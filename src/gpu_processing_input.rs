@@ -1,14 +1,14 @@
 #[cfg(all(feature = "ui", feature = "render"))]
 use super::ProcessingSource;
-use super::{GpuPhotoGrade, ProcessingParameters};
+use super::{GpuAdjustmentLayers, ProcessingParameters};
 #[cfg(all(feature = "ui", feature = "render"))]
 use crate::Error;
 use std::sync::Arc;
 
 /// Immutable processing input shared by image consumers, never their mutable image storage.
 ///
-/// A complete grade is always a [`GpuPhotoGrade`], which owns the semantic
-/// [`crate::local_adjustments::PhotoGradeSnapshot`] it was compiled from. Bare
+/// A complete grade is always a [`GpuAdjustmentLayers`], which owns the semantic
+/// [`crate::adjustment_layers::AdjustmentLayerSnapshot`] it was compiled from. Bare
 /// [`ProcessingParameters`] are reserved for source inspection and low-level GPU fixtures;
 /// they are not an alternative grade representation.
 #[derive(Clone)]
@@ -22,7 +22,7 @@ pub struct ProcessingInput {
 #[derive(Clone)]
 enum Processing {
     Parameters(Arc<ProcessingParameters>),
-    Grade(Arc<GpuPhotoGrade>),
+    Grade(Arc<GpuAdjustmentLayers>),
 }
 
 impl From<ProcessingParameters> for ProcessingInput {
@@ -36,8 +36,8 @@ impl From<ProcessingParameters> for ProcessingInput {
     }
 }
 
-impl From<Arc<GpuPhotoGrade>> for ProcessingInput {
-    fn from(grade: Arc<GpuPhotoGrade>) -> Self {
+impl From<Arc<GpuAdjustmentLayers>> for ProcessingInput {
+    fn from(grade: Arc<GpuAdjustmentLayers>) -> Self {
         Self {
             processing: Processing::Grade(grade),
             look: None,
@@ -99,7 +99,7 @@ impl ProcessingInput {
         }
     }
 
-    pub(crate) fn grade(&self) -> Option<&GpuPhotoGrade> {
+    pub(crate) fn grade(&self) -> Option<&GpuAdjustmentLayers> {
         match &self.processing {
             Processing::Parameters(_) => None,
             Processing::Grade(grade) => Some(grade),
@@ -111,7 +111,7 @@ impl ProcessingInput {
 #[derive(Clone)]
 pub struct ProcessingSignature {
     parameters: [u8; ProcessingParameters::BYTE_LEN],
-    grade: Option<Arc<GpuPhotoGrade>>,
+    grade: Option<Arc<GpuAdjustmentLayers>>,
     look: Option<crate::looks::LookId>,
     #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     repairs: super::repairs::Snapshot,

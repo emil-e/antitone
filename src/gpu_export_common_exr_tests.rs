@@ -1,5 +1,5 @@
 use super::*;
-use crate::local_adjustments::SpatialPipeline;
+use crate::adjustment_layers::AdjustmentLayerPipeline;
 use crate::processing::Calibration;
 use crate::working_precision;
 use exr::prelude::*;
@@ -19,17 +19,17 @@ fn common_linear_engine_exr_matches_independent_scalar_with_shared_working_budge
         input_floor: scan.input_floor,
     };
     let roll = RollSettings::default();
-    let grade = PhotoGradeSnapshot::new(
-        crate::processing::PhotoSettings {
-            contrast: 0.8,
-            saturation: 1.3,
-            ..Default::default()
-        },
-        vec![],
-    )
-    .unwrap();
+    let grade =
+        AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+            crate::adjustment_layers::AdjustmentLayerSettings {
+                contrast: 0.8,
+                saturation: 1.3,
+                ..Default::default()
+            },
+        )])
+        .unwrap();
     let scalar =
-        SpatialPipeline::new(calibration, roll, grade.clone(), scan.camera_to_ap1).unwrap();
+        AdjustmentLayerPipeline::new(calibration, roll, grade.clone(), scan.camera_to_ap1).unwrap();
     let a = scan.area;
     let exact = Composition::new(a, Default::default(), Default::default()).unwrap();
     let rotated = Composition::with_crop(

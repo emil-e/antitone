@@ -1,9 +1,9 @@
 use super::*;
 use crate::processing::InputSettings;
 use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::SourcePoint,
-    local_adjustments::{GradientMask, LocalAdjustment},
-    project::AdjustmentId,
+    project::AdjustmentLayerId,
     viewport::CanvasLayout,
 };
 use glam::DVec2;
@@ -42,7 +42,7 @@ enum MaskDrag {
 }
 
 impl MaskDrag {
-    fn update(&self, point: egui::Pos2) -> GradientMask {
+    fn update(&self, point: egui::Pos2) -> AdjustmentLayerCoverage {
         match self {
             Self::Linear(drag) => drag.update(point),
             Self::Radial(drag) => drag.update(point),
@@ -56,8 +56,9 @@ pub(super) struct MaskEdit {
     source: Source,
     roll: RollSettings,
     input: InputSettings,
-    id: Option<AdjustmentId>,
-    mask: Option<GradientMask>,
+    id: Option<AdjustmentLayerId>,
+    above: Option<AdjustmentLayerId>,
+    mask: Option<AdjustmentLayerCoverage>,
     preview: Option<Source>,
     compare: bool,
     kind: Kind,
@@ -77,7 +78,7 @@ enum Handle {
 struct LinearDrag {
     handle: Handle,
     point: SourcePoint,
-    mask: Option<GradientMask>,
+    mask: Option<AdjustmentLayerCoverage>,
     layout: CanvasLayout,
 }
 
@@ -107,25 +108,26 @@ impl MaskEdit {
         self.drag.is_some()
     }
 
-    fn candidate(&self) -> Result<(Source, AdjustmentId), Error> {
+    fn candidate(&self) -> Result<(Source, AdjustmentLayerId), Error> {
         let mask = self
             .mask
             .ok_or(Error::InvalidParameter("draw a gradient first"))?;
         mask.validate()?;
         let mut source = self.source.clone();
-        let locals = source
-            .local_adjustments
+        let layers = source
+            .adjustment_layers
             .get_or_insert_with(Default::default);
         let id = if let Some(id) = self.id {
-            let record = locals
-                .adjustments
+            let record = layers
+                .layers
                 .iter_mut()
                 .find(|record| record.id == id)
-                .ok_or(Error::InvalidParameter("unknown local-adjustment ID"))?;
+                .ok_or(Error::InvalidParameter("unknown adjustment-layer ID"))?;
             record.adjustment.mask = mask;
             id
         } else {
-            locals.add(
+            layers.add_above(
+                self.above,
                 format!(
                     "{} {}",
                     if self.kind == Kind::Linear {
@@ -133,11 +135,11 @@ impl MaskEdit {
                     } else {
                         "Radial"
                     },
-                    locals.next_id
+                    layers.next_id
                 ),
-                LocalAdjustment {
+                AdjustmentLayer {
                     mask,
-                    photo: PhotoSettings::default(),
+                    photo: AdjustmentLayerSettings::default(),
                     enabled: true,
                     invert: false,
                     strength: 1.,
@@ -158,8 +160,12 @@ fn screen_point(layout: CanvasLayout, point: SourcePoint) -> egui::Pos2 {
     layout.screen_frame_point(layout.composition.source_to_frame(point))
 }
 
-fn handle_at(mask: Option<GradientMask>, layout: CanvasLayout, point: egui::Pos2) -> Handle {
-    let Some(GradientMask::Linear { start, end }) = mask else {
+fn handle_at(
+    mask: Option<AdjustmentLayerCoverage>,
+    layout: CanvasLayout,
+    point: egui::Pos2,
+) -> Handle {
+    let Some(AdjustmentLayerCoverage::Linear { start, end }) = mask else {
         return Handle::New;
     };
     let a = screen_point(layout, start);
@@ -180,7 +186,7 @@ fn handle_at(mask: Option<GradientMask>, layout: CanvasLayout, point: egui::Pos2
 }
 
 impl LinearDrag {
-    fn update(&self, point: egui::Pos2) -> GradientMask {
+    fn update(&self, point: egui::Pos2) -> AdjustmentLayerCoverage {
         let next = source_point(self.layout, point);
         if next == self.point
             && let Some(mask) = self.mask
@@ -189,19 +195,25 @@ impl LinearDrag {
         }
         let delta = DVec2::from_array(next.0) - DVec2::from_array(self.point.0);
         match (self.handle, self.mask) {
-            (Handle::Start, Some(GradientMask::Linear { start, end })) => GradientMask::Linear {
-                start: SourcePoint((DVec2::from_array(start.0) + delta).to_array()),
-                end,
-            },
-            (Handle::End, Some(GradientMask::Linear { start, end })) => GradientMask::Linear {
-                start,
-                end: SourcePoint((DVec2::from_array(end.0) + delta).to_array()),
-            },
-            (Handle::Body, Some(GradientMask::Linear { start, end })) => GradientMask::Linear {
-                start: SourcePoint((DVec2::from_array(start.0) + delta).to_array()),
-                end: SourcePoint((DVec2::from_array(end.0) + delta).to_array()),
-            },
-            _ => GradientMask::Linear {
+            (Handle::Start, Some(AdjustmentLayerCoverage::Linear { start, end })) => {
+                AdjustmentLayerCoverage::Linear {
+                    start: SourcePoint((DVec2::from_array(start.0) + delta).to_array()),
+                    end,
+                }
+            }
+            (Handle::End, Some(AdjustmentLayerCoverage::Linear { start, end })) => {
+                AdjustmentLayerCoverage::Linear {
+                    start,
+                    end: SourcePoint((DVec2::from_array(end.0) + delta).to_array()),
+                }
+            }
+            (Handle::Body, Some(AdjustmentLayerCoverage::Linear { start, end })) => {
+                AdjustmentLayerCoverage::Linear {
+                    start: SourcePoint((DVec2::from_array(start.0) + delta).to_array()),
+                    end: SourcePoint((DVec2::from_array(end.0) + delta).to_array()),
+                }
+            }
+            _ => AdjustmentLayerCoverage::Linear {
                 start: self.point,
                 end: next,
             },
@@ -209,10 +221,13 @@ impl LinearDrag {
     }
 }
 
-fn hits(mask: GradientMask, layout: CanvasLayout, point: egui::Pos2) -> bool {
+fn hits(mask: AdjustmentLayerCoverage, layout: CanvasLayout, point: egui::Pos2) -> bool {
     match mask {
-        GradientMask::Linear { .. } => !matches!(handle_at(Some(mask), layout, point), Handle::New),
-        GradientMask::Radial { .. } => radial::hit(mask, layout, point),
+        AdjustmentLayerCoverage::Global {} => false,
+        AdjustmentLayerCoverage::Linear { .. } => {
+            !matches!(handle_at(Some(mask), layout, point), Handle::New)
+        }
+        AdjustmentLayerCoverage::Radial { .. } => radial::hit(mask, layout, point),
     }
 }
 
@@ -226,30 +241,31 @@ impl Editor {
                     .ok_or(Error::InvalidParameter("no selected source"))?,
             )?
             .clone();
-        source.photo = self.photo;
+        self.overlay_adjustment_layer_settings(&mut source, self.adjustment_layer_settings);
         source.orientation = self.photo_orientation;
         source.crop = self.crop;
         Ok(source)
     }
 
-    fn selected_mask(&self) -> Option<LocalAdjustment> {
-        let adjustments::Target::Local(id) = self.adjustment_target() else {
+    fn selected_mask(&self) -> Option<AdjustmentLayer> {
+        let adjustment_layers::Target::Layer(id) = self.adjustment_layer_target() else {
             return None;
         };
         self.document
             .project
             .source(self.current_source?)
             .ok()?
-            .local_adjustments
+            .adjustment_layers
             .as_ref()?
-            .adjustments
+            .layers
             .iter()
             .find(|record| record.id == id)
             .map(|record| record.adjustment)
+            .filter(|layer| layer.mask != (AdjustmentLayerCoverage::Global {}))
     }
 
     pub(super) fn mask_help(&self) -> Option<&'static str> {
-        if !self.document.visit.adjustments.drawer_open() {
+        if !(self.tab == 1) {
             return None;
         }
         self.document
@@ -260,16 +276,19 @@ impl Editor {
             .or_else(|| {
                 self.selected_mask()
                     .map(|adjustment| match adjustment.mask {
-                        GradientMask::Linear { .. } => Kind::Linear,
-                        GradientMask::Radial { .. } => Kind::Radial,
+                        AdjustmentLayerCoverage::Global {} => {
+                            unreachable!("global layers have no mask handles")
+                        }
+                        AdjustmentLayerCoverage::Linear { .. } => Kind::Linear,
+                        AdjustmentLayerCoverage::Radial { .. } => Kind::Radial,
                     })
             })
             .map(Kind::help)
     }
 
     pub(super) fn mask_handles_available(&self) -> bool {
-        self.document.visit.adjustments.drawer_open()
-            && !self.document.visit.adjustments.dragging()
+        self.adjustment_layer_overlays_visible()
+            && !self.document.visit.adjustment_layers.dragging()
             && self.tab == 1
             && !self.busy
             && self.document.visit.ready.is_some()
@@ -281,7 +300,7 @@ impl Editor {
             && self.flat_edit.is_none()
             && self.document.analysis_review.is_none()
             && !self.document.dust.cleanup
-            && !self.document.visit.adjustments.confirming()
+            && !self.document.visit.adjustment_layers.confirming()
             && self.fullscreen.is_none()
     }
 
@@ -293,15 +312,15 @@ impl Editor {
                     .is_some_and(|adjustment| hits(adjustment.mask, layout, point)))
     }
 
-    pub(super) fn begin_linear_mask(&mut self, id: Option<AdjustmentId>) {
+    pub(super) fn begin_linear_mask(&mut self, id: Option<AdjustmentLayerId>) {
         self.begin_mask(Kind::Linear, id);
     }
 
-    pub(super) fn begin_radial_mask(&mut self, id: Option<AdjustmentId>) {
+    pub(super) fn begin_radial_mask(&mut self, id: Option<AdjustmentLayerId>) {
         self.begin_mask(Kind::Radial, id);
     }
 
-    fn begin_mask(&mut self, kind: Kind, id: Option<AdjustmentId>) {
+    fn begin_mask(&mut self, kind: Kind, id: Option<AdjustmentLayerId>) {
         if self.busy
             || self.document.visit.ready.is_none()
             || self.source
@@ -310,7 +329,7 @@ impl Editor {
             || self.document.auto_crop_edit.is_some()
             || self.flat_edit.is_some()
             || self.document.visit.mask_edit.is_some()
-            || self.document.visit.adjustments.confirming()
+            || self.document.visit.adjustment_layers.confirming()
             || self.document.analysis_review.is_some()
             || self.fullscreen.is_some()
         {
@@ -323,15 +342,15 @@ impl Editor {
             let mask = id
                 .map(|id| {
                     source
-                        .local_adjustments
+                        .adjustment_layers
                         .as_ref()
-                        .and_then(|locals| locals.adjustments.iter().find(|record| record.id == id))
+                        .and_then(|layers| layers.layers.iter().find(|record| record.id == id))
                         .map(|record| record.adjustment.mask)
-                        .ok_or(Error::InvalidParameter("unknown local-adjustment ID"))
+                        .ok_or(Error::InvalidParameter("unknown adjustment-layer ID"))
                 })
                 .transpose()?;
             if mask.is_some_and(|mask| {
-                matches!(mask, GradientMask::Linear { .. }) != (kind == Kind::Linear)
+                matches!(mask, AdjustmentLayerCoverage::Linear { .. }) != (kind == Kind::Linear)
             }) {
                 return Err(Error::InvalidParameter("mask and tool differ"));
             }
@@ -339,11 +358,11 @@ impl Editor {
         })();
         match result {
             Ok((source, mask)) => {
-                if !self.document.visit.adjustments.drawer_open() {
-                    self.open_adjustments();
+                if !(self.tab == 1) {
+                    self.reveal_adjustment_layers();
                 }
                 if let Some(id) = id {
-                    self.select_adjustment(adjustments::Target::Local(id));
+                    self.select_adjustment_layer(adjustment_layers::Target::Layer(id));
                 }
                 self.document.visit.mask_edit = Some(MaskEdit {
                     loaded: self.id,
@@ -351,12 +370,16 @@ impl Editor {
                     roll: self.roll,
                     input: self.input,
                     id,
+                    above: match self.adjustment_layer_target() {
+                        adjustment_layers::Target::Layer(id) => Some(id),
+                        adjustment_layers::Target::None => None,
+                    },
                     mask,
                     preview: None,
                     compare: self.working.compare,
                     kind,
                     feather: match mask {
-                        Some(GradientMask::Radial { feather, .. }) => feather,
+                        Some(AdjustmentLayerCoverage::Radial { feather, .. }) => feather,
                         _ => controls::DEFAULT_RADIAL_FEATHER,
                     },
                     drag: None,
@@ -381,7 +404,7 @@ impl Editor {
             return;
         };
         self.working.compare = edit.compare;
-        if !accept || !self.document.visit.adjustments.drawer_open() {
+        if !accept || !(self.tab == 1) {
             self.status = "Mask gesture cancelled".into();
             return;
         }
@@ -391,9 +414,9 @@ impl Editor {
         }
         let result = edit.candidate().and_then(|(candidate, id)| {
             self.validate_source_candidate(&candidate)?;
-            self.edit_adjustments(|locals| {
-                *locals = candidate
-                    .local_adjustments
+            self.edit_adjustment_layers(|layers| {
+                *layers = candidate
+                    .adjustment_layers
                     .expect("candidate has local records");
                 Ok(())
             })?;
@@ -402,9 +425,9 @@ impl Editor {
         match result {
             Ok(id) => {
                 let created = edit.creating();
-                self.select_adjustment(adjustments::Target::Local(id));
+                self.select_adjustment_layer(adjustment_layers::Target::Layer(id));
                 if created {
-                    self.document.visit.adjustments.reveal_controls = true;
+                    self.document.visit.adjustment_layers.reveal_controls = true;
                 }
                 self.status = format!("{} selected", edit.kind.title());
             }
@@ -423,10 +446,7 @@ impl Editor {
     }
 
     pub(super) fn mask_preview_source(&self) -> Option<&Source> {
-        if self.fullscreen.is_some()
-            || self.tab != 1
-            || !self.document.visit.adjustments.drawer_open()
-        {
+        if self.fullscreen.is_some() || self.tab != 1 || !(self.tab == 1) {
             return None;
         }
         self.document
@@ -441,7 +461,7 @@ impl Editor {
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        photo: PhotoSettings,
+        photo: AdjustmentLayerSettings,
     ) -> Result<ProcessingInput, Error> {
         let input = input.into();
         if let Some(source) = self.mask_preview_source() {
@@ -505,12 +525,13 @@ impl Editor {
                 let Some(adjustment) = self.selected_mask() else {
                     return;
                 };
-                let adjustments::Target::Local(id) = self.adjustment_target() else {
+                let adjustment_layers::Target::Layer(id) = self.adjustment_layer_target() else {
                     return;
                 };
                 match adjustment.mask {
-                    GradientMask::Linear { .. } => self.begin_linear_mask(Some(id)),
-                    GradientMask::Radial { .. } => self.begin_radial_mask(Some(id)),
+                    AdjustmentLayerCoverage::Global {} => return,
+                    AdjustmentLayerCoverage::Linear { .. } => self.begin_linear_mask(Some(id)),
+                    AdjustmentLayerCoverage::Radial { .. } => self.begin_radial_mask(Some(id)),
                 }
             }
             if let Some(edit) = &mut self.document.visit.mask_edit {
@@ -540,7 +561,7 @@ impl Editor {
         {
             if let Some(drag) = &edit.drag {
                 edit.mask = Some(drag.update(point));
-                if let Some(GradientMask::Radial { feather, .. }) = edit.mask {
+                if let Some(AdjustmentLayerCoverage::Radial { feather, .. }) = edit.mask {
                     edit.feather = feather;
                 }
                 edit.preview = match edit
@@ -584,7 +605,7 @@ impl Editor {
     }
 
     pub(super) fn paint_mask(&self, ui: &egui::Ui, layout: CanvasLayout) {
-        if !self.document.visit.adjustments.drawer_open()
+        if !self.adjustment_layer_overlays_visible()
             || self.fullscreen.is_some()
             || self.document.analysis_review.is_some()
             || self.pick.is_some()
@@ -611,7 +632,7 @@ impl Editor {
                 .as_ref()
                 .is_some_and(MaskEdit::creating);
         let painter = ui.painter().with_clip_rect(layout.canvas);
-        if self.document.visit.adjustments.show_coverage {
+        if self.document.visit.adjustment_layers.show_coverage {
             paint_coverage(
                 &painter,
                 layout,
@@ -620,11 +641,11 @@ impl Editor {
                 ui.visuals().selection.stroke.color,
             );
         }
-        if let GradientMask::Radial { .. } = mask {
+        if let AdjustmentLayerCoverage::Radial { .. } = mask {
             radial::paint(&painter, layout, mask);
             return;
         }
-        let GradientMask::Linear { start, end } = mask else {
+        let AdjustmentLayerCoverage::Linear { start, end } = mask else {
             unreachable!()
         };
         let a = screen_point(layout, start);
@@ -696,7 +717,7 @@ impl Editor {
 fn paint_coverage(
     painter: &egui::Painter,
     layout: CanvasLayout,
-    mask: GradientMask,
+    mask: AdjustmentLayerCoverage,
     invert: bool,
     color: egui::Color32,
 ) {

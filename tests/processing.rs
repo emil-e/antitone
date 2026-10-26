@@ -1,13 +1,14 @@
 use antitone::Error;
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::color::{
     AP0_TO_XYZ, AP1_TO_XYZ, BRADFORD, Balance, ap0_to_ap1, ap1_to_ap0, ap1_to_cones, neutral_wb,
     wb_matrix,
 };
 use antitone::processing::{
-    Calibration, DEFAULT_GAMMA, InputSettings, Inversion, NegativeInput, PhotoSettings, Pipeline,
-    Response, RollSettings, exposure_multiplier,
+    Calibration, DEFAULT_GAMMA, InputPipeline, InputSettings, Inversion, NegativeInput, Response,
+    RollSettings, exposure_multiplier,
 };
-use antitone::sampling::{mean, photo_neutral, roll_neutral, weighted_mean, weighted_mean_iter};
+use antitone::sampling::{mean, roll_neutral, weighted_mean, weighted_mean_iter, white_balance};
 use glam::{DMat3, DVec3};
 
 /// A negative interpretation over measured anchors. The response is the identity (toe 1, no
@@ -56,7 +57,7 @@ fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion
             tint: 0.1,
         },
     };
-    let neutral = Pipeline::ungraded(inp(cal, gamma, balance), matrix).unwrap();
+    let neutral = InputPipeline::ungraded(inp(cal, gamma, balance), matrix).unwrap();
     let reference = Inversion::new(neg(cal, gamma, balance)).unwrap();
     for input in [cal.dmin * 1.1, cal.dmin, cal.dmax, cal.dmax * 0.5] {
         let actual = neutral.apply(input).unwrap();
@@ -65,20 +66,14 @@ fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion
         assert_eq!(actual.rgb, matrix * inverted.rgb);
         assert_eq!(
             actual,
-            Pipeline::ungraded(inp(cal, gamma, balance), matrix)
+            InputPipeline::ungraded(inp(cal, gamma, balance), matrix)
                 .unwrap()
                 .apply(input)
                 .unwrap()
         );
     }
     // The grade is wired separately and does reach the graded pipeline.
-    let graded = Pipeline::new(
-        inp(cal, gamma, balance),
-        graded_roll,
-        PhotoSettings::default(),
-        matrix,
-    )
-    .unwrap();
+    let graded = InputPipeline::new(inp(cal, gamma, balance), graded_roll, matrix).unwrap();
     let mid = cal.dmax * 0.5;
     assert_ne!(
         graded.apply(mid).unwrap().rgb,
@@ -93,13 +88,8 @@ fn digital_input_is_already_positive_and_reuses_the_shared_grade() {
     let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 1.3));
     // Identity grade + neutral roll WB + zero exposure: apply is camera→AP1 only,
     // with no polarity flip (the sample is already a scene-referred positive).
-    let pipeline = Pipeline::new(
-        InputSettings::Digital,
-        RollSettings::default(),
-        PhotoSettings::default(),
-        matrix,
-    )
-    .unwrap();
+    let pipeline =
+        InputPipeline::new(InputSettings::Digital, RollSettings::default(), matrix).unwrap();
     for input in [
         DVec3::splat(0.18),
         DVec3::new(-0.02, 0.5, 1.7),
@@ -110,20 +100,19 @@ fn digital_input_is_already_positive_and_reuses_the_shared_grade() {
         assert_eq!(actual.rgb, matrix * input);
     }
     // Ungraded digital positive is camera→AP1, before roll/photo controls.
-    let neutral = Pipeline::ungraded(InputSettings::Digital, matrix).unwrap();
+    let neutral = InputPipeline::ungraded(InputSettings::Digital, matrix).unwrap();
     assert_eq!(
         neutral.apply(DVec3::splat(0.18)).unwrap().rgb,
         matrix * DVec3::splat(0.18)
     );
     // The shared grade reaches the digital positive: roll exposure scales the working value.
     let stops = 1.5;
-    let graded = Pipeline::new(
+    let graded = InputPipeline::new(
         InputSettings::Digital,
         RollSettings {
             exposure: stops,
             ..RollSettings::default()
         },
-        PhotoSettings::default(),
         matrix,
     )
     .unwrap();
@@ -139,7 +128,7 @@ fn digital_input_is_already_positive_and_reuses_the_shared_grade() {
 
 #[test]
 fn weighted_neutral_picks_match_repeated_full_resolution_pixels_not_bounding_box_means() {
-    use antitone::sampling::{photo_neutral_weighted, roll_neutral_weighted};
+    use antitone::sampling::{roll_neutral_weighted, white_balance_weighted};
     let cal = calibration();
     let correct = Balance {
         warmth: 0.21,
@@ -153,8 +142,8 @@ fn weighted_neutral_picks_match_repeated_full_resolution_pixels_not_bounding_box
     let repeated = [patch[0], patch[1], patch[1], patch[2]];
     assert!((weighted_mean(&weighted).unwrap() - mean(&repeated).unwrap()).length() < 1e-15);
 
-    let weighted_balance = photo_neutral_weighted(&weighted).unwrap();
-    let repeated_balance = photo_neutral(&repeated).unwrap();
+    let weighted_balance = white_balance_weighted(&weighted).unwrap();
+    let repeated_balance = white_balance(&repeated).unwrap();
     assert!((weighted_balance.warmth - repeated_balance.warmth).abs() < 1e-14);
     assert!((weighted_balance.tint - repeated_balance.tint).abs() < 1e-14);
 
@@ -363,29 +352,33 @@ fn near_dmin_is_not_rounded_to_zero_by_power_subtraction() {
 fn exposure_scopes_combine_without_changing_inversion() {
     let cal = calibration();
     let scan = DVec3::new(0.06, 0.08, 0.04);
-    let base = Pipeline::new(
+    let base = InputPipeline::new(
         inp(cal, DEFAULT_GAMMA, Balance::default()),
         RollSettings::default(),
-        PhotoSettings::default(),
         ap0_to_ap1(),
     )
     .unwrap()
     .apply(scan)
     .unwrap();
-    let combined = Pipeline::new(
-        inp(cal, DEFAULT_GAMMA, Balance::default()),
-        RollSettings {
-            exposure: 2.0,
-            ..RollSettings::default()
-        },
-        PhotoSettings {
+    let combined = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
             exposure: -0.5,
-            ..PhotoSettings::default()
-        },
-        ap0_to_ap1(),
-    )
+            ..AdjustmentLayerSettings::default()
+        }),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            inp(cal, DEFAULT_GAMMA, Balance::default()),
+            RollSettings {
+                exposure: 2.0,
+                ..RollSettings::default()
+            },
+            layers,
+            ap0_to_ap1(),
+        )
+    })
     .unwrap()
-    .apply(scan)
+    .apply(scan, [0, 0])
     .unwrap();
     close_rgb(combined.rgb, base.rgb * 1.5_f64.exp2());
     assert_eq!(combined.floored, base.floored);
@@ -457,11 +450,11 @@ fn photo_pick_uses_linear_patch_mean_and_does_not_change_shared_state() {
     };
     let cast_matrix = wb_matrix(desired).unwrap().inverse();
     let patch = [0.04, 0.2, 1.5].map(|v| cast_matrix * DVec3::splat(v));
-    let solved = photo_neutral(&patch).unwrap();
+    let solved = white_balance(&patch).unwrap();
     close(solved.warmth, desired.warmth);
     close(solved.tint, desired.tint);
     assert_eq!(roll, RollSettings::default());
-    assert!(photo_neutral(&[]).is_err());
+    assert!(white_balance(&[]).is_err());
 }
 
 #[test]
@@ -539,10 +532,9 @@ fn pipeline_maps_camera_positive_to_ap1_and_ap0_export_preserves_xyz() {
     let original = DVec3::new(4.0, 0.03, 0.1);
     let scan = scan_for_positive(cal, interpretation, original);
     let inverted = Inversion::new(interpretation).unwrap().apply(scan).unwrap();
-    let processed = Pipeline::new(
+    let processed = InputPipeline::new(
         inp(cal, DEFAULT_GAMMA, Balance::default()),
         RollSettings::default(),
-        PhotoSettings::default(),
         ap0_to_ap1(),
     )
     .unwrap()
@@ -563,25 +555,30 @@ fn moving_bradford_wb_to_ap1_preserves_the_xyz_operation() {
         exposure: 1.25,
         ..RollSettings::default()
     };
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         exposure: -0.75,
         wb: Balance {
             warmth: 0.3,
             tint: -0.2,
         },
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
     let scan = DVec3::new(0.05, 0.07, 0.02);
     let interpretation = neg(cal, DEFAULT_GAMMA, Balance::default());
     let inverted = Inversion::new(interpretation).unwrap().apply(scan).unwrap();
-    let processed = Pipeline::new(
-        inp(cal, DEFAULT_GAMMA, Balance::default()),
-        roll,
-        photo,
-        ap0_to_ap1(),
-    )
+    let processed = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(photo),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            inp(cal, DEFAULT_GAMMA, Balance::default()),
+            roll,
+            layers,
+            ap0_to_ap1(),
+        )
+    })
     .unwrap()
-    .apply(scan)
+    .apply(scan, [0, 0])
     .unwrap();
     let previous_cones = BRADFORD * AP0_TO_XYZ;
     let previous_wb = previous_cones.inverse()
@@ -593,14 +590,14 @@ fn moving_bradford_wb_to_ap1_preserves_the_xyz_operation() {
 }
 
 #[test]
-fn photo_neutral_accepts_outside_ap1_rgb_when_cone_responses_are_usable() {
+fn white_balance_accepts_outside_ap1_rgb_when_cone_responses_are_usable() {
     let mut outside_ap1 = 0;
     for warmth in [-0.99, 0.0, 0.99] {
         for tint in [-0.99, 0.0, 0.99] {
             let correction = Balance { warmth, tint };
             let cast = wb_matrix(correction).unwrap().inverse() * DVec3::splat(0.2);
             outside_ap1 += usize::from(cast.min_element() < 0.0);
-            let solved = photo_neutral(&[cast]).unwrap();
+            let solved = white_balance(&[cast]).unwrap();
             close(solved.warmth, warmth);
             close(solved.tint, tint);
             close_rgb(wb_matrix(solved).unwrap() * cast, DVec3::splat(0.2));
@@ -619,29 +616,33 @@ fn photo_pick_uses_ap1_after_the_inversion_conversion() {
     };
     let cast_ap1 = wb_matrix(correction).unwrap().inverse() * DVec3::splat(0.2);
     let scan = scan_for_positive(cal, interpretation, ap1_to_ap0() * cast_ap1);
-    let before_wb = Pipeline::new(
+    let before_wb = InputPipeline::new(
         inp(cal, DEFAULT_GAMMA, Balance::default()),
         RollSettings::default(),
-        PhotoSettings::default(),
         ap0_to_ap1(),
     )
     .unwrap()
     .apply(scan)
     .unwrap();
-    let solved = photo_neutral(&[before_wb.rgb]).unwrap();
+    let solved = white_balance(&[before_wb.rgb]).unwrap();
     close(solved.warmth, correction.warmth);
     close(solved.tint, correction.tint);
-    let positive = Pipeline::new(
-        inp(cal, DEFAULT_GAMMA, Balance::default()),
-        RollSettings::default(),
-        PhotoSettings {
+    let positive = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
             wb: solved,
-            ..PhotoSettings::default()
-        },
-        ap0_to_ap1(),
-    )
+            ..AdjustmentLayerSettings::default()
+        }),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            inp(cal, DEFAULT_GAMMA, Balance::default()),
+            RollSettings::default(),
+            layers,
+            ap0_to_ap1(),
+        )
+    })
     .unwrap()
-    .apply(scan)
+    .apply(scan, [0, 0])
     .unwrap();
     close_rgb(positive.rgb, DVec3::splat(0.2));
 }
@@ -716,5 +717,115 @@ fn weighted_patch_mean_propagates_sample_read_failure() {
     assert_eq!(
         weighted_mean_iter(samples),
         Err(Error::InvalidParameter("sample read failed"))
+    );
+}
+
+#[test]
+fn layer_white_balance_fits_constant_and_varying_coverage_including_partial_strength() {
+    use antitone::sampling::adjustment_layer_white_balance;
+    let expected = Balance {
+        warmth: 0.24,
+        tint: -0.16,
+    };
+    for weights in [
+        vec![1.; 4],
+        vec![0.35; 4],
+        vec![1e-5; 4],
+        vec![1e-6; 4],
+        vec![0., 0.1, 0.35, 0.7],
+        vec![0.8, 0.6, 0.4, 0.2],
+    ] {
+        let pixels: Vec<_> = weights
+            .iter()
+            .enumerate()
+            .map(|(i, &weight)| {
+                let cast = Balance {
+                    warmth: -weight * expected.warmth,
+                    tint: -weight * expected.tint,
+                };
+                (
+                    wb_matrix(cast).unwrap() * DVec3::splat(0.15 + i as f64 * 0.08),
+                    0.25 + i as f64,
+                    weight,
+                )
+            })
+            .collect();
+        let actual = adjustment_layer_white_balance(&pixels).unwrap();
+        assert!(
+            (actual.warmth - expected.warmth).abs() < 1e-8,
+            "{weights:?}: {actual:?}"
+        );
+        assert!(
+            (actual.tint - expected.tint).abs() < 1e-8,
+            "{weights:?}: {actual:?}"
+        );
+        let corrected: Vec<_> = pixels
+            .iter()
+            .map(|&(rgb, area, weight)| {
+                (
+                    wb_matrix(Balance {
+                        warmth: weight * actual.warmth,
+                        tint: weight * actual.tint,
+                    })
+                    .unwrap()
+                        * rgb,
+                    area,
+                )
+            })
+            .collect();
+        let mean = weighted_mean(&corrected).unwrap();
+        assert!((mean - DVec3::splat(mean.y)).abs().max_element() < 1e-9);
+    }
+}
+
+#[test]
+fn layer_white_balance_rejects_uncovered_invalid_and_unreachable_patches() {
+    use antitone::sampling::adjustment_layer_white_balance;
+    assert!(adjustment_layer_white_balance(&[]).is_err());
+    assert!(adjustment_layer_white_balance(&[(DVec3::ONE, 1., 0.)]).is_err());
+    for weight in [f64::NAN, -0.1, 1.1] {
+        assert!(adjustment_layer_white_balance(&[(DVec3::ONE, 1., weight)]).is_err());
+    }
+    let cast = wb_matrix(Balance {
+        warmth: -0.5,
+        tint: 0.,
+    })
+    .unwrap()
+        * DVec3::ONE;
+    assert!(
+        adjustment_layer_white_balance(&[(cast, 1., 0.1)]).is_err(),
+        "a correction outside the layer's control range must not be silently clamped"
+    );
+}
+
+#[test]
+fn layer_white_balance_respects_fractional_patch_area_when_samples_disagree() {
+    use antitone::sampling::adjustment_layer_white_balance;
+    let a = wb_matrix(Balance {
+        warmth: -0.1,
+        tint: 0.05,
+    })
+    .unwrap()
+        * DVec3::splat(0.25);
+    let b = wb_matrix(Balance {
+        warmth: 0.08,
+        tint: -0.1,
+    })
+    .unwrap()
+        * DVec3::splat(0.3);
+    let expected_full_strength = neutral_wb(a * 0.25 + b * 0.75).unwrap();
+    let actual = adjustment_layer_white_balance(&[(a, 0.25, 0.4), (b, 0.75, 0.4)]).unwrap();
+    assert!((actual.warmth - expected_full_strength.warmth / 0.4).abs() < 1e-8);
+    assert!((actual.tint - expected_full_strength.tint / 0.4).abs() < 1e-8);
+    let repeated =
+        adjustment_layer_white_balance(&[(a, 1., 0.4), (b, 1., 0.4), (b, 1., 0.4), (b, 1., 0.4)])
+            .unwrap();
+    assert!((actual.warmth - repeated.warmth).abs() < 1e-8);
+    assert!((actual.tint - repeated.tint).abs() < 1e-8);
+    let unweighted = adjustment_layer_white_balance(&[(a, 1., 0.4), (b, 1., 0.4)]).unwrap();
+    assert!((actual.warmth - unweighted.warmth).abs() > 0.01);
+    assert_eq!(
+        adjustment_layer_white_balance(&[(DVec3::ONE, 1., 1e-5)]).unwrap(),
+        Balance::default()
     );
 }

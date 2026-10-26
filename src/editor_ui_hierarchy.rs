@@ -365,6 +365,7 @@ fn section_heading(
     let left = rect.left() + if open.is_some() { 24. } else { 0. };
     let mut clip = rect;
     clip.max.x -= if changed { 12. } else { 0. };
+    let truncated = text.size().x > clip.right() - left;
     ui.painter().with_clip_rect(clip).galley(
         egui::pos2(left, rect.center().y - text.size().y * 0.5),
         text,
@@ -380,7 +381,11 @@ fn section_heading(
             node.set_description("Modified");
         });
     }
-    response
+    if truncated {
+        response.on_hover_text(title)
+    } else {
+        response
+    }
 }
 
 const DIALOG_DISCLOSURE_HEIGHT: f32 = 22.;

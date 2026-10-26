@@ -4,7 +4,9 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline},
     color::{AP1_TO_XYZ, ap1_to_ap0},
     crop::Crop,
     export::{self, ExrPrecision, Overwrite},
@@ -13,9 +15,8 @@ use antitone::{
         Composition, Flips, PhotoOrientation, QuarterTurns, RollOrientation, SourcePoint,
         SourceRegion,
     },
-    local_adjustments::{GradientMask, LocalAdjustment, SpatialPipeline},
-    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, RollSettings},
-    project::{Development, LocalAdjustments, Project, Save, Source, SourceDevelopment, SourceId},
+    processing::{Calibration, InputSettings, RollSettings},
+    project::{AdjustmentLayers, Development, Project, Save, Source, SourceDevelopment, SourceId},
     rendering::{CpuRenderer, OutputTarget},
     sampling::weighted_mean_iter,
 };
@@ -41,18 +42,21 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
         input: InputSettings::negative(calibration),
         ..Project::default()
     };
-    let mut locals = LocalAdjustments::default();
-    locals
+    let mut layers = AdjustmentLayers::with_global(AdjustmentLayerSettings {
+        contrast: 1.15,
+        ..AdjustmentLayerSettings::default()
+    });
+    layers
         .add(
             "Linear exposure".into(),
-            LocalAdjustment {
-                mask: GradientMask::Linear {
+            AdjustmentLayer {
+                mask: AdjustmentLayerCoverage::Linear {
                     start: SourcePoint([10., 20.]),
                     end: SourcePoint([16., 20.]),
                 },
-                photo: PhotoSettings {
+                photo: AdjustmentLayerSettings {
                     exposure: 2.,
-                    ..PhotoSettings::default()
+                    ..AdjustmentLayerSettings::default()
                 },
                 enabled: true,
                 invert: false,
@@ -60,20 +64,20 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
             },
         )
         .unwrap();
-    locals
+    layers
         .add(
             "Radial saturation".into(),
-            LocalAdjustment {
-                mask: GradientMask::Radial {
+            AdjustmentLayer {
+                mask: AdjustmentLayerCoverage::Radial {
                     center: SourcePoint([13., 23.]),
                     radii: [4., 2.],
                     angle: 0.,
                     feather: 1.,
                 },
-                photo: PhotoSettings {
+                photo: AdjustmentLayerSettings {
                     saturation: 2.,
                     saturation_density: 0.4,
-                    ..PhotoSettings::default()
+                    ..AdjustmentLayerSettings::default()
                 },
                 enabled: true,
                 invert: false,
@@ -96,11 +100,8 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
                 input_floor: calibration.input_floor,
             },
             reference_only: false,
-            photo: PhotoSettings {
-                contrast: 1.15,
-                ..PhotoSettings::default()
-            },
-            local_adjustments: Some(locals),
+
+            adjustment_layers: Some(layers),
             repairs: Default::default(),
             orientation: PhotoOrientation {
                 turns: QuarterTurns::One,
@@ -128,19 +129,28 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
     )
     .unwrap();
     let grade = source.grade_snapshot().unwrap();
-    let spatial = SpatialPipeline::new(
+    let spatial = AdjustmentLayerPipeline::new(
         InputSettings::negative(calibration),
         loaded.roll,
         grade,
         DMat3::IDENTITY,
     )
     .unwrap();
-    let global = Pipeline::new(
-        InputSettings::negative(calibration),
-        RollSettings::default(),
-        source.photo,
-        DMat3::IDENTITY,
-    )
+    let global = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(
+            source.adjustment_layers.as_ref().unwrap().layers[0]
+                .adjustment
+                .photo,
+        ),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            InputSettings::negative(calibration),
+            RollSettings::default(),
+            layers,
+            DMat3::IDENTITY,
+        )
+    })
     .unwrap();
     let camera = |x: u32, y: u32| {
         DVec3::new(
@@ -151,7 +161,7 @@ fn persisted_locals_export_at_source_centres_before_rotated_reconstruction() {
     };
     // Independent coverage/exposure/saturation oracle, not the local evaluator.
     let expected_pixel = |x: u32, y: u32| {
-        let rgb = global.apply(camera(x, y)).unwrap().rgb;
+        let rgb = global.apply(camera(x, y), [x, y]).unwrap().rgb;
         let t = (f64::from(x) + 0.5 - 10.) / 6.;
         let exposure = 2. * t * t * (3. - 2. * t);
         let rgb = rgb * exposure.exp2();

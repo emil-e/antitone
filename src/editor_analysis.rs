@@ -147,11 +147,14 @@ fn proposed_document(
     candidate.project.roll = proposal.roll;
     for (id, photo) in document.project.order.iter().zip(proposal.photos) {
         let source = candidate.project.source_mut(*id)?;
-        source.photo = photo;
-        if let Some(locals) = &mut source.local_adjustments {
-            // A full Photo-grade reset removes masks, not the non-reusing ID history.
-            locals.adjustments.clear();
-        }
+        let layers = source
+            .adjustment_layers
+            .get_or_insert_with(Default::default);
+        layers.layers.clear();
+        layers.add(
+            "Global".into(),
+            crate::adjustment_layers::AdjustmentLayer::global(photo),
+        )?;
     }
     candidate.project.analysis_area = picture.map(array);
     Ok(candidate)
@@ -270,7 +273,7 @@ impl Editor {
             && self.document.auto_crop_edit.is_none()
             && self.flat_edit.is_none()
             && self.document.visit.mask_edit.is_none()
-            && !self.document.visit.adjustments.confirming()
+            && !self.document.visit.adjustment_layers.confirming()
             && !reviewing
             && self.removal_pending.is_none();
         let mut analyze = false;
@@ -368,7 +371,7 @@ impl Editor {
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
-            || self.document.visit.adjustments.confirming()
+            || self.document.visit.adjustment_layers.confirming()
             || self.document.visit.ready.is_none()
             || self.document.project.order.is_empty()
         {
@@ -483,11 +486,13 @@ impl Editor {
                 let photo = match self
                     .validate_document_candidate(&outcome.document)
                     .and_then(|_| {
-                        outcome
-                            .document
-                            .project
-                            .source(snapshot.selected)
-                            .map(|s| s.photo)
+                        outcome.document.project.source(snapshot.selected).map(|s| {
+                            s.adjustment_layers
+                                .as_ref()
+                                .and_then(|layers| layers.layers.last())
+                                .map(|record| record.adjustment.photo)
+                                .unwrap_or_default()
+                        })
                     }) {
                     Ok(photo) => photo,
                     Err(error) => {
@@ -503,11 +508,11 @@ impl Editor {
                 }
                 let before = self.history_snapshot();
                 self.document.install(outcome.document);
-                self.document.visit.adjustments = Adjustments::default();
+                self.document.visit.adjustment_layers = AdjustmentLayerEditor::default();
                 self.grades.clear();
                 self.load_input(self.document.project.input);
                 self.roll = self.document.project.roll;
-                self.photo = photo;
+                self.adjustment_layer_settings = photo;
                 self.source = false;
                 self.working.clear();
                 self.invalidate_original();

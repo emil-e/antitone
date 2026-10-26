@@ -278,7 +278,7 @@ impl Editor {
         }
         let ready = self.document.visit.ready.as_ref().ok_or("No image")?;
         let parameters = self
-            .view_processing(self.input(), self.roll, self.photo)
+            .view_processing(self.input(), self.roll, self.adjustment_layer_settings)
             .map_err(|_| "Positive grade unavailable")?;
         let composition = Composition::with_crop(
             ready.area,

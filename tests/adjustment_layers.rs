@@ -1,14 +1,17 @@
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     Error,
+    adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerStack, weighted_settings,
+    },
     color::{AP1_TO_XYZ, BRADFORD, Balance, wb_matrix},
     crop::Crop,
     geometry::{
         Composition, Flips, PhotoOrientation, QuarterTurns, RollOrientation, SourcePoint,
         SourceRaster, SourceRegion,
     },
-    local_adjustments::{GradientMask, LocalAdjustment, LocalGrade, weighted_settings},
     photographic::Grade,
-    processing::{Calibration, InvertedPixel, PhotoSettings, Pipeline, RollSettings},
+    processing::{Calibration, InvertedPixel, RollSettings},
 };
 use glam::{DMat3, DVec3};
 
@@ -28,15 +31,15 @@ fn near_rgb(actual: DVec3, expected: DVec3) {
     }
 }
 
-fn linear() -> GradientMask {
-    GradientMask::Linear {
+fn linear() -> AdjustmentLayerCoverage {
+    AdjustmentLayerCoverage::Linear {
         start: SourcePoint([10., 20.]),
         end: SourcePoint([18., 20.]),
     }
 }
 
-fn adjustment(photo: PhotoSettings) -> LocalAdjustment {
-    LocalAdjustment {
+fn adjustment(photo: AdjustmentLayerSettings) -> AdjustmentLayer {
+    AdjustmentLayer {
         mask: linear(),
         photo,
         enabled: true,
@@ -79,7 +82,7 @@ fn linear_boundaries_midpoint_direction_and_perpendicular_coverage() {
             assert_eq!(mask.coverage(SourcePoint([x, y])).unwrap(), expected);
         }
     }
-    let reversed = GradientMask::Linear {
+    let reversed = AdjustmentLayerCoverage::Linear {
         start: SourcePoint([18., 20.]),
         end: SourcePoint([10., 20.]),
     };
@@ -89,7 +92,7 @@ fn linear_boundaries_midpoint_direction_and_perpendicular_coverage() {
             1. - mask.coverage(SourcePoint([x, 31.])).unwrap(),
         );
     }
-    let diagonal = GradientMask::Linear {
+    let diagonal = AdjustmentLayerCoverage::Linear {
         start: SourcePoint([-10., -20.]),
         end: SourcePoint([10., 20.]),
     };
@@ -99,7 +102,7 @@ fn linear_boundaries_midpoint_direction_and_perpendicular_coverage() {
 
 #[test]
 fn linear_coverage_is_bounded_and_monotonic_near_endpoints() {
-    let mask = GradientMask::Linear {
+    let mask = AdjustmentLayerCoverage::Linear {
         start: SourcePoint([0., 0.]),
         end: SourcePoint([1., 0.]),
     };
@@ -120,7 +123,7 @@ fn linear_coverage_is_bounded_and_monotonic_near_endpoints() {
 #[test]
 fn radial_inner_outer_boundaries_and_feather_extremes() {
     for feather in [0., 0.25, 0.5, 1.] {
-        let mask = GradientMask::Radial {
+        let mask = AdjustmentLayerCoverage::Radial {
             center: SourcePoint([10., 20.]),
             radii: [8., 4.],
             angle: 0.,
@@ -153,7 +156,7 @@ fn radial_inner_outer_boundaries_and_feather_extremes() {
 #[test]
 fn radial_rotation_retains_native_axis_lengths() {
     for angle in [0., 0.37, std::f64::consts::FRAC_PI_2, -1.1] {
-        let mask = GradientMask::Radial {
+        let mask = AdjustmentLayerCoverage::Radial {
             center: SourcePoint([110., 220.]),
             radii: [8., 2.],
             angle,
@@ -180,7 +183,7 @@ fn radial_rotation_retains_native_axis_lengths() {
 
 #[test]
 fn weighted_controls_retain_auxiliary_values_and_exact_endpoints() {
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         exposure: 2.,
         wb: Balance {
             warmth: 0.8,
@@ -209,15 +212,15 @@ fn weighted_controls_retain_auxiliary_values_and_exact_endpoints() {
     assert_eq!(half.saturation_density, photo.saturation_density);
     assert_eq!(
         weighted_settings(photo, 0.).unwrap(),
-        PhotoSettings {
+        AdjustmentLayerSettings {
             pivot: photo.pivot,
             contrast_colour_mix: photo.contrast_colour_mix,
             saturation_density: photo.saturation_density,
-            ..PhotoSettings::default()
+            ..AdjustmentLayerSettings::default()
         }
     );
     for contrast in [0.4, 1.6] {
-        let photo = PhotoSettings { contrast, ..photo };
+        let photo = AdjustmentLayerSettings { contrast, ..photo };
         assert_eq!(weighted_settings(photo, 1.).unwrap(), photo);
         for w in [0., 1e-12, 0.25, 0.5, 0.75, 1. - f64::EPSILON, 1.] {
             weighted_settings(photo, w).unwrap().validate().unwrap();
@@ -227,9 +230,9 @@ fn weighted_controls_retain_auxiliary_values_and_exact_endpoints() {
 
 #[test]
 fn exposure_feather_scales_ev_not_pixel_output() {
-    let grade = LocalGrade::new(vec![adjustment(PhotoSettings {
+    let grade = AdjustmentLayerStack::new(vec![adjustment(AdjustmentLayerSettings {
         exposure: 1.,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     })])
     .unwrap();
     let input = pixel(DVec3::new(4., -0.5, 0.));
@@ -243,7 +246,7 @@ fn exposure_feather_scales_ev_not_pixel_output() {
 fn invert_precedes_strength_for_linear_and_radial_masks() {
     for mask in [
         linear(),
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([10., 20.]),
             radii: [8., 4.],
             angle: 0.,
@@ -251,13 +254,13 @@ fn invert_precedes_strength_for_linear_and_radial_masks() {
         },
     ] {
         for invert in [false, true] {
-            let grade = LocalGrade::new(vec![LocalAdjustment {
+            let grade = AdjustmentLayerStack::new(vec![AdjustmentLayer {
                 mask,
                 invert,
                 strength: 0.25,
-                ..adjustment(PhotoSettings {
+                ..adjustment(AdjustmentLayerSettings {
                     exposure: 2.,
-                    ..PhotoSettings::default()
+                    ..AdjustmentLayerSettings::default()
                 })
             }])
             .unwrap();
@@ -280,30 +283,30 @@ fn invert_precedes_strength_for_linear_and_radial_masks() {
 
 #[test]
 fn empty_disabled_zero_strength_zero_coverage_and_identity_stages_bypass_exactly() {
-    let active = adjustment(PhotoSettings {
+    let active = adjustment(AdjustmentLayerSettings {
         exposure: 2.,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     });
-    let identity = adjustment(PhotoSettings {
+    let identity = adjustment(AdjustmentLayerSettings {
         pivot: 1.,
         contrast_colour_mix: 1.,
         saturation_density: 1.,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     });
     let point = SourcePoint([14., 20.]);
     for records in [
         vec![],
         vec![identity],
-        vec![LocalAdjustment {
+        vec![AdjustmentLayer {
             enabled: false,
             ..active
         }],
-        vec![LocalAdjustment {
+        vec![AdjustmentLayer {
             strength: 0.,
             ..active
         }],
     ] {
-        let grade = LocalGrade::new(records).unwrap();
+        let grade = AdjustmentLayerStack::new(records).unwrap();
         for rgb in inputs().into_iter().chain([DVec3::new(-0., 0., -0.)]) {
             let input = pixel(rgb);
             let out = grade.apply(input, point).unwrap();
@@ -314,7 +317,7 @@ fn empty_disabled_zero_strength_zero_coverage_and_identity_stages_bypass_exactly
             );
         }
     }
-    let grade = LocalGrade::new(vec![active]).unwrap();
+    let grade = AdjustmentLayerStack::new(vec![active]).unwrap();
     let input = pixel(DVec3::new(-0., 0., -0.));
     let out = grade.apply(input, SourcePoint([0., 20.])).unwrap();
     assert_eq!(
@@ -325,7 +328,7 @@ fn empty_disabled_zero_strength_zero_coverage_and_identity_stages_bypass_exactly
 
 #[test]
 fn full_weight_matches_existing_photographic_operators() {
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         exposure: 1.25,
         wb: Balance {
             warmth: 0.2,
@@ -337,7 +340,7 @@ fn full_weight_matches_existing_photographic_operators() {
         saturation: 1.3,
         saturation_density: 0.6,
     };
-    let grade = LocalGrade::new(vec![adjustment(photo)]).unwrap();
+    let grade = AdjustmentLayerStack::new(vec![adjustment(photo)]).unwrap();
     let matrix = wb_matrix(photo.wb).unwrap() * photo.exposure.exp2();
     for rgb in inputs() {
         let output = grade.apply(pixel(rgb), SourcePoint([18., 20.])).unwrap();
@@ -355,7 +358,7 @@ fn fractional_signed_hdr_stages_match_independent_control_space_reference() {
     for contrast in [0.4, 1., 1.6] {
         for saturation in [0., 1., 2.] {
             for blend in [0., 0.5, 1.] {
-                let photo = PhotoSettings {
+                let photo = AdjustmentLayerSettings {
                     exposure: -1.5,
                     wb: Balance {
                         warmth: 0.6,
@@ -367,7 +370,7 @@ fn fractional_signed_hdr_stages_match_independent_control_space_reference() {
                     saturation,
                     saturation_density: blend,
                 };
-                let grade = LocalGrade::new(vec![adjustment(photo)]).unwrap();
+                let grade = AdjustmentLayerStack::new(vec![adjustment(photo)]).unwrap();
                 for (x, w) in [
                     (10., 0.),
                     (12., 0.15625),
@@ -416,19 +419,19 @@ fn fractional_signed_hdr_stages_match_independent_control_space_reference() {
 
 #[test]
 fn consecutive_local_exposures_add_weighted_ev() {
-    let first = adjustment(PhotoSettings {
+    let first = adjustment(AdjustmentLayerSettings {
         exposure: 2.,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     });
-    let second = LocalAdjustment {
+    let second = AdjustmentLayer {
         invert: true,
         strength: 0.5,
-        ..adjustment(PhotoSettings {
+        ..adjustment(AdjustmentLayerSettings {
             exposure: -1.,
-            ..PhotoSettings::default()
+            ..AdjustmentLayerSettings::default()
         })
     };
-    let grade = LocalGrade::new(vec![first, second]).unwrap();
+    let grade = AdjustmentLayerStack::new(vec![first, second]).unwrap();
     for (x, coverage) in [
         (10., 0.),
         (12., 0.15625),
@@ -447,16 +450,16 @@ fn consecutive_local_exposures_add_weighted_ev() {
 
 #[test]
 fn exposure_and_contrast_stages_obey_list_order() {
-    let exposure = adjustment(PhotoSettings {
+    let exposure = adjustment(AdjustmentLayerSettings {
         exposure: 1.,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     });
-    let contrast = adjustment(PhotoSettings {
+    let contrast = adjustment(AdjustmentLayerSettings {
         contrast: 1.4,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     });
-    let before = LocalGrade::new(vec![exposure, contrast]).unwrap();
-    let after = LocalGrade::new(vec![contrast, exposure]).unwrap();
+    let before = AdjustmentLayerStack::new(vec![exposure, contrast]).unwrap();
+    let after = AdjustmentLayerStack::new(vec![contrast, exposure]).unwrap();
     let rgb = DVec3::new(0.02, 0.1, 0.4);
     let point = SourcePoint([18., 20.]);
     let a = before.apply(pixel(rgb), point).unwrap().rgb;
@@ -479,39 +482,37 @@ fn locals_follow_unchanged_global_pipeline_and_preserve_floor_flags() {
         dmax: DVec3::splat(0.02),
         input_floor: 1. / 65535.,
     };
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         exposure: 1.,
         contrast: 1.3,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
-    let pipeline = Pipeline::new(
-        input_for(calibration),
-        RollSettings::default(),
-        photo,
-        DMat3::IDENTITY,
-    )
+    let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(photo),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            input_for(calibration),
+            RollSettings::default(),
+            layers,
+            DMat3::IDENTITY,
+        )
+    })
     .unwrap();
-    let empty = LocalGrade::new(vec![]).unwrap();
-    let exposure = LocalGrade::new(vec![adjustment(PhotoSettings {
+    let empty = AdjustmentLayerStack::new(vec![]).unwrap();
+    let exposure = AdjustmentLayerStack::new(vec![adjustment(AdjustmentLayerSettings {
         exposure: 1.,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     })])
     .unwrap();
     let point = SourcePoint([18., 20.]);
     for scan in [DVec3::new(0., 0.05, 0.03), DVec3::new(0.3, 0.1, 0.05)] {
-        let global = pipeline.apply(scan).unwrap();
+        let global = pipeline.apply(scan, [0, 0]).unwrap();
         assert_eq!(empty.apply(global, point).unwrap(), global);
         let local = exposure.apply(global, point).unwrap();
         near_rgb(local.rgb, global.rgb * 2.);
         assert_eq!(local.floored, global.floored);
     }
-    assert_eq!(
-        photo.before_white_balance(),
-        PhotoSettings {
-            exposure: 1.,
-            ..PhotoSettings::default()
-        }
-    );
 }
 
 #[test]
@@ -522,7 +523,7 @@ fn mask_sampling_uses_full_source_pixel_centres_for_proxies_and_tiles() {
         width: 40,
         height: 20,
     };
-    let mask = GradientMask::Linear {
+    let mask = AdjustmentLayerCoverage::Linear {
         start: SourcePoint([101.5, 203.5]),
         end: SourcePoint([141.5, 203.5]),
     };
@@ -558,11 +559,11 @@ fn composition_coordinate_roundtrips_preserve_source_mask_coverage() {
         height: 60,
     };
     let masks = [
-        GradientMask::Linear {
+        AdjustmentLayerCoverage::Linear {
             start: SourcePoint([90., 220.]),
             end: SourcePoint([170., 260.]),
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([140., 230.]),
             radii: [30., 15.],
             angle: 0.3,
@@ -616,55 +617,55 @@ fn composition_coordinate_roundtrips_preserve_source_mask_coverage() {
 #[test]
 fn invalid_geometry_settings_and_strength_are_rejected_even_when_disabled() {
     for mask in [
-        GradientMask::Linear {
+        AdjustmentLayerCoverage::Linear {
             start: SourcePoint([1., 2.]),
             end: SourcePoint([1., 2.]),
         },
-        GradientMask::Linear {
+        AdjustmentLayerCoverage::Linear {
             start: SourcePoint([f64::NAN, 0.]),
             end: SourcePoint([1., 2.]),
         },
-        GradientMask::Linear {
+        AdjustmentLayerCoverage::Linear {
             start: SourcePoint([-f64::MAX, 0.]),
             end: SourcePoint([f64::MAX, 0.]),
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([0., f64::INFINITY]),
             radii: [1., 1.],
             angle: 0.,
             feather: 0.5,
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([0., 0.]),
             radii: [0., 1.],
             angle: 0.,
             feather: 0.5,
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([0., 0.]),
             radii: [-1., 1.],
             angle: 0.,
             feather: 0.5,
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([0., 0.]),
             radii: [f64::INFINITY, 1.],
             angle: 0.,
             feather: 0.5,
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([0., 0.]),
             radii: [1., 1.],
             angle: f64::NAN,
             feather: 0.5,
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([0., 0.]),
             radii: [1., 1.],
             angle: 0.,
             feather: -0.1,
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([0., 0.]),
             radii: [1., 1.],
             angle: 0.,
@@ -673,32 +674,32 @@ fn invalid_geometry_settings_and_strength_are_rejected_even_when_disabled() {
     ] {
         assert!(mask.validate().is_err());
         assert!(
-            LocalGrade::new(vec![LocalAdjustment {
+            AdjustmentLayerStack::new(vec![AdjustmentLayer {
                 mask,
                 enabled: false,
-                ..adjustment(PhotoSettings::default())
+                ..adjustment(AdjustmentLayerSettings::default())
             }])
             .is_err()
         );
     }
     for value in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
-        assert!(weighted_settings(PhotoSettings::default(), value).is_err());
+        assert!(weighted_settings(AdjustmentLayerSettings::default(), value).is_err());
         assert!(
-            LocalGrade::new(vec![LocalAdjustment {
+            AdjustmentLayerStack::new(vec![AdjustmentLayer {
                 strength: value,
                 enabled: false,
-                ..adjustment(PhotoSettings::default())
+                ..adjustment(AdjustmentLayerSettings::default())
             }])
             .is_err()
         );
     }
-    let invalid = PhotoSettings {
+    let invalid = AdjustmentLayerSettings {
         contrast: 2.,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
     assert!(weighted_settings(invalid, 0.).is_err());
     assert!(
-        LocalGrade::new(vec![LocalAdjustment {
+        AdjustmentLayerStack::new(vec![AdjustmentLayer {
             enabled: false,
             ..adjustment(invalid)
         }])
@@ -708,7 +709,7 @@ fn invalid_geometry_settings_and_strength_are_rejected_even_when_disabled() {
 
 #[test]
 fn nonfinite_pixels_coordinates_and_arithmetic_overflow_reject_without_repair() {
-    let empty = LocalGrade::new(vec![]).unwrap();
+    let empty = AdjustmentLayerStack::new(vec![]).unwrap();
     for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         assert!(
             empty
@@ -722,16 +723,16 @@ fn nonfinite_pixels_coordinates_and_arithmetic_overflow_reject_without_repair() 
         );
         assert!(linear().coverage(SourcePoint([10., value])).is_err());
     }
-    let grade = LocalGrade::new(vec![adjustment(PhotoSettings {
+    let grade = AdjustmentLayerStack::new(vec![adjustment(AdjustmentLayerSettings {
         exposure: 1.,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     })])
     .unwrap();
     assert_eq!(
         grade.apply(pixel(DVec3::splat(f64::MAX)), SourcePoint([18., 20.])),
         Err(Error::NumericalOverflow)
     );
-    let tiny = GradientMask::Radial {
+    let tiny = AdjustmentLayerCoverage::Radial {
         center: SourcePoint([0., 0.]),
         radii: [f64::MIN_POSITIVE, 1.],
         angle: 0.,
@@ -751,5 +752,65 @@ fn input_for(cal: antitone::processing::Calibration) -> antitone::processing::In
         response: antitone::processing::Response::film(),
         gamma: antitone::processing::DEFAULT_GAMMA,
         balance: antitone::color::Balance::default(),
+    }
+}
+
+#[test]
+fn whole_image_contrast_can_finish_a_gradient_or_precede_it_without_a_special_base_stage() {
+    let exposure = adjustment(AdjustmentLayerSettings {
+        exposure: -2.,
+        ..AdjustmentLayerSettings::default()
+    });
+    let finish = AdjustmentLayer::global(AdjustmentLayerSettings {
+        contrast: 0.7,
+        ..AdjustmentLayerSettings::default()
+    });
+    let local_then_global = AdjustmentLayerStack::new(vec![exposure, finish]).unwrap();
+    let global_then_local = AdjustmentLayerStack::new(vec![finish, exposure]).unwrap();
+    let point = SourcePoint([14., 23.]); // Half coverage means -1 EV.
+    let input = pixel(DVec3::splat(0.6));
+    let after = local_then_global.apply(input, point).unwrap();
+    let before = global_then_local.apply(input, point).unwrap();
+    let expected_after = reference::tone(0.3, 0.7, 0.18);
+    let expected_before = reference::tone(0.6, 0.7, 0.18) * 0.5;
+    near_rgb(after.rgb, DVec3::splat(expected_after));
+    near_rgb(before.rgb, DVec3::splat(expected_before));
+    assert!(
+        (after.rgb.x - before.rgb.x).abs() > 0.01,
+        "fixture must distinguish processing order"
+    );
+    assert_eq!(after.floored, input.floored);
+    assert_eq!(before.floored, input.floored);
+}
+
+#[test]
+fn whole_image_coverage_has_no_geometry_and_uses_the_same_strength_and_enabled_semantics() {
+    for point in [SourcePoint([0., 0.]), SourcePoint([-1e8, 1e8])] {
+        near(
+            AdjustmentLayerCoverage::Global {}.coverage(point).unwrap(),
+            1.,
+        );
+        let mut layer = AdjustmentLayer::global(AdjustmentLayerSettings {
+            exposure: 2.,
+            ..AdjustmentLayerSettings::default()
+        });
+        layer.strength = 0.5;
+        let input = pixel(DVec3::new(0.1, 0.2, 0.3));
+        near_rgb(
+            AdjustmentLayerStack::new(vec![layer])
+                .unwrap()
+                .apply(input, point)
+                .unwrap()
+                .rgb,
+            input.rgb * 2.,
+        );
+        layer.enabled = false;
+        assert_eq!(
+            AdjustmentLayerStack::new(vec![layer])
+                .unwrap()
+                .apply(input, point)
+                .unwrap(),
+            input
+        );
     }
 }

@@ -2,7 +2,7 @@ use super::*;
 use crate::processing::InputSettings;
 use crate::{
     geometry::SourceRegion,
-    gpu::{GpuPhotoGrade, ProcessingInput},
+    gpu::{GpuAdjustmentLayers, ProcessingInput},
 };
 use std::cell::RefCell;
 
@@ -17,7 +17,7 @@ struct Key {
 struct Entry {
     id: SourceId,
     key: Key,
-    grade: Arc<GpuPhotoGrade>,
+    grade: Arc<GpuAdjustmentLayers>,
 }
 
 #[derive(Default)]
@@ -38,10 +38,6 @@ impl Grades {
         self.entries.borrow_mut().clear();
     }
 
-    fn remove(&self, id: SourceId) {
-        self.entries.borrow_mut().retain(|entry| entry.id != id);
-    }
-
     pub(super) fn retain(&self, sources: &[SourceId]) {
         self.entries
             .borrow_mut()
@@ -52,7 +48,7 @@ impl Grades {
         &self,
         id: SourceId,
         key: Key,
-        snapshot: PhotoGradeSnapshot,
+        snapshot: AdjustmentLayerSnapshot,
     ) -> Result<ProcessingInput, Error> {
         if let Some(entry) =
             self.entries.borrow().iter().find(|entry| {
@@ -65,7 +61,7 @@ impl Grades {
             .device
             .as_ref()
             .ok_or_else(|| Error::Gpu("no editor GPU device".into()))?;
-        let grade = Arc::new(GpuPhotoGrade::new(
+        let grade = Arc::new(GpuAdjustmentLayers::new(
             device,
             key.input,
             key.roll,
@@ -81,36 +77,29 @@ impl Grades {
     }
 }
 
-fn snapshot(source: &Source, photo: PhotoSettings) -> Result<PhotoGradeSnapshot, Error> {
-    PhotoGradeSnapshot::new(photo, source.grade_snapshot()?.locals().to_vec())
-}
-
 pub(super) fn validate_source(
     device: Option<&wgpu::Device>,
     input: &InputSettings,
     roll: RollSettings,
     source: &Source,
-    photo: PhotoSettings,
 ) -> Result<(), Error> {
-    let snapshot = snapshot(source, photo)?;
+    let snapshot = source.grade_snapshot()?;
+    if !input.ready() {
+        return Ok(());
+    }
     let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
-    if snapshot.locals().is_empty() {
-        if input.is_negative() && input.calibration().is_none() {
-            // A fresh Negative project is valid before Dmin/Dmax are measured. Rendering
-            // reports the missing calibration; import/save/validation can still proceed.
-            return Ok(());
-        }
-        ProcessingParameters::interpret(input, roll, photo, matrix).map(|_| ())
-    } else {
-        if input.is_negative() && input.calibration().is_none() {
-            return Err(Error::InvalidParameter(
-                "local adjustments require a calibrated processing basis",
-            ));
-        }
-        let device = device
-            .ok_or_else(|| Error::Gpu("local adjustments require an editor GPU device".into()))?;
-        GpuPhotoGrade::validate(
+    if let Some(device) = device {
+        GpuAdjustmentLayers::validate(
             device,
+            input,
+            roll,
+            &snapshot,
+            matrix,
+            source.development.active_area.into(),
+        )
+    } else {
+        GpuAdjustmentLayers::validate_limits(
+            &wgpu::Limits::default(),
             input,
             roll,
             &snapshot,
@@ -133,13 +122,7 @@ impl Editor {
                 self.correction.as_ref().map(|c| c.settings.map.as_ref()),
             )?);
         }
-        validate_source(
-            self.grades.device.as_ref(),
-            &input,
-            self.roll,
-            source,
-            source.photo,
-        )?;
+        validate_source(self.grades.device.as_ref(), &input, self.roll, source)?;
         if self.current_source == Some(source.id) {
             self.dust_validate_snapshot(input, self.roll, &source.grade_snapshot()?)?;
         }
@@ -151,13 +134,15 @@ impl Editor {
         input: impl Into<InputSettings>,
         roll: RollSettings,
         source: &Source,
-        photo: PhotoSettings,
+        photo: AdjustmentLayerSettings,
     ) -> Result<ProcessingInput, Error> {
         let input = input.into();
+        let mut candidate = source.clone();
+        self.overlay_adjustment_layer_settings(&mut candidate, photo);
         let mut recipe = self
             .document
             .project
-            .image_recipe_for_source(source, &input, roll, photo)?;
+            .image_recipe_for_source(&candidate, &input, roll)?;
         recipe.neutral.correction = self
             .correction
             .as_ref()
@@ -167,13 +152,6 @@ impl Editor {
         let matrix =
             glam::DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1);
         let input = recipe.neutral.processing_input()?;
-        if snapshot.locals().is_empty() && self.grades.device.is_none() {
-            // CPU-only fixtures have no GPU grade allocation; production always uses the
-            // complete grade path so local adjustments are never an optional suffix.
-            let parameters = ProcessingParameters::interpret(input, roll, photo, matrix)?;
-            self.grades.remove(source.id);
-            return Ok(ProcessingInput::from(parameters).with_look(look));
-        }
         self.grades
             .prepare(
                 source.id,
@@ -192,7 +170,7 @@ impl Editor {
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        photo: PhotoSettings,
+        photo: AdjustmentLayerSettings,
     ) -> Result<ProcessingInput, Error> {
         match self.current_source {
             Some(id) => self.positive_processing_for_source(
@@ -201,12 +179,10 @@ impl Editor {
                 self.document.project.source(id)?,
                 photo,
             ),
-            None => self
-                .positive_parameters(input, roll, photo)
-                .map(|parameters| {
-                    ProcessingInput::from(parameters)
-                        .with_look(self.document.project.output.look.clone())
-                }),
+            None => self.positive_parameters(input, roll).map(|parameters| {
+                ProcessingInput::from(parameters)
+                    .with_look(self.document.project.output.look.clone())
+            }),
         }
     }
 
@@ -215,17 +191,15 @@ impl Editor {
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        photo: PhotoSettings,
+        photo: AdjustmentLayerSettings,
     ) -> Result<(), Error> {
         let input = input.into();
-        self.positive_parameters(input, roll, photo)?;
+        photo.validate()?;
+        self.positive_parameters(input, roll)?;
         self.dust_validate_processing(input, roll, photo)?;
         for source in &self.document.project.sources {
-            let photo = if self.current_source == Some(source.id) {
-                photo
-            } else {
-                source.photo
-            };
+            let mut candidate = source.clone();
+            self.overlay_adjustment_layer_settings(&mut candidate, photo);
             let source_input = match input.calibration() {
                 Some(base) => input.with_calibration(source.development.processing_calibration(
                     base,
@@ -233,13 +207,7 @@ impl Editor {
                 )?),
                 None => input,
             };
-            validate_source(
-                self.grades.device.as_ref(),
-                &source_input,
-                roll,
-                source,
-                photo,
-            )?;
+            validate_source(self.grades.device.as_ref(), &source_input, roll, &candidate)?;
         }
         Ok(())
     }

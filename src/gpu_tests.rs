@@ -1,4 +1,5 @@
 use super::*;
+use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot};
 use crate::processing::Calibration;
 
 #[test]
@@ -40,61 +41,82 @@ fn source_inspection_is_zero_default_and_changes_only_the_source_post_matrix() {
 }
 
 #[test]
-fn global_output_bounds_do_not_propagate_scratch_peaks_into_locals() {
+fn layer_output_bounds_do_not_propagate_scratch_peaks_into_following_layers() {
     let calibration = Calibration {
         dmin: DVec3::new(0.19, 0.14, 0.12),
         dmax: DVec3::new(0.008, 0.004, 0.002),
         input_floor: 1. / 65535.,
     };
-    let roll = RollSettings::default();
     let (_, input) = ProcessingParameters::positive_with_bound(
         calibration,
-        roll,
-        PhotoSettings::default(),
+        RollSettings::default(),
         DMat3::IDENTITY,
     )
     .unwrap();
-    for photo in [
-        PhotoSettings {
+    for settings in [
+        AdjustmentLayerSettings {
             contrast: 1.05,
             ..Default::default()
         },
-        PhotoSettings {
+        AdjustmentLayerSettings {
             saturation: 2.,
             ..Default::default()
         },
-        PhotoSettings {
+        AdjustmentLayerSettings {
             contrast: 1.05,
             saturation: 1.2,
             ..Default::default()
         },
     ] {
-        let grade = crate::photographic::Grade::new(photo).unwrap();
-        let peak = grade.intermediate_bound(input);
-        let (_, output) = grade.weighted_bounds(input, 1.);
-        let (_, actual) =
-            ProcessingParameters::positive_with_bound(calibration, roll, photo, DMat3::IDENTITY)
-                .unwrap();
-        assert_eq!(actual, output.min(peak));
-        assert!(actual < peak, "{photo:?}: {actual} >= {peak}");
-        if photo.contrast == 1. {
-            assert_eq!(actual, 3. * input);
-        } else {
-            assert!(actual < peak / 2.);
-        }
+        let grade = crate::photographic::Grade::new(settings).unwrap();
+        let (peak, output) = grade.weighted_bounds(input, 1.);
+        assert!(output < peak, "{settings:?}: {output} >= {peak}");
     }
+    // Saturation 2 has output bound 3B and scratch bound 5B. Two layers fit
+    // at B=M/20; propagating scratch instead of output would require 25B > M.
+    let settings = AdjustmentLayerSettings {
+        saturation: 2.,
+        ..Default::default()
+    };
+    let matrix = DMat3::from_diagonal(DVec3::splat(f64::from(f32::MAX) / (80. * input)));
+    let snapshot = AdjustmentLayerSnapshot::new(vec![
+        AdjustmentLayer::global(settings),
+        AdjustmentLayer::global(settings),
+    ])
+    .unwrap();
+    assert!(
+        GpuAdjustmentLayers::validate_limits(
+            &wgpu::Limits::default(),
+            calibration,
+            RollSettings::default(),
+            &snapshot,
+            matrix,
+            [0, 0, 1, 1].into()
+        )
+        .is_ok()
+    );
     let matrix = DMat3::from_diagonal(DVec3::splat(f64::from(f32::MAX) / (16. * input)));
-    let photo = PhotoSettings {
+    let settings = AdjustmentLayerSettings {
         contrast: 0.4,
         ..Default::default()
     };
-    let bound = input * matrix.x_axis.x;
-    let grade = crate::photographic::Grade::new(photo).unwrap();
-    assert!(grade.weighted_bounds(bound, 1.).1 < f64::from(f32::MAX) / 4.);
-    assert!(grade.intermediate_bound(bound) > f64::from(f32::MAX) / 4.);
+    let snapshot = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(settings)]).unwrap();
     assert!(
-        ProcessingParameters::positive(calibration, roll, photo, matrix).is_err(),
-        "output fitting the range must not waive an overflowing global scratch intermediate"
+        GpuAdjustmentLayers::validate_limits(
+            &wgpu::Limits::default(),
+            calibration,
+            RollSettings::default(),
+            &snapshot,
+            matrix,
+            crate::geometry::SourceRegion {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1
+            }
+        )
+        .is_err(),
+        "an overflowing layer scratch intermediate must reject the complete stack"
     );
 }
 
@@ -362,4 +384,21 @@ fn native_and_continuous_transport_preserve_normalization_and_source_addressing(
             readback.unmap();
         }
     });
+}
+
+#[test]
+fn digital_repair_bounds_apply_roll_exposure_once() {
+    let neutral = DVec3::splat(1e30);
+    for exposure in [-16., 0., 16.] {
+        let (_, bound) = ProcessingParameters::digital_with_neutral_bound(
+            RollSettings {
+                exposure,
+                ..Default::default()
+            },
+            DMat3::IDENTITY,
+            neutral,
+        )
+        .unwrap();
+        assert_eq!(bound, neutral.x * exposure.exp2());
+    }
 }

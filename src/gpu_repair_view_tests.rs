@@ -1,9 +1,10 @@
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::{
+    adjustment_layers::AdjustmentLayerSnapshot,
     color::{Balance, wb_matrix},
     dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
     gpu::repairs::{Patch, Snapshot},
-    local_adjustments::PhotoGradeSnapshot,
     processing::{NegativeInput, Response},
 };
 
@@ -12,13 +13,8 @@ fn repaired(
     device: &wgpu::Device,
 ) -> (Snapshot, Arc<crate::dust_repair::EvaluatedRepair>) {
     let roll = RollSettings::default();
-    let scalar = crate::processing::Pipeline::new(
-        calibration(),
-        roll,
-        PhotoSettings::default(),
-        scan.camera_to_ap1,
-    )
-    .unwrap();
+    let scalar =
+        crate::processing::InputPipeline::new(calibration(), roll, scan.camera_to_ap1).unwrap();
     let support =
         SupportMask::new([124, 40], [9, 9], (0..81).map(|i| i % 3 != 0).collect()).unwrap();
     let repair = Repair {
@@ -49,7 +45,7 @@ fn render_repaired(
     queue: &wgpu::Queue,
     (source, scan): (Arc<ViewSource>, &Scan),
     snapshot: &Snapshot,
-    (roll, photo): (RollSettings, PhotoSettings),
+    (roll, photo): (RollSettings, AdjustmentLayerSettings),
     target: OutputTarget,
     previous: Option<&Arc<RenderedView>>,
 ) -> Arc<RenderedView> {
@@ -68,17 +64,32 @@ fn render_repaired(
     )
     .unwrap()
     .unwrap();
-    let mut input: ProcessingInput =
-        ProcessingParameters::positive(calibration(), roll, photo, source.spec.matrix)
-            .unwrap()
-            .into();
+    let mut input: ProcessingInput = crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        crate::adjustment_layers::AdjustmentLayer::global(photo),
+    ])
+    .and_then(|snapshot| {
+        crate::gpu::GpuAdjustmentLayers::new(
+            device,
+            calibration(),
+            roll,
+            snapshot,
+            source.spec.matrix,
+            source.spec.area,
+        )
+    })
+    .map(Arc::new)
+    .unwrap()
+    .into();
     input.repairs = snapshot.clone();
     let view = RenderedView::new(
         device,
         source,
         calibration(),
         roll,
-        PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
+        AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+            photo,
+        )])
+        .unwrap(),
         &input,
         target,
         previous,
@@ -269,21 +280,20 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             balance: Balance::default(),
         };
         let roll = RollSettings::default();
-        let mut input: ProcessingInput = ProcessingParameters::positive(
-            negative,
-            roll,
-            PhotoSettings::default(),
-            source.spec.matrix,
-        )
-        .unwrap()
-        .into();
+        let mut input: ProcessingInput =
+            ProcessingParameters::positive(negative, roll, source.spec.matrix)
+                .unwrap()
+                .into();
         input.repairs = patches;
         let view = RenderedView::new(
             &device,
             source.clone(),
             negative,
             roll,
-            PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
+            AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+                AdjustmentLayerSettings::default(),
+            )])
+            .unwrap(),
             &input,
             OutputTarget::Srgb,
             None,
@@ -317,17 +327,34 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             exposure: 16.,
             ..roll
         };
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             exposure: 16.,
             ..Default::default()
         };
-        ProcessingParameters::positive(calibration(), roll, photo, source.spec.matrix).unwrap();
-        assert!(
-            GpuPhotoGrade::validate_repaired(
+        crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(photo),
+        ])
+        .and_then(|snapshot| {
+            crate::gpu::GpuAdjustmentLayers::new(
                 &device,
                 calibration(),
                 roll,
-                &PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
+                snapshot,
+                source.spec.matrix,
+                source.spec.area,
+            )
+        })
+        .map(Arc::new)
+        .unwrap();
+        assert!(
+            GpuAdjustmentLayers::validate_repaired(
+                &device,
+                calibration(),
+                roll,
+                &AdjustmentLayerSnapshot::new(vec![
+                    crate::adjustment_layers::AdjustmentLayer::global(photo)
+                ])
+                .unwrap(),
                 source.spec.matrix,
                 area,
                 DVec3::splat(1e30)
@@ -343,10 +370,9 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let (patches, evaluated) = repaired(&scan, &device);
-        let scalar = crate::processing::Pipeline::new(
+        let scalar = crate::processing::InputPipeline::new(
             calibration(),
             RollSettings::default(),
-            PhotoSettings::default(),
             scan.camera_to_ap1,
         )
         .unwrap();
@@ -387,7 +413,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 &queue,
                 (source.clone(), &scan),
                 &patches,
-                (RollSettings::default(), PhotoSettings::default()),
+                (RollSettings::default(), AdjustmentLayerSettings::default()),
                 OutputTarget::Srgb,
                 None,
             );
@@ -434,11 +460,11 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                     tint: -0.03,
                 },
             };
-            let photo = PhotoSettings {
+            let photo = AdjustmentLayerSettings {
                 exposure: 0.4,
                 contrast: 1.1,
                 saturation: 0.8,
-                ..PhotoSettings::default()
+                ..AdjustmentLayerSettings::default()
             };
             let graded = render_repaired(
                 &device,
@@ -506,7 +532,7 @@ fn repaired_region_updates_compose_independently_restore_removed_support_and_can
         let scan = scan();
         let (first, _) = repaired(&scan, &device);
         let scalar =
-            crate::processing::Pipeline::ungraded(calibration(), scan.camera_to_ap1).unwrap();
+            crate::processing::InputPipeline::ungraded(calibration(), scan.camera_to_ap1).unwrap();
         let second_repair = Repair {
             id: RepairId(2),
             enabled: true,
@@ -652,13 +678,13 @@ fn original_reference_repairs_are_pre_grade_and_leave_other_rendered_pixels_bit_
                 tint: -0.04,
             },
         };
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             exposure: 0.3,
             contrast: 1.15,
             saturation: 0.8,
-            ..PhotoSettings::default()
+            ..AdjustmentLayerSettings::default()
         };
-        let mut input = processing_input(calibration(), roll, photo, &scan);
+        let mut input = processing_input(&device, calibration(), roll, photo, &scan);
         let frame = frame(&scan);
         let request = crate::refinement::ViewRequest {
             area: scan.area,

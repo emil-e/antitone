@@ -1,8 +1,9 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 
 use antitone::{
     gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
-    processing::{CAMERA_INPUT_FLOOR, Calibration, PhotoSettings, Pipeline, RollSettings},
+    processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
 };
 use glam::{DMat3, DVec3};
 
@@ -27,6 +28,7 @@ fn process(
     source: &ProcessingSource,
     count: usize,
     parameters: ProcessingParameters,
+    grade: Option<&antitone::gpu::GpuAdjustmentLayers>,
 ) -> Vec<[f32; 4]> {
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("continuous camera test"),
@@ -41,7 +43,13 @@ fn process(
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    kernel.encode(device, &mut encoder, source, &output, parameters);
+    if let Some(grade) = grade {
+        kernel
+            .encode_grade(device, &mut encoder, source, &output, grade)
+            .unwrap();
+    } else {
+        kernel.encode(device, &mut encoder, source, &output, parameters);
+    }
     encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
     queue.submit([encoder.finish()]);
     let (send, receive) = std::sync::mpsc::channel();
@@ -81,6 +89,7 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
             &source,
             pixels.len(),
             ProcessingParameters::source(),
+            None,
         );
         for (pixel, actual) in pixels.iter().zip(inspected) {
             for c in 0..3 {
@@ -94,17 +103,51 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
             input_floor: CAMERA_INPUT_FLOOR,
         };
         let roll = RollSettings::default();
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             exposure: 4.,
             ..Default::default()
         };
         let parameters =
-            ProcessingParameters::positive(calibration, roll, photo, DMat3::IDENTITY).unwrap();
-        let actual = process(&device, &queue, &kernel, &source, pixels.len(), parameters);
-        let reference = Pipeline::new(calibration, roll, photo, DMat3::IDENTITY).unwrap();
+            ProcessingParameters::positive(calibration, roll, DMat3::IDENTITY).unwrap();
+        let grade = antitone::gpu::GpuAdjustmentLayers::new(
+            &device,
+            calibration,
+            roll,
+            antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(photo),
+            ])
+            .unwrap(),
+            DMat3::IDENTITY,
+            [0, 0, pixels.len() as u32, 1].into(),
+        )
+        .unwrap();
+        let actual = process(
+            &device,
+            &queue,
+            &kernel,
+            &source,
+            pixels.len(),
+            parameters,
+            Some(&grade),
+        );
+        let reference = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            antitone::adjustment_layers::AdjustmentLayer::global(photo),
+        ])
+        .and_then(|layers| {
+            antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                calibration,
+                roll,
+                layers,
+                DMat3::IDENTITY,
+            )
+        })
+        .unwrap();
         for (pixel, actual) in pixels.iter().zip(actual) {
             let expected = reference
-                .apply(DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64) / 65535.)
+                .apply(
+                    DVec3::new(pixel[0] as f64, pixel[1] as f64, pixel[2] as f64) / 65535.,
+                    [0, 0],
+                )
                 .unwrap();
             for (c, &value) in actual[..3].iter().enumerate() {
                 assert!(
@@ -171,6 +214,7 @@ fn camera_gain_headroom_is_checked_before_a_compensating_matrix() {
                     &source,
                     1,
                     ProcessingParameters::source(),
+                    None,
                 );
                 let expected = matrix * DVec3::new(8. * gain, 1., 1.);
                 for c in 0..3 {
@@ -198,22 +242,27 @@ fn integer_values_preserve_output_bits_in_native_and_continuous_transport() {
             dmax: DVec3::splat(0.01),
             input_floor: CAMERA_INPUT_FLOOR,
         };
-        let parameters = ProcessingParameters::positive(
-            calibration,
-            RollSettings::default(),
-            PhotoSettings::default(),
-            DMat3::IDENTITY,
-        )
-        .unwrap();
+        let parameters =
+            ProcessingParameters::positive(calibration, RollSettings::default(), DMat3::IDENTITY)
+                .unwrap();
         assert_eq!(
-            process(&device, &queue, &kernel, &integer, codes.len(), parameters),
+            process(
+                &device,
+                &queue,
+                &kernel,
+                &integer,
+                codes.len(),
+                parameters,
+                None
+            ),
             process(
                 &device,
                 &queue,
                 &kernel,
                 &continuous,
                 codes.len(),
-                parameters
+                parameters,
+                None
             )
         );
     });

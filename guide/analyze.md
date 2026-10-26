@@ -34,7 +34,7 @@ Press **Analyze roll** (Enter) to confirm the complete set, or **Cancel** (Escap
 restores everything as it was.
 
 > **What confirming replaces.** Analyze installs a fresh baseline: it replaces the roll
-> calibration and Photo grading, and **removes local adjustments and their masks** from
+> calibration and Photo grading, and **replaces adjustment layers with one global layer** on
 > analyzed photographs (a warning in the review counts the affected photos). Orientation
 > and crop are preserved. Confirming is one step in the project's history, so **Undo**
 > returns the previous calibration and grading, masks included — but treat Analyze as the

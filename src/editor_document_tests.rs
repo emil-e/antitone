@@ -1,6 +1,6 @@
 use super::*;
 use crate::project::Development;
-use crate::{color::Balance, processing::PhotoSettings};
+use crate::{adjustment_layers::AdjustmentLayerSettings, color::Balance};
 #[path = "editor_document_admission_tests.rs"]
 mod admission;
 #[path = "editor_document_dust_tests.rs"]
@@ -41,35 +41,39 @@ fn unsupported_project_suffixes_do_not_overwrite_the_destination() {
 }
 
 #[test]
-fn uncalibrated_local_documents_are_durable_but_rejected_before_source_loading() {
+fn uncalibrated_adjustment_stacks_are_durable_and_malformed_coverage_cannot_replace_saved_intent() {
     use crate::{
+        adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
         geometry::SourcePoint,
-        local_adjustments::{GradientMask, LocalAdjustment},
-        project::LocalAdjustments,
+        project::AdjustmentLayers,
     };
     let directory = tempfile::tempdir().unwrap();
-    let document = fixture(directory.path());
-    let path = directory.path().join("locals.json");
+    let mut document = Document::default();
+    document
+        .import(&[Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")])
+        .unwrap();
+    assert!(!document.project.input.ready());
+    let path = directory.path().join("layers.json");
     let mut document = document.save(&path, Save::New).unwrap();
     let id = document.project.order[0];
-    document.project.source_mut(id).unwrap().local_adjustments = Some(LocalAdjustments::default());
+    document.project.source_mut(id).unwrap().adjustment_layers = Some(AdjustmentLayers::default());
     let mut document = document.save(&path, Save::Replace).unwrap();
     assert!(!document.dirty());
     document
         .project
         .source_mut(id)
         .unwrap()
-        .local_adjustments
+        .adjustment_layers
         .as_mut()
         .unwrap()
         .add(
             "Disabled identity".into(),
-            LocalAdjustment {
-                mask: GradientMask::Linear {
+            AdjustmentLayer {
+                mask: AdjustmentLayerCoverage::Linear {
                     start: SourcePoint([0., 0.]),
                     end: SourcePoint([900., 0.]),
                 },
-                photo: PhotoSettings::default(),
+                photo: AdjustmentLayerSettings::default(),
                 enabled: false,
                 invert: false,
                 strength: 1.,
@@ -78,14 +82,27 @@ fn uncalibrated_local_documents_are_durable_but_rejected_before_source_loading()
         .unwrap();
     assert!(document.dirty());
     let before = document.project.clone();
+    let saved = document.save(&path, Save::Replace).unwrap();
+    assert!(!saved.dirty());
+    assert_eq!(Document::open(&path).unwrap().project, before);
     let bytes = std::fs::read(&path).unwrap();
-    let error = document.save(&path, Save::Replace).err().unwrap();
-    assert!(error.to_string().contains("local adjustments"));
-    assert_eq!(document.project, before);
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .mask = AdjustmentLayerCoverage::Linear {
+        start: SourcePoint([0., 0.]),
+        end: SourcePoint([0., 0.]),
+    };
+    let draft = document.project.clone();
+    assert!(document.save(&path, Save::Replace).is_err());
+    assert_eq!(document.project, draft);
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
-    document.project.save(&path, Save::Replace).unwrap();
-    let error = Document::open(&path).err().unwrap();
-    assert!(error.to_string().contains("local adjustments"), "{error}");
     assert_eq!(Project::load(&path).unwrap(), before);
 }
 
@@ -110,8 +127,9 @@ fn fixture(directory: &Path) -> Document {
                         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
-                    photo: PhotoSettings::default(),
-                    local_adjustments: None,
+                    adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                        AdjustmentLayerSettings::default(),
+                    )),
                     repairs: Default::default(),
                     orientation: Default::default(),
                     crop: None,
@@ -460,24 +478,54 @@ fn stable_identity_keeps_photo_edits_independent_of_order_and_locator() {
         panic!()
     };
     let (one, two) = (*one, *two);
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         exposure: 7.123456789012345,
         wb: Balance {
             warmth: 0.25,
             tint: -0.125,
         },
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
-    document.project.source_mut(one).unwrap().photo = photo;
+    document
+        .project
+        .source_mut(one)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo = photo;
     document.project.order.reverse();
     let moved = directory.path().join("renamed.ARW");
     std::fs::rename(directory.path().join("one.ARW"), &moved).unwrap();
     document.project.source_mut(one).unwrap().path = moved.clone();
     assert_eq!(document.find_source(&moved), Some(one));
-    assert_eq!(document.project.source(one).unwrap().photo, photo);
     assert_eq!(
-        document.project.source(two).unwrap().photo,
-        PhotoSettings::default()
+        document
+            .project
+            .source(one)
+            .unwrap()
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo,
+        photo
+    );
+    assert_eq!(
+        document
+            .project
+            .source(two)
+            .unwrap()
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo,
+        AdjustmentLayerSettings::default()
     );
     assert_eq!(document.project.order, [two, one]);
 }
@@ -487,7 +535,17 @@ fn saved_snapshot_and_save_as_preserve_exact_settings_and_relative_locators() {
     let directory = tempfile::tempdir().unwrap();
     let mut document = fixture(directory.path());
     let one = document.project.order[0];
-    document.project.source_mut(one).unwrap().photo.exposure = 7.123456789012345;
+    document
+        .project
+        .source_mut(one)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 7.123456789012345;
     assert!(document.dirty());
     let first = directory.path().join("first.antitone");
     let mut saved = document.save(&first, Save::New).unwrap();
@@ -511,7 +569,17 @@ fn saved_snapshot_and_save_as_preserve_exact_settings_and_relative_locators() {
     assert_eq!(Project::load(&second).unwrap(), second_saved.project);
     assert!(!second_saved.dirty());
     assert_eq!(
-        second_saved.project.source(one).unwrap().photo.exposure,
+        second_saved
+            .project
+            .source(one)
+            .unwrap()
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo
+            .exposure,
         7.123456789012345
     );
     let original = std::fs::read(&first).unwrap();
@@ -848,8 +916,9 @@ fn fresh_mixed_scan_import_switches_to_digital_only_before_calibration() {
                 input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             },
             reference_only: false,
-            photo: PhotoSettings::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                AdjustmentLayerSettings::default(),
+            )),
             repairs: Default::default(),
             orientation: Default::default(),
             crop: None,

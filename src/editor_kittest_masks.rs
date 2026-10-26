@@ -1,13 +1,13 @@
 use super::*;
-use crate::local_adjustments::GradientMask;
+use crate::adjustment_layers::AdjustmentLayerCoverage;
 #[path = "editor_kittest_radial_masks.rs"]
 mod radial;
-#[path = "editor_kittest_local_workflows.rs"]
+#[path = "editor_kittest_adjustment_layer_workflows.rs"]
 mod workflows;
 
 fn click(harness: &mut Harness<'_, Editor>, label: &str) {
     if ["Sky", "Mask overlay"].contains(&label) {
-        adjustments::open_drawer(harness);
+        adjustment_layers::show_layers(harness);
     }
     harness.get_by_label(label).scroll_to_me();
     harness.try_run_realtime().unwrap();
@@ -17,20 +17,20 @@ fn click(harness: &mut Harness<'_, Editor>, label: &str) {
 }
 
 fn arm(harness: &mut Harness<'_, Editor>, radial: bool) {
-    adjustments::open_drawer(harness);
+    adjustment_layers::show_layers(harness);
     click(harness, if radial { "Add radial" } else { "Add linear" });
 }
 
-fn accepted_mask(editor: &Editor) -> GradientMask {
-    editor
-        .document
-        .project
-        .source(editor.current_source.unwrap())
+fn accepted_mask(editor: &Editor) -> AdjustmentLayerCoverage {
+    let super::super::adjustment_layers::Target::Layer(id) = editor.adjustment_layer_target()
+    else {
+        panic!("select a gradient layer");
+    };
+    adjustment_layers::layers(editor)
+        .layers
+        .iter()
+        .find(|record| record.id == id)
         .unwrap()
-        .local_adjustments
-        .as_ref()
-        .unwrap()
-        .adjustments[0]
         .adjustment
         .mask
 }
@@ -53,7 +53,7 @@ pub(super) fn hold_drag(harness: &mut Harness<'_, Editor>, start: egui::Pos2, en
 }
 
 fn endpoint(editor: &Editor) -> egui::Pos2 {
-    let GradientMask::Linear { end, .. } = accepted_mask(editor) else {
+    let AdjustmentLayerCoverage::Linear { end, .. } = accepted_mask(editor) else {
         unreachable!()
     };
     let layout = editor.last_layout.unwrap().0;
@@ -103,17 +103,17 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
             )
         });
         harness.try_run_realtime().unwrap();
-        let locals = harness.read(adjustments::locals);
-        assert_eq!(locals.next_id, 2);
-        assert_eq!(locals.adjustments.len(), 1);
+        let layers = harness.read(adjustment_layers::layers);
+        assert_eq!(layers.next_id, 3);
+        assert_eq!(layers.layers.len(), 2);
         assert_eq!(
-            locals.adjustments[0].adjustment.photo,
-            PhotoSettings::default()
+            layers.layers[1].adjustment.photo,
+            AdjustmentLayerSettings::default()
         );
         harness.read(|editor| {
             assert_eq!(
-                editor.adjustment_target(),
-                super::super::adjustments::Target::Local(locals.adjustments[0].id)
+                editor.adjustment_layer_target(),
+                super::super::adjustment_layers::Target::Layer(layers.layers[1].id)
             )
         });
         assert!(
@@ -125,7 +125,7 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
         workflow::enter_numeric(&mut harness, "Exposure", "0.25");
         harness.read(|editor| {
             assert_eq!(
-                adjustments::locals(editor).adjustments[0]
+                adjustment_layers::layers(editor).layers[1]
                     .adjustment
                     .photo
                     .exposure,
@@ -168,7 +168,11 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             let before = harness.read(|editor| editor.document.project.clone());
             let (input, snapshot, layout, start) = harness.read(|editor| {
                 let input = editor
-                    .positive_processing(editor.input, editor.roll, editor.photo)
+                    .positive_processing(
+                        editor.input,
+                        editor.roll,
+                        editor.adjustment_layer_settings,
+                    )
                     .unwrap();
                 let snapshot = input.grade().unwrap().snapshot().clone();
                 let layout = editor.last_layout.unwrap().0;
@@ -183,17 +187,24 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             harness.read(|editor| assert_eq!(editor.document.project, before));
             let (preview, preview_end, original_end) = harness.read(|editor| {
                 let preview = editor
-                    .view_processing(editor.input, editor.roll, editor.photo)
+                    .view_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                     .unwrap();
                 assert_ne!(preview.signature(), input.signature());
                 assert_eq!(input.grade().unwrap().snapshot(), &snapshot);
-                let GradientMask::Linear {
+                let AdjustmentLayerCoverage::Linear {
                     end: preview_end, ..
-                } = preview.grade().unwrap().snapshot().locals()[0].mask
+                } = preview
+                    .grade()
+                    .unwrap()
+                    .snapshot()
+                    .layers()
+                    .last()
+                    .unwrap()
+                    .mask
                 else {
                     unreachable!()
                 };
-                let GradientMask::Linear {
+                let AdjustmentLayerCoverage::Linear {
                     end: original_end, ..
                 } = accepted_mask(editor)
                 else {
@@ -220,13 +231,20 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             harness.read(|editor| {
                 assert_eq!(
                     accepted_mask(editor),
-                    preview.grade().unwrap().snapshot().locals()[0].mask
+                    preview
+                        .grade()
+                        .unwrap()
+                        .snapshot()
+                        .layers()
+                        .last()
+                        .unwrap()
+                        .mask
                 )
             });
-            harness.read(|editor| assert_eq!(adjustments::locals(editor).next_id, 2));
+            harness.read(|editor| assert_eq!(adjustment_layers::layers(editor).next_id, 3));
             harness.read(|editor| {
                 assert_eq!(
-                    adjustments::locals(editor).adjustments[0]
+                    adjustment_layers::layers(editor).layers[1]
                         .adjustment
                         .photo
                         .exposure,
@@ -283,16 +301,17 @@ fn creation_popup_escape_and_dust_keep_canvas_ownership_unambiguous() {
         harness.read(|editor| assert!(editor.document.dust.cleanup));
         assert!(
             harness
-                .get_by_role_and_label(egui::accesskit::Role::Button, "Adjustments")
+                .get_by_role_and_label(egui::accesskit::Role::Button, "Add linear")
                 .accesskit_node()
                 .is_disabled()
         );
         harness.read(|editor| assert!(!editor.mask_handles_available()));
         click(&mut harness, "Done");
         harness.read(|editor| assert!(!editor.document.dust.cleanup));
+        adjustment_layers::show_layers(&mut harness);
         assert!(
             !harness
-                .get_by_role_and_label(egui::accesskit::Role::Button, "Adjustments")
+                .get_by_role_and_label(egui::accesskit::Role::Button, "Add linear")
                 .accesskit_node()
                 .is_disabled()
         );
@@ -341,9 +360,9 @@ fn armed_creation_suspends_outside_photo_and_resumes_without_consuming_an_id() {
                     editor.status
                 )
             });
-            let locals = h.read(adjustments::locals);
-            assert_eq!(locals.adjustments.len(), if radial { 2 } else { 1 });
-            assert_eq!(locals.next_id, if radial { 3 } else { 2 });
+            let layers = h.read(adjustment_layers::layers);
+            assert_eq!(layers.layers.len(), if radial { 3 } else { 2 });
+            assert_eq!(layers.next_id, if radial { 4 } else { 3 });
         }
     });
 }
@@ -368,16 +387,17 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
             h.step();
             let layout = h.read(|editor| editor.last_layout.unwrap().0);
             let mask = h.read(|editor| {
-                adjustments::locals(editor)
-                    .adjustments
+                adjustment_layers::layers(editor)
+                    .layers
                     .last()
                     .unwrap()
                     .adjustment
                     .mask
             });
             let point = match mask {
-                GradientMask::Linear { end, .. } => end,
-                GradientMask::Radial { center, .. } => center,
+                AdjustmentLayerCoverage::Global {} => panic!("fixture requires a gradient layer"),
+                AdjustmentLayerCoverage::Linear { end, .. } => end,
+                AdjustmentLayerCoverage::Radial { center, .. } => center,
             };
             let start = layout.screen_frame_point(layout.composition.source_to_frame(point));
             let end = start + egui::vec2(20., 15.);
@@ -404,7 +424,7 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
                 editor
                     .mask_preview_source()
                     .unwrap()
-                    .local_adjustments
+                    .adjustment_layers
                     .clone()
             });
             pointer(&mut h, end + egui::vec2(10., 5.), false);
@@ -422,7 +442,7 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
                         .project
                         .source(editor.current_source.unwrap())
                         .unwrap()
-                        .local_adjustments,
+                        .adjustment_layers,
                     preview
                 )
             });

@@ -1,9 +1,13 @@
 #![cfg(feature = "gpu")]
+use antitone::adjustment_layers::{
+    AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
+};
+use antitone::gpu::GpuAdjustmentLayers;
 use antitone::{
     color::Balance,
     gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
     processing::{
-        Calibration, InputSettings, NegativeInput, PhotoSettings, Pipeline, Response, RollSettings,
+        Calibration, InputPipeline, InputSettings, NegativeInput, Response, RollSettings,
     },
 };
 use glam::{DMat3, DVec3};
@@ -37,7 +41,7 @@ fn read(
     queue: &wgpu::Queue,
     kernel: &ProcessingKernel,
     source: &ProcessingSource,
-    params: ProcessingParameters,
+    params: &GpuAdjustmentLayers,
     n: usize,
 ) -> Vec<[f32; 4]> {
     let size = n as u64 * 16;
@@ -54,7 +58,9 @@ fn read(
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    kernel.encode(device, &mut encoder, source, &output, params);
+    kernel
+        .encode_grade(device, &mut encoder, source, &output, params)
+        .unwrap();
     encoder.copy_buffer_to_buffer(&output, 0, &read, 0, size);
     queue.submit([encoder.finish()]);
     let (tx, rx) = std::sync::mpsc::channel();
@@ -162,25 +168,45 @@ fn film_shapes_camera_matrices_balance_and_exposure_match_the_scalar_model() {
                     wb: balances[case / 19 % 4],
                     exposure: ev / 2.,
                 };
-                let photo = PhotoSettings {
+                let photo = AdjustmentLayerSettings {
                     exposure: ev / 2.,
                     wb: balances[case / 17 % 4],
-                    ..PhotoSettings::default()
+                    ..AdjustmentLayerSettings::default()
                 };
                 let params =
-                    match ProcessingParameters::positive(interpretation, roll, photo, matrix) {
+                    match AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
+                        .and_then(|snapshot| {
+                            GpuAdjustmentLayers::new(
+                                &device,
+                                interpretation,
+                                roll,
+                                snapshot,
+                                matrix,
+                                [0, 0, codes.len() as u32, 1].into(),
+                            )
+                        }) {
                         Ok(p) => p,
                         Err(_) => {
                             rejected += 1;
                             continue;
                         }
                     };
-                let pipeline =
-                    Pipeline::new(as_input(interpretation), roll, photo, matrix).unwrap();
-                let gpu = read(&device, &queue, &kernel, &source, params, codes.len());
+                let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                    antitone::adjustment_layers::AdjustmentLayer::global(photo),
+                ])
+                .and_then(|layers| {
+                    antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                        as_input(interpretation),
+                        roll,
+                        layers,
+                        matrix,
+                    )
+                })
+                .unwrap();
+                let gpu = read(&device, &queue, &kernel, &source, &params, codes.len());
                 accepted += 1;
                 for (i, s) in scans.iter().enumerate() {
-                    let expected = pipeline.apply(*s).unwrap();
+                    let expected = pipeline.apply(*s, [0, 0]).unwrap();
                     let flags = (0..3).fold(0u32, |b, c| b | (u32::from(expected.floored[c]) << c));
                     assert_eq!(gpu[i][3] as u32, flags);
                     // Signed matrix/WB products can cancel within one channel.
@@ -203,11 +229,17 @@ fn film_shapes_camera_matrices_balance_and_exposure_match_the_scalar_model() {
                 input_floor: 2.1630933622265155e-5,
             };
             let roll = RollSettings::default();
-            let params =
-                ProcessingParameters::positive(cal, roll, PhotoSettings::default(), matrix)
-                    .unwrap();
-            let gpu = read(&device, &queue, &kernel, &source, params, codes.len());
-            let pipeline = Pipeline::new(cal, roll, PhotoSettings::default(), matrix).unwrap();
+            let params = GpuAdjustmentLayers::new(
+                &device,
+                cal,
+                roll,
+                AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                matrix,
+                [0, 0, codes.len() as u32, 1].into(),
+            )
+            .unwrap();
+            let gpu = read(&device, &queue, &kernel, &source, &params, codes.len());
+            let pipeline = InputPipeline::new(cal, roll, matrix).unwrap();
             for i in [0, 7] {
                 let expected = pipeline.apply(scans[i]).unwrap().rgb;
                 for c in 0..3 {
@@ -242,12 +274,9 @@ fn scalar_valid_floor_anchor_is_rejected_or_stays_finite_with_packed_parameters(
     );
     let scalar = antitone::processing::Inversion::new(interpretation).unwrap();
     assert_eq!(scalar.apply(DVec3::splat(floor)).unwrap().rgb, DVec3::ONE);
-    let Ok(parameters) = ProcessingParameters::positive(
-        interpretation,
-        RollSettings::default(),
-        PhotoSettings::default(),
-        DMat3::IDENTITY,
-    ) else {
+    let Ok(_) =
+        ProcessingParameters::positive(interpretation, RollSettings::default(), DMat3::IDENTITY)
+    else {
         return;
     };
     pollster::block_on(async {
@@ -260,7 +289,16 @@ fn scalar_valid_floor_anchor_is_rejected_or_stays_finite_with_packed_parameters(
         let kernel = ProcessingKernel::new(&device).await.unwrap();
         let source =
             ProcessingSource::new_continuous(&device, &[[0.; 4]], DMat3::IDENTITY).unwrap();
-        let actual = read(&device, &queue, &kernel, &source, parameters, 1)[0];
+        let grade = GpuAdjustmentLayers::new(
+            &device,
+            interpretation,
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            DMat3::IDENTITY,
+            [0, 0, 1, 1].into(),
+        )
+        .unwrap();
+        let actual = read(&device, &queue, &kernel, &source, &grade, 1)[0];
         assert_eq!(actual[3] as u32, 7);
         for value in &actual[..3] {
             assert!(value.is_finite() && (value - 1.).abs() < 2e-4, "{actual:?}");
@@ -284,12 +322,7 @@ fn response_rejects_a_pole_inside_the_supported_sample_domain() {
         Balance::default(),
     );
     assert!(
-        ProcessingParameters::positive(
-            interpretation,
-            RollSettings::default(),
-            PhotoSettings::default(),
-            DMat3::IDENTITY
-        )
-        .is_err()
+        ProcessingParameters::positive(interpretation, RollSettings::default(), DMat3::IDENTITY)
+            .is_err()
     );
 }

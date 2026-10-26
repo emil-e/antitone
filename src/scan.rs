@@ -4,7 +4,7 @@ use crate::{
     color::Balance,
     coverage::Coverage,
     geometry::SourceRaster,
-    processing::{Calibration, InputSettings, PhotoSettings, Pipeline, RollSettings},
+    processing::{Calibration, InputSettings, RollSettings},
     raw::{Developed, FrozenRaw, Metadata, RawFile, Rect, SensorDiagnostics},
     sampling,
 };
@@ -603,32 +603,6 @@ impl Scan {
         sampling::roll_neutral(negative, &self.patch(region)?, matrix)
     }
 
-    pub fn photo_neutral(
-        &mut self,
-        region: Rect,
-        input: &InputSettings,
-        roll: RollSettings,
-        photo: PhotoSettings,
-    ) -> Result<Balance> {
-        let pipeline = Pipeline::new(
-            self.refined_input(input)?,
-            roll,
-            photo.before_white_balance(),
-            self.camera_to_ap1,
-        )?;
-        let mut pixels = self.patch(region)?;
-        for pixel in &mut pixels {
-            let result = pipeline.apply(*pixel)?;
-            if result.floored.into_iter().any(|v| v) {
-                return Err(Error::UnusableSample(
-                    "WB patch contains inputs below the calibration floor",
-                ));
-            }
-            *pixel = result.rgb;
-        }
-        sampling::photo_neutral(&pixels)
-    }
-
     fn checked_coverage(&mut self, coverage: Coverage) -> Result<()> {
         for span in coverage.row_spans(self.area)? {
             self.checked_region(span)?;
@@ -688,33 +662,61 @@ impl Scan {
         sampling::roll_neutral_weighted(negative, &self.patch_coverage(coverage)?, matrix)
     }
 
-    pub fn photo_neutral_coverage(
+    /// Fit Roll WB or a selected layer's replacement from its captured upstream image.
+    pub fn white_balance_coverage(
         &mut self,
         coverage: Coverage,
         input: &InputSettings,
         roll: RollSettings,
-        photo: PhotoSettings,
+        upstream: crate::adjustment_layers::AdjustmentLayerSnapshot,
+        layer: Option<crate::adjustment_layers::AdjustmentLayer>,
     ) -> Result<Balance> {
-        if let Some(region) = coverage.exact_rectangle(self.area) {
-            return self.photo_neutral(region, input, roll, photo);
-        }
-        let pipeline = Pipeline::new(
+        self.checked_coverage(coverage)?;
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             self.refined_input(input)?,
             roll,
-            photo.before_white_balance(),
+            upstream,
             self.camera_to_ap1,
         )?;
-        let mut pixels = self.patch_coverage(coverage)?;
-        for (pixel, _) in &mut pixels {
-            let result = pipeline.apply(*pixel)?;
-            if result.floored.into_iter().any(|v| v) {
-                return Err(Error::UnusableSample(
-                    "WB patch contains inputs below the calibration floor",
-                ));
-            }
-            *pixel = result.rgb;
+        let pixels = coverage
+            .pixels(self.area)?
+            .map(|([x, y], area)| {
+                let pixel = self.pixel(x, y)?;
+                if !pixel.is_finite() || pixel.min_element() < self.corrected_floor {
+                    return Err(Error::UnusableSample(
+                        "patch contains nonfinite or floored scan inputs",
+                    ));
+                }
+                let result = pipeline.apply(pixel, [x, y])?;
+                if result.floored.into_iter().any(|v| v) {
+                    return Err(Error::UnusableSample(
+                        "WB patch contains inputs below the calibration floor",
+                    ));
+                }
+                let weight = match layer {
+                    Some(layer) => layer.weight(crate::geometry::SourcePoint([
+                        f64::from(x) + 0.5,
+                        f64::from(y) + 0.5,
+                    ]))?,
+                    None => 1.,
+                };
+                let exposure = layer.map_or(0., |layer| layer.photo.exposure) * weight;
+                Ok((
+                    result.rgb * crate::processing::exposure_multiplier(exposure)?,
+                    area,
+                    weight,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        match layer {
+            Some(_) => sampling::adjustment_layer_white_balance(&pixels),
+            None => sampling::white_balance_weighted(
+                &pixels
+                    .into_iter()
+                    .map(|(rgb, area, _)| (rgb, area))
+                    .collect::<Vec<_>>(),
+            ),
         }
-        sampling::photo_neutral_weighted(&pixels)
     }
 
     pub fn tile_region(

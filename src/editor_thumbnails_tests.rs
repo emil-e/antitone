@@ -119,8 +119,9 @@ pub(super) fn fixture() -> Document {
                         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
-                    photo: PhotoSettings::default(),
-                    local_adjustments: None,
+                    adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                        AdjustmentLayerSettings::default(),
+                    )),
                     repairs: Default::default(),
                     orientation: Default::default(),
                     crop: None,
@@ -270,7 +271,17 @@ fn source_cache_key_excludes_grading_but_includes_locator_revision_matrix_wb_and
     let mut document = fixture();
     let id = document.project.order[0];
     let original = key(&document, id);
-    document.project.source_mut(id).unwrap().photo.exposure = 7.12345;
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 7.12345;
     document.project.roll.exposure = 1.5;
     document.project.orientation.horizontal = true;
     document.project.orientation.turn_clockwise();
@@ -547,9 +558,13 @@ fn restored_filmstrip_height_survives_window_constraints_and_a_fresh_context() {
 }
 
 #[test]
-fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() {
+fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode() {
     let mut editor = Editor::state();
     *editor.document = fixture();
+    let instance = crate::gpu::instance();
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    editor.initialize_viewer(&device, &queue);
     let id = editor.document.project.order[0];
     let other = editor.document.project.order[1];
     editor.current_source = Some(id);
@@ -562,58 +577,52 @@ fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() 
     editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
     editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
     editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
-    let first = editor.thumbnail_parameters(&source).unwrap().parameters();
-    let expected = ProcessingParameters::positive(
-        editor.calibration().unwrap(),
-        editor.roll,
-        editor.photo,
-        glam::DMat3::IDENTITY,
-    )
-    .unwrap();
-    assert_eq!(bytemuck::bytes_of(&first), bytemuck::bytes_of(&expected));
+    let first = editor.thumbnail_parameters(&source).unwrap();
+    let other_before = editor
+        .thumbnail_parameters(editor.document.project.source(other).unwrap())
+        .unwrap()
+        .signature();
+    assert_eq!(
+        first.grade().unwrap().snapshot(),
+        &source.grade_snapshot().unwrap()
+    );
     let unchanged_key = key(&editor.document, id);
     editor.source_white_balance = crate::raw::SourceWhiteBalance::AsShot;
     editor.source_exposure = -2.;
-    let inspected = editor.thumbnail_parameters(&source).unwrap().parameters();
-    assert_eq!(bytemuck::bytes_of(&inspected), bytemuck::bytes_of(&first));
+    assert_eq!(
+        editor.thumbnail_parameters(&source).unwrap().signature(),
+        first.signature()
+    );
     assert_eq!(key(&editor.document, id), unchanged_key);
-    editor.photo = PhotoSettings {
+    editor.adjustment_layer_settings = AdjustmentLayerSettings {
         exposure: 1.25,
         contrast: 1.2,
         pivot: 0.25,
         contrast_colour_mix: 0.75,
         saturation: 1.3,
         saturation_density: 0.25,
-        ..PhotoSettings::default()
+        ..Default::default()
     };
-    let adjusted = editor.thumbnail_parameters(&source).unwrap().parameters();
-    let expected = ProcessingParameters::positive(
-        editor.calibration().unwrap(),
-        editor.roll,
-        editor.photo,
-        glam::DMat3::IDENTITY,
-    )
-    .unwrap();
-    assert_eq!(bytemuck::bytes_of(&adjusted), bytemuck::bytes_of(&expected));
-    assert_ne!(bytemuck::bytes_of(&adjusted), bytemuck::bytes_of(&first));
+    let adjusted = editor.thumbnail_parameters(&source).unwrap();
     assert_eq!(
-        bytemuck::bytes_of(
-            &editor
-                .thumbnail_parameters(editor.document.project.source(other).unwrap())
-                .unwrap()
-                .parameters()
-        ),
-        bytemuck::bytes_of(&first)
+        adjusted.grade().unwrap().snapshot().layers()[0].photo,
+        editor.adjustment_layer_settings
+    );
+    assert_ne!(adjusted.signature(), first.signature());
+    assert_eq!(
+        editor
+            .thumbnail_parameters(editor.document.project.source(other).unwrap())
+            .unwrap()
+            .signature(),
+        other_before
     );
     editor.roll.exposure = 0.5;
     assert_ne!(
-        bytemuck::bytes_of(
-            &editor
-                .thumbnail_parameters(editor.document.project.source(other).unwrap())
-                .unwrap()
-                .parameters()
-        ),
-        bytemuck::bytes_of(&first)
+        editor
+            .thumbnail_parameters(editor.document.project.source(other).unwrap())
+            .unwrap()
+            .signature(),
+        other_before
     );
     assert_eq!(key(&editor.document, id), unchanged_key);
     editor
@@ -621,23 +630,31 @@ fn thumbnail_grades_follow_roll_and_photo_without_inspection_gain_or_redecode() 
         .project
         .source_mut(other)
         .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
         .photo
         .exposure = -1.25;
-    let expected = ProcessingParameters::positive(
-        editor.calibration().unwrap(),
-        editor.roll,
-        editor.document.project.source(other).unwrap().photo,
-        glam::DMat3::IDENTITY,
-    )
-    .unwrap();
+    let other_input = editor
+        .thumbnail_parameters(editor.document.project.source(other).unwrap())
+        .unwrap();
     assert_eq!(
-        bytemuck::bytes_of(
-            &editor
-                .thumbnail_parameters(editor.document.project.source(other).unwrap())
-                .unwrap()
-                .parameters()
-        ),
-        bytemuck::bytes_of(&expected)
+        other_input.grade().unwrap().snapshot().layers()[0]
+            .photo
+            .exposure,
+        -1.25
+    );
+    assert_eq!(
+        other_input.grade().unwrap().snapshot(),
+        &editor
+            .document
+            .project
+            .source(other)
+            .unwrap()
+            .grade_snapshot()
+            .unwrap()
     );
 }
 

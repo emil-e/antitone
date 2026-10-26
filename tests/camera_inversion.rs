@@ -1,8 +1,9 @@
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     color::{Balance, wb_matrix},
     processing::{
-        Calibration, DEFAULT_GAMMA, InputSettings, Inversion, NegativeInput, PhotoSettings,
-        Pipeline, Response, RollSettings,
+        Calibration, DEFAULT_GAMMA, InputPipeline, InputSettings, Inversion, NegativeInput,
+        Response, RollSettings,
     },
     sampling::{mean, roll_neutral},
 };
@@ -74,23 +75,33 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
             tint: 0.15,
         },
     };
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         exposure: -0.5,
         wb: Balance {
             warmth: 0.2,
             tint: -0.1,
         },
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
     let camera = DVec3::new(0.01, 0.1, 0.1);
     let inverted = Inversion::new(interpretation)
         .unwrap()
         .apply(camera)
         .unwrap();
-    let actual = Pipeline::new(input(interpretation), roll, photo, matrix())
-        .unwrap()
-        .apply(camera)
-        .unwrap();
+    let actual = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(photo),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            input(interpretation),
+            roll,
+            layers,
+            matrix(),
+        )
+    })
+    .unwrap()
+    .apply(camera, [0, 0])
+    .unwrap();
     close(
         actual.rgb,
         wb_matrix(photo.wb).unwrap()
@@ -118,7 +129,7 @@ fn camera_matrix_follows_inversion_and_precedes_photographic_wb() {
 }
 
 #[test]
-fn photo_neutral_is_a_replacement_residual_after_roll_wb_not_a_second_total_correction() {
+fn white_balance_is_a_replacement_residual_after_roll_wb_not_a_second_total_correction() {
     let cal = calibration();
     let total = Balance {
         warmth: 0.3,
@@ -134,29 +145,34 @@ fn photo_neutral_is_a_replacement_residual_after_roll_wb_not_a_second_total_corr
     };
     let cast = wb_matrix(total).unwrap().inverse() * DVec3::splat(0.2);
     let scan = forward(cal, interpretation, matrix().inverse() * cast);
-    let before_photo = Pipeline::new(
-        input(interpretation),
-        roll,
-        PhotoSettings::default(),
-        matrix(),
-    )
-    .unwrap()
-    .apply(scan)
-    .unwrap()
-    .rgb;
-    let residual = antitone::sampling::photo_neutral(&[before_photo]).unwrap();
+    let before_photo = InputPipeline::new(input(interpretation), roll, matrix())
+        .unwrap()
+        .apply(scan)
+        .unwrap()
+        .rgb;
+    let residual = antitone::sampling::white_balance(&[before_photo]).unwrap();
     assert!((residual.warmth - (total.warmth - roll.wb.warmth)).abs() < 1e-11);
     assert!((residual.tint - (total.tint - roll.wb.tint)).abs() < 1e-11);
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         wb: residual,
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
     close(
-        Pipeline::new(input(interpretation), roll, photo, matrix())
-            .unwrap()
-            .apply(scan)
-            .unwrap()
-            .rgb,
+        antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            antitone::adjustment_layers::AdjustmentLayer::global(photo),
+        ])
+        .and_then(|layers| {
+            antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                input(interpretation),
+                roll,
+                layers,
+                matrix(),
+            )
+        })
+        .unwrap()
+        .apply(scan, [0, 0])
+        .unwrap()
+        .rgb,
         DVec3::splat(0.2),
     );
 }
@@ -167,13 +183,7 @@ fn signed_working_values_do_not_set_camera_input_floor_flags() {
     let interpretation = negative(cal, Response::film(), Balance::default());
     let roll = RollSettings::default();
     let camera = forward(cal, interpretation, DVec3::new(0., 0.5, 0.001));
-    let pipeline = Pipeline::new(
-        input(interpretation),
-        roll,
-        PhotoSettings::default(),
-        matrix(),
-    )
-    .unwrap();
+    let pipeline = InputPipeline::new(input(interpretation), roll, matrix()).unwrap();
     let positive = pipeline.apply(camera).unwrap();
     assert!(positive.rgb.z < 0.);
     assert_eq!(positive.floored, [false; 3]);
@@ -280,7 +290,6 @@ fn gpu_range_gate_covers_above_base_continuation_after_camera_mapping() {
             Balance::default(),
         ),
         RollSettings::default(),
-        PhotoSettings::default(),
         DMat3::from_diagonal(DVec3::splat(3e32)),
     );
     assert!(
@@ -295,15 +304,7 @@ fn gpu_range_gate_covers_above_base_continuation_after_camera_mapping() {
 #[test]
 fn invalid_matrix_or_nonpositive_camera_neutral_is_rejected() {
     for invalid in [DMat3::ZERO, DMat3::from_diagonal(DVec3::splat(f64::NAN))] {
-        assert!(
-            Pipeline::new(
-                calibration(),
-                RollSettings::default(),
-                PhotoSettings::default(),
-                invalid
-            )
-            .is_err()
-        );
+        assert!(InputPipeline::new(calibration(), RollSettings::default(), invalid).is_err());
         assert!(roll_neutral(calibration(), &[DVec3::splat(0.05)], invalid).is_err());
     }
     assert!(

@@ -242,13 +242,49 @@ fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialo
                 other.id = SourceId(0);
                 other.path = "other.ARW".into();
                 match field {
-                    0 => other.photo.exposure = 0.1,
-                    1 => other.photo.wb.warmth = 0.1,
-                    2 => other.photo.contrast = 1.1,
-                    3 => other.photo.pivot = 0.3,
-                    4 => other.photo.contrast_colour_mix = 0.4,
-                    5 => other.photo.saturation = 1.1,
-                    _ => other.photo.saturation_density = 0.4,
+                    0 => {
+                        other.adjustment_layers.as_mut().unwrap().layers[0]
+                            .adjustment
+                            .photo
+                            .exposure = 0.1
+                    }
+                    1 => {
+                        other.adjustment_layers.as_mut().unwrap().layers[0]
+                            .adjustment
+                            .photo
+                            .wb
+                            .warmth = 0.1
+                    }
+                    2 => {
+                        other.adjustment_layers.as_mut().unwrap().layers[0]
+                            .adjustment
+                            .photo
+                            .contrast = 1.1
+                    }
+                    3 => {
+                        other.adjustment_layers.as_mut().unwrap().layers[0]
+                            .adjustment
+                            .photo
+                            .pivot = 0.3
+                    }
+                    4 => {
+                        other.adjustment_layers.as_mut().unwrap().layers[0]
+                            .adjustment
+                            .photo
+                            .contrast_colour_mix = 0.4
+                    }
+                    5 => {
+                        other.adjustment_layers.as_mut().unwrap().layers[0]
+                            .adjustment
+                            .photo
+                            .saturation = 1.1
+                    }
+                    _ => {
+                        other.adjustment_layers.as_mut().unwrap().layers[0]
+                            .adjustment
+                            .photo
+                            .saturation_density = 0.4
+                    }
                 }
                 editor.document.project.add_source(other).unwrap();
                 editor.sync_document();
@@ -291,7 +327,10 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
             let mut other = editor.document.project.sources[0].clone();
             other.id = SourceId(0);
             other.path = "other.ARW".into();
-            other.photo.exposure = 1.7;
+            other.adjustment_layers.as_mut().unwrap().layers[0]
+                .adjustment
+                .photo
+                .exposure = 1.7;
             let other = editor.document.project.add_source(other).unwrap();
             editor.select_roll_photo(1, egui::Modifiers::COMMAND, cx);
             start_area_preparation(editor, cx);
@@ -342,7 +381,10 @@ fn default_photos_still_require_area_review_but_retired_grades_do_not_trigger_re
             let mut retired = editor.document.project.sources[0].clone();
             retired.id = SourceId(0);
             retired.path = "retired.ARW".into();
-            retired.photo.contrast = 1.3;
+            retired.adjustment_layers.as_mut().unwrap().layers[0]
+                .adjustment
+                .photo
+                .contrast = 1.3;
             let retired = editor.document.project.add_source(retired).unwrap();
             editor.document.project.order.retain(|id| *id != retired);
             editor.roll.exposure = 1.;
@@ -367,6 +409,11 @@ fn default_photos_still_require_area_review_but_retired_grades_do_not_trigger_re
                     .project
                     .source(retired)
                     .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
                     .photo
                     .contrast,
                 1.3
@@ -381,7 +428,7 @@ fn change(editor: &mut Editor, kind: usize) {
         1 => editor.current_source = None,
         2 => editor.document.path = Some("other.antitone.json".into()),
         3 => editor.document.project.order.clear(),
-        4 => editor.photo.pivot = 0.4,
+        4 => editor.adjustment_layer_settings.pivot = 0.4,
         5 => editor.set_gamma(0.8),
         6 => {
             editor
@@ -657,7 +704,7 @@ fn valid_sampling_exceptions_have_no_inspect_badge_or_extra_photo_warning() {
 fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action() {
     for accept in [false, true] {
         let mut editor = ready_state();
-        editor.photo.pivot = 0.3;
+        editor.adjustment_layer_settings.pivot = 0.3;
         let ctx = egui::Context::default();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(start_area_preparation);
@@ -668,7 +715,7 @@ fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action(
             assert!(
                 !labels
                     .iter()
-                    .any(|(s, _)| s == "Photo adjustments will be replaced.")
+                    .any(|(s, _)| s == "Photo layers will be replaced.")
             );
             assert!(!labels.iter().any(|(s, _)| s == "Warning"));
             assert!(

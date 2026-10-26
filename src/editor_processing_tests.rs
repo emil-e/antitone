@@ -1,10 +1,10 @@
 use super::*;
 use crate::project::Development;
 use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::SourcePoint,
     gpu::SourceGeometry,
-    local_adjustments::{GradientMask, LocalAdjustment},
-    project::{LocalAdjustments, SourceDevelopment},
+    project::{AdjustmentLayers, SourceDevelopment},
 };
 
 pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) {
@@ -27,8 +27,9 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
             input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         },
         reference_only: false,
-        photo: editor.photo,
-        local_adjustments: None,
+        adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+            editor.adjustment_layer_settings,
+        )),
         repairs: Default::default(),
         orientation: Default::default(),
         crop: None,
@@ -63,19 +64,20 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         record,
     });
     editor.source = false;
-    let mut locals = LocalAdjustments::default();
+    editor.tab = 1;
+    let mut layers = AdjustmentLayers::default();
     for (name, adjustment) in [
         ("Linear", local(0.7)),
         (
             "Radial",
-            LocalAdjustment {
-                mask: GradientMask::Radial {
+            AdjustmentLayer {
+                mask: AdjustmentLayerCoverage::Radial {
                     center: SourcePoint([131., 82.]),
                     radii: [10., 7.],
                     angle: 0.4,
                     feather: 0.65,
                 },
-                photo: PhotoSettings {
+                photo: AdjustmentLayerSettings {
                     contrast: 1.2,
                     saturation: 1.3,
                     ..Default::default()
@@ -84,14 +86,14 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
             },
         ),
     ] {
-        locals.add(name.into(), adjustment).unwrap();
+        layers.add(name.into(), adjustment).unwrap();
     }
     editor
         .document
         .project
         .source_mut(id)
         .unwrap()
-        .local_adjustments = Some(locals);
+        .adjustment_layers = Some(layers);
     editor.last_layout = Some((
         editor.viewport.layout(
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
@@ -100,17 +102,20 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         ),
         1.,
     ));
+    editor.adjustment_layer_settings = editor
+        .selected_adjustment_layer_settings()
+        .unwrap_or_default();
     editor.sync_document();
     (editor, device, queue)
 }
 
-fn local(exposure: f64) -> LocalAdjustment {
-    LocalAdjustment {
-        mask: GradientMask::Linear {
+fn local(exposure: f64) -> AdjustmentLayer {
+    AdjustmentLayer {
+        mask: AdjustmentLayerCoverage::Linear {
             start: SourcePoint([121., 74.]),
             end: SourcePoint([142., 91.]),
         },
-        photo: PhotoSettings {
+        photo: AdjustmentLayerSettings {
             exposure,
             ..Default::default()
         },
@@ -122,7 +127,7 @@ fn local(exposure: f64) -> LocalAdjustment {
 
 fn positive(editor: &Editor) -> ProcessingInput {
     editor
-        .positive_processing(editor.input, editor.roll, editor.photo)
+        .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
         .unwrap()
 }
 
@@ -151,16 +156,16 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
             first.grade().unwrap(),
             unchanged.grade().unwrap()
         ));
-        let locals = editor
+        let layers = editor
             .document
             .project
             .source_mut(id)
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_mut()
             .unwrap();
-        locals.adjustments[0].name = "Renamed".into();
-        locals.next_id += 1;
+        layers.layers[0].name = "Renamed".into();
+        layers.next_id += 1;
         editor.source_exposure = 2.;
         editor.viewport.zoom = Some(3.);
         editor.target = OutputTarget::Srgb;
@@ -175,17 +180,27 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
             .project
             .source_mut(id)
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_mut()
             .unwrap()
-            .adjustments
+            .layers
             .reverse();
         let reordered = positive(&editor);
         assert_ne!(first.signature(), reordered.signature());
         assert_eq!(first.grade().unwrap().snapshot(), &old_snapshot);
-        editor.photo.exposure = 1.;
+        editor.adjustment_layer_settings.exposure = 1.;
         let graded = positive(&editor);
-        assert_eq!(graded.grade().unwrap().snapshot().global(), editor.photo);
+        assert_eq!(
+            graded
+                .grade()
+                .unwrap()
+                .snapshot()
+                .layers()
+                .last()
+                .unwrap()
+                .photo,
+            editor.adjustment_layer_settings
+        );
         assert_ne!(reordered.signature(), graded.signature());
         editor.roll.wb = crate::color::Balance {
             warmth: 0.017,
@@ -240,7 +255,7 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
             .project
             .source_mut(first)
             .unwrap()
-            .local_adjustments = None;
+            .adjustment_layers = None;
         let mut shaded = editor.document.project.source(first).unwrap().clone();
         shaded.id = SourceId(0);
         shaded.path = "shaded-fixture.ARW".into();
@@ -254,7 +269,12 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
         );
         let source = editor.document.project.source(second).unwrap();
         let input = editor
-            .positive_processing_for_source(base, editor.roll, source, source.photo)
+            .positive_processing_for_source(
+                base,
+                editor.roll,
+                source,
+                AdjustmentLayerSettings::default(),
+            )
             .unwrap();
         let expected = ProcessingParameters::positive(
             Calibration {
@@ -262,7 +282,6 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
                 ..base
             },
             editor.roll,
-            source.photo,
             glam::DMat3::IDENTITY,
         )
         .unwrap();
@@ -274,14 +293,10 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
             dmax: DVec3::splat(base.input_floor * 2.),
             ..base
         };
+        assert!(editor.positive_parameters(near_floor, editor.roll).is_ok());
         assert!(
             editor
-                .positive_parameters(near_floor, editor.roll, editor.photo)
-                .is_ok()
-        );
-        assert!(
-            editor
-                .validate_processing(near_floor, editor.roll, editor.photo)
+                .validate_processing(near_floor, editor.roll, editor.adjustment_layer_settings)
                 .is_err()
         );
         editor.set_dmax(Some(near_floor.dmax));
@@ -334,7 +349,7 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
         let id = editor.current_source.unwrap();
         editor.sync_document();
         let mut candidate = editor.document.capture();
-        candidate.project.source_mut(id).unwrap().local_adjustments = None;
+        candidate.project.source_mut(id).unwrap().adjustment_layers = None;
         let source = candidate.project.source(id).unwrap();
         let field = Arc::new(
             crate::flat_field::FlatField::from_nodes(
@@ -357,7 +372,7 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             .processing_calibration(editor.calibration().unwrap())
             .unwrap();
         let expected = ProcessingInput::from(Arc::new(
-            crate::gpu::GpuPhotoGrade::new(
+            crate::gpu::GpuAdjustmentLayers::new(
                 &device,
                 calibration,
                 editor.roll,
@@ -371,17 +386,13 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             bytemuck::bytes_of(&corrected.parameters()),
             bytemuck::bytes_of(&expected.parameters())
         );
-        let global = ProcessingParameters::positive(
-            calibration,
-            editor.roll,
-            editor.photo,
-            glam::DMat3::IDENTITY,
-        )
-        .unwrap();
+        let global =
+            ProcessingParameters::positive(calibration, editor.roll, glam::DMat3::IDENTITY)
+                .unwrap();
         assert_eq!(
             bytemuck::bytes_of(&corrected.parameters()),
             bytemuck::bytes_of(&global),
-            "local stages must not change the global photographic parameters"
+            "layer controls must not leak into upstream Roll/input parameters"
         );
         assert!(std::ptr::eq(
             corrected.grade().unwrap(),
@@ -394,17 +405,17 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             .project
             .source_mut(id)
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_mut()
             .unwrap()
-            .adjustments
+            .layers
             .clear();
         let empty = positive(&editor);
         assert!(empty.grade().is_some());
-        assert_eq!(empty.grade().unwrap().snapshot().locals().len(), 0);
+        assert_eq!(empty.grade().unwrap().snapshot().layers().len(), 0);
         assert!(!editor.grades.entries.borrow().is_empty());
         assert_eq!(
-            first.grade().unwrap().snapshot().locals().len(),
+            first.grade().unwrap().snapshot().layers().len(),
             2,
             "captured resources remain immutable after deletion"
         );
@@ -420,44 +431,28 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         let mut other = editor.document.project.source(id).unwrap().clone();
         other.id = SourceId(editor.document.project.next_source_id);
         other.path = "offscreen.ARW".into();
-        let mut locals = LocalAdjustments::default();
+        let mut layers = AdjustmentLayers::default();
         for exposure in [-16., 16.] {
             for _ in 0..7 {
-                locals.add("Stage".into(), local(exposure)).unwrap();
+                layers.add("Stage".into(), local(exposure)).unwrap();
             }
         }
-        for record in &mut locals.adjustments {
+        for record in &mut layers.layers {
             record.adjustment.strength = 1.;
         }
-        other.local_adjustments = Some(locals.clone());
+        other.adjustment_layers = Some(layers.clone());
         let mut disabled = other.clone();
-        for record in &mut disabled.local_adjustments.as_mut().unwrap().adjustments {
+        for record in &mut disabled.adjustment_layers.as_mut().unwrap().layers {
             record.adjustment.enabled = false;
         }
-        validate_source(
-            Some(&device),
-            &editor.input(),
-            editor.roll,
-            &disabled,
-            disabled.photo,
-        )
-        .unwrap();
-        assert!(
-            validate_source(
-                Some(&device),
-                &editor.input(),
-                editor.roll,
-                &other,
-                other.photo
-            )
-            .is_err()
-        );
+        validate_source(Some(&device), &editor.input(), editor.roll, &disabled).unwrap();
+        assert!(validate_source(Some(&device), &editor.input(), editor.roll, &other).is_err());
         editor.document.project.sources.push(other.clone());
         editor.document.project.order.push(other.id);
         editor.document.project.next_source_id += 1;
         let before = (
             editor.roll,
-            editor.photo,
+            editor.adjustment_layer_settings,
             editor.dmin(),
             editor.dmax(),
             editor.document.project.clone(),
@@ -471,7 +466,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
                         exposure: 1.,
                         ..editor.roll
                     },
-                    editor.photo
+                    editor.adjustment_layer_settings
                 )
                 .is_err()
         );
@@ -489,7 +484,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         assert_eq!(
             (
                 editor.roll,
-                editor.photo,
+                editor.adjustment_layer_settings,
                 editor.dmin(),
                 editor.dmax(),
                 editor.document.project.clone()
@@ -507,7 +502,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         };
         assert!(
             editor
-                .validate_processing(proposed_cal, editor.roll, editor.photo)
+                .validate_processing(proposed_cal, editor.roll, editor.adjustment_layer_settings)
                 .is_err()
         );
         assert_eq!(
@@ -544,10 +539,10 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
             .project
             .source_mut(id)
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_mut()
             .unwrap()
-            .adjustments[0]
+            .layers[0]
             .adjustment
             .invert = true;
         frame(&mut editor, &context);
@@ -588,13 +583,13 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
     });
 }
 
-fn tracked_grade(editor: &Editor, id: SourceId) -> (std::sync::Weak<GpuPhotoGrade>, u64) {
+fn tracked_grade(editor: &Editor, id: SourceId) -> (std::sync::Weak<GpuAdjustmentLayers>, u64) {
     let entries = editor.grades.entries.borrow();
     let grade = &entries.iter().find(|entry| entry.id == id).unwrap().grade;
     (Arc::downgrade(grade), grade.byte_len())
 }
 
-fn live_grade_buffers(grades: &[(std::sync::Weak<GpuPhotoGrade>, u64)]) -> (usize, u64) {
+fn live_grade_buffers(grades: &[(std::sync::Weak<GpuAdjustmentLayers>, u64)]) -> (usize, u64) {
     grades
         .iter()
         .filter(|(grade, _)| grade.strong_count() != 0)
@@ -690,7 +685,7 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
             )
             .unwrap();
         for i in 1..=40 {
-            editor.photo.exposure = f64::from(i) / 100.;
+            editor.adjustment_layer_settings.exposure = f64::from(i) / 100.;
             observe(&mut editor);
             tracked.push(tracked_grade(&editor, id));
             editor.original.last_edit = Instant::now() - Duration::from_secs(1);
@@ -772,7 +767,12 @@ fn selected_visible_grade_eviction_releases_unreferenced_roll_resources() {
             let mut source = record.clone();
             source.id = SourceId(i);
             let input = editor
-                .positive_processing_for_source(calibration, editor.roll, &source, source.photo)
+                .positive_processing_for_source(
+                    calibration,
+                    editor.roll,
+                    &source,
+                    editor.adjustment_layer_settings,
+                )
                 .unwrap();
             tracked.push(tracked_grade(&editor, source.id));
             if i == 35 {

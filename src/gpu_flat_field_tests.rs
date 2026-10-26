@@ -1,8 +1,9 @@
 use super::*;
 #[cfg(target_os = "macos")]
 use crate::{
+    adjustment_layers::AdjustmentLayerSettings,
     flat_field::FlatField,
-    processing::{Calibration, Pipeline, Response},
+    processing::{Calibration, Response},
 };
 
 #[cfg(all(feature = "raw", feature = "export"))]
@@ -301,9 +302,21 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 input_floor: floor,
             };
             let mut cases = vec![
-                (ProcessingParameters::source_inspection(-16.).unwrap(), None),
-                (ProcessingParameters::source_inspection(0.).unwrap(), None),
-                (ProcessingParameters::source_inspection(16.).unwrap(), None),
+                (
+                    ProcessingParameters::source_inspection(-16.).unwrap(),
+                    None,
+                    None,
+                ),
+                (
+                    ProcessingParameters::source_inspection(0.).unwrap(),
+                    None,
+                    None,
+                ),
+                (
+                    ProcessingParameters::source_inspection(16.).unwrap(),
+                    None,
+                    None,
+                ),
             ];
             for response in [
                 Response {
@@ -323,9 +336,9 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     exposure: 0.5,
                     ..RollSettings::default()
                 };
-                let photo = PhotoSettings {
+                let photo = AdjustmentLayerSettings {
                     exposure: -0.25,
-                    ..PhotoSettings::default()
+                    ..AdjustmentLayerSettings::default()
                 };
                 let input = crate::processing::NegativeInput {
                     calibration,
@@ -334,13 +347,43 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     balance: Default::default(),
                 };
                 cases.push((
-                    ProcessingParameters::positive(input, roll, photo, matrix).unwrap(),
-                    Some(Pipeline::new(input, roll, photo, matrix).unwrap()),
+                    ProcessingParameters::positive(input, roll, matrix).unwrap(),
+                    Some(
+                        crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                            crate::adjustment_layers::AdjustmentLayer::global(photo),
+                        ])
+                        .and_then(|layers| {
+                            crate::adjustment_layers::AdjustmentLayerPipeline::new(
+                                input, roll, layers, matrix,
+                            )
+                        })
+                        .unwrap(),
+                    ),
+                    Some(
+                        GpuAdjustmentLayers::new(
+                            &device,
+                            input,
+                            roll,
+                            crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                                crate::adjustment_layers::AdjustmentLayer::global(photo),
+                            ])
+                            .unwrap(),
+                            matrix,
+                            area.into(),
+                        )
+                        .unwrap(),
+                    ),
                 ));
             }
-            for (parameters, pipeline) in cases {
+            for (parameters, pipeline, grade) in cases {
                 let mut encoder = device.create_command_encoder(&Default::default());
-                kernel.encode(&device, &mut encoder, &source, &output, parameters);
+                if let Some(grade) = &grade {
+                    kernel
+                        .encode_grade(&device, &mut encoder, &source, &output, grade)
+                        .unwrap();
+                } else {
+                    kernel.encode(&device, &mut encoder, &source, &output, parameters);
+                }
                 let bytes = codes.len() as u64 * 16;
                 encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
                 queue.submit([encoder.finish()]);
@@ -348,7 +391,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 for (pixel, value) in expected.iter().zip(values) {
                     let (reference, flags) = match &pipeline {
                         Some(p) => {
-                            let r = p.apply(*pixel).unwrap();
+                            let r = p.apply(*pixel, [0, 0]).unwrap();
                             (r.rgb, r.floored)
                         }
                         None => (

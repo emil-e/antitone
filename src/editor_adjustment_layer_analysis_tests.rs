@@ -1,26 +1,26 @@
 use super::*;
 use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::SourcePoint,
-    local_adjustments::{GradientMask, LocalAdjustment},
-    project::LocalAdjustments,
+    project::AdjustmentLayers,
 };
 
-fn local_records() -> LocalAdjustments {
-    let mut locals = LocalAdjustments::default();
+fn local_records() -> AdjustmentLayers {
+    let mut layers = AdjustmentLayers::default();
     for (name, enabled, exposure) in [
         ("Active", true, 0.5),
         ("Disabled", false, 1.),
         ("Identity", true, 0.),
     ] {
-        locals
+        layers
             .add(
                 name.into(),
-                LocalAdjustment {
-                    mask: GradientMask::Linear {
+                AdjustmentLayer {
+                    mask: AdjustmentLayerCoverage::Linear {
                         start: SourcePoint([20., 20.]),
                         end: SourcePoint([500., 300.]),
                     },
-                    photo: PhotoSettings {
+                    photo: AdjustmentLayerSettings {
                         exposure,
                         ..Default::default()
                     },
@@ -31,8 +31,8 @@ fn local_records() -> LocalAdjustments {
             )
             .unwrap();
     }
-    locals.next_id = 50;
-    locals
+    layers.next_id = 50;
+    layers
 }
 
 fn proposal(document: &Document) -> roll_analysis::Proposal {
@@ -47,7 +47,7 @@ fn proposal(document: &Document) -> roll_analysis::Proposal {
         },
         roll: document.project.roll,
         photos: vec![
-            PhotoSettings {
+            AdjustmentLayerSettings {
                 exposure: 0.4,
                 ..Default::default()
             };
@@ -58,7 +58,7 @@ fn proposal(document: &Document) -> roll_analysis::Proposal {
 }
 
 #[test]
-fn photo_initialization_removes_only_analyzed_local_records_and_retains_id_history() {
+fn photo_initialization_replaces_only_analyzed_layers_and_retains_id_history() {
     let mut editor = state();
     let first = editor.current_source.unwrap();
     editor
@@ -66,7 +66,7 @@ fn photo_initialization_removes_only_analyzed_local_records_and_retains_id_histo
         .project
         .source_mut(first)
         .unwrap()
-        .local_adjustments = Some(local_records());
+        .adjustment_layers = Some(local_records());
     for (name, ordered) in [
         ("offscreen.ARW", true),
         ("retired.ARW", false),
@@ -90,34 +90,42 @@ fn photo_initialization_removes_only_analyzed_local_records_and_retains_id_histo
         let mut source = candidate.project.source(prior.id).unwrap().clone();
         if before.order.contains(&prior.id) {
             assert_eq!(
-                source.photo,
-                PhotoSettings {
+                source.adjustment_layers.as_ref().unwrap().layers[0]
+                    .adjustment
+                    .photo,
+                AdjustmentLayerSettings {
                     exposure: 0.4,
                     ..Default::default()
                 }
             );
-            let locals = source.local_adjustments.as_ref().unwrap();
-            assert!(locals.adjustments.is_empty());
-            assert_eq!(locals.next_id, 50);
-            let mut next = locals.clone();
+            let layers = source.adjustment_layers.as_ref().unwrap();
+            assert_eq!(layers.layers.len(), 1);
+            assert_eq!(layers.layers[0].id.0, 50);
+            assert_eq!(
+                layers.layers[0].adjustment.mask,
+                AdjustmentLayerCoverage::Global {}
+            );
+            assert_eq!(layers.next_id, 51);
+            let mut next = layers.clone();
             let id = next
                 .add(
                     "New after Analyze".into(),
-                    local_records().adjustments[0].adjustment,
+                    local_records().layers[0].adjustment,
                 )
                 .unwrap();
-            assert_eq!(id.0, 50);
-            source.photo = prior.photo;
-            source.local_adjustments = prior.local_adjustments.clone();
+            assert_eq!(id.0, 51);
+            source.adjustment_layers.as_mut().unwrap().layers[0]
+                .adjustment
+                .photo = prior.adjustment_layers.as_ref().unwrap().layers[0]
+                .adjustment
+                .photo;
+            source.adjustment_layers = prior.adjustment_layers.clone();
         }
         assert_eq!(&source, prior);
     }
     assert_eq!(candidate.project.order, before.order);
     assert_eq!(candidate.project.analysis_area, Some(array(picture)));
-    assert!(
-        candidate.validate().is_err(),
-        "retained non-filmstrip locals still require device-aware validation"
-    );
+    candidate.validate().unwrap();
     let mut malformed = proposal(&editor.document);
     malformed.photos.pop();
     assert!(proposed_document(&editor.document, malformed, Some(picture)).is_err());
@@ -135,9 +143,9 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
                     .project
                     .source_mut(editor.current_source.unwrap())
                     .unwrap();
-                let mut locals = local_records();
-                locals.adjustments = vec![locals.adjustments[index].clone()];
-                source.local_adjustments = Some(locals);
+                let mut layers = local_records();
+                layers.layers = vec![layers.layers[index].clone()];
+                source.adjustment_layers = Some(layers);
                 editor.sync_document();
                 let before = editor.document.project.clone();
                 review_tests::start_area_preparation(editor, cx);
@@ -171,12 +179,12 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
             let mut retired = editor.document.project.sources[0].clone();
             retired.id = SourceId(0);
             retired.path = "retired.ARW".into();
-            retired.local_adjustments = Some(local_records());
+            retired.adjustment_layers = Some(local_records());
             let id = editor.document.project.add_source(retired).unwrap();
             editor.document.project.order.retain(|source| *source != id);
             let mut empty = local_records();
-            empty.adjustments.clear();
-            editor.document.project.sources[0].local_adjustments = Some(empty);
+            empty.layers.clear();
+            editor.document.project.sources[0].adjustment_layers = Some(empty);
             editor.sync_document();
             let before = editor.document.project.clone();
             review_tests::start_area_preparation(editor, cx);
@@ -204,7 +212,9 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
             .project
             .source_mut(editor.current_source.unwrap())
             .unwrap()
-            .local_adjustments = Some(local_records());
+            .adjustment_layers = Some(local_records());
+        editor.refresh_adjustment_layer_selection();
+        let settings_before = editor.adjustment_layer_settings;
         let before = editor.document.project.clone();
         let id = pending(&mut editor);
         let mut candidate = proposed_document(
@@ -236,16 +246,21 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
                 .project
                 .source(editor.current_source.unwrap())
                 .unwrap();
-            let locals = source.local_adjustments.as_ref().unwrap();
-            assert!(locals.adjustments.is_empty());
-            assert_eq!(locals.next_id, 50);
-            assert_eq!(editor.adjustment_target(), adjustments::Target::Global);
+            let layers = source.adjustment_layers.as_ref().unwrap();
+            assert_eq!(layers.layers.len(), 1);
+            assert_eq!(layers.layers[0].id.0, 50);
+            assert_eq!(
+                layers.layers[0].adjustment.mask,
+                AdjustmentLayerCoverage::Global {}
+            );
+            assert_eq!(layers.next_id, 51);
+            assert_eq!(
+                editor.adjustment_layer_target(),
+                adjustment_layers::Target::Layer(crate::project::AdjustmentLayerId(50))
+            );
         } else {
             assert_eq!(editor.document.project, before);
-            assert_eq!(
-                editor.photo,
-                before.source(editor.current_source.unwrap()).unwrap().photo
-            );
+            assert_eq!(editor.adjustment_layer_settings, settings_before);
         }
     }
 }

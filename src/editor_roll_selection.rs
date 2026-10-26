@@ -49,7 +49,7 @@ impl Editor {
             && self.project_overwrite.is_none()
             && !self.allow_close
             && !self.export_modal()
-            && !self.document.visit.adjustments.confirming()
+            && !self.document.visit.adjustment_layers.confirming()
     }
 
     pub(super) fn select_roll_photo(
@@ -224,7 +224,7 @@ impl Editor {
             self.selection_timing = None;
             self.last_layout = None;
             self.viewport.fit();
-            self.photo = PhotoSettings::default();
+            self.adjustment_layer_settings = AdjustmentLayerSettings::default();
             self.photo_orientation = PhotoOrientation::default();
             self.crop = None;
             self.status = "No photos in this roll. Add scans to continue.".into();

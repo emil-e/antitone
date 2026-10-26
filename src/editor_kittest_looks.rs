@@ -32,7 +32,7 @@ fn positive_ready(editor: &Editor) -> bool {
     !editor.busy
         && editor.working.displayed.as_ref().is_some_and(|view| {
             let mut expected = editor
-                .positive_processing(editor.input, editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap();
             expected.repairs = crate::gpu::repairs::Snapshot::logical(
                 editor
@@ -277,7 +277,14 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
             }
             harness.read(|editor| assert!(editor.look_render_failure().is_none()));
             harness.read(|editor| assert_eq!(editor.roll, before.roll));
-            harness.read(|editor| assert_eq!(editor.photo, before.sources[0].photo));
+            harness.read(|editor| {
+                assert_eq!(
+                    editor.adjustment_layer_settings,
+                    before.sources[0].adjustment_layers.as_ref().unwrap().layers[0]
+                        .adjustment
+                        .photo
+                )
+            });
             harness.read(|editor| {
                 assert!(
                     editor
@@ -622,7 +629,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
 fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_session_list() {
     fixture_editor(|mut harness, _| {
         let directory = tempfile::tempdir().unwrap();
-        let baseline = harness.read(|editor| (editor.roll, editor.photo));
+        let baseline = harness.read(|editor| (editor.roll, editor.adjustment_layer_settings));
         let mut assets = Vec::new();
         for index in 0..2 {
             let file = directory.path().join(format!("compare-{index}.cube"));
@@ -725,7 +732,9 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
                 });
             }
             harness.read(|editor| assert_eq!(editor.loaded_looks.len(), 2));
-            harness.read(|editor| assert_eq!((editor.roll, editor.photo), baseline));
+            harness.read(|editor| {
+                assert_eq!((editor.roll, editor.adjustment_layer_settings), baseline)
+            });
         }
         let path = directory.path().join("comparison.json");
         harness.enter(|editor, cx| {
@@ -886,7 +895,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
 #[test]
 fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_it() {
     fixture_editor(|mut harness, _| {
-        let baseline = harness.read(|editor| (editor.roll, editor.photo));
+        let baseline = harness.read(|editor| (editor.roll, editor.adjustment_layer_settings));
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("narrow.cube");
         let mut cube = String::from(
@@ -912,7 +921,8 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         });
         paint_until(&mut harness, positive_ready);
         harness.read(|editor| assert!(editor.look_render_failure().is_none()));
-        harness.read(|editor| assert_eq!((editor.roll, editor.photo), baseline));
+        harness
+            .read(|editor| assert_eq!((editor.roll, editor.adjustment_layer_settings), baseline));
         harness.read(|editor| {
             assert_eq!(
                 editor
@@ -964,7 +974,8 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
             editor.pick.is_none() && editor.document.pick_return.is_none() && positive_ready(editor)
         });
         harness.read(|editor| assert!(editor.look_render_failure().is_none()));
-        harness.read(|editor| assert_eq!((editor.roll, editor.photo), baseline));
+        harness
+            .read(|editor| assert_eq!((editor.roll, editor.adjustment_layer_settings), baseline));
         harness.read(|editor| {
             assert_eq!(
                 editor

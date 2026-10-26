@@ -1,16 +1,70 @@
-//! Scalar, source-anchored local grading after the global AP1 pipeline.
+//! Ordered photographic adjustment layers in source-anchored AP1.
 use crate::{
     Error,
     color::{Balance, wb_matrix},
     geometry::SourcePoint,
     photographic::Grade,
-    processing::{
-        InputSettings, InvertedPixel, PhotoSettings, Pipeline, RollSettings, exposure_multiplier,
-    },
+    processing::{InputPipeline, InputSettings, InvertedPixel, RollSettings, exposure_multiplier},
 };
 use glam::{DMat3, DVec2, DVec3};
 
-pub const CONTRACT: &str = "ap1-ordered-mask-weighted-photo-smoothstep-source-v1";
+pub const DEFAULT_PIVOT: f64 = 0.18;
+pub const DEFAULT_COLOUR_MIX: f64 = 0.;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "project", serde(deny_unknown_fields))]
+pub struct AdjustmentLayerSettings {
+    pub exposure: f64,
+    pub wb: Balance,
+    #[cfg_attr(feature = "project", serde(default = "identity_amount"))]
+    pub contrast: f64,
+    #[cfg_attr(feature = "project", serde(default = "default_pivot"))]
+    pub pivot: f64,
+    #[cfg_attr(feature = "project", serde(default = "default_colour_mix"))]
+    pub contrast_colour_mix: f64,
+    #[cfg_attr(feature = "project", serde(default = "identity_amount"))]
+    pub saturation: f64,
+    #[cfg_attr(feature = "project", serde(default = "default_colour_mix"))]
+    pub saturation_density: f64,
+}
+
+fn identity_amount() -> f64 {
+    1.
+}
+
+fn default_pivot() -> f64 {
+    DEFAULT_PIVOT
+}
+
+fn default_colour_mix() -> f64 {
+    DEFAULT_COLOUR_MIX
+}
+
+impl Default for AdjustmentLayerSettings {
+    fn default() -> Self {
+        Self {
+            exposure: 0.,
+            wb: Balance::default(),
+            contrast: identity_amount(),
+            pivot: default_pivot(),
+            contrast_colour_mix: default_colour_mix(),
+            saturation: identity_amount(),
+            saturation_density: default_colour_mix(),
+        }
+    }
+}
+
+impl AdjustmentLayerSettings {
+    pub fn validate(self) -> Result<Self, Error> {
+        exposure_multiplier(self.exposure)?;
+        wb_matrix(self.wb)?;
+        crate::photographic::Grade::new(self)?;
+        Ok(self)
+    }
+}
+
+pub const CONTRACT: &str = "ap1-ordered-adjustment-layers-smoothstep-source-v1";
 
 /// Analytic coverage in original developed-source pixel-edge coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,7 +73,9 @@ pub const CONTRACT: &str = "ap1-ordered-mask-weighted-photo-smoothstep-source-v1
     feature = "project",
     serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)
 )]
-pub enum GradientMask {
+pub enum AdjustmentLayerCoverage {
+    // Struct form makes serde reject stray geometry on whole-image coverage.
+    Global {},
     Linear {
         start: SourcePoint,
         end: SourcePoint,
@@ -34,9 +90,10 @@ pub enum GradientMask {
     },
 }
 
-impl GradientMask {
+impl AdjustmentLayerCoverage {
     pub fn validate(self) -> Result<Self, Error> {
         match self {
+            Self::Global {} => {}
             Self::Linear { start, end } => {
                 let start = source_point(start)?;
                 let end = source_point(end)?;
@@ -73,6 +130,7 @@ impl GradientMask {
 
     fn coverage_at(self, point: DVec2) -> Result<f64, Error> {
         let coverage = match self {
+            Self::Global {} => 1.,
             Self::Linear { start, end } => {
                 let start = DVec2::from_array(start.0);
                 let delta = DVec2::from_array(end.0) - start;
@@ -133,18 +191,21 @@ fn smoothstep(t: f64) -> f64 {
     if t <= 0.5 { value } else { 1. - value }
 }
 
-/// Attenuates local amounts towards identity, retaining pivot and blend settings.
-pub fn weighted_settings(photo: PhotoSettings, weight: f64) -> Result<PhotoSettings, Error> {
+/// Attenuates layer amounts towards identity, retaining pivot and blend settings.
+pub fn weighted_settings(
+    photo: AdjustmentLayerSettings,
+    weight: f64,
+) -> Result<AdjustmentLayerSettings, Error> {
     photo.validate()?;
-    unit_interval(weight, "local adjustment weight must be within 0..1")?;
+    unit_interval(weight, "adjustment layer weight must be within 0..1")?;
     Ok(weighted(photo, weight))
 }
 
-fn weighted(photo: PhotoSettings, weight: f64) -> PhotoSettings {
+fn weighted(photo: AdjustmentLayerSettings, weight: f64) -> AdjustmentLayerSettings {
     if weight == 1. {
         return photo;
     }
-    PhotoSettings {
+    AdjustmentLayerSettings {
         exposure: weight * photo.exposure,
         wb: Balance {
             warmth: weight * photo.wb.warmth,
@@ -159,15 +220,25 @@ fn weighted(photo: PhotoSettings, weight: f64) -> PhotoSettings {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "project", serde(deny_unknown_fields))]
-pub struct LocalAdjustment {
-    pub mask: GradientMask,
-    pub photo: PhotoSettings,
+pub struct AdjustmentLayer {
+    pub mask: AdjustmentLayerCoverage,
+    pub photo: AdjustmentLayerSettings,
     pub enabled: bool,
     pub invert: bool,
     pub strength: f64,
 }
 
-impl LocalAdjustment {
+impl AdjustmentLayer {
+    pub fn global(photo: AdjustmentLayerSettings) -> Self {
+        Self {
+            mask: AdjustmentLayerCoverage::Global {},
+            photo,
+            enabled: true,
+            invert: false,
+            strength: 1.,
+        }
+    }
+
     pub(crate) fn is_active(self) -> bool {
         self.enabled
             && self.strength != 0.
@@ -177,12 +248,24 @@ impl LocalAdjustment {
                 || self.photo.saturation != 1.)
     }
 
+    pub fn weight(self, point: SourcePoint) -> Result<f64, Error> {
+        self.validate()?.weight_at(source_point(point)?)
+    }
+
+    fn weight_at(self, point: DVec2) -> Result<f64, Error> {
+        if !self.enabled {
+            return Ok(0.);
+        }
+        let coverage = self.mask.coverage_at(point)?;
+        Ok((if self.invert { 1. - coverage } else { coverage }) * self.strength)
+    }
+
     pub fn validate(self) -> Result<Self, Error> {
         self.mask.validate()?;
         self.photo.validate()?;
         unit_interval(
             self.strength,
-            "local adjustment strength must be within 0..1",
+            "adjustment layer strength must be within 0..1",
         )?;
         Ok(self)
     }
@@ -190,51 +273,45 @@ impl LocalAdjustment {
 
 /// Owned processing values, independent of adjustment names/IDs and later document edits.
 #[derive(Debug, Clone, PartialEq)]
-pub struct PhotoGradeSnapshot {
-    global: PhotoSettings,
-    locals: LocalGrade,
+pub struct AdjustmentLayerSnapshot {
+    layers: AdjustmentLayerStack,
 }
 
-impl PhotoGradeSnapshot {
-    pub fn new(global: PhotoSettings, locals: Vec<LocalAdjustment>) -> Result<Self, Error> {
+impl AdjustmentLayerSnapshot {
+    pub fn new(layers: Vec<AdjustmentLayer>) -> Result<Self, Error> {
         Ok(Self {
-            global: global.validate()?,
-            locals: LocalGrade::new(locals)?,
+            layers: AdjustmentLayerStack::new(layers)?,
         })
     }
 
     /// Explicit owned snapshot payload, excluding allocator bookkeeping.
     pub fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
-            + self.locals.adjustments.capacity() * std::mem::size_of::<LocalAdjustment>()
+            + self.layers.layers.capacity() * std::mem::size_of::<AdjustmentLayer>()
     }
 
-    pub fn global(&self) -> PhotoSettings {
-        self.global
-    }
-
-    pub fn locals(&self) -> &[LocalAdjustment] {
-        &self.locals.adjustments
+    pub fn layers(&self) -> &[AdjustmentLayer] {
+        &self.layers.layers
     }
 }
 
 /// Full scalar processing at original source pixel centres, before reconstruction.
 #[derive(Debug, Clone)]
-pub struct SpatialPipeline {
-    global: Pipeline,
-    locals: LocalGrade,
+pub struct AdjustmentLayerPipeline {
+    input: InputPipeline,
+    layers: AdjustmentLayerStack,
 }
 
-impl SpatialPipeline {
+impl AdjustmentLayerPipeline {
     pub fn new(
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        grade: PhotoGradeSnapshot,
+        grade: AdjustmentLayerSnapshot,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
         Ok(Self {
-            global: Pipeline::new(input, roll, grade.global, camera_to_ap1)?,
-            locals: grade.locals,
+            input: InputPipeline::new(input, roll, camera_to_ap1)?,
+            layers: grade.layers,
         })
     }
 
@@ -244,15 +321,15 @@ impl SpatialPipeline {
         pixel: InvertedPixel,
         source_pixel: [u32; 2],
     ) -> Result<InvertedPixel, Error> {
-        self.locals.apply(
-            self.global.grade_neutral(pixel)?,
+        self.layers.apply(
+            self.input.apply_roll(pixel)?,
             SourcePoint(source_pixel.map(|v| f64::from(v) + 0.5)),
         )
     }
 
     pub fn apply(&self, scan: DVec3, source_pixel: [u32; 2]) -> Result<InvertedPixel, Error> {
-        self.locals.apply(
-            self.global.apply(scan)?,
+        self.layers.apply(
+            self.input.apply(scan)?,
             SourcePoint(source_pixel.map(|v| f64::from(v) + 0.5)),
         )
     }
@@ -260,19 +337,19 @@ impl SpatialPipeline {
 
 /// An immutable validated scalar stack; persistence and GPU preflight are separate.
 #[derive(Debug, Clone, PartialEq)]
-pub struct LocalGrade {
-    adjustments: Vec<LocalAdjustment>,
+pub struct AdjustmentLayerStack {
+    layers: Vec<AdjustmentLayer>,
 }
 
-impl LocalGrade {
-    pub fn new(adjustments: Vec<LocalAdjustment>) -> Result<Self, Error> {
-        for adjustment in &adjustments {
+impl AdjustmentLayerStack {
+    pub fn new(layers: Vec<AdjustmentLayer>) -> Result<Self, Error> {
+        for adjustment in &layers {
             adjustment.validate()?;
         }
-        Ok(Self { adjustments })
+        Ok(Self { layers })
     }
 
-    /// Takes globally graded AP1 at an original source pixel centre, preserving floor flags.
+    /// Takes Roll-graded AP1 at an original source pixel centre, preserving floor flags.
     pub fn apply(
         &self,
         mut pixel: InvertedPixel,
@@ -282,18 +359,12 @@ impl LocalGrade {
             return Err(Error::NumericalOverflow);
         }
         let point = source_point(point)?;
-        for adjustment in &self.adjustments {
+        for adjustment in &self.layers {
             let photo = adjustment.photo;
             if !adjustment.is_active() {
                 continue;
             }
-            let coverage = adjustment.mask.coverage_at(point)?;
-            let coverage = if adjustment.invert {
-                1. - coverage
-            } else {
-                coverage
-            };
-            let weight = coverage * adjustment.strength;
+            let weight = adjustment.weight_at(point)?;
             if weight == 0. {
                 continue;
             }

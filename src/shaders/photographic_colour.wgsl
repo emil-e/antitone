@@ -6,43 +6,35 @@ const COLOUR_SCALE: f32 = CCT_SCALE;
 const COLOUR_LOG_SCALE: f32 = CCT_LOG_SCALE;
 const COLOUR_TOE_DELTA: f32 = COLOUR_SLOPE * COLOUR_TOE;
 
-fn colour_delta(row: u32, column: u32, base: f32) -> f32 {
-    return parameters.creative[row][column] - base;
+fn colour_adjustment_layer_delta(stage: u32, row: u32, column: u32, base: f32) -> f32 {
+    return adjustment_layer_value(stage, row, column) - base;
 }
 
-fn colour_local_delta(stage: u32, row: u32, column: u32, base: f32) -> f32 {
-    return local_value(stage, row, column) - base;
+fn colour_adjustment_layer(stage: u32, row: u32, column: u32) -> f32 {
+    return adjustment_layer_value(stage, row, column);
 }
 
-fn colour_local(stage: u32, row: u32, column: u32) -> f32 {
-    return local_value(stage, row, column);
-}
-
-// Originals, repaired positives and filtered working views share the same post/global grade.
+// Originals, repaired positives and filtered views share Roll balance and exposure.
 // Neutral working-view acquisition omits exposure; its caller restores that gain here.
 fn photographic_post(input: array<f32, 3>, gain: f32) -> array<f32, 3> {
     var scaled: array<f32, 3>;
     for(var c = 0u; c < 3u; c++) {
         scaled[c] = input[c] * gain;
     }
-    var rgb = matrix_product(parameters.post, scaled);
-    if parameters.stage != STAGE_SOURCE {
-        rgb = colour_global(rgb);
-    }
-    return rgb;
+    return matrix_product(parameters.post, scaled);
 }
 
 fn colour_balance(stage: u32, rgb: array<f32, 3>, weight: f32) -> array<f32, 3> {
-    let exposure = exp(weight * colour_local(stage, 2u, 0u));
+    let exposure = exp(weight * colour_adjustment_layer(stage, 2u, 0u));
     var exposed: array<f32, 3>;
     for(var c = 0u; c < 3u; c++) {
         exposed[c] = rgb[c] * exposure;
     }
-    var cones = matrix_product(local_context.cones.columns, exposed);
+    var cones = matrix_product(adjustment_layer_context.cones.columns, exposed);
     for(var c = 0u; c < 3u; c++) {
-        cones[c] *= exp(weight * colour_local(stage, 2u, c + 1u));
+        cones[c] *= exp(weight * colour_adjustment_layer(stage, 2u, c + 1u));
     }
-    return matrix_product(local_context.inverse.columns, cones);
+    return matrix_product(adjustment_layer_context.inverse.columns, cones);
 }
 
 fn colour_exprel(x: f32) -> f32 {
@@ -127,7 +119,7 @@ fn colour_mix(a: f32, b: f32, t: f32) -> f32 {
 }
 
 fn colour_luminance(rgb: array<f32, 3>) -> f32 {
-    return dot(parameters.creative[2].xyz, vec3f(rgb[0], rgb[1], rgb[2]));
+    return dot(vec3f(0.2722287168, 0.6740817658, 0.0536895174), vec3f(rgb[0], rgb[1], rgb[2]));
 }
 
 fn colour_apply(
@@ -179,38 +171,29 @@ fn colour_apply(
     return rgb;
 }
 
-fn colour_global(rgb: array<f32, 3>) -> array<f32, 3> {
-    return colour_apply(
-            rgb,
-            colour_delta(0u, 0u, 1.0),
-            colour_delta(0u, 1u, COLOUR_OFFSET),
-            parameters.creative[1][0],
-            colour_delta(1u, 1u, 1.0),
-            parameters.creative[1][2],
-        );
-}
-
-fn colour_locals(input: array<f32, 3>, source: vec2f) -> array<f32, 3> {
-    if local_context.count.x == 0u {
+fn colour_adjustment_layers(input: array<f32, 3>, source: vec2f) -> array<f32, 3> {
+    if adjustment_layer_context.count.x == 0u {
         return input;
     }
-    let area = local_context.area;
-    if f32(area.x) > source.x || f32(area.y) > source.y || f32(area.x + area.z) <= source.x
-        || f32(area.y + area.w) <= source.y {
-        return input;
-    }
+    let area = adjustment_layer_context.area;
+    let inside =
+        f32(area.x) <= source.x && f32(area.y) <= source.y && source.x < f32(area.x + area.z)
+        && source.y < f32(area.y + area.w);
     var rgb = input;
-    for(var stage = 0u; stage < local_context.count.x; stage++) {
-        var coverage = local_coverage_point32(stage, source);
-        if local_stages[stage].flags.y != 0u {
+    for(var stage = 0u; stage < adjustment_layer_context.count.x; stage++) {
+        if adjustment_layer_stages[stage].flags.x != 0u && !inside {
+            continue;
+        }
+        var coverage = adjustment_layer_coverage_point32(stage, source);
+        if adjustment_layer_stages[stage].flags.y != 0u {
             coverage = 1.0 - coverage;
         }
-        let weight = coverage * local_value(stage, 1u, 3u);
+        let weight = coverage * adjustment_layer_value(stage, 1u, 3u);
         if weight == 0.0 {
             continue;
         }
-        let ev = colour_local(stage, 2u, 0u);
-        if local_stages[stage].flags.z != 0u {
+        let ev = colour_adjustment_layer(stage, 2u, 0u);
+        if adjustment_layer_stages[stage].flags.z != 0u {
             rgb = colour_balance(stage, rgb, weight);
         } else if ev != 0.0 {
             let gain = exp(weight * ev);
@@ -218,18 +201,18 @@ fn colour_locals(input: array<f32, 3>, source: vec2f) -> array<f32, 3> {
                 rgb[c] *= gain;
             }
         }
-        let da = weight * colour_local_delta(stage, 3u, 0u, 1.0);
-        let ds = weight * colour_local_delta(stage, 3u, 3u, 1.0);
+        let da = weight * colour_adjustment_layer_delta(stage, 3u, 0u, 1.0);
+        let ds = weight * colour_adjustment_layer_delta(stage, 3u, 3u, 1.0);
         if da == 0.0 && ds == 0.0 {
             continue;
         }
         rgb = colour_apply(
                 rgb,
                 da,
-                colour_local_delta(stage, 3u, 1u, COLOUR_OFFSET),
-                colour_local(stage, 3u, 2u),
+                colour_adjustment_layer_delta(stage, 3u, 1u, COLOUR_OFFSET),
+                colour_adjustment_layer(stage, 3u, 2u),
                 ds,
-                colour_local(stage, 4u, 0u),
+                colour_adjustment_layer(stage, 4u, 0u),
             );
     }
     return rgb;

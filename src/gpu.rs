@@ -6,9 +6,9 @@ mod flat;
 #[path = "gpu_look.rs"]
 pub mod look;
 pub use flat::{GpuFlatField, SourceGeometry};
-#[path = "gpu_local_adjustments.rs"]
-mod local;
-pub use local::GpuPhotoGrade;
+#[path = "gpu_adjustment_layers.rs"]
+mod adjustment_layers;
+pub use adjustment_layers::GpuAdjustmentLayers;
 #[path = "gpu_processing_input.rs"]
 mod input;
 pub use input::{ProcessingInput, ProcessingSignature};
@@ -29,10 +29,10 @@ use glam::{DMat3, DVec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::Error;
-use crate::color::{AP1_TO_XYZ, wb_matrix};
+use crate::color::wb_matrix;
 use crate::processing::{
-    InputSettings, Inversion, NegativeInput, PhotoSettings, RollSettings, exposure_multiplier,
-    log_abs_expm1, validate_camera_matrix,
+    InputSettings, Inversion, NegativeInput, RollSettings, exposure_multiplier, log_abs_expm1,
+    validate_camera_matrix,
 };
 
 #[repr(C)]
@@ -43,7 +43,6 @@ pub struct ProcessingParameters {
     anchor: Vec4,
     post: [Vec4; 3],
     shape: Vec4,
-    creative: [Vec4; 3],
     /// Named input stage for the shader; `STAGE_SOURCE` also means "not graded".
     stage: u32,
     _stage_padding: [u32; 3],
@@ -79,7 +78,7 @@ fn source_preview_gain(fixed_wb: Option<[f64; 4]>) -> f64 {
 impl ProcessingParameters {
     pub const BYTE_LEN: usize = std::mem::size_of::<Self>();
 
-    /// A graded positive render; source inspection is not graded.
+    /// Whether the result is a positive eligible for adjustment-layer grading.
     pub(crate) fn graded(&self) -> bool {
         self.stage != STAGE_SOURCE
     }
@@ -128,36 +127,30 @@ impl ProcessingParameters {
     pub fn positive(
         negative: impl Into<NegativeInput>,
         roll: RollSettings,
-        photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
-        Self::positive_with_bound(negative, roll, photo, camera_to_ap1)
-            .map(|(parameters, _)| parameters)
+        Self::positive_with_bound(negative, roll, camera_to_ap1).map(|(parameters, _)| parameters)
     }
 
     fn positive_with_bound(
         negative: impl Into<NegativeInput>,
         roll: RollSettings,
-        photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<(Self, f64), Error> {
-        Self::positive_with_neutral_bound(negative.into(), roll, photo, camera_to_ap1, DVec3::ZERO)
+        Self::positive_with_neutral_bound(negative.into(), roll, camera_to_ap1, DVec3::ZERO)
     }
 
     fn positive_with_neutral_bound(
         negative: NegativeInput,
         roll: RollSettings,
-        photo: PhotoSettings,
         camera_to_ap1: DMat3,
         additional_neutral: DVec3,
     ) -> Result<(Self, f64), Error> {
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
         let inversion = Inversion::new(negative)?;
-        photo.validate()?;
-        let grade = crate::photographic::Grade::new(photo)?;
-        let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
-        let matrix = wb_matrix(photo.wb)? * wb_matrix(roll.wb)?;
+        let gain = exposure_multiplier(roll.exposure)?;
+        let matrix = wb_matrix(roll.wb)?;
         let (toe, shoulder) = negative.response.shape()?;
         let reference =
             packed_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
@@ -204,15 +197,12 @@ impl ProcessingParameters {
         let bound = matrix.x_axis.abs() * working_bound.x
             + matrix.y_axis.abs() * working_bound.y
             + matrix.z_axis.abs() * working_bound.z;
-        let creative_bound = grade.intermediate_bound(bound.max_element());
         if !largest.is_finite()
             || largest.max_element() > f32::MAX as f64 / 4.0
             || !working_bound.is_finite()
             || working_bound.max_element() > f32::MAX as f64 / 4.0
             || !bound.is_finite()
             || bound.max_element() > f32::MAX as f64 / 4.0
-            || !creative_bound.is_finite()
-            || creative_bound > f32::MAX as f64 / 4.0
         {
             return Err(Error::Gpu(
                 "settings can exceed the f32 working range in response domain or photographic processing"
@@ -220,27 +210,12 @@ impl ProcessingParameters {
             ));
         }
         let post = CameraMatrix::new(matrix)?;
-        let weights = AP1_TO_XYZ.transpose().y_axis;
-        let creative = [
-            packed_constants(DVec3::new(photo.contrast, grade.qp, grade.q0), grade.black)?,
-            packed_constants(
-                DVec3::new(
-                    photo.contrast_colour_mix,
-                    photo.saturation,
-                    photo.saturation_density,
-                ),
-                0.,
-            )?,
-            packed_constants(weights, 0.)?,
-        ];
-        let (_, output) = grade.weighted_bounds(bound.max_element(), 1.);
         let result = Self {
             dmin_floor: reference,
             gamma_mode: gamma,
             shape: Vec4::new(toe as f32, shoulder as f32, 0., 0.),
             anchor,
             post: post.columns,
-            creative,
             stage: STAGE_NEGATIVE,
             _stage_padding: [0; 3],
         };
@@ -255,108 +230,71 @@ impl ProcessingParameters {
                 "processing parameters cannot be represented in f32".into(),
             ));
         }
-        // Scratch maxima must not become the next stage's input. Both bounds
-        // cover the actual full-strength output; keep the tighter envelope.
-        Ok((result, output.min(creative_bound)))
+        Ok((result, bound.max_element()))
     }
 
-    /// A digital source is already a positive: interpretation is identity, so there is no
-    /// response `exp` to fold the exposure gain into. It rides in `post` instead (matching
-    /// the CPU `working_to_graded`), and only camera→AP1 · post · grade run.
-    pub fn digital(
-        roll: RollSettings,
-        photo: PhotoSettings,
-        camera_to_ap1: DMat3,
-    ) -> Result<Self, Error> {
-        Self::digital_with_neutral_bound(roll, photo, camera_to_ap1, DVec3::ZERO).map(|(p, _)| p)
+    /// Digital interpretation is identity; Roll exposure rides in the post-conversion matrix.
+    pub fn digital(roll: RollSettings, camera_to_ap1: DMat3) -> Result<Self, Error> {
+        Self::digital_with_neutral_bound(roll, camera_to_ap1, DVec3::ZERO).map(|(p, _)| p)
     }
 
-    /// Like `digital`, but also returns the f32 working bound for local-grade preflight.
+    /// Like `digital`, but also returns the f32 working bound for adjustment-layer preflight.
     pub fn digital_with_neutral_bound(
         roll: RollSettings,
-        photo: PhotoSettings,
         camera_to_ap1: DMat3,
         additional_neutral: DVec3,
     ) -> Result<(Self, f64), Error> {
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
-        photo.validate()?;
-        let grade = crate::photographic::Grade::new(photo)?;
-        let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
-        let matrix = wb_matrix(photo.wb)? * wb_matrix(roll.wb)? * gain;
+        let gain = exposure_multiplier(roll.exposure)?;
+        let matrix = wb_matrix(roll.wb)? * gain;
         let post = CameraMatrix::new(matrix)?;
-        // f32 preflight: source (already positive) → camera→AP1 → post → grade. With no
-        // inversion continuation, the native-positive bound is simply the source magnitude.
+        // With no inversion continuation, the camera-positive bound is the source magnitude.
         let largest = DVec3::splat(crate::processing::MAX_SOURCE_GAIN);
         let working_bound = (camera_to_ap1.x_axis.abs() * largest.x
             + camera_to_ap1.y_axis.abs() * largest.y
             + camera_to_ap1.z_axis.abs() * largest.z)
-            .max(additional_neutral * gain);
+            .max(additional_neutral);
         let bound = matrix.x_axis.abs() * working_bound.x
             + matrix.y_axis.abs() * working_bound.y
             + matrix.z_axis.abs() * working_bound.z;
-        let creative_bound = grade.intermediate_bound(bound.max_element());
         if !working_bound.is_finite()
             || working_bound.max_element() > f32::MAX as f64 / 4.0
             || !bound.is_finite()
             || bound.max_element() > f32::MAX as f64 / 4.0
-            || !creative_bound.is_finite()
-            || creative_bound > f32::MAX as f64 / 4.0
         {
             return Err(Error::Gpu(
                 "settings can exceed the f32 working range in digital processing".into(),
             ));
         }
-        let weights = AP1_TO_XYZ.transpose().y_axis;
-        let creative = [
-            packed_constants(DVec3::new(photo.contrast, grade.qp, grade.q0), grade.black)?,
-            packed_constants(
-                DVec3::new(
-                    photo.contrast_colour_mix,
-                    photo.saturation,
-                    photo.saturation_density,
-                ),
-                0.,
-            )?,
-            packed_constants(weights, 0.)?,
-        ];
-        let (_, output) = grade.weighted_bounds(bound.max_element(), 1.);
         Ok((
             Self {
                 post: post.columns,
-                creative,
                 stage: STAGE_DIGITAL,
                 ..Self::zeroed()
             },
-            output.min(creative_bound),
+            bound.max_element(),
         ))
     }
 
-    /// Like `interpret`, but returns the f32 working bound (local-grade preflight).
+    /// Like `interpret`, but returns the f32 working bound (adjustment-layer preflight).
     pub fn interpret_with_neutral_bound(
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        photo: PhotoSettings,
         camera_to_ap1: DMat3,
         additional_neutral: DVec3,
     ) -> Result<(Self, f64), Error> {
         let input = input.into();
         match input {
             InputSettings::Digital => {
-                Self::digital_with_neutral_bound(roll, photo, camera_to_ap1, additional_neutral)
+                Self::digital_with_neutral_bound(roll, camera_to_ap1, additional_neutral)
             }
             InputSettings::Negative { .. } => {
                 let negative = input.negative_input().ok_or(Error::InvalidCalibration {
                     channel: 0,
                     reason: "measure Dmin and Dmax",
                 })?;
-                Self::positive_with_neutral_bound(
-                    negative,
-                    roll,
-                    photo,
-                    camera_to_ap1,
-                    additional_neutral,
-                )
+                Self::positive_with_neutral_bound(negative, roll, camera_to_ap1, additional_neutral)
             }
         }
     }
@@ -365,18 +303,17 @@ impl ProcessingParameters {
     pub fn interpret(
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
         let input = input.into();
         match input {
-            InputSettings::Digital => Self::digital(roll, photo, camera_to_ap1),
+            InputSettings::Digital => Self::digital(roll, camera_to_ap1),
             InputSettings::Negative { .. } => {
                 let negative = input.negative_input().ok_or(Error::InvalidCalibration {
                     channel: 0,
                     reason: "measure Dmin and Dmax",
                 })?;
-                Self::positive(negative, roll, photo, camera_to_ap1)
+                Self::positive(negative, roll, camera_to_ap1)
             }
         }
     }
@@ -582,8 +519,8 @@ pub struct ProcessingKernel {
     output_stride: u64,
     workgroup_size: u32,
     identity: wgpu::Buffer,
-    empty_locals: wgpu::Buffer,
-    empty_local_context: wgpu::Buffer,
+    empty_adjustment_layers: wgpu::Buffer,
+    empty_adjustment_layer_context: wgpu::Buffer,
 }
 
 impl ProcessingKernel {
@@ -610,7 +547,7 @@ impl ProcessingKernel {
             include_str!("shaders/film_response.wgsl"),
             include_str!("shaders/film_inversion_export.wgsl"),
             include_str!("shaders/photographic.wgsl"),
-            include_str!("shaders/local_adjustments.wgsl"),
+            include_str!("shaders/adjustment_layers.wgsl"),
             include_str!("shaders/photographic_colour.wgsl"),
             include_str!("shaders/photographic_export.wgsl"),
         ]
@@ -652,8 +589,8 @@ impl ProcessingKernel {
             output_stride: 16,
             workgroup_size: 64,
             identity: flat::identity_nodes(device),
-            empty_locals: local::empty_buffer(device),
-            empty_local_context: local::context_buffer(device, 0, [0; 4])?,
+            empty_adjustment_layers: adjustment_layers::empty_buffer(device),
+            empty_adjustment_layer_context: adjustment_layers::context_buffer(device, 0, [0; 4])?,
         })
     }
 
@@ -671,7 +608,10 @@ impl ProcessingKernel {
             source,
             output,
             parameters,
-            (&self.empty_locals, &self.empty_local_context),
+            (
+                &self.empty_adjustment_layers,
+                &self.empty_adjustment_layer_context,
+            ),
             #[cfg(test)]
             (None, None),
         );
@@ -683,7 +623,7 @@ impl ProcessingKernel {
         encoder: &mut wgpu::CommandEncoder,
         source: &ProcessingSource,
         output: &wgpu::Buffer,
-        grade: &GpuPhotoGrade,
+        grade: &GpuAdjustmentLayers,
     ) -> Result<(), Error> {
         grade.require_source(source)?;
         self.encode_resources(
@@ -706,7 +646,7 @@ impl ProcessingKernel {
         encoder: &mut wgpu::CommandEncoder,
         source: &ProcessingSource,
         output: &wgpu::Buffer,
-        grade: &GpuPhotoGrade,
+        grade: &GpuAdjustmentLayers,
         queries: (&wgpu::QuerySet, u32),
     ) -> Result<(), Error> {
         grade.require_source(source)?;
@@ -730,7 +670,7 @@ impl ProcessingKernel {
         source: &ProcessingSource,
         output: &wgpu::Buffer,
         parameters: ProcessingParameters,
-        (locals, context): (&wgpu::Buffer, &wgpu::Buffer),
+        (layers, context): (&wgpu::Buffer, &wgpu::Buffer),
         #[cfg(test)] diagnostics: (Option<(&wgpu::QuerySet, u32)>, Option<&wgpu::Buffer>),
     ) {
         let pixels = source.pixels;
@@ -789,7 +729,7 @@ impl ProcessingKernel {
             },
             wgpu::BindGroupEntry {
                 binding: 6,
-                resource: locals.as_entire_binding(),
+                resource: layers.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 7,

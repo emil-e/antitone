@@ -1,9 +1,8 @@
 #![cfg(feature = "project")]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     color::Balance,
-    processing::{
-        CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response,
-    },
+    processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
     project::*,
 };
 use glam::DVec3;
@@ -46,8 +45,9 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
                 input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
             },
             reference_only: false,
-            photo: PhotoSettings::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+                AdjustmentLayerSettings::default(),
+            )),
             repairs: Default::default(),
             orientation: Default::default(),
             crop: None,
@@ -61,13 +61,21 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
             tint: -0.23456789012345678,
         };
     }
-    project.source_mut(dmin_source_id).unwrap().photo = PhotoSettings {
+    project
+        .source_mut(dmin_source_id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo = AdjustmentLayerSettings {
         exposure: 0.5,
         wb: Balance {
             warmth: 0.1,
             tint: -0.05,
         },
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
     (project, dmin_source_id, dmax_source_id)
 }
@@ -202,8 +210,16 @@ fn input_stage_roundtrips() {
 fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
     let directory = tempfile::tempdir().unwrap();
     let (mut project, id, _) = fixture(directory.path());
-    let before = project.source(id).unwrap().photo;
-    let photo = PhotoSettings {
+    let before = project
+        .source(id)
+        .unwrap()
+        .adjustment_layers
+        .as_ref()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo;
+    let photo = AdjustmentLayerSettings {
         contrast: 1.123456789012345,
         pivot: 0.23456789012345,
         contrast_colour_mix: 0.3456789012345,
@@ -211,16 +227,35 @@ fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
         saturation_density: 0.456789012345,
         ..before
     };
-    project.source_mut(id).unwrap().photo = photo;
+    project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo = photo;
     let path = directory.path().join("grade.antitone.json");
     project.save(&path, Save::New).unwrap();
     assert_eq!(
-        Project::load(&path).unwrap().source(id).unwrap().photo,
+        Project::load(&path)
+            .unwrap()
+            .source(id)
+            .unwrap()
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo,
         photo
     );
     let mut json = serde_json::to_value(&project).unwrap();
     for source in json["sources"].as_array_mut().unwrap() {
-        let fields = source["photo"].as_object_mut().unwrap();
+        let fields = source["adjustment_layers"]["layers"][0]["adjustment"]["photo"]
+            .as_object_mut()
+            .unwrap();
         for name in [
             "contrast",
             "pivot",
@@ -233,8 +268,27 @@ fn photographic_settings_roundtrip_and_absent_fields_preserve_current_grades() {
     }
     let old: Project = serde_json::from_value(json).unwrap();
     old.validate().unwrap();
-    assert_eq!(old.source(id).unwrap().photo, before);
-    project.source_mut(id).unwrap().photo.contrast = 2.;
+    assert_eq!(
+        old.source(id)
+            .unwrap()
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo,
+        before
+    );
+    project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .contrast = 2.;
     assert!(project.validate().is_err());
 }
 
@@ -254,7 +308,15 @@ fn orientation_roundtrip_keeps_legacy_identity_and_numerical_state() {
         project.roll,
         calibration.dmin.to_array(),
         calibration.dmax.to_array(),
-        project.source(one).unwrap().photo,
+        project
+            .source(one)
+            .unwrap()
+            .adjustment_layers
+            .as_ref()
+            .unwrap()
+            .layers[0]
+            .adjustment
+            .photo,
     );
     project.orientation = Flips {
         horizontal: true,
@@ -283,7 +345,15 @@ fn orientation_roundtrip_keeps_legacy_identity_and_numerical_state() {
             restored.roll,
             restored.calibration().unwrap().unwrap().dmin.to_array(),
             restored.calibration().unwrap().unwrap().dmax.to_array(),
-            restored.source(one).unwrap().photo
+            restored
+                .source(one)
+                .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
+                .photo
         ),
         numerical
     );
@@ -471,20 +541,35 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     let dir = tempfile::tempdir().unwrap();
     let (mut project, dmin_source_id, dmax_source_id) = fixture(dir.path());
     let calibration = project.calibration().unwrap().unwrap();
-    let before = Pipeline::new(
-        project.input,
-        project.roll,
-        project.source(dmax_source_id).unwrap().photo,
-        glam::DMat3::from_cols_array_2d(
-            &project
+    let before = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(
+            project
                 .source(dmax_source_id)
                 .unwrap()
-                .development
-                .camera_to_ap1,
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
+                .photo,
         ),
-    )
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            project.input,
+            project.roll,
+            layers,
+            glam::DMat3::from_cols_array_2d(
+                &project
+                    .source(dmax_source_id)
+                    .unwrap()
+                    .development
+                    .camera_to_ap1,
+            ),
+        )
+    })
     .unwrap()
-    .apply(DVec3::new(0.08, 0.04, 0.015))
+    .apply(DVec3::new(0.08, 0.04, 0.015), [0, 0])
     .unwrap();
     project.remove_from_filmstrip(dmin_source_id).unwrap();
     assert!(project.source(dmin_source_id).is_err());
@@ -497,20 +582,35 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     let restored = Project::load(&path).unwrap();
     assert_eq!(restored, project);
     assert_eq!(restored.calibration().unwrap().unwrap(), calibration);
-    let after = Pipeline::new(
-        restored.input,
-        restored.roll,
-        restored.source(dmax_source_id).unwrap().photo,
-        glam::DMat3::from_cols_array_2d(
-            &restored
+    let after = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(
+            restored
                 .source(dmax_source_id)
                 .unwrap()
-                .development
-                .camera_to_ap1,
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers[0]
+                .adjustment
+                .photo,
         ),
-    )
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            restored.input,
+            restored.roll,
+            layers,
+            glam::DMat3::from_cols_array_2d(
+                &restored
+                    .source(dmax_source_id)
+                    .unwrap()
+                    .development
+                    .camera_to_ap1,
+            ),
+        )
+    })
     .unwrap()
-    .apply(DVec3::new(0.08, 0.04, 0.015))
+    .apply(DVec3::new(0.08, 0.04, 0.015), [0, 0])
     .unwrap();
     assert_eq!(after, before);
     assert_eq!(restored.order, vec![dmax_source_id]);
@@ -647,7 +747,17 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
         serde_json::json!({"bytes": 1, "blake3": "a".repeat(64)});
     assert!(serde_json::from_value::<Project>(identity).is_err());
     let mut numeric = project.clone();
-    numeric.source_mut(source_id).unwrap().photo.wb.warmth = f64::INFINITY;
+    numeric
+        .source_mut(source_id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .wb
+        .warmth = f64::INFINITY;
     assert!(numeric.validate().is_err());
     let mut dimensions = project.clone();
     dimensions
@@ -701,8 +811,9 @@ fn mixed_source(path: &str, camera: &str, fixed_wb: [f64; 4], matrix: [[f64; 3];
             input_floor: CAMERA_INPUT_FLOOR,
         },
         reference_only: false,
-        photo: PhotoSettings::default(),
-        local_adjustments: None,
+        adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+            AdjustmentLayerSettings::default(),
+        )),
         repairs: Default::default(),
         orientation: Default::default(),
         crop: None,

@@ -35,8 +35,9 @@ pub(super) fn fixture_project(directory: &Path) -> host::Result<PathBuf> {
             input_floor: metadata.input_floor()?,
         },
         reference_only: false,
-        photo: Default::default(),
-        local_adjustments: None,
+        adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+            Default::default(),
+        )),
         repairs: Default::default(),
         orientation: Default::default(),
         crop: None,

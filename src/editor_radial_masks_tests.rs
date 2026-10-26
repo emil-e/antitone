@@ -22,8 +22,8 @@ fn layout(turns: usize, flipped: bool) -> CanvasLayout {
     )
 }
 
-fn mask() -> GradientMask {
-    GradientMask::Radial {
+fn mask() -> AdjustmentLayerCoverage {
+    AdjustmentLayerCoverage::Radial {
         center: SourcePoint([1120.125, 900.375]),
         radii: [480.25, 310.5],
         angle: 0.41,
@@ -31,7 +31,7 @@ fn mask() -> GradientMask {
     }
 }
 
-fn handle(mask: GradientMask, layout: CanvasLayout, target: Handle) -> egui::Pos2 {
+fn handle(mask: AdjustmentLayerCoverage, layout: CanvasLayout, target: Handle) -> egui::Pos2 {
     handles(mask, layout)
         .into_iter()
         .find(|(_, handle)| *handle == target)
@@ -56,7 +56,7 @@ fn radial_creation_keeps_the_pressed_center_and_expands_a_circle_through_every_o
             let draft = RadialDrag::begin(None, layout, start, controls::DEFAULT_RADIAL_FEATHER)
                 .update(end);
             draft.validate().unwrap();
-            let GradientMask::Radial {
+            let AdjustmentLayerCoverage::Radial {
                 center,
                 radii,
                 angle,
@@ -89,7 +89,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
     for flipped in [false, true] {
         let layout = layout(1, flipped);
         let original = mask();
-        let GradientMask::Radial {
+        let AdjustmentLayerCoverage::Radial {
             center,
             radii,
             angle,
@@ -125,7 +125,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
                 SourcePoint((DVec2::from_array(press.0) + delta).to_array()),
             );
             if matches!(target, Handle::Center | Handle::Axis(..)) {
-                let GradientMask::Radial {
+                let AdjustmentLayerCoverage::Radial {
                     center: moved,
                     radii: resized,
                     angle: rotated,
@@ -160,7 +160,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
             layout,
             SourcePoint((DVec2::from_array(center.0) + delta).to_array()),
         );
-        let GradientMask::Radial {
+        let AdjustmentLayerCoverage::Radial {
             center: moved,
             radii: resized,
             angle: rotated,
@@ -184,7 +184,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
                     DVec2::splat(radius * std::f64::consts::FRAC_1_SQRT_2),
                 ),
             );
-            let GradientMask::Radial {
+            let AdjustmentLayerCoverage::Radial {
                 center: moved,
                 radii: resized,
                 angle: rotated,
@@ -204,7 +204,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
 #[test]
 fn feather_handle_tracks_the_inner_boundary_and_full_feather_keeps_center_movement_available() {
     let layout = layout(0, false);
-    let GradientMask::Radial {
+    let AdjustmentLayerCoverage::Radial {
         center,
         radii,
         angle,
@@ -214,7 +214,7 @@ fn feather_handle_tracks_the_inner_boundary_and_full_feather_keeps_center_moveme
         unreachable!()
     };
     for feather in [0., 0.25, 0.8, 0.99] {
-        let mask = GradientMask::Radial {
+        let mask = AdjustmentLayerCoverage::Radial {
             center,
             radii,
             angle,
@@ -227,7 +227,7 @@ fn feather_handle_tracks_the_inner_boundary_and_full_feather_keeps_center_moveme
                 < 1e-6
         );
     }
-    let full = GradientMask::Radial {
+    let full = AdjustmentLayerCoverage::Radial {
         center,
         radii,
         angle,
@@ -254,7 +254,7 @@ fn zero_size_drafts_are_invalid_but_positive_small_ovals_and_hard_edges_keep_exi
     let horizontal =
         RadialDrag::begin(None, layout, start, 0.8).update(start + egui::vec2(20., 0.));
     horizontal.validate().unwrap();
-    let tiny = GradientMask::Radial {
+    let tiny = AdjustmentLayerCoverage::Radial {
         center: SourcePoint([120.5, 80.5]),
         radii: [1e-6, 2e-6],
         angle: 0.,

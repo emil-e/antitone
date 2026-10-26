@@ -1,5 +1,5 @@
 use super::*;
-use crate::{geometry::QuarterTurns, processing::Pipeline};
+use crate::{geometry::QuarterTurns, processing::InputPipeline};
 
 #[path = "editor_dust_persistence_tests.rs"]
 mod persistence;
@@ -499,16 +499,20 @@ fn grade_range_rejection_retains_neutral_evaluation_and_readmits_without_reheali
     let e = gpu_editor();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
-            e.photo.exposure = 16.;
+            e.adjustment_layer_settings.exposure = 16.;
             let response = high_response(e);
             let evaluated = response.evaluated.clone();
             e.receive_dust(response.request, Ok(Some(response)));
             assert!(e.document.dust.failed.is_empty());
             assert!(e.dust_gpu_snapshot(None).unwrap().0.is_empty());
             assert!(e.document.dust.render_error.is_some());
-            e.photo.exposure = 0.;
-            e.dust_validate_processing(e.calibration().unwrap(), e.roll, e.photo)
-                .unwrap();
+            e.adjustment_layer_settings.exposure = 0.;
+            e.dust_validate_processing(
+                e.calibration().unwrap(),
+                e.roll,
+                e.adjustment_layer_settings,
+            )
+            .unwrap();
             let snapshot = e.dust_gpu_snapshot(None).unwrap();
             assert_eq!(snapshot.0.len(), 1);
             assert!(Arc::ptr_eq(&snapshot.0[0].evaluated, &evaluated));
@@ -528,17 +532,27 @@ fn arriving_repairs_are_admitted_against_the_exact_view_grade_without_mutating_t
             let response = high_response(e);
             let evaluated = response.evaluated.clone();
             e.receive_dust(response.request, Ok(Some(response)));
-            let candidate = PhotoGradeSnapshot::new(
-                PhotoSettings {
-                    exposure: 16.,
-                    ..e.photo
-                },
-                Vec::new(),
+            let candidate = AdjustmentLayerSnapshot::new(
+                std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(
+                    AdjustmentLayerSettings {
+                        exposure: 16.,
+                        ..e.adjustment_layer_settings
+                    },
+                ))
+                .chain(Vec::new())
+                .collect(),
             )
             .unwrap();
             assert!(e.dust_gpu_snapshot(Some(&candidate)).unwrap().0.is_empty());
             assert!(e.document.dust.render_error.is_some());
-            let accepted = PhotoGradeSnapshot::new(e.photo, Vec::new()).unwrap();
+            let accepted = AdjustmentLayerSnapshot::new(
+                std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(
+                    e.adjustment_layer_settings,
+                ))
+                .chain(Vec::new())
+                .collect(),
+            )
+            .unwrap();
             let snapshot = e.dust_gpu_snapshot(Some(&accepted)).unwrap();
             assert_eq!(snapshot.0.len(), 1);
             assert!(Arc::ptr_eq(&snapshot.0[0].evaluated, &evaluated));
@@ -548,7 +562,10 @@ fn arriving_repairs_are_admitted_against_the_exact_view_grade_without_mutating_t
                 .source(e.current_source.unwrap())
                 .unwrap()
                 .clone();
-            source_candidate.photo.exposure = 16.;
+            source_candidate.adjustment_layers.as_mut().unwrap().layers[0]
+                .adjustment
+                .photo
+                .exposure = 16.;
             assert!(e.validate_source_candidate(&source_candidate).is_err());
             assert_eq!(e.document.project, before);
             e.schedule_dust(e.dust_signature().unwrap(), cx);
@@ -618,8 +635,8 @@ fn photo_widget_rejects_an_unsafe_repaired_value_before_accepting_the_grade() {
                 ],
                 cx,
             );
-            assert_eq!(e.photo.exposure, 0.);
-            assert!(e.status.starts_with("Edit rejected:"), "{}", e.status);
+            assert_eq!(e.adjustment_layer_settings.exposure, 0.);
+            assert!(e.status.contains("rejected:"), "{}", e.status);
             assert_eq!(e.dust_gpu_snapshot(None).unwrap().0.len(), 1);
         });
     });
@@ -769,7 +786,7 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         result.evaluated.pixels().collect::<Vec<_>>(),
         other.evaluated.pixels().collect::<Vec<_>>()
     );
-    let pipeline = Pipeline::ungraded(request.input, scan.camera_to_ap1).unwrap();
+    let pipeline = InputPipeline::ungraded(request.input, scan.camera_to_ap1).unwrap();
     let expected = crate::dust_repair::evaluate(&request.repair, scan.area, |p| {
         Ok(pipeline
             .apply(scan.pixel(p[0], p[1])?)?
@@ -808,7 +825,7 @@ fn repair_identity_excludes_roll_photo_grades_but_tracks_negative_interpretation
         warmth: 0.1,
         tint: -0.1,
     };
-    e.photo = PhotoSettings {
+    e.adjustment_layer_settings = AdjustmentLayerSettings {
         exposure: 0.5,
         contrast: 1.2,
         saturation: 0.7,
@@ -876,7 +893,7 @@ fn navigation_and_downstream_grades_do_not_cancel_an_admitted_heal() {
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             let request = captured_request(e);
             e.viewport.zoom = Some(2.);
-            e.photo.exposure = 1.;
+            e.adjustment_layer_settings.exposure = 1.;
             e.roll.exposure = 2.;
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             assert!(!request.cancelled.load(std::sync::atomic::Ordering::Relaxed));

@@ -31,7 +31,7 @@ fn linear_gestures_inverse_map_composition_and_allow_off_image_geometry() {
             layout,
         };
         let mask = drag.update(end);
-        let GradientMask::Linear { start: a, end: b } = mask else {
+        let AdjustmentLayerCoverage::Linear { start: a, end: b } = mask else {
             unreachable!()
         };
         assert!((screen_point(layout, a) - start).length() < 0.001);
@@ -53,7 +53,7 @@ fn linear_gestures_inverse_map_composition_and_allow_off_image_geometry() {
             layout,
         };
         let moved = move_drag.update(middle + egui::vec2(35., -20.));
-        let GradientMask::Linear { start, end } = moved else {
+        let AdjustmentLayerCoverage::Linear { start, end } = moved else {
             unreachable!()
         };
         let before = DVec2::from_array(b.0) - DVec2::from_array(a.0);
@@ -75,18 +75,18 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
             .project
             .source(editor.current_source.unwrap())
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap()
-            .adjustments[0]
+            .layers[0]
             .id;
-        editor.select_adjustment(adjustments::Target::Local(id));
+        editor.select_adjustment_layer(adjustment_layers::Target::Layer(id));
         let layout = editor.last_layout.unwrap().0;
         let context = egui::Context::default();
         for invert in [false, true] {
             editor
-                .edit_adjustments(|locals| {
-                    locals.adjustments[0].adjustment.invert = invert;
+                .edit_adjustment_layers(|layers| {
+                    layers.layers[0].adjustment.invert = invert;
                     Ok(())
                 })
                 .unwrap();
@@ -116,7 +116,9 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
                     _ => None,
                 })
                 .unwrap();
-            let GradientMask::Linear { start, end } = editor.selected_mask().unwrap().mask else {
+            let AdjustmentLayerCoverage::Linear { start, end } =
+                editor.selected_mask().unwrap().mask
+            else {
                 unreachable!()
             };
             let a = screen_point(layout, start);
@@ -126,9 +128,9 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
             assert_eq!(arrow[0], expected_tip);
         }
         let input = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
-        editor.document.visit.adjustments.show_coverage = true;
+        editor.document.visit.adjustment_layers.show_coverage = true;
         let mut output = context.run_ui(Default::default(), |ui| editor.paint_mask(ui, layout));
         output.textures_delta.clear();
         assert!(
@@ -140,7 +142,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
         assert_eq!(
             input.signature(),
             editor
-                .positive_processing(editor.input, editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap()
                 .signature()
         );
@@ -148,7 +150,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
 }
 
 #[test]
-fn closing_the_tool_cancels_preview_and_hides_handles_and_coverage_without_resetting_grades() {
+fn cancelling_gradient_interaction_discards_preview_without_resetting_the_selected_layer() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         editor.tab = 1;
@@ -157,23 +159,24 @@ fn closing_the_tool_cancels_preview_and_hides_handles_and_coverage_without_reset
             .project
             .source(editor.current_source.unwrap())
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap()
-            .adjustments[0]
+            .layers[0]
             .id;
-        editor.select_adjustment(adjustments::Target::Local(id));
-        editor.document.visit.adjustments.show_coverage = true;
+        editor.select_adjustment_layer(adjustment_layers::Target::Layer(id));
+        editor.document.visit.adjustment_layers.show_coverage = true;
         editor.working.compare = true;
         let before = editor.document.project.clone();
         let input = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         editor.begin_linear_mask(Some(id));
-        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
-            start: SourcePoint([122., 75.]),
-            end: SourcePoint([140., 88.]),
-        });
+        editor.document.visit.mask_edit.as_mut().unwrap().mask =
+            Some(AdjustmentLayerCoverage::Linear {
+                start: SourcePoint([122., 75.]),
+                end: SourcePoint([140., 88.]),
+            });
         let candidate = editor
             .document
             .visit
@@ -186,18 +189,21 @@ fn closing_the_tool_cancels_preview_and_hides_handles_and_coverage_without_reset
         editor.validate_source_candidate(&candidate).unwrap();
         editor.document.visit.mask_edit.as_mut().unwrap().preview = Some(candidate);
         assert!(editor.mask_preview_source().is_some());
-        editor.close_adjustments();
+        editor.finish_adjustment_layer_interaction();
         assert!(editor.document.visit.mask_edit.is_none());
         assert!(editor.working.compare);
-        assert_eq!(editor.adjustment_target(), adjustments::Target::Global);
-        assert!(!editor.mask_handles_available());
-        assert!(editor.mask_help().is_none());
+        assert_eq!(
+            editor.adjustment_layer_target(),
+            adjustment_layers::Target::Layer(id)
+        );
+        assert!(editor.mask_handles_available());
+        assert!(editor.mask_help().is_some());
         assert!(editor.mask_preview_source().is_none());
         assert_eq!(editor.document.project, before);
         assert_eq!(
             input.signature(),
             editor
-                .view_processing(editor.input, editor.roll, editor.photo)
+                .view_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap()
                 .signature()
         );
@@ -206,8 +212,8 @@ fn closing_the_tool_cancels_preview_and_hides_handles_and_coverage_without_reset
         let mut output = context.run_ui(Default::default(), |ui| editor.paint_mask(ui, layout));
         output.textures_delta.clear();
         assert!(
-            output.shapes.is_empty(),
-            "the eye preference must not keep artwork visible after closing"
+            !output.shapes.is_empty(),
+            "the selected gradient retains its handles after an individual gesture ends"
         );
     });
 }
@@ -247,10 +253,11 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
         assert!(!editor.working.compare);
         assert!(editor.document.visit.mask_edit.is_some());
         assert!(!editor.document.visit.mask_edit.as_ref().unwrap().valid());
-        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
-            start: SourcePoint([121., 74.]),
-            end: SourcePoint([141., 90.]),
-        });
+        editor.document.visit.mask_edit.as_mut().unwrap().mask =
+            Some(AdjustmentLayerCoverage::Linear {
+                start: SourcePoint([121., 74.]),
+                end: SourcePoint([141., 90.]),
+            });
         let (_, first) = editor
             .document
             .visit
@@ -276,10 +283,11 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
         assert!(editor.working.compare);
         assert_eq!(editor.document.project, before);
         editor.begin_linear_mask(None);
-        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
-            start: SourcePoint([121., 74.]),
-            end: SourcePoint([141., 90.]),
-        });
+        editor.document.visit.mask_edit.as_mut().unwrap().mask =
+            Some(AdjustmentLayerCoverage::Linear {
+                start: SourcePoint([121., 74.]),
+                end: SourcePoint([141., 90.]),
+            });
         editor.finish_mask(true);
         assert!(
             editor.document.visit.mask_edit.is_none(),
@@ -291,19 +299,19 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
             .project
             .source(editor.current_source.unwrap())
             .unwrap();
-        let locals = source.local_adjustments.as_ref().unwrap();
+        let layers = source.adjustment_layers.as_ref().unwrap();
         let prior = before
             .source(source.id)
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap();
-        assert_eq!(locals.next_id, prior.next_id + 1);
-        assert_eq!(locals.adjustments.len(), prior.adjustments.len() + 1);
-        assert_eq!(locals.adjustments.last().unwrap().id, first);
+        assert_eq!(layers.next_id, prior.next_id + 1);
+        assert_eq!(layers.layers.len(), prior.layers.len() + 1);
+        assert_eq!(layers.layers.last().unwrap().id, first);
         assert_eq!(
-            editor.adjustment_target(),
-            adjustments::Target::Local(first)
+            editor.adjustment_layer_target(),
+            adjustment_layers::Target::Layer(first)
         );
         editor
             .validate_document_candidate(&editor.document)
@@ -321,13 +329,13 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             .project
             .source(source)
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap()
             .clone();
-        let id = records.adjustments[0].id;
+        let id = records.layers[0].id;
         let input = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         let snapshot = input.grade().unwrap().snapshot().clone();
         editor.begin_linear_mask(Some(id));
@@ -341,7 +349,7 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
                 && editor.document.analysis_pending.is_none()
         );
         assert!(!editor.roll_edit_available());
-        let mask = GradientMask::Linear {
+        let mask = AdjustmentLayerCoverage::Linear {
             start: SourcePoint([100., 70.]),
             end: SourcePoint([149., 99.]),
         };
@@ -353,24 +361,28 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             .project
             .source(source)
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap();
         assert_eq!(accepted.next_id, records.next_id);
-        assert_eq!(accepted.adjustments[0].id, id);
+        assert_eq!(accepted.layers[0].id, id);
         assert_eq!(
-            accepted.adjustments[0].adjustment.photo,
-            records.adjustments[0].adjustment.photo
+            accepted.layers[0].adjustment.photo,
+            records.layers[0].adjustment.photo
         );
-        assert_eq!(accepted.adjustments[0].adjustment.mask, mask);
-        assert_eq!(editor.adjustment_target(), adjustments::Target::Local(id));
+        assert_eq!(accepted.layers[0].adjustment.mask, mask);
+        assert_eq!(
+            editor.adjustment_layer_target(),
+            adjustment_layers::Target::Layer(id)
+        );
         assert_eq!(input.grade().unwrap().snapshot(), &snapshot);
         let before = editor.document.project.clone();
         editor.begin_linear_mask(Some(id));
-        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(GradientMask::Linear {
-            start: SourcePoint([0., 0.]),
-            end: SourcePoint([0., 0.]),
-        });
+        editor.document.visit.mask_edit.as_mut().unwrap().mask =
+            Some(AdjustmentLayerCoverage::Linear {
+                start: SourcePoint([0., 0.]),
+                end: SourcePoint([0., 0.]),
+            });
         editor.finish_mask(true);
         assert!(
             editor.document.visit.mask_edit.is_none(),

@@ -30,7 +30,11 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
         dmax: DVec3::splat(128. / 4031.),
         input_floor: scan.input_floor,
     };
-    let grade = PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap();
+    let grade =
+        AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+            Default::default(),
+        )])
+        .unwrap();
     let look = Arc::new(
         crate::looks::LookAsset::new(
             "Lifetime fixture".into(),

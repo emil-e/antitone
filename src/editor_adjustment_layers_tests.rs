@@ -1,16 +1,16 @@
 use super::*;
-use crate::local_adjustments::{GradientMask, LocalAdjustment};
+use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage};
 
-fn ids(editor: &Editor) -> Vec<AdjustmentId> {
+fn ids(editor: &Editor) -> Vec<AdjustmentLayerId> {
     editor
         .document
         .project
         .source(editor.current_source.unwrap())
         .unwrap()
-        .local_adjustments
+        .adjustment_layers
         .as_ref()
         .unwrap()
-        .adjustments
+        .layers
         .iter()
         .map(|record| record.id)
         .collect()
@@ -22,40 +22,43 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
         let (mut editor, _, _) = processing::tests::fixture().await;
         let id = editor.current_source.unwrap();
         let order = ids(&editor);
-        editor.open_adjustments();
-        editor.apply_adjustment_action(Action::Select(Target::Local(order[0])));
-        assert_eq!(editor.adjustment_target(), Target::Local(order[0]));
+        editor.reveal_adjustment_layers();
+        editor.apply_adjustment_layer_action(Action::Select(Target::Layer(order[0])));
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         let accepted = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         let revision = editor.original.revision();
-        editor.apply_adjustment_action(Action::Rename(order[0], "Sky".into()));
+        editor.apply_adjustment_layer_action(Action::Rename(order[0], "Sky".into()));
         assert_eq!(
             editor.original.revision(),
             revision,
             "metadata must not invalidate processing"
         );
         let renamed = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         assert!(std::ptr::eq(
             accepted.grade().unwrap(),
             renamed.grade().unwrap()
         ));
-        editor.apply_adjustment_action(Action::Reorder(editor.order_drag(order[0]).unwrap(), 2));
+        editor.apply_adjustment_layer_action(Action::Reorder(
+            editor.order_drag(order[0]).unwrap(),
+            2,
+        ));
         assert_eq!(ids(&editor), vec![order[1], order[0]]);
-        assert_eq!(editor.adjustment_target(), Target::Local(order[0]));
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         assert_ne!(
             editor
-                .positive_processing(editor.input, editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap()
                 .signature(),
             accepted.signature()
         );
-        editor.apply_adjustment_action(Action::Enable(order[0], false));
+        editor.apply_adjustment_layer_action(Action::Enable(order[0], false));
         let source = editor.document.project.source(id).unwrap();
         assert!(
-            !source.local_adjustments.as_ref().unwrap().adjustments[1]
+            !source.adjustment_layers.as_ref().unwrap().layers[1]
                 .adjustment
                 .enabled
         );
@@ -63,25 +66,28 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
         let revision = editor.original.revision();
         assert!(
             editor
-                .edit_adjustments(|locals| {
-                    record_mut(locals, order[0])?.adjustment.photo.contrast = f64::NAN;
+                .edit_adjustment_layers(|layers| {
+                    record_mut(layers, order[0])?.adjustment.photo.contrast = f64::NAN;
                     Ok(())
                 })
                 .is_err()
         );
         assert_eq!(editor.document.project, before);
         assert_eq!(editor.original.revision(), revision);
-        editor.apply_adjustment_action(Action::Rename(order[0], "  ".into()));
+        editor.apply_adjustment_layer_action(Action::Rename(order[0], "  ".into()));
         assert_eq!(editor.document.project, before);
-        editor.apply_adjustment_action(Action::Reorder(editor.order_drag(order[0]).unwrap(), 3));
+        editor.apply_adjustment_layer_action(Action::Reorder(
+            editor.order_drag(order[0]).unwrap(),
+            3,
+        ));
         assert_eq!(editor.document.project, before);
         editor.busy = true;
-        editor.apply_adjustment_action(Action::Select(Target::Global));
-        editor.apply_adjustment_action(Action::Enable(order[0], true));
+        editor.apply_adjustment_layer_action(Action::Select(Target::None));
+        editor.apply_adjustment_layer_action(Action::Enable(order[0], true));
         assert_eq!(editor.document.project, before);
-        assert_eq!(editor.adjustment_target(), Target::Local(order[0]));
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         editor.current_source = None;
-        assert_eq!(editor.adjustment_target(), Target::Global);
+        assert_eq!(editor.adjustment_layer_target(), Target::None);
     });
 }
 
@@ -89,7 +95,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
 fn deferred_drag_captures_locals_after_an_outgoing_rename_commits() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
-        editor.open_adjustments();
+        editor.reveal_adjustment_layers();
         let order = ids(&editor);
         let key = OrderKey {
             loaded: editor.id,
@@ -115,16 +121,16 @@ fn deferred_drag_captures_locals_after_an_outgoing_rename_commits() {
             editor.apply_control_command(command, &cx);
         }
         assert_eq!(ids(&editor), vec![order[1], order[0]]);
-        let locals = editor
+        let layers = editor
             .document
             .project
             .source(key.source)
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap();
-        assert_eq!(locals.adjustments[1].name, "Renamed");
-        assert!(!editor.document.visit.adjustments.dragging());
+        assert_eq!(layers.layers[1].name, "Renamed");
+        assert!(!editor.document.visit.adjustment_layers.dragging());
     });
 }
 
@@ -133,17 +139,17 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         editor
-            .edit_adjustments(|locals| {
-                let mut adjustment = locals.adjustments[0].adjustment;
-                adjustment.photo = PhotoSettings::default();
-                locals.add("Identity".into(), adjustment)?;
+            .edit_adjustment_layers(|layers| {
+                let mut adjustment = layers.layers[0].adjustment;
+                adjustment.photo = AdjustmentLayerSettings::default();
+                layers.add("Identity".into(), adjustment)?;
                 Ok(())
             })
             .unwrap();
         let order = ids(&editor);
-        editor.select_adjustment(Target::Local(order[0]));
+        editor.select_adjustment_layer(Target::Layer(order[0]));
         let input = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         let snapshot = input.grade().unwrap().snapshot().clone();
         let next_id = editor
@@ -151,7 +157,7 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
             .project
             .source(editor.current_source.unwrap())
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap()
             .next_id;
@@ -163,14 +169,14 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
             .reorder_adjustment(editor.order_drag(order[0]).unwrap(), 0)
             .unwrap();
         assert_eq!(ids(&editor), order);
-        assert_eq!(editor.adjustment_target(), Target::Local(order[0]));
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         assert_eq!(
             editor
                 .document
                 .project
                 .source(editor.current_source.unwrap())
                 .unwrap()
-                .local_adjustments
+                .adjustment_layers
                 .as_ref()
                 .unwrap()
                 .next_id,
@@ -186,12 +192,12 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
         for changed_records in [false, true] {
             let (mut editor, _, _) = processing::tests::fixture().await;
             let id = ids(&editor)[0];
-            editor.select_adjustment(Target::Local(id));
+            editor.select_adjustment_layer(Target::Layer(id));
             let drag = editor.order_drag(id).unwrap();
             if changed_records {
                 editor
-                    .edit_adjustments(|locals| {
-                        locals.adjustments[0].name = "Renamed during drag".into();
+                    .edit_adjustment_layers(|layers| {
+                        layers.layers[0].name = "Renamed during drag".into();
                         Ok(())
                     })
                     .unwrap();
@@ -201,14 +207,14 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
             let before = editor.document.project.clone();
             let revision = editor.original.revision();
             let input = editor
-                .positive_processing(editor.input, editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap();
             assert!(editor.reorder_adjustment(drag, 2).is_err());
             assert_eq!(editor.document.project, before);
             assert_eq!(editor.original.revision(), revision);
-            assert_eq!(editor.adjustment_target(), Target::Local(id));
+            assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
             let current = editor
-                .positive_processing(editor.input, editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap();
             assert!(std::ptr::eq(
                 input.grade().unwrap(),
@@ -219,49 +225,39 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
 }
 
 #[test]
-fn drawer_visibility_routes_global_and_reopening_validates_source_owned_selection() {
+fn finishing_canvas_interaction_preserves_the_selected_layer_and_accepted_grade() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
-        let source = editor.current_source.unwrap();
+
         let order = ids(&editor);
-        editor.select_adjustment(Target::Local(order[1]));
+        editor.select_adjustment_layer(Target::Layer(order[1]));
         let before = editor.document.project.clone();
-        let input = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+        let processing = editor
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
-        editor.close_adjustments();
-        assert_eq!(editor.adjustment_target(), Target::Global);
-        assert!(!editor.document.visit.adjustments.drawer_open());
-        assert!(!editor.mask_handles_available());
+        editor.finish_adjustment_layer_interaction();
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[1]));
         assert_eq!(editor.document.project, before);
         assert_eq!(
-            input.signature(),
+            processing.signature(),
             editor
-                .positive_processing(editor.input, editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap()
                 .signature()
         );
-        editor.open_adjustments();
-        assert_eq!(editor.adjustment_target(), Target::Local(order[1]));
-        editor.close_adjustments();
         editor
-            .edit_adjustments(|locals| locals.remove(order[1]))
+            .edit_adjustment_layers(|layers| layers.remove(order[1]))
             .unwrap();
-        editor.open_adjustments();
-        assert_eq!(editor.adjustment_target(), Target::Local(order[0]));
-        editor.close_adjustments();
-        let mut other = editor.document.project.source(source).unwrap().clone();
-        other.id = SourceId(0);
-        other.path = "another-local-owner.ARW".into();
-        let other = editor.document.project.add_source(other).unwrap();
-        editor.current_source = Some(other);
-        let before = editor.document.project.clone();
-        editor.open_adjustments();
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         assert_eq!(
-            editor.document.visit.adjustments.selected,
-            Some((other, order[0]))
+            editor.adjustment_layer_settings,
+            editor.selected_adjustment_layer_settings().unwrap()
         );
-        assert_eq!(editor.document.project, before);
+        editor
+            .edit_adjustment_layers(|layers| layers.remove(order[0]))
+            .unwrap();
+        assert_eq!(editor.adjustment_layer_target(), Target::None);
+        assert!(editor.selected_adjustment_layer_settings().is_none());
     });
 }
 
@@ -272,8 +268,8 @@ fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 let id = ids(editor)[1];
-                editor.select_adjustment(Target::Local(id));
-                editor.document.visit.adjustments.show_coverage = true;
+                editor.select_adjustment_layer(Target::Layer(id));
+                editor.document.visit.adjustment_layers.show_coverage = true;
                 editor.sync_document();
                 let accepted = editor.document.project.clone();
                 let visit = editor.document.visit.view;
@@ -281,9 +277,9 @@ fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
                 let request = editor.document_pending.unwrap();
                 editor.document_prepared(request, Err("candidate rejected".into()));
                 assert_eq!(editor.document.visit.view, visit);
-                assert_eq!(editor.adjustment_target(), Target::Local(id));
-                assert!(editor.document.visit.adjustments.drawer_open());
-                assert!(editor.document.visit.adjustments.show_coverage);
+                assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
+                assert!((editor.tab == 1));
+                assert!(editor.document.visit.adjustment_layers.show_coverage);
                 assert_eq!(editor.document.project, accepted);
             });
         });
@@ -291,38 +287,39 @@ fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
 }
 
 #[test]
-fn late_local_actions_cannot_mutate_the_stack_after_the_tool_closes() {
+fn deferred_layer_actions_cannot_mutate_the_stack_after_leaving_the_photo_stage() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
-        editor.select_adjustment(Target::Local(id));
+        editor.select_adjustment_layer(Target::Layer(id));
         let drag = editor.order_drag(id).unwrap();
-        editor.close_adjustments();
+        editor.tab = 0;
+        editor.finish_adjustment_layer_interaction();
         let before = editor.document.project.clone();
-        editor.apply_adjustment_action(Action::Enable(id, false));
-        editor.apply_adjustment_action(Action::Reorder(drag, 2));
-        editor.apply_adjustment_action(Action::Delete(id));
-        editor.apply_adjustment_action(Action::Select(Target::Local(id)));
-        assert!(!editor.document.visit.adjustments.confirming());
-        assert!(!editor.document.visit.adjustments.drawer_open());
+        editor.apply_adjustment_layer_action(Action::Enable(id, false));
+        editor.apply_adjustment_layer_action(Action::Reorder(drag, 2));
+        editor.apply_adjustment_layer_action(Action::Delete(id));
+        editor.apply_adjustment_layer_action(Action::Select(Target::Layer(id)));
+        assert!(!editor.document.visit.adjustment_layers.confirming());
+        assert!(!(editor.tab == 1));
         assert_eq!(editor.document.project, before);
-        assert_eq!(editor.adjustment_target(), Target::Global);
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
     });
 }
 
 #[test]
-fn explicitly_closing_during_a_roll_pick_prevents_its_return_context_reopening_locals() {
+fn cancelling_layer_interaction_during_a_roll_pick_preserves_its_selected_target() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
-        editor.select_adjustment(Target::Local(id));
+        editor.select_adjustment_layer(Target::Layer(id));
         editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
         assert!(editor.document.pick_return.is_some());
         let before = editor.document.project.clone();
-        editor.close_adjustments();
+        editor.finish_adjustment_layer_interaction();
         editor.finish_pick(&crate::application::UiContext::render_only());
-        assert_eq!(editor.adjustment_target(), Target::Global);
-        assert!(!editor.document.visit.adjustments.drawer_open());
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
+        assert_eq!(editor.tab, 1);
         assert_eq!(editor.document.project, before);
     });
 }
@@ -332,18 +329,18 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let accepted = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         let before = editor.document.project.clone();
         let revision = editor.original.revision();
         let viewport = editor.viewport;
-        let result = editor.edit_adjustments(|locals| {
-            let mut adjustment = locals.adjustments[0].adjustment;
+        let result = editor.edit_adjustment_layers(|layers| {
+            let mut adjustment = layers.layers[0].adjustment;
             adjustment.photo.exposure = 16.;
             adjustment.photo.contrast = 1.6;
             adjustment.strength = 1.;
             for _ in 0..16 {
-                locals.add("Unsupported".into(), adjustment)?;
+                layers.add("Unsupported".into(), adjustment)?;
             }
             Ok(())
         });
@@ -352,7 +349,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
         assert_eq!(editor.original.revision(), revision);
         assert_eq!(editor.viewport, viewport);
         let current = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         assert!(std::ptr::eq(
             accepted.grade().unwrap(),
@@ -367,24 +364,24 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
         for reorder in [false, true] {
             let (mut editor, _, _) = processing::tests::fixture().await;
             editor.roll = RollSettings::default();
-            editor.photo = PhotoSettings::default();
+            editor.adjustment_layer_settings = AdjustmentLayerSettings::default();
             assert_eq!(editor.gamma(), 0.6);
             let source = editor
                 .document
                 .project
                 .source_mut(editor.current_source.unwrap())
                 .unwrap();
-            let base = source.local_adjustments.as_ref().unwrap().adjustments[0].adjustment;
+            let base = source.adjustment_layers.as_ref().unwrap().layers[0].adjustment;
             let photos = if reorder {
                 let mut photos = vec![
-                    PhotoSettings {
+                    AdjustmentLayerSettings {
                         contrast: 1.4,
                         ..Default::default()
                     };
                     4
                 ];
                 photos.extend(
-                    [PhotoSettings {
+                    [AdjustmentLayerSettings {
                         exposure: 16.,
                         ..Default::default()
                     }; 2],
@@ -392,7 +389,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 photos
             } else {
                 vec![
-                    PhotoSettings {
+                    AdjustmentLayerSettings {
                         exposure: 16.,
                         ..Default::default()
                     };
@@ -400,12 +397,12 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 ]
             };
             let last = photos.len() - 1;
-            let mut locals = LocalAdjustments::default();
+            let mut layers = AdjustmentLayers::default();
             for (index, photo) in photos.into_iter().enumerate() {
-                locals
+                layers
                     .add(
                         "Range boundary".into(),
-                        LocalAdjustment {
+                        AdjustmentLayer {
                             photo,
                             enabled: reorder || index < last,
                             strength: 1.,
@@ -414,17 +411,18 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                     )
                     .unwrap();
             }
-            let subject = locals.adjustments[last].id;
-            source.local_adjustments = Some(locals);
+            let subject = layers.layers[last].id;
+            source.adjustment_layers = Some(layers);
+            editor.adjustment_layer_settings = editor.selected_adjustment_layer_settings().unwrap();
             editor.sync_document();
-            editor.select_adjustment(Target::Local(subject));
+            editor.select_adjustment_layer(Target::Layer(subject));
             let accepted = editor
-                .positive_processing(editor.input, editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap_or_else(|error| panic!("accepted fixture reorder={reorder}: {error}"));
             let before = editor.document.project.clone();
             let revision = editor.original.revision();
             let viewport = editor.viewport;
-            editor.apply_adjustment_action(if reorder {
+            editor.apply_adjustment_layer_action(if reorder {
                 Action::Reorder(editor.order_drag(subject).unwrap(), 0)
             } else {
                 Action::Enable(subject, true)
@@ -435,11 +433,11 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 editor.status
             );
             assert_eq!(editor.document.project, before);
-            assert_eq!(editor.adjustment_target(), Target::Local(subject));
+            assert_eq!(editor.adjustment_layer_target(), Target::Layer(subject));
             assert_eq!(editor.original.revision(), revision);
             assert_eq!(editor.viewport, viewport);
             let current = editor
-                .positive_processing(editor.input, editor.roll, editor.photo)
+                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap();
             assert!(std::ptr::eq(
                 accepted.grade().unwrap(),
@@ -454,20 +452,20 @@ fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         editor.roll = RollSettings::default();
-        editor.photo = PhotoSettings::default();
+        editor.adjustment_layer_settings = AdjustmentLayerSettings::default();
         let source = editor
             .document
             .project
             .source_mut(editor.current_source.unwrap())
             .unwrap();
-        let base = source.local_adjustments.as_ref().unwrap().adjustments[0].adjustment;
-        let mut locals = LocalAdjustments::default();
+        let base = source.adjustment_layers.as_ref().unwrap().layers[0].adjustment;
+        let mut layers = AdjustmentLayers::default();
         for index in 0..4 {
-            locals
+            layers
                 .add(
                     "Exposure".into(),
-                    LocalAdjustment {
-                        photo: PhotoSettings {
+                    AdjustmentLayer {
+                        photo: AdjustmentLayerSettings {
                             exposure: 16.,
                             ..Default::default()
                         },
@@ -478,30 +476,37 @@ fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
                 )
                 .unwrap();
         }
-        let subject = locals.adjustments[3].id;
-        let allocator = locals.next_id;
-        source.local_adjustments = Some(locals);
+        let subject = layers.layers[3].id;
+        let allocator = layers.next_id;
+        source.adjustment_layers = Some(layers);
+        editor.refresh_adjustment_layer_selection();
         editor.sync_document();
-        editor.select_adjustment(Target::Local(subject));
+        editor.select_adjustment_layer(Target::Layer(subject));
         let before = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         let viewport = editor.viewport;
-        editor.apply_adjustment_action(Action::Enable(subject, true));
-        let locals = editor
+        editor.apply_adjustment_layer_action(Action::Enable(subject, true));
+        let layers = editor
             .document
             .project
             .source(editor.current_source.unwrap())
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap();
-        assert!(locals.adjustments[3].adjustment.enabled);
-        assert_eq!(locals.next_id, allocator);
-        assert_eq!(editor.adjustment_target(), Target::Local(subject));
+        assert!(layers.layers[3].adjustment.enabled);
+        assert!(
+            layers
+                .layers
+                .iter()
+                .all(|record| record.adjustment.photo.exposure == 16.)
+        );
+        assert_eq!(layers.next_id, allocator);
+        assert_eq!(editor.adjustment_layer_target(), Target::Layer(subject));
         assert_eq!(editor.viewport, viewport);
         let current = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         assert_ne!(before.signature(), current.signature());
     });
@@ -521,12 +526,15 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
                     other.path = "other-fixture.ARW".into();
                     let other = editor.document.project.add_source(other).unwrap();
                     editor.sync_document();
-                    editor.select_adjustment(Target::Local(target));
+                    editor.select_adjustment_layer(Target::Layer(target));
                     editor.begin_pick(Pick::Dmin, cx);
                     let mut ready = editor.document.visit.ready.take().unwrap();
                     editor.pick_roll_source(other, cx);
                     assert_eq!(editor.current_source, Some(other));
-                    assert_eq!(editor.adjustment_target(), Target::Global);
+                    assert_eq!(
+                        editor.adjustment_layer_target(),
+                        Target::Layer(ids(editor)[1])
+                    );
                     assert!(editor.document.visit.source.pending());
                     // Both fixture sources use identical pixels/metadata; deliver the other owner's Ready.
                     ready.path = editor.document.source_path(other).unwrap();
@@ -545,21 +553,21 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
                             .project
                             .source_mut(original)
                             .unwrap()
-                            .local_adjustments
+                            .adjustment_layers
                             .as_mut()
                             .unwrap()
-                            .adjustments
+                            .layers
                             .clear();
                     }
                     editor.finish_pick(cx);
                     assert_eq!(editor.current_source, Some(original));
                     assert!(editor.document.pick_return.is_none());
                     assert_eq!(
-                        editor.adjustment_target(),
+                        editor.adjustment_layer_target(),
                         if removed {
-                            Target::Global
+                            Target::None
                         } else {
-                            Target::Local(target)
+                            Target::Layer(target)
                         }
                     );
                     assert!(editor.document.visit.source.pending());
@@ -579,17 +587,17 @@ fn disabling_and_editing_an_inactive_record_does_not_drop_its_mask_or_controls()
             .project
             .source(editor.current_source.unwrap())
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap()
-            .adjustments[0]
+            .layers[0]
             .adjustment
             .mask;
-        editor.open_adjustments();
-        editor.apply_adjustment_action(Action::Enable(id, false));
+        editor.reveal_adjustment_layers();
+        editor.apply_adjustment_layer_action(Action::Enable(id, false));
         editor
-            .edit_adjustments(|locals| {
-                record_mut(locals, id)?.adjustment.photo.exposure = 1.25;
+            .edit_adjustment_layers(|layers| {
+                record_mut(layers, id)?.adjustment.photo.exposure = 1.25;
                 Ok(())
             })
             .unwrap();
@@ -598,26 +606,26 @@ fn disabling_and_editing_an_inactive_record_does_not_drop_its_mask_or_controls()
             .project
             .source(editor.current_source.unwrap())
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap()
-            .adjustments[0]
+            .layers[0]
             .adjustment;
         assert_eq!(adjustment.mask, mask);
         assert_eq!(adjustment.photo.exposure, 1.25);
         assert!(!adjustment.enabled);
-        assert!(matches!(mask, GradientMask::Linear { .. }));
-        editor.apply_adjustment_action(Action::Enable(id, true));
+        assert!(matches!(mask, AdjustmentLayerCoverage::Linear { .. }));
+        editor.apply_adjustment_layer_action(Action::Enable(id, true));
         assert!(
             editor
                 .document
                 .project
                 .source(editor.current_source.unwrap())
                 .unwrap()
-                .local_adjustments
+                .adjustment_layers
                 .as_ref()
                 .unwrap()
-                .adjustments[0]
+                .layers[0]
                 .adjustment
                 .enabled
         );

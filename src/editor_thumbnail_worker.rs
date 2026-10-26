@@ -180,7 +180,7 @@ impl Worker {
             source
         };
         let tick = std::time::Instant::now();
-        let grade = Arc::new(crate::gpu::GpuPhotoGrade::new(
+        let grade = Arc::new(crate::gpu::GpuAdjustmentLayers::new(
             &self.device,
             recipe.neutral.processing_input()?,
             recipe.roll,

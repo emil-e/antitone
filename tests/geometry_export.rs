@@ -1,4 +1,5 @@
 #![cfg(all(feature = "export", feature = "ocio-reference", target_os = "macos"))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     color::ap1_to_ap0,
     crop::Crop,
@@ -169,10 +170,7 @@ fn rotated_diamond_exports_filter_after_aces_and_preserve_signed_hdr_scene_data(
 
 #[test]
 fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction() {
-    use antitone::{
-        flat_field::FlatField,
-        processing::{Calibration, PhotoSettings, Pipeline},
-    };
+    use antitone::{flat_field::FlatField, processing::Calibration};
     use glam::DMat3;
     let directory = tempfile::tempdir().unwrap();
     let area = SourceRegion {
@@ -219,13 +217,23 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
         } else {
             base
         };
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             contrast: 0.8,
             saturation: 1.3,
-            ..PhotoSettings::default()
+            ..AdjustmentLayerSettings::default()
         };
-        let pipeline =
-            Pipeline::new(InputSettings::negative(calibration), roll, photo, matrix).unwrap();
+        let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            antitone::adjustment_layers::AdjustmentLayer::global(photo),
+        ])
+        .and_then(|layers| {
+            antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                InputSettings::negative(calibration),
+                roll,
+                layers,
+                matrix,
+            )
+        })
+        .unwrap();
         let source = |x: u32, y: u32| {
             pipeline
                 .apply(
@@ -235,6 +243,7 @@ fn native_camera_flat_field_compositions_reopen_with_source_anchored_correction(
                         } else {
                             DVec3::ONE
                         },
+                    [0, 0],
                 )
                 .map(|p| p.rgb)
         };

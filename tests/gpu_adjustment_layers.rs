@@ -1,15 +1,16 @@
 #![cfg(feature = "gpu")]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::{AP1_TO_XYZ, BRADFORD, Balance},
     flat_field::FlatField,
     geometry::{SourcePoint, SourceRaster, SourceRegion},
     gpu::{
-        GpuFlatField, GpuPhotoGrade, ProcessingKernel, ProcessingParameters, ProcessingSource,
-        SourceGeometry,
+        GpuAdjustmentLayers, GpuFlatField, ProcessingKernel, ProcessingParameters,
+        ProcessingSource, SourceGeometry,
     },
-    local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot},
     processing::{
-        Calibration, DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response, RollSettings,
+        Calibration, DEFAULT_GAMMA, InputPipeline, InputSettings, Response, RollSettings,
     },
 };
 use glam::{DMat3, DVec2, DVec3};
@@ -19,10 +20,7 @@ mod reference;
 
 fn context() -> (wgpu::Device, wgpu::Queue, ProcessingKernel) {
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        let instance = antitone::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let kernel = ProcessingKernel::new(&device).await.unwrap();
@@ -46,8 +44,8 @@ fn matrix() -> DMat3 {
     )
 }
 
-fn adjustment(mask: GradientMask, photo: PhotoSettings) -> LocalAdjustment {
-    LocalAdjustment {
+fn adjustment(mask: AdjustmentLayerCoverage, photo: AdjustmentLayerSettings) -> AdjustmentLayer {
+    AdjustmentLayer {
         mask,
         photo,
         enabled: true,
@@ -104,7 +102,7 @@ fn read(
     kernel: &ProcessingKernel,
     source: &ProcessingSource,
     n: usize,
-    grade: &GpuPhotoGrade,
+    grade: &GpuAdjustmentLayers,
     legacy: Option<ProcessingParameters>,
 ) -> Vec<[f32; 4]> {
     let size = n as u64 * 16;
@@ -149,16 +147,17 @@ fn smooth(t: f64) -> f64 {
     if t <= 0.5 { v } else { 1. - v }
 }
 
-fn coverage(mask: GradientMask, point: [f64; 2]) -> f64 {
+fn coverage(mask: AdjustmentLayerCoverage, point: [f64; 2]) -> f64 {
     let point = DVec2::from_array(point);
     match mask {
-        GradientMask::Linear { start, end } => {
+        AdjustmentLayerCoverage::Global {} => 1.,
+        AdjustmentLayerCoverage::Linear { start, end } => {
             let start = DVec2::from_array(start.0);
             let delta = DVec2::from_array(end.0) - start;
             let length = delta.x.hypot(delta.y);
             smooth(((point - start) / length).dot(delta / length))
         }
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center,
             radii,
             angle,
@@ -179,8 +178,8 @@ fn coverage(mask: GradientMask, point: [f64; 2]) -> f64 {
     }
 }
 
-fn local_reference(mut rgb: DVec3, locals: &[LocalAdjustment], point: [f64; 2]) -> DVec3 {
-    for a in locals {
+fn local_reference(mut rgb: DVec3, layers: &[AdjustmentLayer], point: [f64; 2]) -> DVec3 {
+    for a in layers {
         if !a.enabled || a.strength == 0. {
             continue;
         }
@@ -225,8 +224,8 @@ fn assert_reference(
     actual: &[[f32; 4]],
     pixels: &[[u16; 4]],
     raster: SourceRaster,
-    snapshot: &PhotoGradeSnapshot,
-    global: Pipeline,
+    snapshot: &AdjustmentLayerSnapshot,
+    global: InputPipeline,
     field: Option<&FlatField>,
 ) {
     let mut signed = false;
@@ -242,7 +241,7 @@ fn assert_reference(
                 .map(|field| field.gain(point).unwrap())
                 .unwrap_or(DVec3::ONE);
         let inverted = global.apply(scan).unwrap();
-        let expected = local_reference(inverted.rgb, snapshot.locals(), point);
+        let expected = local_reference(inverted.rgb, snapshot.layers(), point);
         let flags = inverted
             .floored
             .iter()
@@ -256,9 +255,9 @@ fn assert_reference(
         for c in 0..3 {
             assert!(
                 actual[i][c].is_finite() && (actual[i][c] as f64 - expected[c]).abs() <= allowed,
-                "pixel={i} point={point:?} channel={c} GPU={:?} reference={expected:?} locals={:?}",
+                "pixel={i} point={point:?} channel={c} GPU={:?} reference={expected:?} layers={:?}",
                 actual[i],
-                snapshot.locals()
+                snapshot.layers()
             );
         }
     }
@@ -297,19 +296,19 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
         );
         for case in 0..18 {
             let mask = if case % 2 == 0 {
-                GradientMask::Linear {
+                AdjustmentLayerCoverage::Linear {
                     start: SourcePoint([140.5, 90.5]),
                     end: SourcePoint([180.5, 130.5]),
                 }
             } else {
-                GradientMask::Radial {
+                AdjustmentLayerCoverage::Radial {
                     center: SourcePoint([184.5, 124.5]),
                     radii: [60., 32.],
                     angle: [0., 0.371, std::f64::consts::FRAC_PI_2][case / 2 % 3],
                     feather: [0., 0.5, 1.][case / 6 % 3],
                 }
             };
-            let photo = PhotoSettings {
+            let photo = AdjustmentLayerSettings {
                 exposure: [0.713456, -1.7, 2.31][case % 3],
                 wb: Balance {
                     warmth: [-1., 0., 1.][case / 3 % 3],
@@ -324,14 +323,14 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
             let mut local = adjustment(mask, photo);
             local.invert = case % 4 == 0;
             local.strength = [1., 0.73, 0.31][case / 3 % 3];
-            let mut locals = vec![local];
+            let mut layers = vec![local];
             if case >= 12 {
                 let mut second = adjustment(
-                    GradientMask::Linear {
+                    AdjustmentLayerCoverage::Linear {
                         start: SourcePoint([210.5, 84.5]),
                         end: SourcePoint([160.5, 150.5]),
                     },
-                    PhotoSettings {
+                    AdjustmentLayerSettings {
                         exposure: -0.7,
                         contrast: 1.6,
                         saturation: 1.3,
@@ -339,21 +338,24 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
                     },
                 );
                 second.strength = 0.61;
-                locals.push(second);
+                layers.push(second);
                 if case % 2 == 0 {
-                    locals.reverse();
+                    layers.reverse();
                 }
             }
-            let snapshot = PhotoGradeSnapshot::new(
-                PhotoSettings {
-                    contrast: 1.21,
-                    saturation: 1.2,
-                    ..Default::default()
-                },
-                locals,
+            let snapshot = AdjustmentLayerSnapshot::new(
+                std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+                    AdjustmentLayerSettings {
+                        contrast: 1.21,
+                        saturation: 1.2,
+                        ..Default::default()
+                    },
+                ))
+                .chain(layers)
+                .collect(),
             )
             .unwrap();
-            let grade = GpuPhotoGrade::new(
+            let grade = GpuAdjustmentLayers::new(
                 &device,
                 calibration(),
                 RollSettings::default(),
@@ -377,13 +379,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
                 &pixels,
                 SourceRaster::new(area, size).unwrap(),
                 &snapshot,
-                Pipeline::new(
-                    calibration(),
-                    RollSettings::default(),
-                    snapshot.global(),
-                    matrix(),
-                )
-                .unwrap(),
+                InputPipeline::new(calibration(), RollSettings::default(), matrix()).unwrap(),
                 corrected.then_some(field.as_ref()),
             );
         }
@@ -402,21 +398,21 @@ fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
         },
         ..RollSettings::default()
     };
-    let snapshot = PhotoGradeSnapshot::new(
-        PhotoSettings {
+    let snapshot = AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
             wb: Balance {
                 warmth: -0.11,
                 tint: 0.07,
             },
             contrast: 1.03,
             ..Default::default()
-        },
-        vec![adjustment(
-            GradientMask::Linear {
+        }),
+        adjustment(
+            AdjustmentLayerCoverage::Linear {
                 start: SourcePoint([125., 83.]),
                 end: SourcePoint([141., 99.]),
             },
-            PhotoSettings {
+            AdjustmentLayerSettings {
                 exposure: 0.3,
                 wb: Balance {
                     warmth: 0.13,
@@ -426,10 +422,10 @@ fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
                 saturation: 1.1,
                 ..Default::default()
             },
-        )],
-    )
+        ),
+    ])
     .unwrap();
-    let grade = GpuPhotoGrade::new(
+    let grade = GpuAdjustmentLayers::new(
         &device,
         calibration(),
         roll,
@@ -453,7 +449,7 @@ fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
         &pixels,
         SourceRaster::new(area, size).unwrap(),
         &snapshot,
-        Pipeline::new(calibration(), roll, snapshot.global(), matrix()).unwrap(),
+        InputPipeline::new(calibration(), roll, matrix()).unwrap(),
         None,
     );
 }
@@ -465,10 +461,10 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
     let size = [31, 19];
     for (gamma, global, count) in [0.60, 0.65].into_iter().flat_map(|gamma| {
         [
-            (gamma, PhotoSettings::default(), 3),
+            (gamma, AdjustmentLayerSettings::default(), 3),
             (
                 gamma,
-                PhotoSettings {
+                AdjustmentLayerSettings {
                     exposure: -2.,
                     contrast: 1.05,
                     saturation: 1.2,
@@ -487,22 +483,22 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
             balance: Balance::default(),
         };
         let roll = RollSettings::default();
-        let locals = (0..count)
-            .map(|i| LocalAdjustment {
+        let layers: Vec<_> = (0..count)
+            .map(|i| AdjustmentLayer {
                 mask: if i % 2 == 1 {
-                    GradientMask::Radial {
+                    AdjustmentLayerCoverage::Radial {
                         center: SourcePoint([4100., 2750.]),
                         radii: [3500., 2300.],
                         angle: 0.3,
                         feather: 0.8,
                     }
                 } else {
-                    GradientMask::Linear {
+                    AdjustmentLayerCoverage::Linear {
                         start: SourcePoint([900., 800.]),
                         end: SourcePoint([7000., 4400.]),
                     }
                 },
-                photo: PhotoSettings {
+                photo: AdjustmentLayerSettings {
                     exposure: 0.25,
                     wb: Balance {
                         warmth: 0.005,
@@ -519,14 +515,24 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
                 strength: 0.6,
             })
             .collect();
-        let snapshot = PhotoGradeSnapshot::new(global, locals).unwrap();
+        let snapshot = AdjustmentLayerSnapshot::new(
+            std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(global))
+                .chain(layers)
+                .collect(),
+        )
+        .unwrap();
         for matrix in [DMat3::IDENTITY, matrix()] {
-            let grade = GpuPhotoGrade::new(&device, input, roll, snapshot.clone(), matrix, area)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "gamma={gamma} global={global:?} count={count} matrix={matrix:?}: {error}"
-                    )
-                });
+            let grade = GpuAdjustmentLayers::new(
+                &device,
+                input,
+                roll,
+                snapshot.clone(),
+                matrix,
+                area,
+            )
+            .unwrap_or_else(|error| {
+                panic!("gamma={gamma} global={global:?} count={count} matrix={matrix:?}: {error}")
+            });
             let (source, pixels) = source(&device, area, size, matrix, None);
             let actual = read(
                 &device,
@@ -542,7 +548,7 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
                 &pixels,
                 SourceRaster::new(area, size).unwrap(),
                 &snapshot,
-                Pipeline::new(input, roll, snapshot.global(), matrix).unwrap(),
+                InputPipeline::new(input, roll, matrix).unwrap(),
                 None,
             );
         }
@@ -598,13 +604,13 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                 SourceGeometry::new([120, 80, 32, 8], [32, 8]).unwrap(),
             )
             .unwrap();
-        let mut locals = vec![
+        let mut layers = vec![
             adjustment(
-                GradientMask::Linear {
+                AdjustmentLayerCoverage::Linear {
                     start: SourcePoint([121., 80.]),
                     end: SourcePoint([149., 87.]),
                 },
-                PhotoSettings {
+                AdjustmentLayerSettings {
                     exposure: 0.5,
                     wb: Balance {
                         warmth: 0.02,
@@ -614,13 +620,13 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                 },
             ),
             adjustment(
-                GradientMask::Radial {
+                AdjustmentLayerCoverage::Radial {
                     center: SourcePoint([135., 84.]),
                     radii: [14., 5.],
                     angle: 0.3,
                     feather: 0.8,
                 },
-                PhotoSettings {
+                AdjustmentLayerSettings {
                     exposure: -0.25,
                     contrast: 1.05,
                     saturation: 1.1,
@@ -630,9 +636,16 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
         ];
         let mut results = Vec::new();
         for _ in 0..2 {
-            let snapshot =
-                PhotoGradeSnapshot::new(PhotoSettings::default(), locals.clone()).unwrap();
-            let grade = GpuPhotoGrade::new(&device, cal, roll, snapshot, matrix(), area).unwrap();
+            let snapshot = AdjustmentLayerSnapshot::new(
+                std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+                    AdjustmentLayerSettings::default(),
+                ))
+                .chain(layers.clone())
+                .collect(),
+            )
+            .unwrap();
+            let grade =
+                GpuAdjustmentLayers::new(&device, cal, roll, snapshot, matrix(), area).unwrap();
             let actual = read(
                 &device,
                 &queue,
@@ -642,7 +655,7 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                 &grade,
                 None,
             );
-            let global = Pipeline::new(cal, roll, PhotoSettings::default(), matrix()).unwrap();
+            let global = InputPipeline::new(cal, roll, matrix()).unwrap();
             let mut signed = false;
             let mut hdr = false;
             for (i, pixel) in pixels.iter().enumerate() {
@@ -656,7 +669,7 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                         DVec3::ONE
                     };
                 let inverted = global.apply(scan).unwrap();
-                let expected = local_reference(inverted.rgb, &locals, point);
+                let expected = local_reference(inverted.rgb, &layers, point);
                 let flags = inverted
                     .floored
                     .iter()
@@ -677,7 +690,7 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
             }
             assert!(signed && hdr);
             results.push(actual);
-            locals.reverse();
+            layers.reverse();
         }
         assert!(
             results[0].iter().zip(&results[1]).any(|(a, b)| a != b),
@@ -692,24 +705,26 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
     let area = SourceRegion::from([0, 0, 8, 8]);
     let pixels = pixels(SourceRaster::new(area, [8, 8]).unwrap());
     let source = ProcessingSource::new(&device, &pixels, matrix()).unwrap();
-    let global = PhotoSettings {
+    let global = AdjustmentLayerSettings {
         contrast: 0.71,
         saturation: 1.8,
         ..Default::default()
     };
-    let empty = PhotoGradeSnapshot::new(global, vec![]).unwrap();
-    let prepared = GpuPhotoGrade::new(
+    let empty =
+        AdjustmentLayerSnapshot::new(vec![antitone::adjustment_layers::AdjustmentLayer::global(
+            global,
+        )])
+        .unwrap();
+    let prepared = GpuAdjustmentLayers::new(
         &device,
         calibration(),
         RollSettings::default(),
-        empty,
+        empty.clone(),
         matrix(),
         area,
     )
     .unwrap();
-    let parameters =
-        ProcessingParameters::positive(calibration(), RollSettings::default(), global, matrix())
-            .unwrap();
+
     let baseline = read(
         &device,
         &queue,
@@ -717,7 +732,15 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
         &source,
         pixels.len(),
         &prepared,
-        Some(parameters),
+        None,
+    );
+    assert_reference(
+        &baseline,
+        &pixels,
+        SourceRaster::new(area, [8, 8]).unwrap(),
+        &empty,
+        InputPipeline::new(calibration(), RollSettings::default(), matrix()).unwrap(),
+        None,
     );
     let bits = |pixels: &[[f32; 4]]| {
         pixels
@@ -725,26 +748,15 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             .map(|p| p.map(f32::to_bits))
             .collect::<Vec<_>>()
     };
-    assert_eq!(
-        bits(&read(
-            &device,
-            &queue,
-            &kernel,
-            &source,
-            pixels.len(),
-            &prepared,
-            None
-        )),
-        bits(&baseline)
-    );
-    let mask = GradientMask::Linear {
+
+    let mask = AdjustmentLayerCoverage::Linear {
         start: SourcePoint([100., 0.]),
         end: SourcePoint([200., 0.]),
     };
     for mode in 0..4 {
         let mut a = adjustment(
             mask,
-            PhotoSettings {
+            AdjustmentLayerSettings {
                 exposure: 3.,
                 ..Default::default()
             },
@@ -753,7 +765,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             0 => a.enabled = false,
             1 => a.strength = 0.,
             2 => {
-                a.photo = PhotoSettings {
+                a.photo = AdjustmentLayerSettings {
                     pivot: 1.,
                     contrast_colour_mix: 1.,
                     saturation_density: 1.,
@@ -762,8 +774,12 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             }
             _ => {}
         }
-        let snapshot = PhotoGradeSnapshot::new(global, vec![a]).unwrap();
-        let prepared = GpuPhotoGrade::new(
+        let snapshot = AdjustmentLayerSnapshot::new(vec![
+            antitone::adjustment_layers::AdjustmentLayer::global(global),
+            a,
+        ])
+        .unwrap();
+        let prepared = GpuAdjustmentLayers::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -811,29 +827,32 @@ fn source_centres_at_nonzero_origins_preserve_fractional_mask_geometry() {
     let point = [f64::from(area.x) + 8.5, f64::from(area.y) + 8.5];
     let (source, pixels) = source(&device, area, size, matrix(), None);
     for mask in [
-        GradientMask::Linear {
+        AdjustmentLayerCoverage::Linear {
             start: SourcePoint([point[0] - 0.25, point[1]]),
             end: SourcePoint([point[0] + 0.25, point[1]]),
         },
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([point[0] - 0.125, point[1]]),
             radii: [0.25, 0.5],
             angle: 0.71345,
             feather: 1.,
         },
     ] {
-        let snapshot = PhotoGradeSnapshot::new(
-            PhotoSettings::default(),
-            vec![adjustment(
-                mask,
-                PhotoSettings {
-                    exposure: 1.,
-                    ..Default::default()
-                },
-            )],
-        )
-        .unwrap();
-        let grade = GpuPhotoGrade::new(
+        let snapshot =
+            AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(
+                    AdjustmentLayerSettings::default(),
+                ),
+                adjustment(
+                    mask,
+                    AdjustmentLayerSettings {
+                        exposure: 1.,
+                        ..Default::default()
+                    },
+                ),
+            ])
+            .unwrap();
+        let grade = GpuAdjustmentLayers::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -856,13 +875,7 @@ fn source_centres_at_nonzero_origins_preserve_fractional_mask_geometry() {
             &pixels,
             SourceRaster::new(area, size).unwrap(),
             &snapshot,
-            Pipeline::new(
-                calibration(),
-                RollSettings::default(),
-                snapshot.global(),
-                matrix(),
-            )
-            .unwrap(),
+            InputPipeline::new(calibration(), RollSettings::default(), matrix()).unwrap(),
             None,
         );
     }
@@ -872,46 +885,44 @@ fn source_centres_at_nonzero_origins_preserve_fractional_mask_geometry() {
 fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
     let (device, queue, kernel) = context();
     let area = SourceRegion::from([120, 80, 27, 24]);
-    let snapshot = PhotoGradeSnapshot::new(
-        PhotoSettings {
+    let snapshot = AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
             exposure: 0.7,
             contrast: 1.13,
             ..Default::default()
-        },
-        vec![
-            adjustment(
-                GradientMask::Linear {
-                    start: SourcePoint([120.5, 90.5]),
-                    end: SourcePoint([140.5, 100.5]),
+        }),
+        adjustment(
+            AdjustmentLayerCoverage::Linear {
+                start: SourcePoint([120.5, 90.5]),
+                end: SourcePoint([140.5, 100.5]),
+            },
+            AdjustmentLayerSettings {
+                exposure: 1.2,
+                wb: Balance {
+                    warmth: 0.31,
+                    tint: -0.67,
                 },
-                PhotoSettings {
-                    exposure: 1.2,
-                    wb: Balance {
-                        warmth: 0.31,
-                        tint: -0.67,
-                    },
-                    contrast: 0.41,
-                    saturation: 1.73,
-                    ..Default::default()
-                },
-            ),
-            adjustment(
-                GradientMask::Radial {
-                    center: SourcePoint([135.5, 90.5]),
-                    radii: [16., 12.],
-                    angle: 0.713,
-                    feather: 0.73,
-                },
-                PhotoSettings {
-                    contrast: 1.41,
-                    saturation: 0.31,
-                    ..Default::default()
-                },
-            ),
-        ],
-    )
+                contrast: 0.41,
+                saturation: 1.73,
+                ..Default::default()
+            },
+        ),
+        adjustment(
+            AdjustmentLayerCoverage::Radial {
+                center: SourcePoint([135.5, 90.5]),
+                radii: [16., 12.],
+                angle: 0.713,
+                feather: 0.73,
+            },
+            AdjustmentLayerSettings {
+                contrast: 1.41,
+                saturation: 0.31,
+                ..Default::default()
+            },
+        ),
+    ])
     .unwrap();
-    let grade = GpuPhotoGrade::new(
+    let grade = GpuAdjustmentLayers::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -966,7 +977,7 @@ fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
 fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
     let (device, queue, kernel) = context();
     let area = SourceRegion::from([0, 0, 8, 8]);
-    let mask = GradientMask::Linear {
+    let mask = AdjustmentLayerCoverage::Linear {
         start: SourcePoint([0., 0.]),
         end: SourcePoint([1., 0.]),
     };
@@ -983,7 +994,7 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
     let (source, pixels) = source(&device, area, [8, 8], camera_matrix, None);
     for exposure in [-2., 0., 2.] {
         for contrast in [0.4, 1., 1.6] {
-            let photo = PhotoSettings {
+            let photo = AdjustmentLayerSettings {
                 exposure,
                 contrast,
                 pivot: 0.03,
@@ -992,12 +1003,22 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
                 saturation_density: 0.43,
                 ..Default::default()
             };
-            let snapshot =
-                PhotoGradeSnapshot::new(PhotoSettings::default(), vec![adjustment(mask, photo)])
-                    .unwrap();
-            let prepared =
-                GpuPhotoGrade::new(&device, input, roll, snapshot.clone(), camera_matrix, area)
-                    .unwrap();
+            let snapshot = AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(
+                    AdjustmentLayerSettings::default(),
+                ),
+                adjustment(mask, photo),
+            ])
+            .unwrap();
+            let prepared = GpuAdjustmentLayers::new(
+                &device,
+                input,
+                roll,
+                snapshot.clone(),
+                camera_matrix,
+                area,
+            )
+            .unwrap();
             let actual = read(
                 &device,
                 &queue,
@@ -1012,7 +1033,7 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
                 &pixels,
                 SourceRaster::new(area, [8, 8]).unwrap(),
                 &snapshot,
-                Pipeline::new(input, roll, snapshot.global(), camera_matrix).unwrap(),
+                InputPipeline::new(input, roll, camera_matrix).unwrap(),
                 None,
             );
         }
@@ -1024,26 +1045,31 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
     let (device, queue, kernel) = context();
     let area = SourceRegion::from([0, 0, 8, 8]);
     let (source, pixels) = source(&device, area, [8, 8], matrix(), None);
-    let mask = GradientMask::Linear {
+    let mask = AdjustmentLayerCoverage::Linear {
         start: SourcePoint([-2., 0.]),
         end: SourcePoint([-1., 0.]),
     };
-    let snapshot = PhotoGradeSnapshot::new(
-        PhotoSettings::default(),
-        [-2., -2., 2., 2.]
-            .map(|exposure| {
-                adjustment(
-                    mask,
-                    PhotoSettings {
-                        exposure,
-                        ..Default::default()
-                    },
-                )
-            })
-            .to_vec(),
+    let snapshot = AdjustmentLayerSnapshot::new(
+        std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+            AdjustmentLayerSettings::default(),
+        ))
+        .chain(
+            [-2., -2., 2., 2.]
+                .map(|exposure| {
+                    adjustment(
+                        mask,
+                        AdjustmentLayerSettings {
+                            exposure,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .to_vec(),
+        )
+        .collect(),
     )
     .unwrap();
-    let grade = GpuPhotoGrade::new(
+    let grade = GpuAdjustmentLayers::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -1052,11 +1078,14 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
         area,
     )
     .unwrap();
-    let identity = GpuPhotoGrade::new(
+    let identity = GpuAdjustmentLayers::new(
         &device,
         calibration(),
         RollSettings::default(),
-        PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
+        AdjustmentLayerSnapshot::new(vec![antitone::adjustment_layers::AdjustmentLayer::global(
+            AdjustmentLayerSettings::default(),
+        )])
+        .unwrap(),
         matrix(),
         area,
     )
@@ -1092,19 +1121,19 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     let (device, _queue, kernel) = context();
     let area = SourceRegion::from([0, 0, 8, 8]);
     let active = adjustment(
-        GradientMask::Linear {
+        AdjustmentLayerCoverage::Linear {
             start: SourcePoint([0., 0.]),
             end: SourcePoint([8., 0.]),
         },
-        PhotoSettings {
+        AdjustmentLayerSettings {
             exposure: 16.,
             contrast: 1.6,
             ..Default::default()
         },
     );
-    let stack = PhotoGradeSnapshot::new(PhotoSettings::default(), vec![active; 16]).unwrap();
+    let stack = AdjustmentLayerSnapshot::new(vec![active; 16]).unwrap();
     assert!(
-        GpuPhotoGrade::new(
+        GpuAdjustmentLayers::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -1115,20 +1144,24 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
         .is_err()
     );
     let tiny = adjustment(
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: SourcePoint([0., 0.]),
             radii: [f64::MIN_POSITIVE, 1.],
             angle: 0.,
             feather: 0.5,
         },
-        PhotoSettings {
+        AdjustmentLayerSettings {
             exposure: 1.,
             ..Default::default()
         },
     );
-    let snapshot = PhotoGradeSnapshot::new(PhotoSettings::default(), vec![tiny]).unwrap();
+    let snapshot = AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings::default()),
+        tiny,
+    ])
+    .unwrap();
     assert!(
-        GpuPhotoGrade::new(
+        GpuAdjustmentLayers::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -1138,15 +1171,22 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
         )
         .is_err()
     );
-    let grade = GpuPhotoGrade::new(
-        &device,
-        calibration(),
-        RollSettings::default(),
-        PhotoGradeSnapshot::new(PhotoSettings::default(), vec![active]).unwrap(),
-        matrix(),
-        area,
-    )
-    .unwrap();
+    let grade =
+        GpuAdjustmentLayers::new(
+            &device,
+            calibration(),
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(
+                    AdjustmentLayerSettings::default(),
+                ),
+                active,
+            ])
+            .unwrap(),
+            matrix(),
+            area,
+        )
+        .unwrap();
     let (source, pixels) = source(&device, area, [8, 8], DMat3::IDENTITY, None);
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,

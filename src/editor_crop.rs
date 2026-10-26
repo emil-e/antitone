@@ -120,7 +120,7 @@ impl Editor {
         let Some(area) = self.document.visit.ready.as_ref().map(|ready| ready.area) else {
             return;
         };
-        self.close_adjustments();
+        self.finish_adjustment_layer_interaction();
         self.document.visit.crop_edit = Some(CropEdit {
             draft: self.crop.unwrap_or(Crop::from_region(area)),
             viewport: self.viewport,
@@ -280,7 +280,6 @@ impl Editor {
             {
                 action = Some(Action::Dust);
             }
-            self.adjustment_launcher(ui, commands_enabled && self.input.ready() && !self.source);
         });
 
         if let Some(action) = action {

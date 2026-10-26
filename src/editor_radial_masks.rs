@@ -12,7 +12,7 @@ enum Handle {
 pub(super) struct RadialDrag {
     handle: Handle,
     point: SourcePoint,
-    mask: Option<GradientMask>,
+    mask: Option<AdjustmentLayerCoverage>,
     layout: CanvasLayout,
     feather: f64,
 }
@@ -35,8 +35,8 @@ fn normalized_radius(point: SourcePoint, center: SourcePoint, radii: [f64; 2], a
     (delta.dot(x) / radii[0]).hypot(delta.dot(y) / radii[1])
 }
 
-fn handles(mask: GradientMask, layout: CanvasLayout) -> Vec<(egui::Pos2, Handle)> {
-    let GradientMask::Radial {
+fn handles(mask: AdjustmentLayerCoverage, layout: CanvasLayout) -> Vec<(egui::Pos2, Handle)> {
+    let AdjustmentLayerCoverage::Radial {
         center,
         radii,
         angle,
@@ -79,13 +79,17 @@ fn handles(mask: GradientMask, layout: CanvasLayout) -> Vec<(egui::Pos2, Handle)
     result
 }
 
-pub(super) fn hit(mask: GradientMask, layout: CanvasLayout, point: egui::Pos2) -> bool {
+pub(super) fn hit(mask: AdjustmentLayerCoverage, layout: CanvasLayout, point: egui::Pos2) -> bool {
     handle_at(Some(mask), layout, point) != Handle::New
 }
 
-fn handle_at(mask: Option<GradientMask>, layout: CanvasLayout, point: egui::Pos2) -> Handle {
+fn handle_at(
+    mask: Option<AdjustmentLayerCoverage>,
+    layout: CanvasLayout,
+    point: egui::Pos2,
+) -> Handle {
     let Some(
-        mask @ GradientMask::Radial {
+        mask @ AdjustmentLayerCoverage::Radial {
             center,
             radii,
             angle,
@@ -117,7 +121,7 @@ fn handle_at(mask: Option<GradientMask>, layout: CanvasLayout, point: egui::Pos2
 
 impl RadialDrag {
     pub(super) fn begin(
-        mask: Option<GradientMask>,
+        mask: Option<AdjustmentLayerCoverage>,
         layout: CanvasLayout,
         point: egui::Pos2,
         feather: f64,
@@ -131,14 +135,14 @@ impl RadialDrag {
         }
     }
 
-    pub(super) fn update(&self, point: egui::Pos2) -> GradientMask {
+    pub(super) fn update(&self, point: egui::Pos2) -> AdjustmentLayerCoverage {
         let next = source_point(self.layout, point);
         if next == self.point
             && let Some(mask) = self.mask
         {
             return mask;
         }
-        if let Some(GradientMask::Radial {
+        if let Some(AdjustmentLayerCoverage::Radial {
             mut center,
             mut radii,
             mut angle,
@@ -169,7 +173,7 @@ impl RadialDrag {
                 }
                 Handle::New => unreachable!(),
             }
-            return GradientMask::Radial {
+            return AdjustmentLayerCoverage::Radial {
                 center,
                 radii,
                 angle,
@@ -183,7 +187,7 @@ impl RadialDrag {
             .composition
             .frame_to_source(crate::geometry::FramePoint([start.0[0] + 1., start.0[1]]));
         let direction = DVec2::from_array(horizontal.0) - DVec2::from_array(self.point.0);
-        GradientMask::Radial {
+        AdjustmentLayerCoverage::Radial {
             center: self.point,
             radii: [(end.0[0] - start.0[0]).hypot(end.0[1] - start.0[1]); 2],
             angle: direction.y.atan2(direction.x),
@@ -192,8 +196,8 @@ impl RadialDrag {
     }
 }
 
-pub(super) fn paint(painter: &egui::Painter, layout: CanvasLayout, mask: GradientMask) {
-    let GradientMask::Radial {
+pub(super) fn paint(painter: &egui::Painter, layout: CanvasLayout, mask: AdjustmentLayerCoverage) {
+    let AdjustmentLayerCoverage::Radial {
         center,
         radii,
         angle,

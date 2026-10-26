@@ -1,7 +1,9 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{OutputTarget, PhotoSettings, ProcessingParameters, RollSettings, tests::fixture},
+    editor::{
+        AdjustmentLayerSettings, OutputTarget, ProcessingParameters, RollSettings, tests::fixture,
+    },
 };
 use std::sync::{
     Arc,
@@ -17,18 +19,28 @@ impl Drop for Dropped {
 
 #[test]
 fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_content() {
-    let e = fixture();
+    let mut e = fixture();
+    crate::editor::tests::add_ready_fixture(&mut e);
+    let device = e.working.device().unwrap().clone();
     let parameters = |ev| {
         ProcessingInput::from(
-            ProcessingParameters::positive(
-                e.calibration().unwrap(),
-                RollSettings::default(),
-                PhotoSettings {
+            crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                crate::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
                     exposure: ev,
                     ..Default::default()
-                },
-                glam::DMat3::IDENTITY,
-            )
+                }),
+            ])
+            .and_then(|snapshot| {
+                crate::gpu::GpuAdjustmentLayers::new(
+                    &device,
+                    e.calibration().unwrap(),
+                    RollSettings::default(),
+                    snapshot,
+                    glam::DMat3::IDENTITY,
+                    e.document.visit.ready.as_ref().unwrap().area,
+                )
+            })
+            .map(Arc::new)
             .unwrap(),
         )
     };

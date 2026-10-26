@@ -1,13 +1,16 @@
 #![cfg(all(feature = "ui", feature = "render", feature = "ocio-reference"))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::Balance,
     flat_field::FlatField,
     frame_raster::FrameRaster,
     geometry::{Composition, SourcePoint, SourceRegion},
-    gpu::{GpuFlatField, GpuPhotoGrade, ProcessingInput, ProcessingParameters, SourceGeometry},
+    gpu::{
+        GpuAdjustmentLayers, GpuFlatField, ProcessingInput, ProcessingParameters, SourceGeometry,
+    },
     gpu_scopes::{GpuScopes, ScopePaint},
-    local_adjustments::{GradientMask, LocalAdjustment, PhotoGradeSnapshot},
-    processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
+    processing::{Calibration, InputPipeline, RollSettings},
     rendering::{CpuRenderer, OutputTarget},
     scopes::{self, Plot, Settings},
     viewer::{GpuImage, ImagePaint},
@@ -34,14 +37,14 @@ fn calibration() -> Calibration {
     }
 }
 
-fn adjustments() -> Vec<LocalAdjustment> {
+fn layers() -> Vec<AdjustmentLayer> {
     vec![
-        LocalAdjustment {
-            mask: GradientMask::Linear {
+        AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Linear {
                 start: SourcePoint([122., 74.]),
                 end: SourcePoint([138., 89.]),
             },
-            photo: PhotoSettings {
+            photo: AdjustmentLayerSettings {
                 exposure: 0.7,
                 contrast: 1.2,
                 contrast_colour_mix: 0.3,
@@ -51,14 +54,14 @@ fn adjustments() -> Vec<LocalAdjustment> {
             invert: false,
             strength: 0.8,
         },
-        LocalAdjustment {
-            mask: GradientMask::Radial {
+        AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Radial {
                 center: SourcePoint([131., 82.]),
                 radii: [10., 7.],
                 angle: 0.4,
                 feather: 0.65,
             },
-            photo: PhotoSettings {
+            photo: AdjustmentLayerSettings {
                 exposure: -0.3,
                 wb: Balance {
                     warmth: 0.13,
@@ -75,13 +78,20 @@ fn adjustments() -> Vec<LocalAdjustment> {
     ]
 }
 
-fn input(device: &wgpu::Device, cal: Calibration, locals: Vec<LocalAdjustment>) -> ProcessingInput {
+fn input(device: &wgpu::Device, cal: Calibration, layers: Vec<AdjustmentLayer>) -> ProcessingInput {
     Arc::new(
-        GpuPhotoGrade::new(
+        GpuAdjustmentLayers::new(
             device,
             cal,
             RollSettings::default(),
-            PhotoGradeSnapshot::new(PhotoSettings::default(), locals).unwrap(),
+            AdjustmentLayerSnapshot::new(
+                std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+                    AdjustmentLayerSettings::default(),
+                ))
+                .chain(layers)
+                .collect(),
+            )
+            .unwrap(),
             DMat3::IDENTITY,
             AREA,
         )
@@ -91,10 +101,7 @@ fn input(device: &wgpu::Device, cal: Calibration, locals: Vec<LocalAdjustment>) 
 }
 
 async fn device() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
+    let instance = antitone::gpu::instance();
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     adapter.request_device(&Default::default()).await.unwrap()
 }
@@ -257,8 +264,8 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             )
             .await,
         );
-        let accepted = input(&device, calibration(), adjustments());
-        let duplicate = input(&device, calibration(), adjustments());
+        let accepted = input(&device, calibration(), layers());
+        let duplicate = input(&device, calibration(), layers());
         assert_eq!(
             accepted.signature(),
             duplicate.signature(),
@@ -277,28 +284,28 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
         );
         for changed in [
             {
-                let mut a = adjustments();
+                let mut a = layers();
                 a.reverse();
                 a
             },
             {
-                let mut a = adjustments();
+                let mut a = layers();
                 a[0].enabled = false;
                 a
             },
             {
-                let mut a = adjustments();
+                let mut a = layers();
                 a[0].strength = 0.5;
                 a
             },
             {
-                let mut a = adjustments();
+                let mut a = layers();
                 a[0].invert = true;
                 a
             },
             {
-                let mut a = adjustments();
-                a[0].mask = GradientMask::Linear {
+                let mut a = layers();
+                a[0].mask = AdjustmentLayerCoverage::Linear {
                     start: SourcePoint([120., 73.]),
                     end: SourcePoint([140., 90.]),
                 };
@@ -322,7 +329,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
         changed_calibration.dmin.x *= 0.9;
         assert_ne!(
             accepted.signature(),
-            input(&device, changed_calibration, adjustments()).signature()
+            input(&device, changed_calibration, layers()).signature()
         );
         for (roll, photo, area) in [
             (
@@ -330,12 +337,12 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
                     exposure: 0.5,
                     ..RollSettings::default()
                 },
-                PhotoSettings::default(),
+                AdjustmentLayerSettings::default(),
                 AREA,
             ),
             (
                 RollSettings::default(),
-                PhotoSettings {
+                AdjustmentLayerSettings {
                     exposure: 0.5,
                     ..Default::default()
                 },
@@ -343,7 +350,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             ),
             (
                 RollSettings::default(),
-                PhotoSettings::default(),
+                AdjustmentLayerSettings::default(),
                 SourceRegion {
                     x: AREA.x - 1,
                     width: AREA.width + 1,
@@ -352,11 +359,18 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             ),
         ] {
             let changed: ProcessingInput = Arc::new(
-                GpuPhotoGrade::new(
+                GpuAdjustmentLayers::new(
                     &device,
                     calibration(),
                     roll,
-                    PhotoGradeSnapshot::new(photo, adjustments()).unwrap(),
+                    AdjustmentLayerSnapshot::new(
+                        std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+                            photo,
+                        ))
+                        .chain(layers())
+                        .collect(),
+                    )
+                    .unwrap(),
                     DMat3::IDENTITY,
                     area,
                 )
@@ -397,11 +411,18 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
                 .is_err()
         );
         let wrong_basis: ProcessingInput = Arc::new(
-            GpuPhotoGrade::new(
+            GpuAdjustmentLayers::new(
                 &device,
                 calibration(),
                 RollSettings::default(),
-                PhotoGradeSnapshot::new(PhotoSettings::default(), adjustments()).unwrap(),
+                AdjustmentLayerSnapshot::new(
+                    std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+                        AdjustmentLayerSettings::default(),
+                    ))
+                    .chain(layers())
+                    .collect(),
+                )
+                .unwrap(),
                 DMat3::from_diagonal(DVec3::splat(2.)),
                 AREA,
             )
@@ -485,14 +506,8 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
             } else {
                 calibration()
             };
-            let processing = input(&device, cal, adjustments());
-            let global = Pipeline::new(
-                cal,
-                RollSettings::default(),
-                PhotoSettings::default(),
-                DMat3::IDENTITY,
-            )
-            .unwrap();
+            let processing = input(&device, cal, layers());
+            let global = InputPipeline::new(cal, RollSettings::default(), DMat3::IDENTITY).unwrap();
             let working: Vec<_> = (0..35)
                 .map(|i| {
                     let pixel = geometry.pixel(i).unwrap();
@@ -571,7 +586,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
                         .iter()
                         .zip(without_locals)
                         .any(|(local, global)| (*local - global).abs().max_element() > 2e-5),
-                    "fixture must distinguish locals from a global-only render"
+                    "fixture must distinguish layers from a global-only render"
                 );
                 for (a, b) in actual.iter().zip(expected) {
                     for c in 0..3 {
@@ -635,13 +650,13 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
             )
             .await,
         );
-        let mut locals = adjustments();
-        locals[0].photo.contrast = 1.6;
-        locals[0].photo.exposure = 2.;
-        locals[1].photo.exposure = -2.;
-        locals[1].photo.wb.warmth = 0.5;
-        let first = input(&device, calibration(), locals.clone());
-        let mut reversed = locals.clone();
+        let mut layers = layers();
+        layers[0].photo.contrast = 1.6;
+        layers[0].photo.exposure = 2.;
+        layers[1].photo.exposure = -2.;
+        layers[1].photo.wb.warmth = 0.5;
+        let first = input(&device, calibration(), layers.clone());
+        let mut reversed = layers.clone();
         reversed.reverse();
         let latest = input(&device, calibration(), reversed);
         let frame = FrameRaster::new(
@@ -725,7 +740,7 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
             counts
         );
         let duplicate = {
-            let mut a = locals.clone();
+            let mut a = layers.clone();
             a.reverse();
             input(&device, calibration(), a)
         };
@@ -777,14 +792,8 @@ fn reusable_tiles_grade_original_pixels_before_rotated_target_averaging() {
             } else {
                 calibration()
             };
-            let processing = input(&device, cal, adjustments());
-            let global = Pipeline::new(
-                cal,
-                RollSettings::default(),
-                PhotoSettings::default(),
-                DMat3::IDENTITY,
-            )
-            .unwrap();
+            let processing = input(&device, cal, layers());
+            let global = InputPipeline::new(cal, RollSettings::default(), DMat3::IDENTITY).unwrap();
             let working: Vec<_> = (AREA.y..AREA.y + AREA.height)
                 .flat_map(|y| {
                     (AREA.x..AREA.x + AREA.width)

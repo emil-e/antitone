@@ -1,4 +1,5 @@
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 #[cfg(feature = "ocio-reference")]
 use crate::raw::sony_fixture as sony;
 
@@ -186,7 +187,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                     .unwrap();
                     assert!(
                         view.graded.as_ref().unwrap().grade.is_none(),
-                        "no calibration, inversion, WB, contrast, saturation or locals"
+                        "no calibration, inversion, WB, contrast, saturation or layers"
                     );
                     if let Some(old) = &previous
                         && old.processing == input.signature()
@@ -238,9 +239,10 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                         assert_eq!(a[3], b[3]);
                     }
                     let positive_input = processing_input(
+                        &device,
                         calibration(),
                         RollSettings::default(),
-                        PhotoSettings::default(),
+                        AdjustmentLayerSettings::default(),
                         &scan,
                     );
                     assert!(
@@ -259,7 +261,12 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                             source.clone(),
                             calibration(),
                             RollSettings::default(),
-                            PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
+                            AdjustmentLayerSnapshot::new(vec![
+                                crate::adjustment_layers::AdjustmentLayer::global(
+                                    AdjustmentLayerSettings::default()
+                                )
+                            ])
+                            .unwrap(),
                             &positive_input,
                             target,
                             None

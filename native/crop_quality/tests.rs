@@ -24,9 +24,11 @@ fn fixture(directory: &Path) -> PathBuf {
                 camera_to_ap1: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
                 input_floor: crate::processing::CAMERA_INPUT_FLOOR,
             },
-            photo: Default::default(),
+
             repairs: Default::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                Default::default(),
+            )),
             orientation: Default::default(),
             crop: None,
         })

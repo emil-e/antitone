@@ -1,8 +1,8 @@
 use super::*;
 use crate::processing::Calibration;
 use crate::{
+    adjustment_layers::AdjustmentLayerSettings,
     dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
-    processing::PhotoSettings,
 };
 use glam::DMat3;
 
@@ -28,9 +28,9 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
     let evaluated =
         Arc::new(crate::dust_repair::evaluate(&repair, area, |_| Ok([-0.125, 2., 0.25])).unwrap());
     let logical = crate::gpu::repairs::Snapshot::logical(vec![evaluated.clone()]).unwrap();
-    let photo = PhotoSettings::default();
+    let photo = AdjustmentLayerSettings::default();
     let grade = Arc::new(
-        GpuPhotoGrade::new(
+        GpuAdjustmentLayers::new(
             &device,
             Calibration {
                 dmin: DVec3::splat(0.8),
@@ -38,7 +38,10 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
                 input_floor: 1. / 65535.,
             },
             RollSettings::default(),
-            PhotoGradeSnapshot::new(photo, vec![]).unwrap(),
+            AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+                photo,
+            )])
+            .unwrap(),
             DMat3::IDENTITY,
             area,
         )

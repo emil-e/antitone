@@ -518,8 +518,9 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                     input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                 },
                 reference_only: false,
-                photo: Default::default(),
-                local_adjustments: None,
+                adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                    Default::default(),
+                )),
                 repairs: Default::default(),
                 orientation: Default::default(),
                 crop: None,
@@ -639,13 +640,9 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
         );
         let (image, input, scope_frame) = editor.scope_input().unwrap();
         let parameters = input.parameters();
-        let expected = ProcessingParameters::positive(
-            editor.calibration().unwrap(),
-            editor.roll,
-            editor.photo,
-            matrix,
-        )
-        .unwrap();
+        let expected =
+            ProcessingParameters::positive(editor.calibration().unwrap(), editor.roll, matrix)
+                .unwrap();
         assert_eq!(
             bytemuck::bytes_of(&parameters),
             bytemuck::bytes_of(&expected)

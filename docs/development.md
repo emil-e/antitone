@@ -161,7 +161,7 @@ cargo test --locked --features editor --lib export -- --test-threads=1
 cargo test --locked --features raw,gpu,export,project,ocio-reference \
   --lib gpu_export:: -- --test-threads=1
 cargo test --locked --features raw,gpu,export,project,ocio-reference \
-  --test gpu_export --test export --test geometry_export --test local_adjustment_export
+  --test gpu_export --test export --test geometry_export --test adjustment_layer_export
 cargo build --locked --release --features editor --bin antitone
 ```
 
@@ -244,26 +244,26 @@ cargo test --locked --features editor --lib refinement_worker_uses_the_submissio
 
 These headless GPU checks exercise submission exclusion and the host-supplied gate. Use the [native presentation stress route](diagnostics.md#macos-presentation) for real surface reconfiguration alongside background GPU work.
 
-## Local grading and shared consumers
+## Adjustment layers and shared consumers
 
-Use the [processing model](processing.md#local-grades-change-controls-not-rendered-pixels) and [editor workflow](editor.md#immutable-local-grade-routing) to identify the boundary being changed:
+Use the [processing model](processing.md#adjustment-layers-change-controls-not-rendered-pixels) and [editor workflow](editor.md#immutable-adjustment-layer-routing) to identify the boundary being changed:
 
 ```sh
-cargo test --locked --no-default-features --test local_adjustments
-cargo test --locked --features project --test local_adjustment_project
-cargo test --locked --features export,project,ocio-reference --test local_adjustment_export
+cargo test --locked --no-default-features --test adjustment_layers
+cargo test --locked --features project --test adjustment_layer_project
+cargo test --locked --features export,project,ocio-reference --test adjustment_layer_export
 cargo test --locked --features gpu --lib gpu::
-cargo test --locked --features gpu --test gpu_local_adjustments
-cargo test --locked --features editor,ocio-reference --test local_adjustment_consumers --test viewer --test scopes
+cargo test --locked --features gpu --test gpu_adjustment_layers
+cargo test --locked --features editor,ocio-reference --test adjustment_layer_consumers --test viewer --test scopes
 cargo test --locked --features editor --lib editor::processing::tests -- --test-threads=1
-cargo test --locked --features editor --lib editor::adjustments::tests -- --test-threads=1
-cargo test --locked --features ui-tests --lib editor::kittest_tests::adjustments -- --test-threads=1
+cargo test --locked --features editor --lib editor::adjustment_layers::tests -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::kittest_tests::adjustment_layers -- --test-threads=1
 cargo test --locked --features editor --lib editor::mask_editor:: -- --test-threads=1
 cargo test --locked --features editor --lib editor::document::tests::admission -- --test-threads=1
 cargo test --locked --features ui-tests --lib editor::kittest_tests::masks -- --test-threads=1
 ```
 
-Processing admission, source-owned transactions and downstream consumers need separate checks; one supported fixture does not establish admission for every response or control combination. Use [performance/RAW diagnostics](diagnostics.md#local-processing-and-reuse) for opt-in resource observations.
+Processing admission, source-owned transactions and downstream consumers need separate checks; one supported fixture does not establish admission for every response or control combination. Use [performance/RAW diagnostics](diagnostics.md#adjustment-layer-processing-and-reuse) for opt-in resource observations.
 
 ## Undo/redo
 

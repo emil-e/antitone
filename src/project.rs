@@ -1,3 +1,4 @@
+use crate::adjustment_layers::AdjustmentLayerSettings;
 #[cfg(test)]
 use crate::color::Balance;
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
     color::wb_matrix,
     crop::Crop,
     geometry::{PhotoOrientation, RollOrientation, SourceRegion},
-    processing::{Calibration, Inversion, PhotoSettings, RollSettings, exposure_multiplier},
+    processing::{Calibration, Inversion, RollSettings, exposure_multiplier},
 };
 use glam::DMat3;
 #[cfg(test)]
@@ -21,7 +22,7 @@ use std::{
 #[path = "project_json.rs"]
 mod json;
 
-pub const SCHEMA_VERSION: u32 = 10;
+pub const SCHEMA_VERSION: u32 = 11;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
@@ -229,10 +230,10 @@ pub struct Source {
     pub path: PathBuf,
     pub development: SourceDevelopment,
     pub reference_only: bool,
-    pub photo: PhotoSettings,
+
     pub repairs: crate::dust_repair::RepairSet,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub local_adjustments: Option<LocalAdjustments>,
+    pub adjustment_layers: Option<AdjustmentLayers>,
     #[serde(default, skip_serializing_if = "PhotoOrientation::is_identity")]
     pub orientation: PhotoOrientation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -246,10 +247,10 @@ impl Source {
         if let Some(crop) = self.crop {
             crop.region(self.development.active_area.into())?;
         }
-        self.photo.validate()?;
+
         self.repairs.validate(self.development.active_area.into())?;
-        if let Some(locals) = &self.local_adjustments {
-            locals.validate()?;
+        if let Some(layers) = &self.adjustment_layers {
+            layers.validate()?;
         }
         Ok(())
     }
@@ -292,9 +293,9 @@ impl Default for Output {
 #[path = "project_flat_field.rs"]
 mod flat;
 pub use flat::FlatFieldSettings;
-#[path = "project_local_adjustments.rs"]
-mod local;
-pub use local::{AdjustmentId, AdjustmentRecord, LocalAdjustments};
+#[path = "project_adjustment_layers.rs"]
+mod adjustment_layers;
+pub use adjustment_layers::{AdjustmentLayerId, AdjustmentLayerRecord, AdjustmentLayers};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

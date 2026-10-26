@@ -190,15 +190,18 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
             for contrast in [None, Some(0.4), Some(1.6)] {
                 for scale in [1., 2.] {
                     let mut editor = crate::editor::tests::fixture();
+                    editor.initialize_viewer(&device, &queue);
                     *editor.document = super::tests::fixture();
                     if let Some(contrast) = contrast {
                         for source in &mut editor.document.project.sources {
-                            source.photo = PhotoSettings {
+                            source.adjustment_layers.as_mut().unwrap().layers[0]
+                                .adjustment
+                                .photo = AdjustmentLayerSettings {
                                 contrast,
                                 saturation: 1.3,
                                 contrast_colour_mix: 0.5,
                                 saturation_density: 0.5,
-                                ..PhotoSettings::default()
+                                ..AdjustmentLayerSettings::default()
                             };
                         }
                     } else {

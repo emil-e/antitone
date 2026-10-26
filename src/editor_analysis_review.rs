@@ -182,10 +182,13 @@ impl Editor {
             Ok(Some(approved)) => {
                 let replaces_photos = request.document.project.order.iter().any(|id| {
                     request.document.project.source(*id).is_ok_and(|s| {
-                        s.photo != PhotoSettings::default()
-                            || s.local_adjustments
-                                .as_ref()
-                                .is_some_and(|locals| !locals.adjustments.is_empty())
+                        s.grade_snapshot().is_ok_and(|snapshot| {
+                            !snapshot.layers().is_empty()
+                                && snapshot.layers()
+                                    != [crate::adjustment_layers::AdjustmentLayer::global(
+                                        AdjustmentLayerSettings::default(),
+                                    )]
+                        })
                     })
                 });
                 self.document.analysis_review = Some(Review {

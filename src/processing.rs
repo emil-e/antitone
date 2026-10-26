@@ -16,8 +16,6 @@ pub const DEFAULT_TOE: f64 = 2.5;
 pub const MIN_TOE: f64 = 1.0;
 pub const MAX_TOE: f64 = 4.0;
 pub const MAX_SHOULDER: f64 = 0.02;
-pub const DEFAULT_PIVOT: f64 = 0.18;
-pub const DEFAULT_COLOUR_MIX: f64 = 0.;
 
 /// What a stage can offer the editor. Scan-based stages share the film tools; the
 /// interpretation controls differ per stage. UI reads this instead of matching variants.
@@ -390,67 +388,6 @@ impl Default for InputSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "project", serde(deny_unknown_fields))]
-pub struct PhotoSettings {
-    pub exposure: f64,
-    pub wb: Balance,
-    #[cfg_attr(feature = "project", serde(default = "identity_amount"))]
-    pub contrast: f64,
-    #[cfg_attr(feature = "project", serde(default = "default_pivot"))]
-    pub pivot: f64,
-    #[cfg_attr(feature = "project", serde(default = "default_colour_mix"))]
-    pub contrast_colour_mix: f64,
-    #[cfg_attr(feature = "project", serde(default = "identity_amount"))]
-    pub saturation: f64,
-    #[cfg_attr(feature = "project", serde(default = "default_colour_mix"))]
-    pub saturation_density: f64,
-}
-
-fn identity_amount() -> f64 {
-    1.
-}
-
-fn default_pivot() -> f64 {
-    DEFAULT_PIVOT
-}
-
-fn default_colour_mix() -> f64 {
-    DEFAULT_COLOUR_MIX
-}
-
-impl Default for PhotoSettings {
-    fn default() -> Self {
-        Self {
-            exposure: 0.,
-            wb: Balance::default(),
-            contrast: identity_amount(),
-            pivot: default_pivot(),
-            contrast_colour_mix: default_colour_mix(),
-            saturation: identity_amount(),
-            saturation_density: default_colour_mix(),
-        }
-    }
-}
-
-impl PhotoSettings {
-    pub fn validate(self) -> Result<Self, Error> {
-        exposure_multiplier(self.exposure)?;
-        wb_matrix(self.wb)?;
-        crate::photographic::Grade::new(self)?;
-        Ok(self)
-    }
-
-    /// Measurement is before Photo WB and creative grading, retaining exposure.
-    pub fn before_white_balance(self) -> Self {
-        Self {
-            exposure: self.exposure,
-            ..Self::default()
-        }
-    }
-}
-
 pub fn exposure_multiplier(stops: f64) -> Result<f64, Error> {
     if !stops.is_finite() || stops.abs() > MAX_EXPOSURE {
         return Err(Error::InvalidParameter(
@@ -568,87 +505,62 @@ impl Inversion {
     }
 }
 
+/// Source interpretation, camera conversion and Roll balance/exposure, before adjustment layers.
 #[derive(Debug, Clone)]
-pub struct Pipeline {
+pub struct InputPipeline {
     interpretation: Interpretation,
-    /// Native-camera positive → pre-contrast graded AP1: camera→AP1, then roll/photo WB
-    /// and exposure. Contrast/saturation follow in `grade`. Used by `apply`, which starts
-    /// from a source sample. (Not named for "inversion": Digital uses it too.)
-    to_graded_ap1: DMat3,
-    /// Working AP1 → pre-contrast graded AP1: roll/photo WB and exposure, *without*
-    /// camera→AP1 (already applied). Used by `grade_neutral`, which starts from an
-    /// already-converted working positive such as a neutral repair replacement.
-    working_to_graded: DMat3,
-    grade: crate::photographic::Grade,
+    camera_to_working: DMat3,
+    roll_transform: DMat3,
 }
 
-impl Pipeline {
-    /// Build the graded pipeline for a source interpreted through `input`.
+impl InputPipeline {
     pub fn new(
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        photo: PhotoSettings,
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
-        Self::build(Self::interpret(&input.into())?, roll, photo, camera_to_ap1)
-    }
-
-    /// Full-resolution signed/HDR AP1 after correction, interpretation and camera conversion,
-    /// before grading. The caller supplies camera samples corrected in the same basis.
-    pub fn ungraded(input: impl Into<InputSettings>, camera_to_ap1: DMat3) -> Result<Self, Error> {
-        Self::new(
-            input,
-            RollSettings::default(),
-            PhotoSettings::default(),
-            camera_to_ap1,
-        )
-    }
-
-    fn interpret(input: &InputSettings) -> Result<Interpretation, Error> {
-        match input {
-            InputSettings::Digital => Ok(Interpretation::Digital),
-            InputSettings::Negative { .. } => {
+        validate_camera_matrix(camera_to_ap1)?;
+        let roll_transform = wb_matrix(roll.wb)? * exposure_multiplier(roll.exposure)?;
+        let camera_to_working = roll_transform * camera_to_ap1;
+        if !camera_to_working.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
+        let interpretation = match input.into() {
+            InputSettings::Digital => Interpretation::Digital,
+            input @ InputSettings::Negative { .. } => {
                 let negative = input.negative_input().ok_or(Error::InvalidCalibration {
                     channel: 0,
                     reason: "measure Dmin and Dmax",
                 })?;
-                Ok(Interpretation::Negative(Inversion::new(negative)?))
+                Interpretation::Negative(Inversion::new(negative)?)
             }
-        }
-    }
-
-    /// Shared grading for every input stage; only `interpret` differs.
-    fn build(
-        interpretation: Interpretation,
-        roll: RollSettings,
-        photo: PhotoSettings,
-        camera_to_ap1: DMat3,
-    ) -> Result<Self, Error> {
-        validate_camera_matrix(camera_to_ap1)?;
-        photo.validate()?;
-        let gain = exposure_multiplier(roll.exposure)? * exposure_multiplier(photo.exposure)?;
-        let to_graded_ap1 = wb_matrix(photo.wb)? * wb_matrix(roll.wb)? * camera_to_ap1 * gain;
-        if !to_graded_ap1.is_finite() {
-            return Err(Error::NumericalOverflow);
-        }
+        };
         Ok(Self {
             interpretation,
-            to_graded_ap1,
-            working_to_graded: wb_matrix(photo.wb)? * wb_matrix(roll.wb)? * gain,
-            grade: crate::photographic::Grade::new(photo)?,
+            camera_to_working,
+            roll_transform,
         })
     }
 
-    /// Grade an absolute ungraded AP1 replacement without repeating correction or inversion.
-    pub fn grade_neutral(&self, mut pixel: InvertedPixel) -> Result<InvertedPixel, Error> {
-        pixel.rgb = self.grade.apply(self.working_to_graded * pixel.rgb)?;
+    /// Absolute neutral AP1, without Roll or adjustment layers.
+    pub fn ungraded(input: impl Into<InputSettings>, camera_to_ap1: DMat3) -> Result<Self, Error> {
+        Self::new(input, RollSettings::default(), camera_to_ap1)
+    }
+
+    pub fn apply_roll(&self, mut pixel: InvertedPixel) -> Result<InvertedPixel, Error> {
+        pixel.rgb = self.roll_transform * pixel.rgb;
+        if !pixel.rgb.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
         Ok(pixel)
     }
 
-    /// Returns unclipped AP1 working RGB; scene-linear AP0 export converts at its boundary.
     pub fn apply(&self, scan: DVec3) -> Result<InvertedPixel, Error> {
         let mut pixel = self.interpretation.interpret(scan)?;
-        pixel.rgb = self.grade.apply(self.to_graded_ap1 * pixel.rgb)?;
+        pixel.rgb = self.camera_to_working * pixel.rgb;
+        if !pixel.rgb.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
         Ok(pixel)
     }
 }

@@ -5,11 +5,12 @@ use super::{
         SectionHeader, SectionTool, ToolIdentity, labelled_row_at, section,
     },
 };
+use crate::adjustment_layers::{DEFAULT_COLOUR_MIX, DEFAULT_PIVOT};
 use crate::{
     color::{Balance, ap1_to_cones, opponent, opponent_coordinates},
     processing::{
-        DEFAULT_COLOUR_MIX, DEFAULT_GAMMA, DEFAULT_PIVOT, DEFAULT_TOE, MAX_EXPOSURE, MAX_GAMMA,
-        MAX_SHOULDER, MAX_TOE, MIN_GAMMA, MIN_TOE,
+        DEFAULT_GAMMA, DEFAULT_TOE, MAX_EXPOSURE, MAX_GAMMA, MAX_SHOULDER, MAX_TOE, MIN_GAMMA,
+        MIN_TOE,
     },
 };
 use egui::{Color32, Response, Ui};
@@ -176,13 +177,38 @@ pub(super) fn numeric_cancelled(ui: &Ui, response: &Response) -> bool {
     cancelled || cancelling
 }
 
-fn history_gesture(ui: &Ui, response: &Response) {
+/// Frame-local activity, independent of the history group retained for a completed drag.
+pub(super) fn values_are_being_adjusted(context: &egui::Context) -> bool {
+    context.data(|data| data.get_temp::<u64>(egui::Id::new("value-adjustment-frame")))
+        == Some(context.cumulative_frame_nr())
+}
+
+fn record_control_interaction(ui: &Ui, response: &Response) {
     if response.enabled()
         && (response.is_pointer_button_down_on() || response.dragged() || response.drag_stopped())
     {
         ui.ctx().data_mut(|data| {
             data.insert_temp(egui::Id::new("project-control-gesture"), response.id);
         });
+    }
+    let keyboard = response.has_focus()
+        && (ui.ctx().text_edit_focused()
+            || ui.input(|input| {
+                [
+                    egui::Key::ArrowLeft,
+                    egui::Key::ArrowRight,
+                    egui::Key::ArrowUp,
+                    egui::Key::ArrowDown,
+                ]
+                .into_iter()
+                .any(|key| input.key_down(key))
+            }));
+    if response.enabled()
+        && (response.is_pointer_button_down_on() || response.dragged() || keyboard)
+    {
+        let frame = ui.ctx().cumulative_frame_nr();
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::new("value-adjustment-frame"), frame));
     }
 }
 
@@ -407,15 +433,18 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
         })
         .inner;
 
-        history_gesture(ui, &slider);
-        history_gesture(ui, &numeric);
+        record_control_interaction(ui, &slider);
+        record_control_interaction(ui, &numeric);
         ui.add_space(PARAMETER_GAP);
         (slider, numeric, label)
     })
     .inner
 }
 
-pub(super) fn photographic_exposure(ui: &mut Ui, photo: &mut crate::processing::PhotoSettings) {
+pub(super) fn photographic_exposure(
+    ui: &mut Ui,
+    photo: &mut crate::adjustment_layers::AdjustmentLayerSettings,
+) {
     let (_, action) = section(
         ui,
         "photo-exposure",
@@ -438,11 +467,11 @@ pub(super) fn photographic_exposure(ui: &mut Ui, photo: &mut crate::processing::
 
 pub(super) fn photographic_colour(
     ui: &mut Ui,
-    photo: &mut crate::processing::PhotoSettings,
+    photo: &mut crate::adjustment_layers::AdjustmentLayerSettings,
     can_pick: bool,
 ) -> bool {
     let pick = white_balance(ui, "photo-white-balance", &mut photo.wb, can_pick);
-    let defaults = crate::processing::PhotoSettings::default();
+    let defaults = crate::adjustment_layers::AdjustmentLayerSettings::default();
     let changed = photo.contrast != defaults.contrast
         || photo.pivot != defaults.pivot
         || photo.contrast_colour_mix != defaults.contrast_colour_mix;
@@ -784,7 +813,7 @@ fn wheel(ui: &mut Ui, kind: ColorControl, value: &mut Balance, size: f32) -> Res
         4.,
         ui.visuals().text_color(),
     );
-    history_gesture(ui, &response);
+    record_control_interaction(ui, &response);
     response.on_hover_text(
         "Drag to shift the balance; hold Shift for finer motion. Double-click resets.",
     )

@@ -35,7 +35,10 @@ fn repair_index(point: vec2u) -> u32 {
 
 fn repaired_positive(value: vec3f, index: u32) -> array<f32, 3> {
     let rgb = value * exp(parameters.anchor.w);
-    return local_grade(photographic_post(array<f32, 3>(rgb.x, rgb.y, rgb.z), 1.0), index);
+    return adjustment_layer_grade(
+            photographic_post(array<f32, 3>(rgb.x, rgb.y, rgb.z), 1.0),
+            index,
+        );
 }
 
 @compute @workgroup_size(64)

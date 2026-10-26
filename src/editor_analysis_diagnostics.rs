@@ -56,19 +56,30 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
         if let Some(field) = project.active_flat_field() {
             scan.set_flat_field(Some(field.map.clone()))?;
         }
-        let pipeline = crate::processing::Pipeline::new(
-            scan.processing_calibration(calibration)?,
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+            project
+                .input
+                .with_calibration(scan.processing_calibration(calibration)?),
             project.roll,
-            record.photo,
+            record.grade_snapshot()?,
             scan.camera_to_ap1,
         )?;
         let (w, h) = scan.preview_dimensions(384)?;
         let grid = crate::geometry::SourceRaster::new(scan.area, [w, h])?;
         let mut working = Vec::with_capacity((w * h) as usize);
+        let mut luminances = Vec::new();
         for y in 0..h {
             for x in 0..w {
                 let [sx, sy] = grid.source_pixel([x, y])?;
-                working.push(pipeline.apply(scan.pixel(sx, sy)?)?.rgb);
+                let rgb = pipeline.apply(scan.pixel(sx, sy)?, [sx, sy])?.rgb;
+                if sx >= picture.x
+                    && sx < picture.x + picture.width
+                    && sy >= picture.y
+                    && sy < picture.y + picture.height
+                {
+                    luminances.push(crate::color::AP1_TO_XYZ.row(1).dot(rgb));
+                }
+                working.push(rgb);
             }
         }
         let rendered = renderer.render(&working)?;
@@ -81,15 +92,6 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
         let eligibility = scan
             .analysis_samples(picture, MAX_SAMPLES_PER_FRAME, || false)?
             .ok_or("uncancellable sampling cancelled")?;
-        let mut luminances: Vec<_> = eligibility
-            .pixels
-            .iter()
-            .map(|&p| {
-                pipeline
-                    .apply(p)
-                    .map(|v| crate::color::AP1_TO_XYZ.row(1).dot(v.rgb))
-            })
-            .collect::<Result<_, _>>()?;
         luminances.sort_unstable_by(f64::total_cmp);
         let lower_tail: [f64; 3] = std::array::from_fn(|channel| {
             let mut values: Vec<_> = eligibility.pixels.iter().map(|p| p[channel]).collect();
@@ -113,7 +115,7 @@ fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std
             "capture_rejected": eligibility.rejected_capture,
             "development_rejected": eligibility.rejected_development,
             "floor_rejected": eligibility.rejected_floor,
-            "picture_ap1_luminance_median": luminances.get(luminances.len()/2),
+            "preview_picture_ap1_luminance_median": luminances.get(luminances.len()/2),
             "picture_channel_lower_half_percent": lower_tail,
             "picture_count_at_or_below_roll_dmax": global_tail_count,
             "preview_negative_fraction": working.iter().filter(|p| p.min_element()<0.).count() as f64/working.len() as f64,
@@ -193,8 +195,18 @@ fn diagnose_sample_rolls() {
                     .into_iter()
                     .zip(&before.sources)
                 {
-                    assert_eq!(after.photo.wb, Balance::default());
-                    after.photo = prior.photo;
+                    assert_eq!(
+                        after.adjustment_layers.as_ref().unwrap().layers[0]
+                            .adjustment
+                            .photo
+                            .wb,
+                        Balance::default()
+                    );
+                    after.adjustment_layers.as_mut().unwrap().layers[0]
+                        .adjustment
+                        .photo = prior.adjustment_layers.as_ref().unwrap().layers[0]
+                        .adjustment
+                        .photo;
                     assert_eq!(&after, prior);
                 }
             } else {
@@ -214,7 +226,7 @@ fn diagnose_sample_rolls() {
                 "explicit_area": case.area, "status": editor.status, "installed": installed,
                 "seconds_analysis_and_render": started.elapsed().as_secs_f64(),
                 "project": editor.document.project, "frames": frames, "render_error": render_error,
-                "preview_contract": "384px original nearest-centres; actual Pipeline and CPU ACES 100-nit sRGB; not area-averaged settled/export acceptance",
+                "preview_contract": "384px original nearest-centres; actual InputPipeline and CPU ACES 100-nit sRGB; not area-averaged settled/export acceptance",
             });
             fs::write(
                 directory.join("report.json"),

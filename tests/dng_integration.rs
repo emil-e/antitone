@@ -43,9 +43,11 @@ fn record(path: &Path, scan: &Scan) -> Source {
             input_floor: scan.source().input_floor(),
         },
         reference_only: false,
-        photo: Default::default(),
+
         repairs: Default::default(),
-        local_adjustments: None,
+        adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+            Default::default(),
+        )),
         orientation: Default::default(),
         crop: None,
     }

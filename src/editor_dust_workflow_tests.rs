@@ -210,7 +210,7 @@ fn downstream_grading_and_viewport_navigation_keep_running_healing_and_its_captu
         app.pump();
         starts.recv_timeout(LIMIT).unwrap();
         app.enter(|e, cx| {
-            e.photo.exposure = 1.;
+            e.adjustment_layer_settings.exposure = 1.;
             e.roll.exposure = 2.;
             e.viewport.zoom = Some(2.);
             e.schedule_dust(e.dust_signature().unwrap(), cx);

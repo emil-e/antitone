@@ -1028,7 +1028,7 @@ impl Editor {
         if self.document.auto_crop_edit.is_some() {
             return;
         }
-        self.close_adjustments();
+        self.finish_adjustment_layer_interaction();
         if self.document.dust.brush_source != self.current_source
             && let (Some(source), Some(active)) = (
                 self.current_source,
@@ -1738,12 +1738,7 @@ impl Editor {
             Some(base) => input.with_calibration(self.processing_calibration(base)?),
             None => *input,
         };
-        let parameters = ProcessingParameters::interpret(
-            input,
-            RollSettings::default(),
-            PhotoSettings::default(),
-            matrix,
-        )?;
+        let parameters = ProcessingParameters::interpret(input, RollSettings::default(), matrix)?;
         Ok(bytemuck::bytes_of(&parameters).try_into().unwrap())
     }
 
@@ -1751,7 +1746,7 @@ impl Editor {
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        photo: PhotoSettings,
+        photo: AdjustmentLayerSettings,
     ) -> Result<(), Error> {
         let input = input.into();
         self.dust_validate_snapshot(input, roll, &self.dust_grade_snapshot(photo)?)
@@ -1761,7 +1756,7 @@ impl Editor {
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        snapshot: &PhotoGradeSnapshot,
+        snapshot: &AdjustmentLayerSnapshot,
     ) -> Result<(), Error> {
         let input = input.into();
         if self.document.dust.gpu.is_empty() {
@@ -1806,25 +1801,21 @@ impl Editor {
         self.validate_dust_snapshot(&input, roll, snapshot, bound)
     }
 
-    fn dust_grade_snapshot(&self, photo: PhotoSettings) -> Result<PhotoGradeSnapshot, Error> {
-        let locals = match self.current_source {
-            Some(source) => self
-                .document
-                .project
-                .source(source)?
-                .grade_snapshot()?
-                .locals()
-                .to_vec(),
-            None => Vec::new(),
-        };
-        PhotoGradeSnapshot::new(photo, locals)
+    fn dust_grade_snapshot(
+        &self,
+        photo: AdjustmentLayerSettings,
+    ) -> Result<AdjustmentLayerSnapshot, Error> {
+        match self.current_source {
+            Some(id) => self.adjustment_layer_snapshot(self.document.project.source(id)?, photo),
+            None => AdjustmentLayerSnapshot::new(Vec::new()),
+        }
     }
 
     fn validate_dust_snapshot(
         &self,
         input: &InputSettings,
         roll: RollSettings,
-        snapshot: &PhotoGradeSnapshot,
+        snapshot: &AdjustmentLayerSnapshot,
         bound: DVec3,
     ) -> Result<(), Error> {
         if bound == DVec3::ZERO {
@@ -1838,7 +1829,7 @@ impl Editor {
             Some(base) => input.with_calibration(self.processing_calibration(base)?),
             None => *input,
         };
-        crate::gpu::GpuPhotoGrade::validate_repaired(
+        crate::gpu::GpuAdjustmentLayers::validate_repaired(
             device,
             input,
             roll,
@@ -1851,7 +1842,7 @@ impl Editor {
 
     pub(super) fn dust_gpu_snapshot(
         &mut self,
-        grade: Option<&PhotoGradeSnapshot>,
+        grade: Option<&AdjustmentLayerSnapshot>,
     ) -> Result<crate::gpu::repairs::Snapshot, Error> {
         let Some(signature) = self.dust_signature() else {
             return Ok(Default::default());
@@ -1866,7 +1857,7 @@ impl Editor {
         let input = self.input();
         let snapshot = match grade {
             Some(grade) => grade.clone(),
-            None => self.dust_grade_snapshot(self.photo)?,
+            None => self.dust_grade_snapshot(self.adjustment_layer_settings)?,
         };
         let repairs = self.effective_dust_repairs(source);
         let candidates = repairs

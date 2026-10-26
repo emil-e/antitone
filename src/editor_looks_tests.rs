@@ -318,13 +318,8 @@ fn positive_input_adopts_look_but_source_inspection_cannot() {
         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     };
     let input = ProcessingInput::from(
-        ProcessingParameters::positive(
-            calibration,
-            RollSettings::default(),
-            PhotoSettings::default(),
-            glam::DMat3::IDENTITY,
-        )
-        .unwrap(),
+        ProcessingParameters::positive(calibration, RollSettings::default(), glam::DMat3::IDENTITY)
+            .unwrap(),
     );
     let looked = input.clone().with_look(Some(look));
     assert_ne!(input.signature(), looked.signature());

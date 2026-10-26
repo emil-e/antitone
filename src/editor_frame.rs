@@ -99,7 +99,7 @@ impl Editor {
         fullscreen_was_active: bool,
         dialog_escape_available: bool,
     ) {
-        self.sync_adjustment_drag(ui.ctx());
+        self.sync_adjustment_layer_drag(ui.ctx());
         // egui clears text focus at pass start on Escape, before tool shortcuts run.
         let text_was_focused = ui.ctx().data(|data| {
             data.get_temp::<bool>(ui.id().with("editor-text-focus"))
@@ -175,7 +175,7 @@ impl Editor {
             && !fullscreen_was_active
             && self.failure.is_none()
             && self.removal_pending.is_none()
-            && !self.document.visit.adjustments.confirming()
+            && !self.document.visit.adjustment_layers.confirming()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && !self.export_modal()
             && self.transition.is_none()
@@ -257,20 +257,20 @@ impl Editor {
         cx: &UiContext<'_, Self>,
         file_action: &mut Option<FileAction>,
     ) {
-        let adjustment_delete = self.adjustment_owns_delete();
+        let adjustment_delete = self.adjustment_layer_owns_delete();
         if adjustment_delete
-            && !self.document.visit.adjustments.dragging()
+            && !self.document.visit.adjustment_layers.dragging()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
             })
         {
-            self.delete_selected_adjustment();
+            self.delete_selected_adjustment_layer();
         }
         if !self.document.dust.cleanup
             && self.document.auto_crop_edit.is_none()
             && !adjustment_delete
-            && !self.document.visit.adjustments.dragging()
+            && !self.document.visit.adjustment_layers.dragging()
             && self.roll_edit_available()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
@@ -282,7 +282,7 @@ impl Editor {
         if self.pick.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
-            && !self.document.visit.adjustments.dragging()
+            && !self.document.visit.adjustment_layers.dragging()
             && !self.document.project.order.is_empty()
         {
             let previous = ui
@@ -311,7 +311,7 @@ impl Editor {
             || self.transition.is_some()
             || self.project_overwrite.is_some()
             || self.removal_pending.is_some()
-            || self.document.visit.adjustments.confirming()
+            || self.document.visit.adjustment_layers.confirming()
         {
             ui.disable();
         }
@@ -396,7 +396,7 @@ impl Editor {
         });
         let reset_scope = match (self.tab, self.current_source) {
             (0, _) => editing::Scope::Roll,
-            (1, Some(source)) => editing::Scope::Photo(source, self.adjustment_target()),
+            (1, Some(source)) => editing::Scope::Photo(source, self.adjustment_layer_target()),
             _ => editing::Scope::Rendering,
         };
         ui.ctx()
@@ -417,6 +417,11 @@ impl Editor {
         );
         for command in std::mem::take(&mut self.control_commands) {
             self.apply_control_command(command, cx);
+            ui.ctx().request_repaint();
+        }
+        let adjusting = controls::values_are_being_adjusted(ui.ctx());
+        if self.document.visit.adjustment_layers.adjusting_values != adjusting {
+            self.document.visit.adjustment_layers.adjusting_values = adjusting;
             ui.ctx().request_repaint();
         }
         controls
@@ -499,7 +504,7 @@ impl Editor {
         self.document_dialogs(ui.ctx(), dialog_escape_available, cx);
         self.input_stage_dialog(ui.ctx(), dialog_escape_available, cx);
         self.removal_dialog(ui.ctx(), dialog_escape_available, cx);
-        self.adjustment_dialog(ui.ctx(), dialog_escape_available);
+        self.adjustment_layer_dialog(ui.ctx(), dialog_escape_available);
         self.export_dialogs(ui.ctx(), dialog_escape_available, cx);
         if self.failure.is_none()
             && let Some(request) = self

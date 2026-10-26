@@ -1,11 +1,12 @@
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use glam::{DMat3, DVec3};
 
 use crate::{
     Error,
     color::{AP1_TO_XYZ, Balance, neutral_wb, wb_matrix},
     processing::{
-        Calibration, InputSettings, Inversion, NegativeInput, PhotoSettings, RollSettings,
-        exposure_multiplier, validate_camera_matrix,
+        Calibration, InputSettings, Inversion, NegativeInput, RollSettings, exposure_multiplier,
+        validate_camera_matrix,
     },
     sampling,
 };
@@ -39,7 +40,7 @@ pub struct FrameStatistics {
 pub struct Proposal {
     pub input: InputSettings,
     pub roll: RollSettings,
-    pub photos: Vec<PhotoSettings>,
+    pub photos: Vec<AdjustmentLayerSettings>,
     pub frames: Vec<FrameStatistics>,
 }
 
@@ -277,10 +278,10 @@ pub fn estimate(
     let photos = totals
         .into_iter()
         .map(|total| {
-            let photo = PhotoSettings {
+            let photo = AdjustmentLayerSettings {
                 exposure: total - roll.exposure,
                 wb: Balance::default(),
-                ..PhotoSettings::default()
+                ..AdjustmentLayerSettings::default()
             };
             exposure_multiplier(photo.exposure)?;
             Ok(photo)

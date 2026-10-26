@@ -1,6 +1,6 @@
 use super::{
-    Balance, Calibration, Coverage, DVec3, Editor, Error, InputSettings, PhotoSettings, Pick,
-    RollSettings, Scan, Task, TaskRequest,
+    Balance, Calibration, Coverage, DVec3, Editor, Error, InputSettings, Pick, RollSettings, Scan,
+    SourceId, Task, TaskRequest,
 };
 use crate::{flat_field::FlatField, scan::DevelopedSource};
 use std::sync::Arc;
@@ -21,7 +21,8 @@ pub(super) struct Input {
     pub region: Coverage,
     pub input: InputSettings,
     pub roll: RollSettings,
-    pub photo: PhotoSettings,
+    pub upstream: crate::adjustment_layers::AdjustmentLayerSnapshot,
+    pub layer: Option<crate::adjustment_layers::AdjustmentLayer>,
 }
 
 impl Input {
@@ -36,18 +37,28 @@ impl Input {
                 .roll_neutral_coverage(self.region, &self.input)
                 .map(Measurement::Balance),
             Pick::RollWb => scan
-                .photo_neutral_coverage(
+                .white_balance_coverage(
                     self.region,
                     &self.input,
                     RollSettings {
                         wb: Balance::default(),
                         ..self.roll
                     },
-                    PhotoSettings::default(),
+                    crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![])?,
+                    None,
                 )
                 .map(Measurement::Balance),
             Pick::Wb => scan
-                .photo_neutral_coverage(self.region, &self.input, self.roll, self.photo)
+                .white_balance_coverage(
+                    self.region,
+                    &self.input,
+                    self.roll,
+                    self.upstream,
+                    Some(
+                        self.layer
+                            .ok_or(Error::InvalidParameter("select an adjustment layer for WB"))?,
+                    ),
+                )
                 .map(Measurement::Balance),
             Pick::Flat | Pick::Analysis => Err(Error::InvalidParameter(
                 "area acceptance uses a separate transaction",
@@ -58,6 +69,7 @@ impl Input {
 
 pub(super) struct Pending {
     pub kind: Pick,
+    pub(super) target: Option<(SourceId, crate::project::AdjustmentLayerId)>,
     pub _task: async_executor::Task<()>,
 }
 
@@ -73,7 +85,44 @@ impl Editor {
             region,
             input: self.input(),
             roll: self.roll,
-            photo: self.photo,
+            upstream: if kind == Pick::Wb {
+                let source = self.document.project.source(self.current_source?).ok()?;
+                let crate::editor::adjustment_layers::Target::Layer(id) =
+                    self.adjustment_layer_target()
+                else {
+                    return None;
+                };
+                let records = &source.adjustment_layers.as_ref()?.layers;
+                let index = records.iter().position(|record| record.id == id)?;
+                crate::adjustment_layers::AdjustmentLayerSnapshot::new(
+                    records[..index]
+                        .iter()
+                        .map(|record| record.adjustment)
+                        .collect(),
+                )
+                .ok()?
+            } else {
+                crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).ok()?
+            },
+            layer: if kind == Pick::Wb {
+                let source = self.document.project.source(self.current_source?).ok()?;
+                let crate::editor::adjustment_layers::Target::Layer(id) =
+                    self.adjustment_layer_target()
+                else {
+                    return None;
+                };
+                let mut layer = source
+                    .adjustment_layers
+                    .as_ref()?
+                    .layers
+                    .iter()
+                    .find(|record| record.id == id)?
+                    .adjustment;
+                layer.photo = self.adjustment_layer_settings;
+                Some(layer)
+            } else {
+                None
+            },
         })
     }
 
@@ -108,7 +157,17 @@ impl Editor {
             self.finish_pick(cx);
             return;
         };
-        self.document.visit.measurement = Some(Pending { kind, _task: task });
+        let target = match (kind, self.current_source, self.adjustment_layer_target()) {
+            (Pick::Wb, Some(source), crate::editor::adjustment_layers::Target::Layer(layer)) => {
+                Some((source, layer))
+            }
+            _ => None,
+        };
+        self.document.visit.measurement = Some(Pending {
+            kind,
+            target,
+            _task: task,
+        });
         self.tasks.begin(Task::Measurement(view, kind));
         self.busy = true;
         self.status = "Measuring full-resolution patch…".into();
@@ -132,6 +191,23 @@ impl Editor {
         cx: &crate::application::UiContext<'_, Self>,
     ) {
         if view != self.document.visit.view || self.document_pending.is_some() {
+            return;
+        }
+        if self
+            .document
+            .visit
+            .measurement
+            .as_ref()
+            .and_then(|pending| pending.target)
+            .is_some_and(|(source, layer)| {
+                self.current_source != Some(source)
+                    || self.adjustment_layer_target()
+                        != crate::editor::adjustment_layers::Target::Layer(layer)
+            })
+        {
+            self.cancel_measurement();
+            self.status = "WB target changed; measurement discarded".into();
+            self.finish_pick(cx);
             return;
         }
         if self
@@ -188,10 +264,9 @@ impl Editor {
                     dmax: next_dmax,
                     input_floor,
                 };
-                if let Err(error) = calibration
-                    .validate()
-                    .and_then(|_| self.validate_processing(candidate, self.roll, self.photo))
-                {
+                if let Err(error) = calibration.validate().and_then(|_| {
+                    self.validate_processing(candidate, self.roll, self.adjustment_layer_settings)
+                }) {
                     self.status = error.to_string();
                     self.finish_pick(cx);
                     return;
@@ -200,7 +275,7 @@ impl Editor {
                 self.status = format!("{kind:?} measured");
             }
             Ok(Measurement::Balance(balance)) => {
-                let (mut roll, mut photo) = (self.roll, self.photo);
+                let (mut roll, mut photo) = (self.roll, self.adjustment_layer_settings);
                 let mut input = self.input;
                 match kind {
                     Pick::Gamma => {
@@ -215,7 +290,7 @@ impl Editor {
                     Pick::RollWb => roll.wb = balance,
                     _ => photo.wb = balance,
                 }
-                if input.calibration().is_some()
+                if input.ready()
                     && let Err(error) = self.validate_processing(input, roll, photo)
                 {
                     self.status = format!("Pick rejected: {error}");
@@ -224,7 +299,7 @@ impl Editor {
                 }
                 self.input = input;
                 self.roll = roll;
-                self.photo = photo;
+                self.adjustment_layer_settings = photo;
                 self.status = format!("{kind:?} neutral correction applied");
             }
             Err(error) => self.status = error,

@@ -183,7 +183,7 @@ impl Editor {
                 }
             }
         } else {
-            match self.view_processing(self.input(), self.roll, self.photo) {
+            match self.view_processing(self.input(), self.roll, self.adjustment_layer_settings) {
                 Ok(p) => p,
                 Err(error) => {
                     ui.label(format!("Positive preview unavailable: {error}"));

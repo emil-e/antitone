@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
+    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::SourcePoint,
-    local_adjustments::{GradientMask, LocalAdjustment},
     processing::RollSettings,
-    project::LocalAdjustments,
+    project::AdjustmentLayers,
 };
 use glam::DVec3;
 
@@ -13,16 +13,16 @@ async fn device() -> wgpu::Device {
     adapter.request_device(&Default::default()).await.unwrap().0
 }
 
-fn locals() -> LocalAdjustments {
-    let mut locals = LocalAdjustments::default();
+fn layers() -> AdjustmentLayers {
+    let mut layers = AdjustmentLayers::default();
     for (name, mask, photo) in [
         (
             "Linear",
-            GradientMask::Linear {
+            AdjustmentLayerCoverage::Linear {
                 start: SourcePoint([100., 100.]),
                 end: SourcePoint([800., 500.]),
             },
-            PhotoSettings {
+            AdjustmentLayerSettings {
                 exposure: 0.25,
                 contrast: 1.01,
                 ..Default::default()
@@ -30,23 +30,23 @@ fn locals() -> LocalAdjustments {
         ),
         (
             "Radial",
-            GradientMask::Radial {
+            AdjustmentLayerCoverage::Radial {
                 center: SourcePoint([450., 300.]),
                 radii: [300., 200.],
                 angle: 0.3,
                 feather: 0.8,
             },
-            PhotoSettings {
+            AdjustmentLayerSettings {
                 exposure: -0.125,
                 saturation: 1.02,
                 ..Default::default()
             },
         ),
     ] {
-        locals
+        layers
             .add(
                 name.into(),
-                LocalAdjustment {
+                AdjustmentLayer {
                     mask,
                     photo,
                     enabled: true,
@@ -56,20 +56,20 @@ fn locals() -> LocalAdjustments {
             )
             .unwrap();
     }
-    locals.next_id = 30;
-    locals
+    layers.next_id = 30;
+    layers
 }
 
-fn unsupported_locals() -> LocalAdjustments {
-    let mut locals = LocalAdjustments::default();
-    let base = self::locals().adjustments[0].adjustment;
+fn unsupported_locals() -> AdjustmentLayers {
+    let mut layers = AdjustmentLayers::default();
+    let base = self::layers().layers[0].adjustment;
     for exposure in [-16., 16.] {
         for _ in 0..7 {
-            locals
+            layers
                 .add(
                     "Recovery".into(),
-                    LocalAdjustment {
-                        photo: PhotoSettings {
+                    AdjustmentLayer {
+                        photo: AdjustmentLayerSettings {
                             exposure,
                             ..Default::default()
                         },
@@ -80,7 +80,7 @@ fn unsupported_locals() -> LocalAdjustments {
                 .unwrap();
         }
     }
-    locals
+    layers
 }
 
 fn calibrated(directory: &Path) -> Document {
@@ -88,12 +88,12 @@ fn calibrated(directory: &Path) -> Document {
     document.project.roll = RollSettings::default();
     document.project.set_dmin(Some([0.2, 0.15, 0.1]));
     document.project.set_dmax(Some([0.008, 0.005, 0.002]));
-    document.project.sources[0].local_adjustments = Some(locals());
+    document.project.sources[0].adjustment_layers = Some(layers());
     document
 }
 
 #[test]
-fn device_preflight_is_read_only_and_missing_device_or_calibration_fails_closed() {
+fn complete_stack_preflight_is_read_only_with_adapter_or_default_limits() {
     pollster::block_on(async {
         let device = device().await;
         let directory = tempfile::tempdir().unwrap();
@@ -104,23 +104,33 @@ fn device_preflight_is_read_only_and_missing_device_or_calibration_fails_closed(
         document.validate_for_device(&device).unwrap();
         assert_eq!(document.project, before);
         assert!(Arc::ptr_eq(document.cache(), &cache));
-        assert!(
-            document
-                .validate()
-                .unwrap_err()
-                .to_string()
-                .contains("GPU device")
-        );
+        document.validate().unwrap();
+        assert_eq!(document.project, before);
         let mut uncalibrated = document.clone();
         uncalibrated.project.set_dmin(None);
         uncalibrated.project.set_dmax(None);
-        let error = uncalibrated.validate_for_device(&device).unwrap_err();
-        assert!(error.to_string().contains("calibrated processing basis"));
+        uncalibrated.validate_for_device(&device).unwrap();
+        uncalibrated.validate().unwrap();
+        assert!(
+            crate::gpu::GpuAdjustmentLayers::new(
+                &device,
+                uncalibrated.project.input,
+                uncalibrated.project.roll,
+                uncalibrated.project.sources[0].grade_snapshot().unwrap(),
+                glam::DMat3::IDENTITY,
+                uncalibrated.project.sources[0]
+                    .development
+                    .active_area
+                    .into()
+            )
+            .is_err(),
+            "saved layer intent remains valid while positive execution waits for interpretation"
+        );
         uncalibrated.project.sources[0]
-            .local_adjustments
+            .adjustment_layers
             .as_mut()
             .unwrap()
-            .adjustments
+            .layers
             .clear();
         uncalibrated.validate_for_device(&device).unwrap();
     });
@@ -150,18 +160,18 @@ fn device_preflight_includes_offscreen_photos_and_the_flat_field_reference_and_v
                 document.project.set_flat_field(Some(field));
                 assert!(document.project.source(id).unwrap().reference_only);
             }
-            document.project.source_mut(id).unwrap().local_adjustments = Some(unsupported_locals());
+            document.project.source_mut(id).unwrap().adjustment_layers = Some(unsupported_locals());
             let before = document.project.clone();
             assert!(document.validate_for_device(&device).is_err());
             assert_eq!(document.project, before);
-            let locals = document
+            let layers = document
                 .project
                 .source_mut(id)
                 .unwrap()
-                .local_adjustments
+                .adjustment_layers
                 .as_mut()
                 .unwrap();
-            for record in &mut locals.adjustments {
+            for record in &mut layers.layers {
                 record.adjustment.enabled = false;
             }
             document.validate_for_device(&device).unwrap();
@@ -169,10 +179,10 @@ fn device_preflight_includes_offscreen_photos_and_the_flat_field_reference_and_v
                 .project
                 .source_mut(id)
                 .unwrap()
-                .local_adjustments
+                .adjustment_layers
                 .as_mut()
                 .unwrap()
-                .adjustments[0]
+                .layers[0]
                 .adjustment
                 .strength = f64::NAN;
             assert!(
@@ -231,7 +241,7 @@ fn device_aware_save_and_open_validate_flat_field_reference_grades_before_io_and
             .project
             .source_mut(reference.id)
             .unwrap()
-            .local_adjustments = Some(locals());
+            .adjustment_layers = Some(layers());
         let map = Arc::new(
             crate::flat_field::FlatField::from_nodes(
                 reference.development.active_area,
@@ -273,14 +283,14 @@ fn device_aware_save_and_open_validate_flat_field_reference_grades_before_io_and
         assert_eq!(opened.project, saved.project);
         assert_eq!(
             opened.project.sources[0]
-                .local_adjustments
+                .adjustment_layers
                 .as_ref()
                 .unwrap()
                 .next_id,
             30
         );
         let mut rejected = saved.clone();
-        rejected.project.sources[0].local_adjustments = Some(unsupported_locals());
+        rejected.project.sources[0].adjustment_layers = Some(unsupported_locals());
         let before = rejected.project.clone();
         let bytes = std::fs::read(&path).unwrap();
         assert!(
@@ -316,7 +326,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             .validate_document_candidate(&editor.document)
             .unwrap();
         let accepted = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         let mut retired = editor
             .document
@@ -326,7 +336,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             .clone();
         retired.id = SourceId(0);
         retired.path = "retired.ARW".into();
-        retired.local_adjustments = Some(unsupported_locals());
+        retired.adjustment_layers = Some(unsupported_locals());
         let id = editor.document.project.add_source(retired).unwrap();
         assert!(editor.document.project.order.contains(&id));
         let before = editor.document.project.clone();
@@ -384,7 +394,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
         assert_eq!(std::fs::read(&destination).unwrap(), b"keep destination");
         assert_eq!(editor.document.project, before);
         let current = editor
-            .positive_processing(editor.input, editor.roll, editor.photo)
+            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         assert!(std::ptr::eq(
             accepted.grade().unwrap(),
@@ -404,7 +414,7 @@ fn device_aware_authored_raw_open_and_duplicate_import_preserve_linear_radial_re
             .unwrap();
         document.project.set_dmin(Some([0.2, 0.15, 0.1]));
         document.project.set_dmax(Some([0.008, 0.005, 0.002]));
-        document.project.sources[0].local_adjustments = Some(locals());
+        document.project.sources[0].adjustment_layers = Some(layers());
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("masks.json");
         let saved = document

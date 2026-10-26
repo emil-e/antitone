@@ -2,6 +2,7 @@
 use super::*;
 use crate::cache_observation as observation;
 use crate::{
+    adjustment_layers::AdjustmentLayerSettings,
     crop::Crop,
     frame_raster::FrameRaster,
     geometry::{PhotoOrientation, QuarterTurns, RollOrientation},
@@ -9,7 +10,6 @@ use crate::{
         ProcessingInput,
         view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec},
     },
-    processing::PhotoSettings,
 };
 use std::time::{Duration, Instant};
 
@@ -132,20 +132,25 @@ fn exercise(
             .processing_calibration(calibration)
             .map_err(|e| e.to_string())?;
         let roll = RollSettings::default();
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             contrast: 0.8,
             saturation: 1.1,
             ..Default::default()
         };
-        let locals = match std::env::var("ANTITONE_EXPORT_RESOURCE_LOCALS").as_deref() {
+        let layers = match std::env::var("ANTITONE_EXPORT_RESOURCE_LOCALS").as_deref() {
             Err(_) | Ok("0") => vec![],
             Ok("2") => resource_locals(area),
-            _ => return Err("resource locals must be0 or2".into()),
+            _ => return Err("resource layers must be0 or2".into()),
         };
-        println!("export_resources ordered_locals={}", locals.len());
-        let snapshot = PhotoGradeSnapshot::new(photo, locals).map_err(|e| e.to_string())?;
+        println!("export_resources ordered_locals={}", layers.len());
+        let snapshot = AdjustmentLayerSnapshot::new(
+            std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(photo))
+                .chain(layers)
+                .collect(),
+        )
+        .map_err(|e| e.to_string())?;
         let input: ProcessingInput = Arc::new(
-            GpuPhotoGrade::new(
+            GpuAdjustmentLayers::new(
                 device,
                 adjusted,
                 roll,
@@ -391,14 +396,17 @@ fn exercise(
                 monitor.phase(
                     "grade-retained-detail-after-export-no-original-reacquisition",
                     || -> Result<(), Error> {
-                        let edited = PhotoGradeSnapshot::new(
-                            PhotoSettings {
-                                exposure: 0.25,
-                                ..photo
-                            },
-                            snapshot.locals().to_vec(),
+                        let edited = AdjustmentLayerSnapshot::new(
+                            std::iter::once(crate::adjustment_layers::AdjustmentLayer::global(
+                                AdjustmentLayerSettings {
+                                    exposure: 0.25,
+                                    ..photo
+                                },
+                            ))
+                            .chain(snapshot.layers().to_vec())
+                            .collect(),
                         )?;
-                        let edited_input: ProcessingInput = Arc::new(GpuPhotoGrade::new(
+                        let edited_input: ProcessingInput = Arc::new(GpuAdjustmentLayers::new(
                             device,
                             adjusted,
                             roll,
@@ -438,20 +446,20 @@ fn exercise(
 
 pub(super) fn resource_locals(
     area: crate::geometry::SourceRegion,
-) -> Vec<crate::local_adjustments::LocalAdjustment> {
+) -> Vec<crate::adjustment_layers::AdjustmentLayer> {
     use crate::{
+        adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
         geometry::SourcePoint,
-        local_adjustments::{GradientMask, LocalAdjustment},
     };
     let [x, y] = [area.x as f64, area.y as f64];
     let [width, height] = [area.width as f64, area.height as f64];
     vec![
-        LocalAdjustment {
-            mask: GradientMask::Linear {
+        AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Linear {
                 start: SourcePoint([x, y]),
                 end: SourcePoint([x + width, y + height]),
             },
-            photo: PhotoSettings {
+            photo: AdjustmentLayerSettings {
                 exposure: 0.5,
                 wb: crate::color::Balance {
                     warmth: 0.003,
@@ -463,14 +471,14 @@ pub(super) fn resource_locals(
             invert: false,
             strength: 0.7,
         },
-        LocalAdjustment {
-            mask: GradientMask::Radial {
+        AdjustmentLayer {
+            mask: AdjustmentLayerCoverage::Radial {
                 center: SourcePoint([x + width / 2., y + height / 2.]),
                 radii: [width / 3., height / 3.],
                 angle: 0.3,
                 feather: 0.4,
             },
-            photo: PhotoSettings {
+            photo: AdjustmentLayerSettings {
                 exposure: -0.25,
                 contrast: 1.05,
                 saturation: 1.08,
@@ -503,7 +511,10 @@ fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
         field: None,
         input: calibration.into(),
         roll: RollSettings::default(),
-        grade: PhotoGradeSnapshot::new(PhotoSettings::default(), vec![]).unwrap(),
+        grade: AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings::default()),
+        ])
+        .unwrap(),
         repairs: &[],
         composition,
         format: Format::Tiff(OutputTarget::Srgb),
@@ -548,8 +559,12 @@ fn write_reference(
         look,
         ..
     } = request;
-    let pipeline =
-        crate::local_adjustments::SpatialPipeline::new(input, roll, grade, scan.camera_to_ap1)?;
+    let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+        input,
+        roll,
+        grade,
+        scan.camera_to_ap1,
+    )?;
     let mut samples = 0_u64;
     check()?;
     let pixel = |x, y| {
@@ -562,8 +577,8 @@ fn write_reference(
             .iter()
             .find(|repair| repair.support().contains([x, y]))
         {
-            let mut pixel =
-                crate::processing::Pipeline::ungraded(input, scan.camera_to_ap1)?.apply(sample)?;
+            let mut pixel = crate::processing::InputPipeline::ungraded(input, scan.camera_to_ap1)?
+                .apply(sample)?;
             pixel.rgb = glam::DVec3::from_array(repair.pixel([x, y], [0.; 3]).map(f64::from));
             pipeline.grade_neutral(pixel, [x, y])?.rgb
         } else {

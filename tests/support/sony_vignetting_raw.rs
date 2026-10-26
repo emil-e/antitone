@@ -101,9 +101,10 @@ fn shading_curve_provenance_differs_even_with_equal_geometry_and_precision_floor
         path: "reference.ARW".into(),
         development: first,
         reference_only: true,
-        photo: Default::default(),
         repairs: Default::default(),
-        local_adjustments: None,
+        adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+            Default::default(),
+        )),
         orientation: Default::default(),
         crop: None,
     };
@@ -234,9 +235,11 @@ fn headroom_is_not_capture_clipping_and_source_floor_composes_with_residual_flat
             path: file.path().into(),
             development: development(&scan),
             reference_only: false,
-            photo: Default::default(),
+
             repairs: Default::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+                Default::default(),
+            )),
             orientation: Default::default(),
             crop: None,
         })

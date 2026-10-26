@@ -3,9 +3,9 @@
 mod tests;
 
 use super::{
-    Adjustments, DocumentRequest, Editor, FailureKind, OutputTarget, Preparation, Prepared,
-    RollSelection, Task, TaskProgress, TaskRequest, document_services::PreparationServices, dust,
-    history, source_workflow,
+    AdjustmentLayerEditor, DocumentRequest, Editor, FailureKind, OutputTarget, Preparation,
+    Prepared, RollSelection, Task, TaskProgress, TaskRequest,
+    document_services::PreparationServices, dust, history, source_workflow,
 };
 use crate::processing::InputSettings;
 use std::sync::{
@@ -181,6 +181,11 @@ impl Editor {
                     && self
                         .document
                         .same_visit(prepared.ready.as_ref(), prepared.reuse_ready);
+                let layer_selection = if !replacement && self.current_source == prepared.selected {
+                    self.document.visit.adjustment_layers.selection_only()
+                } else {
+                    AdjustmentLayerEditor::default()
+                };
                 self.document.visit.source = source_workflow::State::default();
                 self.correction = prepared.correction;
                 if replacement {
@@ -189,7 +194,7 @@ impl Editor {
                     self.document.install(prepared.document);
                 }
                 self.remember_current_look();
-                self.document.visit.adjustments = Adjustments::default();
+                self.document.visit.adjustment_layers = layer_selection;
                 self.document.visit.mask_edit = None;
                 self.grades.clear();
                 if new_project {
@@ -227,11 +232,14 @@ impl Editor {
                     *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
                     self.document.project.input = self.input;
                 }
-                self.photo = prepared
+                self.adjustment_layer_settings = prepared
                     .selected
                     .and_then(|id| self.document.project.source(id).ok())
-                    .map(|source| source.photo)
+                    .and_then(|source| source.adjustment_layers.as_ref())
+                    .and_then(|layers| layers.layers.last())
+                    .map(|record| record.adjustment.photo)
                     .unwrap_or_default();
+                self.refresh_adjustment_layer_selection();
                 self.photo_orientation = prepared
                     .selected
                     .and_then(|id| self.document.project.source(id).ok())

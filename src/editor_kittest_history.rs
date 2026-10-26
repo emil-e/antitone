@@ -61,7 +61,7 @@ fn native_history_actions_route_to_text_first_and_then_restore_the_accepted_phot
         h.try_run_realtime().unwrap();
         h.read(|editor| {
             assert_eq!(
-                editor.photo.exposure, 0.,
+                editor.adjustment_layer_settings.exposure, 0.,
                 "native Undo must change the pending text, not merely leave the project alone"
             )
         });
@@ -75,7 +75,7 @@ fn native_history_actions_route_to_text_first_and_then_restore_the_accepted_phot
         native_action(&mut h, Action::Redo);
         h.key_press(egui::Key::Enter);
         h.try_run_realtime().unwrap();
-        h.read(|editor| assert_eq!(editor.photo.exposure, 1.5));
+        h.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 1.5));
         let accepted = h.read(|editor| editor.document.project.clone());
         h.read(|editor| {
             assert_eq!(
@@ -125,7 +125,7 @@ fn native_history_actions_cannot_interrupt_a_held_slider_or_an_open_popup() {
         h.hover_at(end);
         h.step();
         let held = h.read(|editor| editor.document.project.clone());
-        h.read(|editor| assert_ne!(editor.photo.exposure, 0.75));
+        h.read(|editor| assert_ne!(editor.adjustment_layer_settings.exposure, 0.75));
         h.read(|editor| assert!(!editor.application_menu_state().enabled(Action::Undo)));
         native_action(&mut h, Action::Undo);
         h.read(|editor| assert_eq!(editor.document.project, held));
@@ -138,7 +138,7 @@ fn native_history_actions_cannot_interrupt_a_held_slider_or_an_open_popup() {
         });
         h.step();
         native_action(&mut h, Action::Undo);
-        h.read(|editor| assert_eq!(editor.photo.exposure, 0.75));
+        h.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 0.75));
 
         stage(&mut h, "Rendering");
         h.get_by(|node| {
@@ -157,7 +157,7 @@ fn native_history_actions_cannot_interrupt_a_held_slider_or_an_open_popup() {
         h.key_press(egui::Key::Escape);
         h.step();
         native_action(&mut h, Action::Undo);
-        h.read(|editor| assert_eq!(editor.photo.exposure, 0.));
+        h.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 0.));
     });
 }
 
@@ -284,7 +284,7 @@ fn history_idle_navigation_and_cancelled_input_do_not_clone_repair_bearing_proje
         });
 
         enter_numeric(&mut h, "Exposure", "0.75");
-        h.read(|editor| assert_eq!(editor.photo.exposure, 0.75));
+        h.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 0.75));
         h.read(|editor| {
             assert_eq!(
                 editor.history_snapshot_clones, 2,
@@ -354,15 +354,20 @@ fn history_focus_loss_commits_numeric_text_separately_from_an_orientation_comman
         h.step();
         h.event(egui::Event::Text("1.25".into()));
         h.step();
-        h.read(|editor| assert_eq!(editor.photo.exposure, 0., "text is still pending"));
+        h.read(|editor| {
+            assert_eq!(
+                editor.adjustment_layer_settings.exposure, 0.,
+                "text is still pending"
+            )
+        });
         h.get_by_label("Turn right").click();
         h.step();
-        h.read(|editor| assert_eq!(editor.photo.exposure, 1.25));
+        h.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 1.25));
         h.read(|editor| assert_ne!(editor.photo_orientation, PhotoOrientation::default()));
         shortcut(&mut h, false);
         h.read(|editor| {
             assert_eq!(
-                editor.photo.exposure, 1.25,
+                editor.adjustment_layer_settings.exposure, 1.25,
                 "undo rotation must retain the committed numeric edit"
             )
         });
@@ -388,16 +393,16 @@ fn history_focus_loss_numeric_commit_is_separate_from_section_resets() {
                 .unwrap();
             reset.click();
             h.step();
-            h.read(|editor| assert_eq!(editor.photo.exposure, 0.));
+            h.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 0.));
             shortcut(&mut h, false);
             h.read(|editor| {
                 assert_eq!(
-                    editor.photo.exposure, 1.25,
+                    editor.adjustment_layer_settings.exposure, 1.25,
                     "reset undo must retain the preceding numeric commit"
                 )
             });
             shortcut(&mut h, false);
-            h.read(|editor| assert_eq!(editor.photo.exposure, 0.5));
+            h.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 0.5));
         }
     });
 }
@@ -408,8 +413,11 @@ fn history_confirmed_multi_removal_can_restore_an_empty_roll_without_resetting_i
         h.update(|editor| {
             let id = editor.document.project.order[0];
             let source = editor.document.project.source_mut(id).unwrap();
-            source.photo.exposure = 0.75;
-            editor.photo.exposure = 0.75;
+            source.adjustment_layers.as_mut().unwrap().layers[0]
+                .adjustment
+                .photo
+                .exposure = 0.75;
+            editor.adjustment_layer_settings.exposure = 0.75;
             source
                 .repairs
                 .insert(
@@ -450,7 +458,7 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
     setup(|mut h| {
         let edited_photo = h.read(|editor| editor.current_source);
         enter_numeric(&mut h, "Exposure", "7.123456789012345");
-        h.read(|editor| assert_eq!(editor.photo.exposure, 7.123456789012345));
+        h.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 7.123456789012345));
         let accepted = h.read(|editor| editor.document.project.clone());
         h.get_by_label("roll-1.dng").click();
         h.step();
@@ -467,7 +475,7 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
         });
         native_action(&mut h, crate::platform::menu::Action::Undo);
         h.read(|editor| assert_eq!(editor.current_source, edited_photo));
-        h.read(|editor| assert_eq!(editor.photo.exposure, 0.));
+        h.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 0.));
         shortcut(&mut h, true);
         h.read(|editor| assert_eq!(editor.document.project, accepted));
         h.get_by_label("Crop & straighten").click();

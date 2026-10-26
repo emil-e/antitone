@@ -35,7 +35,7 @@ Click **Analyze** on the Roll tool shelf. Antitone prepares sampling areas and o
 area that is wrong, then confirm the complete set with **Analyze roll** (or press Enter).
 
 > **Before you confirm:** Analyze replaces the roll calibration and all Photo grading,
-> and **removes local adjustments and their masks** from analyzed photographs. The
+> and **replaces each photo's adjustment layers with one global layer** from analyzed photographs. The
 > [Analyze](analyze.md) page explains the review and what exactly gets replaced.
 
 Afterwards: "Adjust normally" — refine any photograph by hand.
@@ -46,7 +46,8 @@ Afterwards: "Adjust normally" — refine any photograph by hand.
 
 Select a photo in the filmstrip and open the **Photo** tab. Exposure, white balance,
 contrast and saturation work the way you expect; the tool shelf adds **Crop &
-straighten**, **Dust repair** and local adjustments. Everything on this tab is
+straighten** and **Dust repair**. The **Layers** section manages ordered whole-image and
+gradient adjustments. Everything on this tab is
 per-photograph — see [Grading a photograph](grading.md).
 
 ## 5. Choose the look and export

@@ -31,8 +31,9 @@ impl Input {
             id: SourceId(1),
             path: file.path().into(),
             reference_only: false,
-            photo: Default::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+                Default::default(),
+            )),
             repairs: Default::default(),
             crop: None,
             orientation: Default::default(),
@@ -327,7 +328,10 @@ fn exact_keys_exclude_grade_identity_and_fail_closed_without_stats() {
     let before = input.key.clone();
     input.record.id = SourceId(99);
     input.record.reference_only = true;
-    input.record.photo.exposure = 2.0;
+    input.record.adjustment_layers.as_mut().unwrap().layers[0]
+        .adjustment
+        .photo
+        .exposure = 2.0;
     assert_eq!(
         SourceKey::capture(input.file.path(), &input.record.development).unwrap(),
         before

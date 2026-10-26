@@ -289,7 +289,6 @@ impl Editor {
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        photo: PhotoSettings,
     ) -> Result<ProcessingParameters, Error> {
         let basis = self
             .document
@@ -297,14 +296,13 @@ impl Editor {
             .camera_basis()
             .ok_or(Error::UnusableSample("no native-camera basis identity"))?;
         let matrix = glam::DMat3::from_cols_array_2d(&basis.camera_to_ap1);
-        self.positive_parameters_for_matrix(input, roll, photo, matrix)
+        self.positive_parameters_for_matrix(input, roll, matrix)
     }
 
     pub(super) fn positive_parameters_for_matrix(
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
-        photo: PhotoSettings,
         camera_to_ap1: glam::DMat3,
     ) -> Result<ProcessingParameters, Error> {
         let input = input.into();
@@ -312,7 +310,7 @@ impl Editor {
             Some(base) => input.with_calibration(self.processing_calibration(base)?),
             None => input,
         };
-        ProcessingParameters::interpret(input, roll, photo, camera_to_ap1)
+        ProcessingParameters::interpret(input, roll, camera_to_ap1)
     }
 
     pub(super) fn processing_calibration(

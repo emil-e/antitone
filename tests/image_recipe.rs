@@ -35,11 +35,13 @@ fn project() -> (Project, SourceId) {
                 camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
                 input_floor: CAMERA_INPUT_FLOOR,
             },
-            photo: Default::default(),
+
             orientation: Default::default(),
             crop: None,
             repairs: Default::default(),
-            local_adjustments: None,
+            adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
+                Default::default(),
+            )),
         })
         .unwrap();
     (project, id)
@@ -62,14 +64,23 @@ fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair
     let repaired = project.image_recipe(id).unwrap();
     assert_ne!(empty, repaired);
     assert!(empty.neutral == repaired.neutral);
-    project.source_mut(id).unwrap().photo.exposure = 1.;
+    project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 1.;
     project.roll.exposure = 0.5;
     project.orientation.turn_clockwise();
     let graded = project.image_recipe(id).unwrap();
     assert_ne!(repaired, graded);
     assert!(repaired.same_neutral_content(&graded));
     assert_eq!(
-        repaired.grade.global().exposure,
+        repaired.grade.layers()[0].photo.exposure,
         0.,
         "captured recipe is immutable"
     );
@@ -101,7 +112,10 @@ fn recipe_capture_uses_the_requested_reference_source_even_when_it_is_not_in_the
     let (mut project, first) = project();
     let mut second = project.source(first).unwrap().clone();
     second.path = "other.ARW".into();
-    second.photo.exposure = 2.;
+    second.adjustment_layers.as_mut().unwrap().layers[0]
+        .adjustment
+        .photo
+        .exposure = 2.;
     let second = project.add_source(second).unwrap();
     let map = Arc::new(
         FlatField::from_nodes([12, 12, 864, 576], [2, 2], vec![glam::DVec3::ONE; 4]).unwrap(),
@@ -113,8 +127,8 @@ fn recipe_capture_uses_the_requested_reference_source_even_when_it_is_not_in_the
     let a = project.image_recipe(first).unwrap();
     let b = project.image_recipe(second).unwrap();
     assert_ne!(a.neutral, b.neutral);
-    assert_eq!(a.grade.global().exposure, 0.);
-    assert_eq!(b.grade.global().exposure, 2.);
+    assert_eq!(a.grade.layers()[0].photo.exposure, 0.);
+    assert_eq!(b.grade.layers()[0].photo.exposure, 2.);
 }
 
 #[test]

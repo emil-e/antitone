@@ -4,13 +4,14 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 
 use antitone as api;
 use api::{
     flat_field::FlatField,
     gpu::{GpuFlatField, ProcessingKernel, ProcessingParameters, ProcessingSource, SourceGeometry},
     lens::EmbeddedLensGeometry,
-    processing::{CAMERA_INPUT_FLOOR, Calibration, PhotoSettings, Pipeline, RollSettings},
+    processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
     raw::{RawFile, Rect},
     rendering::{CpuRenderer, OutputTarget},
     scan::Scan,
@@ -180,6 +181,11 @@ fn synthetic(near_base: bool) -> Dataset {
     }
 }
 
+enum ProcessingCase {
+    Source(ProcessingParameters),
+    Layers(antitone::gpu::GpuAdjustmentLayers),
+}
+
 struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -207,7 +213,7 @@ impl Gpu {
         &self,
         source: &ProcessingSource,
         output: &wgpu::Buffer,
-        parameters: ProcessingParameters,
+        parameters: &ProcessingCase,
         expected: &[DVec3],
     ) {
         self.time(source, output, parameters);
@@ -245,12 +251,20 @@ impl Gpu {
         &self,
         source: &ProcessingSource,
         output: &wgpu::Buffer,
-        parameters: ProcessingParameters,
+        parameters: &ProcessingCase,
     ) -> f64 {
         let start = Instant::now();
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        self.kernel
-            .encode(&self.device, &mut encoder, source, output, parameters);
+        match parameters {
+            ProcessingCase::Source(parameters) => {
+                self.kernel
+                    .encode(&self.device, &mut encoder, source, output, *parameters)
+            }
+            ProcessingCase::Layers(grade) => self
+                .kernel
+                .encode_grade(&self.device, &mut encoder, source, output, grade)
+                .unwrap(),
+        }
         let submission = self.queue.submit([encoder.finish()]);
         self.device
             .poll(wgpu::PollType::Wait {
@@ -275,7 +289,7 @@ fn benchmark(
     gpu: &Gpu,
     dataset: &Dataset,
     output: &wgpu::Buffer,
-    parameters: ProcessingParameters,
+    parameters: &ProcessingCase,
     sources: &[(&str, &ProcessingSource)],
     exposure: f64,
 ) {
@@ -413,14 +427,26 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
     };
     for &exposure in exposures {
         let roll = RollSettings::default();
-        let photo = PhotoSettings {
+        let photo = AdjustmentLayerSettings {
             exposure,
             ..Default::default()
         };
-        let pipeline =
-            calibration.map(|cal| Pipeline::new(cal, roll, photo, dataset.matrix).unwrap());
+        let pipeline = calibration.map(|cal| {
+            antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(photo),
+            ])
+            .and_then(|layers| {
+                antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+                    cal,
+                    roll,
+                    layers,
+                    dataset.matrix,
+                )
+            })
+            .unwrap()
+        });
         let evaluate = |i, p| match &pipeline {
-            Some(pipeline) => pipeline.apply(camera(p) * gain_at(i)).unwrap().rgb,
+            Some(pipeline) => pipeline.apply(camera(p) * gain_at(i), [0, 0]).unwrap().rgb,
             None => dataset.matrix * camera(p) * exposure.exp2(),
         };
         let reference: Vec<_> = dataset
@@ -524,8 +550,21 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
             }
         }
         let parameters = match calibration {
-            Some(cal) => ProcessingParameters::positive(cal, roll, photo, dataset.matrix),
-            None => ProcessingParameters::source_inspection(exposure),
+            Some(cal) => antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(photo),
+            ])
+            .and_then(|snapshot| {
+                antitone::gpu::GpuAdjustmentLayers::new(
+                    &gpu.device,
+                    cal,
+                    roll,
+                    snapshot,
+                    dataset.matrix,
+                    [0, 0, dataset.size[0], dataset.size[1]].into(),
+                )
+            })
+            .map(ProcessingCase::Layers),
+            None => ProcessingParameters::source_inspection(exposure).map(ProcessingCase::Source),
         };
         match parameters {
             Ok(parameters) => {
@@ -534,8 +573,8 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
                     sources.push(("u16-packed", integer));
                 }
                 sources.push(("f32-rounded", &rounded_float_source));
-                benchmark(gpu, dataset, &output, parameters, &sources, exposure);
-                gpu.validate(&float_source, &output, parameters, &reference);
+                benchmark(gpu, dataset, &output, &parameters, &sources, exposure);
+                gpu.validate(&float_source, &output, &parameters, &reference);
                 let rounded_reference: Vec<_> = dataset
                     .codes
                     .iter()
@@ -543,12 +582,12 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
                     .map(|(i, &p)| evaluate(i, quantized(p, 0)))
                     .collect();
                 if let Some(integer) = &integer_source {
-                    gpu.validate(integer, &output, parameters, &rounded_reference);
+                    gpu.validate(integer, &output, &parameters, &rounded_reference);
                 }
                 gpu.validate(
                     &rounded_float_source,
                     &output,
-                    parameters,
+                    &parameters,
                     &rounded_reference,
                 );
             }

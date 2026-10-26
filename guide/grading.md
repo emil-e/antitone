@@ -11,6 +11,9 @@ model behind that promise.
 
 ## The photographic grade
 
+These controls edit the selected adjustment layer. The **Layers** header names the
+target even when collapsed; every new photo starts with an ordinary **Global** layer.
+
 - **Exposure** — in EV. The slider covers ±3 EV; type a value for up to ±16 EV. (After
   Analyze this is the photo's residual exposure on top of the shared Roll EV.)
 - **White balance** — **Warmth** and **Tint**, the **White balance wheel** beside them, or
@@ -39,20 +42,24 @@ Activate **Crop & straighten** from the tool shelf:
 Rotation and crop are per-photo; scan orientation (for the whole roll) is on the Roll
 tool shelf.
 
-## Local adjustments (gradients)
+## Adjustment layers
 
-For graduated changes — darkening a sky, lifting a face — use **Add radial** or **Add
-linear** from the **Adjustments** drawer. Each gradient is a named adjustment with its own
-exposure, white balance, contrast and saturation.
+Use **Add global**, **Add linear** or **Add radial** in the **Layers** section. Every
+layer has the same exposure, white balance, contrast and saturation controls; only its
+coverage differs.
 
-- Draw the gradient on the canvas; drag to move, adjust **Margin**, **Strength** and
-  **Feather** to taste. **Invert mask** flips which side it affects.
-- Weights are continuous: a gradient that half-covers a region with +1 EV applies about
-  +0.5 EV there — a true blend, not an on/off mask.
-- Gradients are listed by name ("Adjustment name"); rename them as you add more. Deleting
-  asks for confirmation.
+- Layers process **bottom to top**. Drag rows to reorder; new layers appear above the
+  selection. Put a global contrast layer above a sky gradient to soften the balanced
+  photograph, rather than changing what the gradient receives.
+- Draw gradients on the canvas and refine their handles. **Strength** attenuates the
+  adjustment, **Invert mask** swaps coverage, and radial **Feather** changes the fade.
+  Half coverage of +1 EV means +0.5 EV, not half a rendered-pixel blend.
+- Select a row to target the shared controls, double-click to rename, or press
+  Delete/Backspace to remove it with confirmation. The initial global layer can also be
+  moved, disabled or deleted.
 
-Global grading runs first, local gradients on top, in the order listed.
+Collapse **Layers** for a clean view. Mask coverage and handles also hide while you
+adjust values, then return. Drawing or moving a gradient keeps its guides visible.
 
 ## Dust repair
 

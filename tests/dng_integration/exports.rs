@@ -2,11 +2,11 @@ use super::*;
 #[path = "../support/working_precision.rs"]
 mod working_precision;
 use antitone::{
+    adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::SubmissionGate,
     gpu_export::{self, Format, Request},
-    local_adjustments::{PhotoGradeSnapshot, SpatialPipeline},
     processing::{Calibration, InputSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
@@ -79,7 +79,16 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
         }
     }
     let calibration = loaded.calibration().unwrap().unwrap();
-    let grade = PhotoGradeSnapshot::new(source.photo, Vec::new()).unwrap();
+    let grade = AdjustmentLayerSnapshot::new(
+        std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+            source.adjustment_layers.as_ref().unwrap().layers[0]
+                .adjustment
+                .photo,
+        ))
+        .chain(Vec::new())
+        .collect(),
+    )
+    .unwrap();
     let composition = Composition::new(
         scan.area,
         RollOrientation::default(),
@@ -91,7 +100,8 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
         ..calibration
     });
     let oracle =
-        SpatialPipeline::new(oracle_input, loaded.roll, grade.clone(), scan.camera_to_ap1).unwrap();
+        AdjustmentLayerPipeline::new(oracle_input, loaded.roll, grade.clone(), scan.camera_to_ap1)
+            .unwrap();
     let (device, queue, renderer) = pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,

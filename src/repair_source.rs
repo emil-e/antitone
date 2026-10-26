@@ -2,7 +2,7 @@
 use crate::{
     Error,
     dust_repair::{self, EvaluatedRepair, Execution, Repair},
-    processing::{InputSettings, Pipeline},
+    processing::{InputPipeline, InputSettings},
     scan::Scan,
 };
 
@@ -30,7 +30,7 @@ pub(crate) fn evaluate_with(
         Some(base) => input.with_calibration(scan.processing_calibration(base)?),
         None => *input,
     };
-    let pipeline = Pipeline::ungraded(input, scan.camera_to_ap1)?;
+    let pipeline = InputPipeline::ungraded(input, scan.camera_to_ap1)?;
     dust_repair::evaluate_with(
         repair,
         scan.area,

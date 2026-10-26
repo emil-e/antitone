@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     gpu::SubmissionGate,
     looks::{LookAsset, LookOrigin, Lut3D},
-    processing::Pipeline,
+    processing::InputPipeline,
     rendering::CpuRenderer,
 };
 use glam::{DMat3, DVec3, Vec3};
@@ -83,7 +83,7 @@ fn assert_rendered(actual: &[[f32; 4]], expected: &[Vec3]) {
 }
 
 #[test]
-fn navigation_pixels_keep_global_local_grades_look_and_target() {
+fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
     let (device, queue) = gpu();
     let renderers = Arc::new(crate::renderer::RendererCache::default());
     let mut thumbnails =
@@ -92,22 +92,37 @@ fn navigation_pixels_keep_global_local_grades_look_and_target() {
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
     let id = document.project.order[0];
-    document.project.source_mut(id).unwrap().photo = PhotoSettings {
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo = AdjustmentLayerSettings {
         exposure: 0.4,
         contrast: 1.15,
         saturation: 1.1,
         ..Default::default()
     };
-    let mut locals = crate::project::LocalAdjustments::default();
-    locals
+    let mut layers = document
+        .project
+        .source(id)
+        .unwrap()
+        .adjustment_layers
+        .clone()
+        .unwrap();
+    layers
         .add(
             "Gradient".into(),
-            crate::local_adjustments::LocalAdjustment {
-                mask: crate::local_adjustments::GradientMask::Linear {
+            crate::adjustment_layers::AdjustmentLayer {
+                mask: crate::adjustment_layers::AdjustmentLayerCoverage::Linear {
                     start: crate::geometry::SourcePoint([0., 0.]),
                     end: crate::geometry::SourcePoint([900., 600.]),
                 },
-                photo: PhotoSettings {
+                photo: AdjustmentLayerSettings {
                     exposure: -0.7,
                     ..Default::default()
                 },
@@ -117,7 +132,10 @@ fn navigation_pixels_keep_global_local_grades_look_and_target() {
             },
         )
         .unwrap();
-    document.project.source_mut(id).unwrap().local_adjustments = Some(locals);
+    assert_eq!(layers.layers.len(), 2);
+    assert_eq!(layers.layers[0].adjustment.photo.exposure, 0.4);
+    assert_eq!(layers.layers[1].adjustment.photo.exposure, -0.7);
+    document.project.source_mut(id).unwrap().adjustment_layers = Some(layers);
     let size = [8, 6];
     let pixels = (0..size[1])
         .flat_map(|y| {
@@ -179,16 +197,16 @@ fn navigation_pixels_keep_global_local_grades_look_and_target() {
             for selected in [None, Some(look.clone())] {
                 document.project.output.look = selected.clone();
                 let recipe = document.project.image_recipe(id).unwrap();
-                let pipeline = Pipeline::new(
+                let pipeline = InputPipeline::new(
                     recipe.neutral.processing_input().unwrap(),
                     recipe.roll,
-                    recipe.grade.global(),
                     DMat3::IDENTITY,
                 )
                 .unwrap();
-                let locals =
-                    crate::local_adjustments::LocalGrade::new(recipe.grade.locals().to_vec())
-                        .unwrap();
+                let layers = crate::adjustment_layers::AdjustmentLayerStack::new(
+                    recipe.grade.layers().to_vec(),
+                )
+                .unwrap();
                 let expected = pixels
                     .iter()
                     .enumerate()
@@ -200,7 +218,7 @@ fn navigation_pixels_keep_global_local_grades_look_and_target() {
                             (f64::from(y) + 0.5) * 600. / f64::from(size[1]),
                         ]);
                         let camera = DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.;
-                        let rgb = locals
+                        let rgb = layers
                             .apply(pipeline.apply(camera).unwrap(), point)
                             .unwrap()
                             .rgb;

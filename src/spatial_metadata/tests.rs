@@ -38,9 +38,11 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
                 path: path.clone(),
                 development: development.clone(),
                 reference_only: false,
-                photo: Default::default(),
+
                 repairs: Default::default(),
-                local_adjustments: None,
+                adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                    Default::default(),
+                )),
                 orientation: Default::default(),
                 crop: None,
             })
@@ -248,7 +250,16 @@ fn invalid_or_crossed_geometry_never_becomes_available_coverage() {
 fn freshness_uses_sources_and_measurement_basis_not_grade_order_or_accepted_crop() {
     let (_dir, mut project, metadata, mut inputs) = fixture();
     project.order.reverse();
-    project.source_mut(inputs[0].source).unwrap().photo.exposure = 1.;
+    project
+        .source_mut(inputs[0].source)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 1.;
     project.source_mut(inputs[0].source).unwrap().crop =
         Some(Crop::from_region([173, 269, 960, 1440].into()));
     inputs.reverse();

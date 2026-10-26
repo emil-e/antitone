@@ -16,8 +16,8 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
             editor.set_gamma(0.75);
-            editor.photo.exposure = 0.5;
-            editor.photo.wb = Balance {
+            editor.adjustment_layer_settings.exposure = 0.5;
+            editor.adjustment_layer_settings.wb = Balance {
                 warmth: 0.1,
                 tint: -0.05,
             };
@@ -180,7 +180,19 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                     e.target,
                     matrix,
                     (!e.source).then(|| {
-                        crate::processing::Pipeline::new(e.input, e.roll, e.photo, matrix).unwrap()
+                        e.adjustment_layer_snapshot(
+                            e.document
+                                .project
+                                .source(e.current_source.unwrap())
+                                .unwrap(),
+                            e.adjustment_layer_settings,
+                        )
+                        .and_then(|layers| {
+                            crate::adjustment_layers::AdjustmentLayerPipeline::new(
+                                e.input, e.roll, layers, matrix,
+                            )
+                        })
+                        .unwrap()
                     }),
                 )
             });
@@ -193,7 +205,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                 );
                 let camera = DVec3::splat(code / 4031.);
                 let working = match &pipeline {
-                    Some(pipeline) => pipeline.apply(camera).unwrap().rgb,
+                    Some(pipeline) => pipeline.apply(camera, point.map(|v| v as u32)).unwrap().rgb,
                     None => matrix * camera,
                 };
                 let linear =
@@ -303,7 +315,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 } else {
                     harness.read(|editor| {
                         assert_ne!(
-                            editor.photo.wb,
+                            editor.adjustment_layer_settings.wb,
                             Balance {
                                 warmth: 0.1,
                                 tint: -0.05
@@ -314,8 +326,13 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                         expected
                             .source_mut(editor.current_source.unwrap())
                             .unwrap()
+                            .adjustment_layers
+                            .as_mut()
+                            .unwrap()
+                            .layers[0]
+                            .adjustment
                             .photo
-                            .wb = editor.photo.wb
+                            .wb = editor.adjustment_layer_settings.wb
                     });
                 }
                 harness.read(|editor| assert_eq!(editor.document.project, expected));

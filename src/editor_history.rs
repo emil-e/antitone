@@ -39,9 +39,10 @@ pub(super) struct History {
 struct ControlState {
     input: InputSettings,
     roll: RollSettings,
-    photo: PhotoSettings,
+    photo: AdjustmentLayerSettings,
     target: OutputTarget,
     source: Option<SourceId>,
+    layer: adjustment_layers::Target,
 }
 
 impl ControlState {
@@ -49,9 +50,10 @@ impl ControlState {
         Self {
             input: editor.input(),
             roll: editor.roll,
-            photo: editor.photo,
+            photo: editor.adjustment_layer_settings,
             target: editor.target,
             source: editor.current_source,
+            layer: editor.adjustment_layer_target(),
         }
     }
 
@@ -63,11 +65,16 @@ impl ControlState {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
             OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
         };
-        if let Some(source) = self.source {
-            project
+        if let Some(source) = self.source
+            && let adjustment_layers::Target::Layer(layer) = self.layer
+            && let Some(record) = project
                 .source_mut(source)
                 .expect("control source belongs to document")
-                .photo = self.photo;
+                .adjustment_layers
+                .as_mut()
+                .and_then(|layers| layers.layers.iter_mut().find(|record| record.id == layer))
+        {
+            record.adjustment.photo = self.photo;
         }
     }
 }
@@ -216,7 +223,7 @@ impl Editor {
         }
         if let Some(controls) = &mut self.history_controls {
             controls.label = label;
-            // Local controls replace accepted records during the pass. Keep their
+            // Layer controls replace accepted records during the pass. Keep their
             // first before-project; scalar mirrors can be compared without cloning.
             controls.before.get_or_insert(before);
             return;
@@ -247,8 +254,8 @@ impl Editor {
             && !self.allow_close
             && self.project_overwrite.is_none()
             && self.removal_pending.is_none()
-            && !self.document.visit.adjustments.confirming()
-            && !self.document.visit.adjustments.dragging()
+            && !self.document.visit.adjustment_layers.confirming()
+            && !self.document.visit.adjustment_layers.dragging()
             && !self.document.dust.history_draft()
     }
 

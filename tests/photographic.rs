@@ -1,6 +1,7 @@
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     photographic::Grade,
-    processing::{Calibration, PhotoSettings, Pipeline, RollSettings},
+    processing::{Calibration, RollSettings},
 };
 use glam::{DMat3, DVec3};
 #[path = "support/photographic_reference.rs"]
@@ -28,19 +29,19 @@ fn inputs() -> Vec<DVec3> {
 
 #[test]
 fn default_blends_select_rgb_contrast_and_constant_y_saturation() {
-    let defaults = PhotoSettings::default();
+    let defaults = AdjustmentLayerSettings::default();
     assert_eq!(defaults.contrast_colour_mix, 0.);
     assert_eq!(defaults.saturation_density, 0.);
     for photo in [
-        PhotoSettings {
+        AdjustmentLayerSettings {
             contrast: 1.2,
             ..defaults
         },
-        PhotoSettings {
+        AdjustmentLayerSettings {
             saturation: 1.3,
             ..defaults
         },
-        PhotoSettings {
+        AdjustmentLayerSettings {
             contrast: 1.2,
             saturation: 1.3,
             ..defaults
@@ -71,13 +72,13 @@ fn production_matches_signed_hdr_reference_for_both_blends() {
             for colour in [0., 0.5, 1.] {
                 for saturation in [0., 0.7, 1., 1.3, 2.] {
                     for density in [0., 0.5, 1.] {
-                        let photo = PhotoSettings {
+                        let photo = AdjustmentLayerSettings {
                             contrast,
                             pivot,
                             contrast_colour_mix: colour,
                             saturation,
                             saturation_density: density,
-                            ..PhotoSettings::default()
+                            ..AdjustmentLayerSettings::default()
                         };
                         let grade = Grade::new(photo).unwrap();
                         for rgb in inputs() {
@@ -127,11 +128,11 @@ fn decode_toe_crossings_do_not_create_a_near_zero_y_gain_jump() {
         let qp = (0.155251141552511 - contrast * 0.0729055341958355) / (1. - contrast);
         let pivot = (qp * 17.52 - 9.72).exp2();
         for dp in [-1e-15, 0., 1e-15] {
-            let grade = Grade::new(PhotoSettings {
+            let grade = Grade::new(AdjustmentLayerSettings {
                 contrast,
                 pivot: pivot + dp,
                 contrast_colour_mix: 1.,
-                ..PhotoSettings::default()
+                ..AdjustmentLayerSettings::default()
             })
             .unwrap();
             let black = grade.apply(DVec3::ZERO).unwrap();
@@ -158,11 +159,11 @@ fn amount_identity_is_exact_at_every_blend_and_pivot() {
     for pivot in [0.01, 0.18, 1.] {
         for colour in [0., 0.5, 1.] {
             for density in [0., 0.5, 1.] {
-                let grade = Grade::new(PhotoSettings {
+                let grade = Grade::new(AdjustmentLayerSettings {
                     pivot,
                     contrast_colour_mix: colour,
                     saturation_density: density,
-                    ..PhotoSettings::default()
+                    ..AdjustmentLayerSettings::default()
                 })
                 .unwrap();
                 for rgb in inputs() {
@@ -186,66 +187,80 @@ fn grade_follows_exposure_wb_and_preserves_camera_floor_flags() {
         DVec3::new(-0.1, 1.2, -0.1),
         DVec3::new(-0.1, -0.1, 1.2),
     );
-    let base = PhotoSettings {
+    let base = AdjustmentLayerSettings {
         exposure: 1.2,
         wb: antitone::color::Balance {
             warmth: 0.2,
             tint: -0.1,
         },
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         contrast: 1.2,
         saturation: 1.3,
         ..base
     };
-    let original = Pipeline::new(input_for(calibration), roll, base, matrix).unwrap();
-    let pipeline = Pipeline::new(input_for(calibration), roll, photo, matrix).unwrap();
+    let original = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(base),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            input_for(calibration),
+            roll,
+            layers,
+            matrix,
+        )
+    })
+    .unwrap();
+    let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(photo),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            input_for(calibration),
+            roll,
+            layers,
+            matrix,
+        )
+    })
+    .unwrap();
     let grade = Grade::new(photo).unwrap();
     for scan in [DVec3::new(0., 0.05, 0.03), DVec3::new(0.3, 0.1, 0.05)] {
-        let before = original.apply(scan).unwrap();
-        let after = pipeline.apply(scan).unwrap();
+        let before = original.apply(scan, [0, 0]).unwrap();
+        let after = pipeline.apply(scan, [0, 0]).unwrap();
         near(after.rgb, grade.apply(before.rgb).unwrap());
         assert_eq!(after.floored, before.floored);
     }
-    let neutral = photo.before_white_balance();
-    assert_eq!(
-        neutral,
-        PhotoSettings {
-            exposure: photo.exposure,
-            ..PhotoSettings::default()
-        }
-    );
 }
 
 #[test]
 fn invalid_parameters_and_overflow_reject_without_clamps() {
     for bad in [0.4 - f64::EPSILON, 1.6 + f64::EPSILON] {
         assert!(
-            Grade::new(PhotoSettings {
+            Grade::new(AdjustmentLayerSettings {
                 contrast: bad,
-                ..PhotoSettings::default()
+                ..AdjustmentLayerSettings::default()
             })
             .is_err()
         );
     }
     for bad in [f64::NAN, f64::INFINITY, -1., 3.] {
-        let base = PhotoSettings::default();
+        let base = AdjustmentLayerSettings::default();
         for photo in [
-            PhotoSettings {
+            AdjustmentLayerSettings {
                 contrast: bad,
                 ..base
             },
-            PhotoSettings { pivot: bad, ..base },
-            PhotoSettings {
+            AdjustmentLayerSettings { pivot: bad, ..base },
+            AdjustmentLayerSettings {
                 contrast_colour_mix: bad,
                 ..base
             },
-            PhotoSettings {
+            AdjustmentLayerSettings {
                 saturation: bad,
                 ..base
             },
-            PhotoSettings {
+            AdjustmentLayerSettings {
                 saturation_density: bad,
                 ..base
             },
@@ -254,16 +269,16 @@ fn invalid_parameters_and_overflow_reject_without_clamps() {
         }
     }
     assert!(
-        Grade::new(PhotoSettings {
+        Grade::new(AdjustmentLayerSettings {
             contrast: 1.5,
-            ..PhotoSettings::default()
+            ..AdjustmentLayerSettings::default()
         })
         .unwrap()
         .apply(DVec3::splat(f64::MAX))
         .is_err()
     );
     assert!(
-        Grade::new(PhotoSettings::default())
+        Grade::new(AdjustmentLayerSettings::default())
             .unwrap()
             .apply(DVec3::splat(f64::NAN))
             .is_err()
@@ -274,21 +289,21 @@ fn invalid_parameters_and_overflow_reject_without_clamps() {
 #[test]
 fn current_photo_json_defaults_old_fields_and_retains_new_fields_strictly() {
     let old = r#"{"exposure":1.25,"wb":{"warmth":0.1,"tint":-0.2}}"#;
-    let loaded: PhotoSettings = serde_json::from_str(old).unwrap();
+    let loaded: AdjustmentLayerSettings = serde_json::from_str(old).unwrap();
     assert_eq!(loaded.contrast_colour_mix, 0.);
     assert_eq!(loaded.saturation_density, 0.);
     assert_eq!(
         loaded,
-        PhotoSettings {
+        AdjustmentLayerSettings {
             exposure: 1.25,
             wb: antitone::color::Balance {
                 warmth: 0.1,
                 tint: -0.2
             },
-            ..PhotoSettings::default()
+            ..AdjustmentLayerSettings::default()
         }
     );
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         contrast: 1.123456789012345,
         pivot: 0.123456789012345,
         contrast_colour_mix: 0.23456789012345,
@@ -297,19 +312,25 @@ fn current_photo_json_defaults_old_fields_and_retains_new_fields_strictly() {
         ..loaded
     };
     let json = serde_json::to_string(&photo).unwrap();
-    assert_eq!(serde_json::from_str::<PhotoSettings>(&json).unwrap(), photo);
-    let halfway = PhotoSettings {
+    assert_eq!(
+        serde_json::from_str::<AdjustmentLayerSettings>(&json).unwrap(),
+        photo
+    );
+    let halfway = AdjustmentLayerSettings {
         contrast_colour_mix: 0.5,
         saturation_density: 0.5,
         ..photo
     };
     let json = serde_json::to_string(&halfway).unwrap();
     assert_eq!(
-        serde_json::from_str::<PhotoSettings>(&json).unwrap(),
+        serde_json::from_str::<AdjustmentLayerSettings>(&json).unwrap(),
         halfway
     );
     assert!(
-        serde_json::from_str::<PhotoSettings>(&old.replace("\"exposure\"", "\"unknown\"")).is_err()
+        serde_json::from_str::<AdjustmentLayerSettings>(
+            &old.replace("\"exposure\"", "\"unknown\"")
+        )
+        .is_err()
     );
 }
 

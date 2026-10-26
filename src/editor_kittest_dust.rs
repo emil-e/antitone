@@ -176,9 +176,9 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
                 tint: -0.02,
             }
         });
-        h.update(|editor| editor.photo.exposure = 0.7);
-        h.update(|editor| editor.photo.contrast = 1.1);
-        h.update(|editor| editor.photo.saturation = 0.8);
+        h.update(|editor| editor.adjustment_layer_settings.exposure = 0.7);
+        h.update(|editor| editor.adjustment_layer_settings.contrast = 1.1);
+        h.update(|editor| editor.adjustment_layer_settings.saturation = 0.8);
         h.step();
         ready(&mut h, 1);
         h.read(|editor| assert_eq!(editor.dust_signature(), Some(sig)));
@@ -314,9 +314,7 @@ fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
         h.try_run_realtime().unwrap();
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
             .click();
-        for _ in 0..3 {
-            h.step();
-        }
+        h.try_run_realtime().unwrap();
         let shelf = h
             .get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
             .rect();

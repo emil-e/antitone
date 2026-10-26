@@ -53,8 +53,8 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     }) {
         let warning = harness.get_by_label("Tool warning");
         let description = warning.accesskit_node().description().unwrap();
-        assert!(description.contains("Photo adjustments"));
-        assert!(description.contains("local adjustments and masks"));
+        assert!(description.contains("Photo layers"));
+        assert!(description.contains("adjustment layers and masks"));
     }
 }
 
@@ -202,31 +202,31 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                 .straightened(editor.document.visit.ready.as_ref().unwrap().area, 0.05)
                 .unwrap(),
         );
-        editor.photo.exposure = 0.5;
-        editor.photo.wb = Balance {
+        editor.adjustment_layer_settings.exposure = 0.5;
+        editor.adjustment_layer_settings.wb = Balance {
             warmth: 0.1,
             tint: -0.05,
         };
-        editor.photo.contrast = 1.2;
-        let ids = adjustments::install_locals(editor);
-        let mut locals = editor
+        editor.adjustment_layer_settings.contrast = 1.2;
+        let ids = adjustment_layers::install_layers(editor);
+        let mut layers = editor
             .document
             .project
             .source(editor.current_source.unwrap())
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .clone()
             .unwrap();
-        locals.next_id = 40;
-        locals.adjustments[0].adjustment.photo.exposure = 0.25;
-        locals.adjustments[1].adjustment.enabled = false;
+        layers.next_id = 40;
+        layers.layers[0].adjustment.photo.exposure = 0.25;
+        layers.layers[1].adjustment.enabled = false;
         for id in editor.document.project.order.clone() {
             editor
                 .document
                 .project
                 .source_mut(id)
                 .unwrap()
-                .local_adjustments = Some(locals.clone());
+                .adjustment_layers = Some(layers.clone());
         }
         if let Some(reference_id) = editor
             .document
@@ -239,9 +239,9 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                 .project
                 .source_mut(reference_id)
                 .unwrap()
-                .local_adjustments = Some(locals);
+                .adjustment_layers = Some(layers);
         }
-        editor.select_adjustment(super::super::adjustments::Target::Local(ids[0]));
+        editor.select_adjustment_layer(super::super::adjustment_layers::Target::Layer(ids[0]));
         editor.sync_document();
         editor
             .validate_document_candidate(&editor.document)
@@ -320,8 +320,8 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     harness.read(|editor| assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status));
     harness.read(|editor| {
         assert_eq!(
-            editor.adjustment_target(),
-            super::super::adjustments::Target::Global
+            editor.adjustment_layer_target(),
+            super::super::adjustment_layers::Target::Layer(crate::project::AdjustmentLayerId(40))
         )
     });
     harness.read(|editor| {
@@ -347,21 +347,34 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         for (mut source, prior) in after.sources.clone().into_iter().zip(&before.sources) {
             if after.order.contains(&source.id) {
                 assert_eq!(
-                    source.photo,
-                    PhotoSettings {
-                        exposure: source.photo.exposure,
-                        ..PhotoSettings::default()
+                    source.adjustment_layers.as_ref().unwrap().layers[0]
+                        .adjustment
+                        .photo,
+                    AdjustmentLayerSettings {
+                        exposure: source.adjustment_layers.as_ref().unwrap().layers[0]
+                            .adjustment
+                            .photo
+                            .exposure,
+                        ..AdjustmentLayerSettings::default()
                     }
                 );
-                let locals = source.local_adjustments.as_ref().unwrap();
-                assert!(locals.adjustments.is_empty());
+                let layers = source.adjustment_layers.as_ref().unwrap();
+                assert_eq!(layers.layers.len(), 1);
                 assert_eq!(
-                    locals.next_id,
-                    prior.local_adjustments.as_ref().unwrap().next_id
+                    layers.layers[0].adjustment.mask,
+                    crate::adjustment_layers::AdjustmentLayerCoverage::Global {}
                 );
-                source.local_adjustments = prior.local_adjustments.clone();
+                assert_eq!(
+                    layers.next_id,
+                    prior.adjustment_layers.as_ref().unwrap().next_id + 1
+                );
+                source.adjustment_layers = prior.adjustment_layers.clone();
             }
-            source.photo = prior.photo;
+            source.adjustment_layers.as_mut().unwrap().layers[0]
+                .adjustment
+                .photo = prior.adjustment_layers.as_ref().unwrap().layers[0]
+                .adjustment
+                .photo;
             assert_eq!(&source, prior);
         }
         if let Some(correction) = correction {
@@ -380,7 +393,18 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
             let exposures: Vec<_> = after
                 .order
                 .iter()
-                .map(|id| after.source(*id).unwrap().photo.exposure)
+                .map(|id| {
+                    after
+                        .source(*id)
+                        .unwrap()
+                        .adjustment_layers
+                        .as_ref()
+                        .unwrap()
+                        .layers[0]
+                        .adjustment
+                        .photo
+                        .exposure
+                })
                 .collect();
             assert!(exposures[0] > exposures[1]);
         }
@@ -390,14 +414,14 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         let adjustment = before
             .source(selected.unwrap())
             .unwrap()
-            .local_adjustments
+            .adjustment_layers
             .as_ref()
             .unwrap()
-            .adjustments[0]
+            .layers[0]
             .adjustment;
         editor
-            .edit_adjustments(|locals| {
-                locals.add("Survives failed Analyze".into(), adjustment)?;
+            .edit_adjustment_layers(|layers| {
+                layers.add("Survives failed Analyze".into(), adjustment)?;
                 Ok(())
             })
             .unwrap();
@@ -531,7 +555,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.update(|editor| editor.photo.exposure = 1.25);
+        harness.update(|editor| editor.adjustment_layer_settings.exposure = 1.25);
         harness.update(|editor| editor.sync_document());
         let before = harness.read(|editor| editor.document.project.clone());
         let first = harness.read(|editor| editor.current_source);

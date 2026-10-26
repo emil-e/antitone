@@ -39,7 +39,10 @@ fn fixture() -> Editor {
             .enumerate()
         {
             let source = editor.document.project.source_mut(id).unwrap();
-            source.photo.exposure = index as f64 * 0.75;
+            source.adjustment_layers.as_mut().unwrap().layers[0]
+                .adjustment
+                .photo
+                .exposure = index as f64 * 0.75;
             source.crop = Some(crate::crop::Crop {
                 center: [200., 200.],
                 size: if index == 0 { [16, 16] } else { [24, 12] },
@@ -52,7 +55,9 @@ fn fixture() -> Editor {
             .project
             .source(editor.current_source.unwrap())
             .unwrap();
-        editor.photo = active.photo;
+        editor.adjustment_layer_settings = active.adjustment_layers.as_ref().unwrap().layers[0]
+            .adjustment
+            .photo;
         editor.crop = active.crop;
         editor
     })

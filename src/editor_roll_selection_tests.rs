@@ -22,8 +22,9 @@ fn fixture(index: usize) -> Editor {
                         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
                     },
                     reference_only: false,
-                    photo: PhotoSettings::default(),
-                    local_adjustments: None,
+                    adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
+                        AdjustmentLayerSettings::default(),
+                    )),
                     repairs: Default::default(),
                     orientation: PhotoOrientation::default(),
                     crop: None,

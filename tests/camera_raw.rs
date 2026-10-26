@@ -1,9 +1,10 @@
 #![cfg(all(feature = "raw", feature = "gpu", target_os = "macos"))]
 use antitone as api;
+use antitone::adjustment_layers::AdjustmentLayerSettings;
 use api::{
     color::Balance,
-    gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
-    processing::{DEFAULT_GAMMA, InputSettings, PhotoSettings, Pipeline, Response, RollSettings},
+    gpu::{ProcessingKernel, ProcessingSource},
+    processing::{DEFAULT_GAMMA, InputSettings, Response, RollSettings},
 };
 use glam::Vec4;
 #[path = "support/train_raw.rs"]
@@ -29,16 +30,26 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
             tint: -0.11,
         },
     };
-    let photo = PhotoSettings {
+    let photo = AdjustmentLayerSettings {
         exposure: 0.25,
         wb: Balance {
             warmth: -0.15,
             tint: 0.12,
         },
-        ..PhotoSettings::default()
+        ..AdjustmentLayerSettings::default()
     };
-    let pipeline = Pipeline::new(input, roll, photo, train.camera_to_ap1).unwrap();
-    let params = ProcessingParameters::interpret(input, roll, photo, train.camera_to_ap1).unwrap();
+    let pipeline = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+        antitone::adjustment_layers::AdjustmentLayer::global(photo),
+    ])
+    .and_then(|layers| {
+        antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            input,
+            roll,
+            layers,
+            train.camera_to_ap1,
+        )
+    })
+    .unwrap();
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -50,6 +61,18 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
             ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1).unwrap();
         assert_eq!(source.byte_len(), codes.len() as u64 * 16);
         let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let grade = antitone::gpu::GpuAdjustmentLayers::new(
+            &device,
+            input,
+            roll,
+            antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                antitone::adjustment_layers::AdjustmentLayer::global(photo),
+            ])
+            .unwrap(),
+            train.camera_to_ap1,
+            [0, 0, codes.len() as u32, 1].into(),
+        )
+        .unwrap();
         let bytes = codes.len() as u64 * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -64,7 +87,9 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
             mapped_at_creation: false,
         });
         let mut encoder = device.create_command_encoder(&Default::default());
-        kernel.encode(&device, &mut encoder, &source, &output, params);
+        kernel
+            .encode_grade(&device, &mut encoder, &source, &output, &grade)
+            .unwrap();
         encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
         queue.submit([encoder.finish()]);
         let (send, receive) = std::sync::mpsc::channel();
@@ -78,7 +103,7 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
         let mut worst = 0_f64;
         for (code, actual) in codes.iter().zip(actual) {
             let camera = glam::DVec3::new(code[0] as f64, code[1] as f64, code[2] as f64) / 65535.;
-            let reference = pipeline.apply(camera).unwrap();
+            let reference = pipeline.apply(camera, [0, 0]).unwrap();
             let flags = (0..3).fold(0u32, |bits, c| {
                 bits | (u32::from(reference.floored[c]) << c)
             });

@@ -112,18 +112,18 @@ fn threshold_bits(target: OutputTarget) -> Result<Vec<u32>, Error> {
     for code in 1..=65535 {
         let mut bits = (target.decode((f64::from(code) - 0.5) / 65535.)? as f32).to_bits();
         // Inverse transfer supplies a nearby candidate; verify rather than assume its rounding.
-        let mut adjustments = 0;
+        let mut layers = 0;
         while quantize(bits)? < code {
             bits += 1;
-            adjustments += 1;
-            if adjustments > 8 {
+            layers += 1;
+            if layers > 8 {
                 return Err(Error::Gpu("RGB16 boundary search did not converge".into()));
             }
         }
         while quantize(bits - 1)? >= code {
             bits -= 1;
-            adjustments += 1;
-            if adjustments > 8 {
+            layers += 1;
+            if layers > 8 {
                 return Err(Error::Gpu("RGB16 boundary search did not converge".into()));
             }
         }

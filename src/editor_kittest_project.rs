@@ -2,7 +2,7 @@ use super::workflow::{enter_numeric, wait_settled};
 use super::*;
 
 fn compare_pixel(harness: &Harness<'_, Editor>) -> (DVec3, Vec<glam::Vec3>, Vec<glam::Vec3>) {
-    let (path, wb, input, roll, photo) = harness.read(|editor| {
+    let (path, wb, input, roll, snapshot) = harness.read(|editor| {
         let document = &editor.document;
         let id = editor.current_source.unwrap();
         (
@@ -10,21 +10,30 @@ fn compare_pixel(harness: &Harness<'_, Editor>) -> (DVec3, Vec<glam::Vec3>, Vec<
             document.project.development().as_ref().unwrap().fixed_wb,
             document.project.input,
             document.project.roll,
-            document.project.source(id).unwrap().photo,
+            document
+                .project
+                .source(id)
+                .unwrap()
+                .grade_snapshot()
+                .unwrap(),
         )
     });
     let scan = Scan::open(&path, Some(wb)).unwrap();
-    let pixel = scan
-        .pixel(
-            scan.area.x + scan.area.width / 2,
-            scan.area.y + scan.area.height / 2,
-        )
-        .unwrap();
-    let working = crate::processing::Pipeline::new(input, roll, photo, scan.camera_to_ap1)
-        .unwrap()
-        .apply(pixel)
-        .unwrap()
-        .rgb;
+    let point = [
+        scan.area.x + scan.area.width / 2,
+        scan.area.y + scan.area.height / 2,
+    ];
+    let pixel = scan.pixel(point[0], point[1]).unwrap();
+    let working = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+        input,
+        roll,
+        snapshot,
+        scan.camera_to_ap1,
+    )
+    .unwrap()
+    .apply(pixel, point)
+    .unwrap()
+    .rgb;
     (
         working,
         crate::rendering::CpuRenderer::new(OutputTarget::Srgb)
@@ -109,7 +118,7 @@ fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_t
             };
             editor.sync_document();
             editor
-                .validate_processing(editor.input, editor.roll, editor.photo)
+                .validate_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap();
         });
         let before = harness.read(|editor| editor.document.project.clone());
@@ -186,7 +195,9 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         harness.read(|editor| assert_eq!(editor.current_source, Some(ids[1])));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "7.123456789012345");
-        harness.read(|editor| assert_eq!(editor.photo.exposure, 7.123456789012345));
+        harness.read(|editor| {
+            assert_eq!(editor.adjustment_layer_settings.exposure, 7.123456789012345)
+        });
         stage(&mut harness, "Roll");
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "Toe & shoulder")
@@ -217,8 +228,18 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         });
         harness.read(|editor| {
             assert_eq!(
-                editor.document.project.source(ids[2]).unwrap().photo,
-                PhotoSettings::default()
+                editor
+                    .document
+                    .project
+                    .source(ids[2])
+                    .unwrap()
+                    .adjustment_layers
+                    .as_ref()
+                    .unwrap()
+                    .layers[0]
+                    .adjustment
+                    .photo,
+                AdjustmentLayerSettings::default()
             )
         });
         stage(&mut harness, "Photo");

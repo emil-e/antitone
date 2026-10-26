@@ -16,13 +16,24 @@ fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell
                 .unwrap()
                 .layout
                 .unwrap(),
-            crate::processing::Pipeline::new(
-                editor.input,
-                editor.roll,
-                editor.photo,
-                DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1),
-            )
-            .unwrap(),
+            editor
+                .adjustment_layer_snapshot(
+                    editor
+                        .document
+                        .project
+                        .source(editor.current_source.unwrap())
+                        .unwrap(),
+                    editor.adjustment_layer_settings,
+                )
+                .and_then(|layers| {
+                    crate::adjustment_layers::AdjustmentLayerPipeline::new(
+                        editor.input,
+                        editor.roll,
+                        layers,
+                        DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1),
+                    )
+                })
+                .unwrap(),
             editor.target,
         )
     });
@@ -52,7 +63,7 @@ fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell
             continue;
         }
         let camera = DVec3::from_array(codes) / 4031.;
-        let working = pipeline.apply(camera).unwrap().rgb;
+        let working = pipeline.apply(camera, point.map(|v| v as u32)).unwrap().rgb;
         let linear = target.linear_to_srgb() * cpu.render(&[working]).unwrap()[0].as_dvec3();
         let actual = output.pixels
             [position.y.floor() as usize * output.size[0] as usize + position.x.floor() as usize];
@@ -107,7 +118,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
         h.update(|e| {
             e.input = crate::processing::InputSettings::Digital;
             e.source = false;
-            e.photo.exposure = 0.75;
+            e.adjustment_layer_settings.exposure = 0.75;
             e.photo_orientation.turn_clockwise();
             e.roll_orientation.horizontal = true;
             e.sync_document();
@@ -215,8 +226,22 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
             let ready = e.document.visit.ready.as_ref().unwrap();
             (
                 position,
-                crate::processing::Pipeline::new(e.input, e.roll, e.photo, ready.proxy.matrix())
-                    .unwrap(),
+                e.adjustment_layer_snapshot(
+                    e.document
+                        .project
+                        .source(e.current_source.unwrap())
+                        .unwrap(),
+                    e.adjustment_layer_settings,
+                )
+                .and_then(|layers| {
+                    crate::adjustment_layers::AdjustmentLayerPipeline::new(
+                        e.input,
+                        e.roll,
+                        layers,
+                        ready.proxy.matrix(),
+                    )
+                })
+                .unwrap(),
                 e.target,
             )
         });
@@ -224,7 +249,10 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
         let actual = output.pixels
             [position.y.floor() as usize * output.size[0] as usize + position.x.floor() as usize];
         if healed {
-            let working = pipeline.apply(DVec3::splat(3200. / 4031.)).unwrap().rgb;
+            let working = pipeline
+                .apply(DVec3::splat(3200. / 4031.), [160, 96])
+                .unwrap()
+                .rgb;
             let cpu = crate::rendering::CpuRenderer::new(target).unwrap();
             let linear = target.linear_to_srgb() * cpu.render(&[working]).unwrap()[0].as_dvec3();
             for c in 0..3 {
@@ -264,7 +292,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
                 }
                 editor.source = false;
                 editor.roll.exposure = 0.75;
-                editor.photo.wb = Balance {
+                editor.adjustment_layer_settings.wb = Balance {
                     warmth: 0.1,
                     tint: -0.05,
                 };

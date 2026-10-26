@@ -1,11 +1,11 @@
 use super::*;
 use crate::{
+    adjustment_layers::AdjustmentLayerSnapshot,
     crop::Crop,
     export::Overwrite,
     geometry::Composition,
     gpu::SubmissionGate,
     gpu_export::{self, Format, Request},
-    local_adjustments::PhotoGradeSnapshot,
     processing::{Calibration, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
@@ -60,7 +60,10 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
         }
         .into(),
         roll: RollSettings::default(),
-        grade: PhotoGradeSnapshot::new(Default::default(), vec![]).unwrap(),
+        grade: AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(Default::default()),
+        ])
+        .unwrap(),
         repairs: &[],
         composition,
         format: Format::Tiff(OutputTarget::Srgb),

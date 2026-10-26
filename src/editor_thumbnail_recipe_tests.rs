@@ -84,17 +84,27 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
         cpu_bytes: 0,
         gpu_bytes: 0,
     });
-    document.project.source_mut(id).unwrap().photo.exposure = 0.5;
-    let mut locals = crate::project::LocalAdjustments::default();
-    locals
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 0.5;
+    let mut layers = crate::project::AdjustmentLayers::default();
+    layers
         .add(
             "Linear".into(),
-            crate::local_adjustments::LocalAdjustment {
-                mask: crate::local_adjustments::GradientMask::Linear {
+            crate::adjustment_layers::AdjustmentLayer {
+                mask: crate::adjustment_layers::AdjustmentLayerCoverage::Linear {
                     start: crate::geometry::SourcePoint([0., 0.]),
                     end: crate::geometry::SourcePoint([256., 192.]),
                 },
-                photo: PhotoSettings {
+                photo: AdjustmentLayerSettings {
                     exposure: 0.75,
                     ..Default::default()
                 },
@@ -104,7 +114,7 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
             },
         )
         .unwrap();
-    document.project.source_mut(id).unwrap().local_adjustments = Some(locals);
+    document.project.source_mut(id).unwrap().adjustment_layers = Some(layers);
     let mut graded_key = tests::key(&document, id);
     graded_key.target = OutputTarget::Srgb;
     let graded = complete(&mut thumbnails, &document, graded_key.clone()).unwrap();
@@ -122,7 +132,17 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
         !thumbnails.cache.contains(&plain_key),
         "replacement completion must retire the carried old card at zero optional retention"
     );
-    document.project.source_mut(id).unwrap().photo.exposure = 1.;
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 1.;
     let failed_key = tests::key(&document, id);
     thumbnails.protect_images(vec![failed_key.clone()]);
     thumbnails
@@ -133,7 +153,17 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
         thumbnails.cache.contains(&graded_key),
         "a failed downstream grade must not discard compatible visible neutral content"
     );
-    document.project.source_mut(id).unwrap().photo.exposure = 0.25;
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 0.25;
     let readmitted = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(Arc::ptr_eq(
         &neutral,
@@ -177,7 +207,17 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
     );
     let plain = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(plain.positive.is_some());
-    document.project.source_mut(id).unwrap().photo.exposure = 0.5;
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 0.5;
     let graded = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(
         Arc::ptr_eq(
@@ -341,9 +381,14 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
             .project
             .source_mut(id)
             .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap()
+            .layers[0]
+            .adjustment
             .photo
             .exposure = exposure;
-        editor.photo.exposure = exposure;
+        editor.adjustment_layer_settings.exposure = exposure;
         let output = frame(&mut editor);
         assert!(
             output
@@ -390,6 +435,11 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
         .project
         .source_mut(id)
         .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
         .photo
         .exposure = 1.25;
     let key = tests::key(&editor.document, id);
@@ -429,7 +479,17 @@ fn replacing_a_grade_preserves_other_photos_in_the_roll_cache() {
     let other_key = tests::key(&document, other);
     complete(&mut thumbnails, &document, first_key.clone()).unwrap();
     let other_product = complete(&mut thumbnails, &document, other_key.clone()).unwrap();
-    document.project.source_mut(first).unwrap().photo.exposure = 0.5;
+    document
+        .project
+        .source_mut(first)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 0.5;
     let replacement = tests::key(&document, first);
     complete(&mut thumbnails, &document, replacement.clone()).unwrap();
     assert!(!thumbnails.cache.contains(&first_key));
@@ -448,7 +508,17 @@ fn previous_card_presentation_requires_matching_source_framing_and_target() {
     let mut document = document();
     let id = document.project.order[0];
     let original = tests::key(&document, id);
-    document.project.source_mut(id).unwrap().photo.exposure = 0.5;
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .layers[0]
+        .adjustment
+        .photo
+        .exposure = 0.5;
     let graded = tests::key(&document, id);
     assert!(original.same_presentation(&graded));
     document.project.set_gamma(1.2);
