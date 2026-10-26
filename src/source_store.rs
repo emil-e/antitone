@@ -22,6 +22,37 @@ pub struct SourceKey {
 }
 
 impl SourceKey {
+    /// Capture a load identity even when file stats are unavailable. Missing or stale
+    /// stats disable reuse, while the loader still reports authoritative source errors.
+    pub fn new(path: &Path, source: &SourceDevelopment) -> Self {
+        let locator = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir().map_or_else(|_| path.to_path_buf(), |cwd| cwd.join(path))
+        };
+        Self::for_load(&locator, FileKey::new(&locator), source)
+    }
+
+    pub(crate) fn for_load(path: &Path, file: FileKey, source: &SourceDevelopment) -> Self {
+        Self {
+            locator: path.to_path_buf(),
+            file,
+            source: source.clone(),
+        }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.locator
+    }
+
+    pub(crate) fn file(&self) -> &FileKey {
+        &self.file
+    }
+
+    pub(crate) fn development(&self) -> &SourceDevelopment {
+        &self.source
+    }
+
     pub fn capture(path: &Path, source: &SourceDevelopment) -> Option<Self> {
         let locator = if path.is_absolute() {
             path.to_path_buf()
@@ -48,7 +79,7 @@ impl SourceKey {
         self.file.current_at(&self.locator)
     }
 
-    fn matches(&self, source: &DevelopedSource) -> bool {
+    pub(crate) fn matches(&self, source: &DevelopedSource) -> bool {
         let Ok(image) = source.camera_image() else {
             return false;
         };

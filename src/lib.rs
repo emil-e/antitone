@@ -74,6 +74,8 @@ pub mod sampling;
 pub mod scan;
 #[cfg(feature = "project")]
 pub mod scan_regions;
+#[cfg(feature = "editor")]
+pub mod source_provider;
 #[cfg(any(feature = "project", feature = "raw"))]
 mod source_revision;
 #[cfg(all(feature = "raw", feature = "project"))]

@@ -43,12 +43,14 @@ impl Request {
             .as_ref()
             .zip(other.key.as_ref())
             .is_some_and(|(a, b)| a == b)
-            && self
-                .parent
-                .as_ref()
-                .or(self.store.as_ref())
-                .zip(other.parent.as_ref().or(other.store.as_ref()))
-                .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+            && match (
+                self.parent.as_ref().or(self.store.as_ref()),
+                other.parent.as_ref().or(other.store.as_ref()),
+            ) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            }
     }
 
     fn retired(&self) -> bool {
@@ -58,7 +60,7 @@ impl Request {
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug)]
-pub(super) enum NativePhase {
+pub(crate) enum NativePhase {
     Open,
     UnpackBegin,
     UnpackEnd,
@@ -222,7 +224,7 @@ impl Drop for Owner {
 }
 
 #[derive(Clone)]
-pub(super) struct Scheduler {
+pub(crate) struct Scheduler {
     owner: Arc<Owner>,
     #[cfg(test)]
     workers: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
@@ -235,7 +237,7 @@ struct Demand {
     store: Option<Arc<SourceStore>>,
 }
 
-pub(super) struct Ticket {
+pub(crate) struct Ticket {
     demand: Demand,
     _owner: Arc<Owner>,
     closed: Option<Pin<Box<event_listener::EventListener>>>,
@@ -358,7 +360,7 @@ impl Scheduler {
     }
 
     #[cfg(test)]
-    pub(super) fn new_observed(
+    pub(crate) fn new_observed(
         observe: impl Fn(
             &std::path::Path,
             NativePhase,
@@ -581,7 +583,7 @@ impl Scheduler {
     }
 
     #[cfg(test)]
-    pub(super) fn waiter_count(&self) -> usize {
+    pub(crate) fn waiter_count(&self) -> usize {
         self.owner
             .0
             .state
@@ -594,7 +596,7 @@ impl Scheduler {
     }
 
     #[cfg(test)]
-    pub fn load(
+    pub(super) fn load(
         &self,
         request: Request,
         priority: Priority,
@@ -606,11 +608,27 @@ impl Scheduler {
         self.submit(request, priority)?.wait(cancelled)
     }
 
-    pub fn submit(&self, request: Request, priority: Priority) -> Result<Ticket, Error> {
+    pub(crate) fn submit_key(&self, key: SourceKey) -> Result<Ticket, Error> {
+        self.submit(
+            Request {
+                path: key.path().to_owned(),
+                wb: Some(key.development().decode.fixed_wb),
+                expected: None,
+                file: key.file().clone(),
+                key: Some(key),
+                store: None,
+                parent: None,
+                retain: false,
+            },
+            Priority::Foreground,
+        )
+    }
+
+    pub(super) fn submit(&self, request: Request, priority: Priority) -> Result<Ticket, Error> {
         self.submit_with_admission(request, priority, None)
     }
 
-    pub fn submit_admitted(
+    pub(super) fn submit_admitted(
         &self,
         request: Request,
         priority: Priority,
