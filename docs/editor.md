@@ -161,7 +161,7 @@ Positive navigation cards interpret a small camera-RGB proxy, then apply ordered
 
 Camera preview display and Digital preparation share bounded JPEG/RGB8 extraction and decoding, including in-flight work. ICC profiles or explicit colour labels, including the matching DNG preview IFD, establish interpretation. Completed starting EV survives pixel eviction; a Digital proxy without resolved exposure waits for preparation rather than displaying an uninitialized positive.
 
-Compatible neutral products survive grade, look and target changes. While an update prepares, the previous card stays visible with an updating indicator if source, correction, framing and target match. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
+Compatible neutral products survive grade, look and target changes. Across project replacement, Digital positives also require a known matching normalization, even when captured pixels and photographic controls match. While an update prepares, the previous card stays visible with an updating indicator if source, correction, framing and target match. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
 
 ### Retention settings and pressure
 

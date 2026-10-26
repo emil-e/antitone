@@ -152,6 +152,19 @@ impl Document {
         ))
     }
 
+    fn has_normalization(&self, source: &Source) -> Result<bool> {
+        let Some(header) = self.source_previews.get(&source.id) else {
+            return Ok(false);
+        };
+        Ok(SourceKey::from_revision(
+            &self.source_path(source.id)?,
+            header.file.clone(),
+            &source.development,
+        )
+        .and_then(|key| self.cache().completed_reference(&key))
+        .is_some())
+    }
+
     pub(super) fn positive_matrix(
         &self,
         source: &Source,
@@ -254,20 +267,44 @@ impl Document {
         self.validate_with_device(None)
     }
 
-    /// Preflight the complete document without publishing grades or retaining offscreen images.
+    /// Preflight known source domains without retaining offscreen images; unresolved
+    /// Digital domains complete numerical admission during lazy preparation.
     pub fn validate_for_device(&self, device: &wgpu::Device) -> Result<()> {
         self.validate_with_device(Some(device))
     }
 
-    pub(super) fn validate_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
+    fn validate_structure_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
         self.project.require_runtime(&crate::raw::version())?;
         if let Some(device) = device
             && let Some(asset) = &self.project.output.look
         {
             crate::gpu::look::Lut::require_limits(&device.limits(), asset.lut())?;
         }
+        for source in &self.project.sources {
+            if source
+                .development
+                .decode
+                .fixed_wb
+                .iter()
+                .any(|value| !(*value as f32).is_finite() || *value as f32 <= 0.)
+            {
+                return Err(failure(
+                    "saved RAW white balance cannot be represented by the developer",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
+        self.validate_structure_with_device(device)?;
         let input = self.project.input;
         for source in &self.project.sources {
+            // Unvisited Digital sources have no resolved AP1 domain yet. Their layer
+            // controls are structurally valid; numerical admission follows preparation.
+            if !input.is_negative() && !self.has_normalization(source)? {
+                continue;
+            }
             {
                 let refined = match input.calibration() {
                     Some(base) => input.with_calibration(
@@ -287,19 +324,6 @@ impl Document {
                     source,
                     self.positive_matrix(source, refined)?,
                 )?;
-            }
-        }
-        for source in &self.project.sources {
-            if source
-                .development
-                .decode
-                .fixed_wb
-                .iter()
-                .any(|value| !(*value as f32).is_finite() || *value as f32 <= 0.)
-            {
-                return Err(failure(
-                    "saved RAW white balance cannot be represented by the developer",
-                ));
             }
         }
         Ok(())
@@ -342,6 +366,7 @@ impl Document {
             .restore_exposure_metadata(&exposure_metadata, &document.project, |id| {
                 document.source_path(id)
             });
+        document.validate_with_device(device)?;
         Ok(document)
     }
 

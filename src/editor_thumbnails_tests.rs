@@ -767,8 +767,16 @@ fn digital_source_inspection_does_not_balance_as_shot_development_twice() {
         vec![],
         [4, 1, 2],
     );
+    let (device, queue) = pollster::block_on(async {
+        let adapter = crate::gpu::instance()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        adapter.request_device(&Default::default()).await.unwrap()
+    });
     for path in [path, native.path().to_owned()] {
         let mut editor = Editor::state();
+        editor.initialize_viewer(&device, &queue);
         editor.document.project.input = InputSettings::Digital;
         editor.document.import(&[path]).unwrap();
         editor.input = InputSettings::Digital;

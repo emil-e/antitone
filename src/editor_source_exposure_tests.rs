@@ -218,3 +218,82 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
     assert_eq!(editor.document.project, before);
     assert!(editor.document.visit.ready.is_none());
 }
+
+#[test]
+fn save_open_admission_uses_restored_positive_and_negative_source_normalization() {
+    use crate::{
+        adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings},
+        exposure_reference::StartingExposure,
+        project::{AdjustmentLayers, Project, Save},
+    };
+    let raw = preview_fixture::neutral_dng(1.3);
+    let directory = tempfile::tempdir().unwrap();
+    for (name, reference_ev, last_layer) in [("attenuated", -3., 8.), ("amplified", 0., 4.)] {
+        let mut document = Document::default();
+        document.project.input = InputSettings::Digital;
+        document.import(&[raw.path().to_owned()]).unwrap();
+        let id = document.project.order[0];
+        let source = document.project.source(id).unwrap().clone();
+        let key = SourceKey::capture(raw.path(), &source.development).unwrap();
+        document
+            .cache()
+            .exposure_memo(&key)
+            .set(ReferenceExposure::Matched(StartingExposure {
+                ev: reference_ev,
+                samples: 1024,
+                spread: 0.,
+            }))
+            .unwrap();
+        document.project.roll.exposure = 16.;
+        let mut layers = AdjustmentLayers::default();
+        for exposure in [16., 16., 16., 16., 16., 16., last_layer] {
+            layers
+                .add(
+                    "Range control".into(),
+                    AdjustmentLayer::global(AdjustmentLayerSettings {
+                        exposure,
+                        ..Default::default()
+                    }),
+                )
+                .unwrap();
+        }
+        document.project.source_mut(id).unwrap().adjustment_layers = Some(layers);
+        let record = document.project.source(id).unwrap();
+        let zero_start = crate::editor::processing::validate_source(
+            None,
+            InputSettings::Digital,
+            document.project.roll,
+            record,
+        );
+        if reference_ev < 0. {
+            assert!(
+                zero_start.is_err(),
+                "attenuation is essential for this stack"
+            );
+        } else {
+            zero_start.unwrap();
+        }
+        let path = directory.path().join(format!("{name}.antitone"));
+        document.save(&path, Save::New).unwrap();
+        if reference_ev < 0. {
+            let opened = Document::open(&path)
+                .expect("normalization must be restored before range admission");
+            assert_eq!(opened.project.roll, document.project.roll);
+            assert_eq!(opened.project.sources, document.project.sources);
+            assert!(!opened.dirty());
+        } else {
+            let mut saved = Project::load(&path).unwrap();
+            saved.exposure_metadata.as_mut().unwrap().entries[0].reference =
+                ReferenceExposure::Matched(StartingExposure {
+                    ev: 3.,
+                    samples: 1024,
+                    spread: 0.,
+                });
+            saved.save(&path, Save::Replace).unwrap();
+            assert!(
+                Document::open(&path).is_err(),
+                "restored amplification makes this otherwise supported stack unsafe"
+            );
+        }
+    }
+}

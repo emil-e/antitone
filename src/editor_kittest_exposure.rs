@@ -169,3 +169,172 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
         });
     });
 }
+
+#[test]
+fn opening_same_source_with_different_normalization_replaces_navigation_pixels_and_regrades() {
+    use crate::{
+        exposure_reference::{ReferenceExposure, UnavailableReference as Unavailable},
+        project::{Project, Save},
+    };
+    let file = crate::exposure_fixture::neutral_dng(1.3);
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("matched.antitone");
+    let second = directory.path().join("unavailable.antitone");
+    let mut document = Document::default();
+    document.project.input = crate::processing::InputSettings::Digital;
+    document.import(&[file.path().to_owned()]).unwrap();
+    let id = document.project.order[0];
+    let native = Scan::open(
+        file.path(),
+        Some(
+            document
+                .project
+                .source(id)
+                .unwrap()
+                .development
+                .decode
+                .fixed_wb,
+        ),
+    )
+    .unwrap();
+    document
+        .cache()
+        .prepare_source(document.project.input, native.source())
+        .unwrap();
+    document.save(&first, Save::New).unwrap();
+    let mut saved = Project::load(&first).unwrap();
+    let entry = &mut saved.exposure_metadata.as_mut().unwrap().entries[0];
+    assert!((entry.reference.ev() - 1.3).abs() < 0.03);
+    entry.reference = ReferenceExposure::Unavailable(Unavailable::NoUsablePreview);
+    saved.save(&second, Save::New).unwrap();
+
+    editor_harness_with_thumbnails(true, |mut h, capture| {
+        for (stage, expected_ev) in [(0, 1.3_f64), (1, 0.), (2, 0.6)] {
+            if stage < 2 {
+                open_project(
+                    &mut h,
+                    if stage == 0 {
+                        first.clone()
+                    } else {
+                        second.clone()
+                    },
+                );
+            } else {
+                h.update(|editor| {
+                    editor
+                        .edit_adjustment_layers(|layers| {
+                            layers.layers[0].adjustment.photo.exposure = 0.6;
+                            Ok(())
+                        })
+                        .unwrap()
+                });
+            }
+            wait_for(&mut h, |editor| {
+                !editor.busy
+                    && editor.document_pending.is_none()
+                    && editor.working.support_ready()
+                    && editor
+                        .thumbnails
+                        .ready_count(&editor.document, editor.target)
+                        == 1
+            });
+            h.event(egui::Event::PointerGone);
+            h.step();
+            h.render().unwrap();
+            let center = h.read(|editor| {
+                if stage > 0 {
+                    assert_eq!(
+                        editor
+                            .document
+                            .visit
+                            .ready
+                            .as_ref()
+                            .unwrap()
+                            .developed
+                            .reference_exposure
+                            .get(),
+                        Some(&ReferenceExposure::Unavailable(
+                            Unavailable::NoUsablePreview
+                        ))
+                    );
+                }
+                editor.last_layout.unwrap().0.image.center()
+            });
+            let card = h
+                .get_by_label(file.path().file_name().unwrap().to_str().unwrap())
+                .rect()
+                .center();
+            let expected = crate::rendering::CpuRenderer::new(OutputTarget::Srgb)
+                .unwrap()
+                .render(&[DVec3::splat(6000. / 65535. * expected_ev.exp2())])
+                .unwrap()[0]
+                .to_array()
+                .map(|v| OutputTarget::Srgb.encode(f64::from(v)).unwrap());
+            let pixels = capture.borrow();
+            for (name, point) in [("canvas", center), ("navigation", card)] {
+                let actual = pixels.pixels
+                    [point.y.floor() as usize * pixels.size[0] as usize + point.x.floor() as usize];
+                for c in 0..3 {
+                    assert!(
+                        (f64::from(actual[c]) - expected[c]).abs() < 0.004,
+                        "stage {stage} {name}: {actual:?} vs independent reference {expected:?}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn cold_open_admits_selected_layers_only_after_source_normalization() {
+    use crate::{
+        adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings},
+        project::{AdjustmentLayers, Save},
+    };
+    let file = crate::exposure_fixture::neutral_dng(1.3);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("unprepared.antitone");
+    let mut document = Document::default();
+    document.project.input = crate::processing::InputSettings::Digital;
+    document.import(&[file.path().to_owned()]).unwrap();
+    let id = document.project.order[0];
+    document.project.roll.exposure = 16.;
+    let mut layers = AdjustmentLayers::default();
+    for exposure in [16., 16., 16., 16., 16., 16., 5.5] {
+        layers
+            .add(
+                "Range control".into(),
+                AdjustmentLayer::global(AdjustmentLayerSettings {
+                    exposure,
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+    }
+    document.project.source_mut(id).unwrap().adjustment_layers = Some(layers);
+    super::super::processing::validate_source(
+        None,
+        document.project.input,
+        document.project.roll,
+        document.project.source(id).unwrap(),
+    )
+    .expect("zero-start range is supported");
+    document.save(&path, Save::New).unwrap();
+    assert!(
+        crate::project::Project::load(&path)
+            .unwrap()
+            .exposure_metadata
+            .is_none()
+    );
+    Document::open(&path).expect("header-only Open defers this unresolved numerical domain");
+    editor_harness(|mut h, _| {
+        open_project(&mut h, path.clone());
+        h.read(|editor| {
+            assert!(
+                editor.document.project.order.is_empty(),
+                "the unsafe normalized selected grade must not replace the accepted document"
+            );
+            assert!(editor.current_source.is_none());
+        });
+    });
+}

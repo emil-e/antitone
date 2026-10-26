@@ -445,8 +445,8 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
         for record in &mut disabled.adjustment_layers.as_mut().unwrap().layers {
             record.adjustment.enabled = false;
         }
-        validate_source(Some(&device), &editor.input(), editor.roll, &disabled).unwrap();
-        assert!(validate_source(Some(&device), &editor.input(), editor.roll, &other).is_err());
+        validate_source(Some(&device), editor.input(), editor.roll, &disabled).unwrap();
+        assert!(validate_source(Some(&device), editor.input(), editor.roll, &other).is_err());
         editor.document.project.sources.push(other.clone());
         editor.document.project.order.push(other.id);
         editor.document.project.next_source_id += 1;

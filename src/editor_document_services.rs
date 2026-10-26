@@ -201,9 +201,18 @@ impl PreparationServices {
             return Err("Document preparation retired".into());
         }
         if let Some(source) = source {
-            prepared.ready = Some(self.0.prepare(source, cancelled).await?);
+            prepared.ready = Some(self.0.clone().prepare(source, cancelled).await?);
         }
-        Ok(prepared)
+        let device = self.0.device.clone();
+        self.0
+            .jobs
+            .run(move || {
+                prepared.document.validate_with_device(Some(&device))?;
+                Ok(prepared)
+            })
+            .await
+            .map_err(|_| "Document admission worker panicked".to_owned())?
+            .map_err(|error: Error| error.to_string())
     }
 }
 
