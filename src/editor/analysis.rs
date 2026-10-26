@@ -166,24 +166,20 @@ pub(super) fn develop_scan(
     cancelled: impl Fn() -> bool,
 ) -> Result<Option<Scan>, Error> {
     let cache = LoadCache::new(path, Some(expected), document);
-    let result = developments.load(
-        development::Request {
-            path: path.to_owned(),
-            wb: Some(wb),
-            expected: Some(expected.clone()),
-            file: cache.file,
-            key: cache.key,
-            store: Some(cache.store),
-            parent: cache.parent,
-            retain: false,
-        },
-        development::Priority::Foreground,
-        &cancelled,
-    );
+    let request = source::Request {
+        path: path.to_owned(),
+        wb: Some(wb),
+        expected: Some(expected.clone()),
+        cache: Some(cache),
+        correction: None,
+    };
+    let result = request.load(developments, &cancelled);
     if cancelled() {
         return Ok(None);
     }
-    result.map(Scan::from_source).map(Some)
+    result
+        .and_then(|developed| developed.context.scan())
+        .map(Some)
 }
 
 impl Editor {

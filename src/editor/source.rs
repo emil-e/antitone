@@ -5,6 +5,7 @@ use crate::{
     Error,
     project::Source,
     scan::{DevelopedSource, Scan},
+    source_provider::{SourceCache, SourceLoader, SourceProvider},
     source_store::{SourceKey, SourceStore},
 };
 use std::{
@@ -63,6 +64,10 @@ pub(super) struct Cache {
 }
 
 impl Cache {
+    pub(super) fn provider(&self, loader: SourceLoader) -> SourceCache<SourceLoader> {
+        SourceCache::new(loader, self.store.clone()).with_parent(self.parent.clone())
+    }
+
     pub fn new(path: &Path, expected: Option<&Source>, document: &Document) -> Self {
         let file = thumbnails::FileKey::new(path);
         let key = expected
@@ -105,18 +110,6 @@ pub(super) struct Services {
     pub queue: wgpu::Queue,
 }
 
-struct Acquisition {
-    references: Arc<SourceStore>,
-    request: Request,
-    file: thumbnails::FileKey,
-    supply: Supply,
-    timing: Timing,
-}
-
-enum Supply {
-    Retained(Arc<DevelopedSource>),
-    Native(development::Ticket),
-}
 
 impl Services {
     pub async fn prepare(
@@ -156,34 +149,69 @@ impl Services {
         cancelled: Arc<std::sync::atomic::AtomicBool>,
         independent: bool,
     ) -> Result<Developed, String> {
-        let scheduler = self.developments.clone();
+        let started = std::time::Instant::now();
         let retired = cancelled.clone();
-        let acquisition = self
+        let (request, key, cache) = self
             .jobs
-            .run_admitted(move |admission| {
-                request.begin(&scheduler, admission, independent, &|| {
-                    retired.load(std::sync::atomic::Ordering::Relaxed)
-                })
+            .run(move || {
+                let mut request = request;
+                let cache = request.cache.clone();
+                if independent {
+                    request.cache = None;
+                }
+                request.require_live(&|| retired.load(std::sync::atomic::Ordering::Relaxed))?;
+                let key = request.load_key()?;
+                Ok::<_, Error>((request, key, cache))
             })
             .await
-            .map_err(|_| "Source submission worker panicked".to_owned())?
+            .map_err(|_| "Source capture worker panicked".to_owned())?
             .map_err(|error| error.to_string())?;
-        let Acquisition {
-            references,
-            request,
-            file,
-            supply,
-            mut timing,
-        } = acquisition;
-        let source = match supply {
-            Supply::Retained(source) => source,
-            Supply::Native(ticket) => ticket.await.map_err(|error| error.to_string())?,
+        let references = cache.as_ref().map_or_else(
+            || Arc::new(SourceStore::new(0)), |cache| cache.store.clone(),
+        );
+        let store = (!independent)
+            .then(|| cache.as_ref().map(|cache| cache.store.clone()))
+            .flatten();
+        let loader = SourceLoader::from_scheduler(
+            self.developments.clone(),
+            development::Priority::Foreground,
+        );
+        let load = async {
+            match cache {
+                Some(cache) => cache.provider(loader).load_source(key.clone()).await,
+                None => loader.load_source(key.clone()).await,
+            }
         };
-        timing.development_seconds = timing.started.elapsed().as_secs_f64();
+        let source = if let Some(store) = store {
+            let changed = store.listen_for_close();
+            let close = async {
+                if !store.is_closed() {
+                    changed.await;
+                }
+                Err(Error::UnusableSample("document source work retired"))
+            };
+            futures_lite::future::or(close, load).await
+        } else {
+            load.await
+        }
+        .map_err(|error| error.to_string())?;
+        let timing = Timing {
+            started,
+            development_seconds: started.elapsed().as_secs_f64(),
+            registration_seconds: 0.,
+            verification_seconds: 0.,
+        };
+        let file = key.file().clone();
         self.jobs
             .run(move || {
-                let retired = || cancelled.load(std::sync::atomic::Ordering::Relaxed);
-                request.accept(source, file, references, &retired, timing)
+
+                request.accept(
+                    source,
+                    file,
+                    references,
+                    &|| cancelled.load(std::sync::atomic::Ordering::Relaxed),
+                    timing,
+                )
             })
             .await
             .map_err(|_| "Source preparation worker panicked".to_owned())?
@@ -193,7 +221,6 @@ impl Services {
 
 struct Timing {
     started: std::time::Instant,
-    native_hit: bool,
     development_seconds: f64,
     registration_seconds: f64,
     verification_seconds: f64,
@@ -212,80 +239,31 @@ impl Request {
         Ok(())
     }
 
-    fn demand(&self) -> Result<development::Request, Error> {
-        if let Some(expected) = &self.expected {
-            expected.grade_snapshot()?;
-        }
-        Ok(development::Request {
-            path: self.path.clone(),
-            wb: self.wb,
-            expected: self.expected.clone(),
-            file: self.cache.as_ref().map_or_else(
-                || thumbnails::FileKey::new(&self.path),
-                |cache| cache.file.clone(),
-            ),
-            key: self.cache.as_ref().and_then(|cache| cache.key.clone()),
-            store: self.cache.as_ref().map(|cache| cache.store.clone()),
-            parent: self.cache.as_ref().and_then(|cache| cache.parent.clone()),
-            retain: true,
-        })
-    }
 
-    fn retained(&self) -> Option<Arc<DevelopedSource>> {
-        let cache = self.cache.as_ref()?;
-        let key = cache.key.as_ref()?;
-        cache
-            .store
-            .get(key)
-            .or_else(|| cache.parent.as_ref().and_then(|parent| parent.get(key)))
-    }
-
-    fn begin(
-        mut self,
-        developments: &development::Scheduler,
-        admission: crate::blocking_jobs::Admission,
-        independent: bool,
-        cancelled: &dyn Fn() -> bool,
-    ) -> Result<Acquisition, Error> {
-        let retained = self.retained();
-        let references = self.cache.as_ref().map_or_else(
-            || Arc::new(SourceStore::new(0)),
-            |cache| cache.store.clone(),
-        );
-        if independent {
-            // The cache may close while native work is queued. Do not use its
-            // publication lifetime as authority for an accepted file operation.
-            self.cache = None;
-        }
-        self.require_live(cancelled)?;
-        let demand = self.demand()?;
-        let file = demand.file.clone();
-        let started = std::time::Instant::now();
-        let native_hit = retained.is_some();
-        let supply = match retained {
-            Some(source) => Supply::Retained(source),
-            None => Supply::Native(developments.submit_admitted(
-                demand,
-                development::Priority::Foreground,
-                admission,
-            )?),
+    pub(super) fn load_key(&self) -> Result<SourceKey, Error> {
+        let record = match &self.expected {
+            Some(expected) => {
+                expected.grade_snapshot()?;
+                if self
+                    .wb
+                    .is_some_and(|wb| wb != expected.development.decode.fixed_wb)
+                {
+                    return Err(Error::Project(
+                        "source WB differs from requested development".into(),
+                    ));
+                }
+                expected.clone()
+            }
+            None => document::open_source(&self.path, self.wb)?.0,
         };
-        Ok(Acquisition {
-            references,
-            request: self,
-            file,
-            supply,
-            timing: Timing {
-                started,
-                native_hit,
-                development_seconds: 0.,
-                registration_seconds: 0.,
-                verification_seconds: 0.,
-            },
-        })
+        let file = self.cache.as_ref().map_or_else(
+            || thumbnails::FileKey::new(&self.path),
+            |cache| cache.file.clone(),
+        );
+        Ok(SourceKey::for_load(&self.path, file, &record.development))
     }
 
-    /// Synchronous source fixtures exercise acquisition without application state.
+    /// Synchronous fixtures drive the same provider, observing their poll-only stop signal.
     #[cfg(test)]
     pub fn load(
         self,
@@ -293,20 +271,30 @@ impl Request {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Developed, Error> {
         self.require_live(cancelled)?;
-        let demand = self.demand()?;
-        let file = demand.file.clone();
+        let key = self.load_key()?;
+        let file = key.file().clone();
         let started = std::time::Instant::now();
-        let retained = self.retained();
-        let native_hit = retained.is_some();
-        let tick = std::time::Instant::now();
-        let source = match retained {
-            Some(source) => source,
-            None => developments.load(demand, development::Priority::Foreground, cancelled)?,
+        let loader =
+            SourceLoader::from_scheduler(developments.clone(), development::Priority::Foreground);
+        let mut load = Box::pin(async {
+            match &self.cache {
+                Some(cache) => cache.provider(loader).load_source(key).await,
+                None => loader.load_source(key).await,
+            }
+        });
+        let source = loop {
+            self.require_live(cancelled)?;
+            if let Some(result) =
+                futures_lite::future::block_on(futures_lite::future::poll_once(&mut load))
+            {
+                break result?;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         };
+        drop(load);
         let timing = Timing {
             started,
-            native_hit,
-            development_seconds: tick.elapsed().as_secs_f64(),
+            development_seconds: started.elapsed().as_secs_f64(),
             registration_seconds: 0.,
             verification_seconds: 0.,
         };
@@ -343,14 +331,6 @@ impl Request {
         // A captured revision can disable cache publication, never be refreshed to
         // relabel pixels developed from an earlier file version.
         let key = SourceKey::from_revision(&self.path, file.clone(), &record.development);
-        if let Some(cache) = &self.cache
-            && let Some(key) = &key
-            && let Some(source) = cache
-                .store
-                .publish_source(key.clone(), scan.source().clone())?
-        {
-            scan = Scan::from_source(source);
-        }
         if let Some(correction) = &self.correction {
             correction.settings.require_source(&record.development)?;
         }
@@ -426,14 +406,12 @@ impl Developed {
         let images_seconds = tick.elapsed().as_secs_f64();
         let Timing {
             started,
-            native_hit,
             development_seconds,
             registration_seconds,
             verification_seconds,
         } = self.timing;
 
         log::debug!(
-            native_cache_hit = native_hit,
             seconds = started.elapsed().as_secs_f64(),
             registration_seconds,
             development_seconds,

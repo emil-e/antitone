@@ -866,7 +866,6 @@ use production_worker::worker;
 #[derive(Default, Debug)]
 struct ThumbnailMetrics {
     disk_hit: bool,
-    native_hit: bool,
     neutral_hit: bool,
     neutral_seconds: f64,
     disk_seconds: f64,

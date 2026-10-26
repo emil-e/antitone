@@ -3,23 +3,20 @@
 //! ownership and UI tickets. Started work stays pinned to its owner, and at most
 //! two owners overlap independent sources, yielding to foreground demand.
 use super::*;
-use crate::{
-    scan::DevelopedSource,
-    source_store::{SourceKey, SourceStore},
-};
+use crate::{scan::DevelopedSource, source_store::SourceKey};
 use std::{
     collections::HashMap,
     future::Future,
     pin::Pin,
     sync::{
-        Condvar, Mutex,
+        Condvar, Mutex, Weak,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Waker},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Priority {
+pub(crate) enum Priority {
     Foreground,
     Visible,
     Eager,
@@ -32,9 +29,6 @@ pub(super) struct Request {
     pub expected: Option<Source>,
     pub file: thumbnails::FileKey,
     pub key: Option<SourceKey>,
-    pub store: Option<Arc<SourceStore>>,
-    pub parent: Option<Arc<SourceStore>>,
-    pub retain: bool,
 }
 
 impl Request {
@@ -43,18 +37,6 @@ impl Request {
             .as_ref()
             .zip(other.key.as_ref())
             .is_some_and(|(a, b)| a == b)
-            && match (
-                self.parent.as_ref().or(self.store.as_ref()),
-                other.parent.as_ref().or(other.store.as_ref()),
-            ) {
-                (None, None) => true,
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-                _ => false,
-            }
-    }
-
-    fn retired(&self) -> bool {
-        self.store.as_ref().is_some_and(|store| store.is_closed())
     }
 }
 
@@ -81,8 +63,6 @@ type Step = Box<dyn FnMut(&Arc<Task>) -> Result<Option<Arc<DevelopedSource>>, St
 struct Consumer {
     id: u64,
     priority: Priority,
-    store: Option<Arc<SourceStore>>,
-    retain: bool,
     waker: Option<Waker>,
 }
 
@@ -96,9 +76,7 @@ struct Task {
     started: std::sync::atomic::AtomicBool,
     owner: AtomicUsize,
     share: AtomicUsize,
-    native_backing: std::sync::atomic::AtomicBool,
     sdk: std::sync::atomic::AtomicBool,
-    admissions: Mutex<Vec<crate::blocking_jobs::Admission>>,
     result: Mutex<Option<Completion>>,
     ready: Condvar,
 }
@@ -113,22 +91,9 @@ impl Task {
             started: std::sync::atomic::AtomicBool::new(false),
             owner: AtomicUsize::new(UNOWNED),
             share: AtomicUsize::new(1),
-            native_backing: std::sync::atomic::AtomicBool::new(false),
             sdk: std::sync::atomic::AtomicBool::new(false),
-            admissions: Mutex::new(Vec::new()),
             result: Mutex::new(None),
             ready: Condvar::new(),
-        }
-    }
-
-    fn release_admissions(&self) {
-        let retired = std::mem::take(&mut *self.admissions.lock().unwrap());
-        drop(retired);
-    }
-
-    fn release_unbacked_admissions(&self) {
-        if !self.native_backing.load(Ordering::Acquire) {
-            self.release_admissions();
         }
     }
 
@@ -156,26 +121,6 @@ impl Task {
             .unwrap_or(Priority::Eager)
     }
 
-    fn scopes(&self) -> Vec<(Arc<SourceStore>, bool)> {
-        let mut scopes: Vec<_> = self
-            .request
-            .store
-            .iter()
-            .map(|store| (store.clone(), self.request.retain))
-            .collect();
-        scopes.extend(self.demands.lock().unwrap().iter().filter_map(|consumer| {
-            consumer
-                .store
-                .as_ref()
-                .map(|store| (store.clone(), consumer.retain))
-        }));
-        scopes
-    }
-
-    fn retired(&self) -> bool {
-        self.request.retired() && self.scopes().iter().all(|(store, _)| store.is_closed())
-    }
-
     fn abandoned(&self) -> bool {
         !self.started.load(Ordering::Relaxed) && self.demands.lock().unwrap().is_empty()
     }
@@ -183,6 +128,8 @@ impl Task {
 
 struct State {
     tasks: Vec<Arc<Task>>,
+    // Covers delivery/publication handoff without retaining completed pixels.
+    live: Vec<(SourceKey, Weak<DevelopedSource>)>,
     queue: Vec<Arc<Task>>,
     next: u64,
     steps: usize,
@@ -207,9 +154,6 @@ impl Shared {
         };
         self.changed.notify_all();
         for task in tasks {
-            if !task.started.load(Ordering::Relaxed) {
-                task.release_admissions();
-            }
             task.wake_waiters();
         }
     }
@@ -234,29 +178,17 @@ struct Demand {
     shared: Arc<Shared>,
     task: Arc<Task>,
     id: u64,
-    store: Option<Arc<SourceStore>>,
 }
 
 pub(crate) struct Ticket {
     demand: Demand,
     _owner: Arc<Owner>,
-    closed: Option<Pin<Box<event_listener::EventListener>>>,
 }
 
 impl Future for Ticket {
     type Output = Result<Arc<DevelopedSource>, Error>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.closed.is_none() {
-            self.closed = self
-                .demand
-                .store
-                .as_ref()
-                .map(|store| Box::pin(store.listen_for_close()));
-        }
-        if let Some(closed) = &mut self.closed {
-            let _ = closed.as_mut().poll(cx);
-        }
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Register before checking completion. Publication/closure can race the first poll.
         {
             let mut demands = self.demand.task.demands.lock().unwrap();
@@ -280,14 +212,6 @@ impl Future for Ticket {
 
 impl Ticket {
     pub fn result(&self) -> Result<Option<Arc<DevelopedSource>>, Error> {
-        if self
-            .demand
-            .store
-            .as_ref()
-            .is_some_and(|store| store.is_closed())
-        {
-            return Err(Error::UnusableSample("source demand retired"));
-        }
         if self.demand.shared.state.lock().unwrap().closed {
             return Err(Error::UnusableSample("RAW development worker stopped"));
         }
@@ -326,23 +250,11 @@ impl Ticket {
 
 impl Drop for Demand {
     fn drop(&mut self) {
-        let (retired, admissions) = {
-            // Match native dispatch's state → consumer lock order so a last queued
-            // waiter cannot release admission as the worker starts its call.
-            let _state = self.shared.state.lock().unwrap();
-            let mut demands = self.task.demands.lock().unwrap();
-            let retired = demands
-                .iter()
-                .position(|consumer| consumer.id == self.id)
-                .map(|index| demands.swap_remove(index));
-            let admissions = if demands.is_empty() && !self.task.started.load(Ordering::Relaxed) {
-                std::mem::take(&mut *self.task.admissions.lock().unwrap())
-            } else {
-                Vec::new()
-            };
-            (retired, admissions)
-        };
-        drop((retired, admissions));
+        let mut demands = self.task.demands.lock().unwrap();
+        if let Some(index) = demands.iter().position(|consumer| consumer.id == self.id) {
+            demands.swap_remove(index);
+        }
+        drop(demands);
         self.shared.changed.notify_all();
     }
 }
@@ -406,7 +318,7 @@ impl Scheduler {
             let mut unpacked: HashMap<u64, Unpacked> = HashMap::new();
 
             Box::new(move |task| {
-                if task.retired() {
+                if task.demands.lock().unwrap().is_empty() {
                     unpacked.remove(&task.id);
                     return Err("source demand retired".into());
                 }
@@ -429,22 +341,6 @@ impl Scheduler {
                     document::verify_scan(&input.record, &scan).map_err(|e| e.to_string())?;
                     Ok(Some(scan.source().clone()))
                 } else {
-                    if let Some(key) = &task.request.key
-                        && let Some(source) = task
-                            .request
-                            .store
-                            .as_ref()
-                            .and_then(|store| store.get(key))
-                            .or_else(|| {
-                                task.request
-                                    .parent
-                                    .as_ref()
-                                    .and_then(|store| store.get(key))
-                            })
-                    {
-                        return Ok(Some(source));
-                    }
-
                     #[cfg(test)]
                     observe(&task.request.path, NativePhase::Open, None)?;
                     let (record, mut raw) =
@@ -455,6 +351,14 @@ impl Scheduler {
                     task.sdk.store(raw.metadata.uses_sdk(), Ordering::Relaxed);
                     if let Some(expected) = &task.request.expected {
                         document::verify_source(expected, &record).map_err(|e| e.to_string())?;
+                    }
+                    if task
+                        .request
+                        .key
+                        .as_ref()
+                        .is_some_and(|key| key.development() != &record.development)
+                    {
+                        return Err("source differs from requested development".into());
                     }
 
                     // Queue priority is not a different pixel policy or a smaller CPU budget.
@@ -473,15 +377,7 @@ impl Scheduler {
                         NativePhase::UnpackEnd,
                         Some(&raw.metadata),
                     )?;
-                    task.native_backing.store(true, Ordering::Release);
-                    unpacked.insert(
-                        task.id,
-                        Unpacked {
-                            record,
-                            raw,
-                            _backing: NativeBacking(task.clone()),
-                        },
-                    );
+                    unpacked.insert(task.id, Unpacked { record, raw });
                     Ok(None)
                 }
             })
@@ -492,6 +388,7 @@ impl Scheduler {
         Arc::new(Shared {
             state: Mutex::new(State {
                 tasks: Vec::new(),
+                live: Vec::new(),
                 queue: Vec::new(),
                 next: 0,
                 steps: 0,
@@ -608,7 +505,7 @@ impl Scheduler {
         self.submit(request, priority)?.wait(cancelled)
     }
 
-    pub(crate) fn submit_key(&self, key: SourceKey) -> Result<Ticket, Error> {
+    pub(crate) fn submit_key(&self, key: SourceKey, priority: Priority) -> Result<Ticket, Error> {
         self.submit(
             Request {
                 path: key.path().to_owned(),
@@ -616,82 +513,66 @@ impl Scheduler {
                 expected: None,
                 file: key.file().clone(),
                 key: Some(key),
-                store: None,
-                parent: None,
-                retain: false,
             },
-            Priority::Foreground,
+            priority,
         )
     }
 
     pub(super) fn submit(&self, request: Request, priority: Priority) -> Result<Ticket, Error> {
-        self.submit_with_admission(request, priority, None)
+        self.submit_request(request, priority)
     }
 
-    pub(super) fn submit_admitted(
-        &self,
-        request: Request,
-        priority: Priority,
-        admission: crate::blocking_jobs::Admission,
-    ) -> Result<Ticket, Error> {
-        self.submit_with_admission(request, priority, Some(admission))
-    }
-
-    fn submit_with_admission(
-        &self,
-        mut request: Request,
-        priority: Priority,
-        admission: Option<crate::blocking_jobs::Admission>,
-    ) -> Result<Ticket, Error> {
-        if request.retired() {
-            return Err(Error::UnusableSample("source demand retired"));
-        }
+    fn submit_request(&self, mut request: Request, priority: Priority) -> Result<Ticket, Error> {
         // Missing/stale stats disable joining, not authoritative opening. Never refresh
         // a supplied pre-work revision after work or relabel the worker's result.
         if request.key.as_ref().is_some_and(|key| !key.current()) {
             request.key = None;
         }
-        let retain = request.retain;
-        let consumer_store = request.store.clone();
         let shared = self.owner.0.clone();
         let demand = {
             let mut state = shared.state.lock().unwrap();
             if state.closed {
                 return Err(Error::UnusableSample("RAW development worker stopped"));
             }
-            let task =
-                if let Some(task) = state.tasks.iter().find(|task| request.joins(&task.request)) {
-                    task.clone()
-                } else {
-                    state.next += 1;
-                    let task = Arc::new(Task::new(state.next, request));
-                    state.tasks.push(task.clone());
-                    state.queue.push(task.clone());
-                    task
-                };
-            if let Some(admission) = admission {
-                task.admissions.lock().unwrap().push(admission);
-            }
+            state.live.retain(|(_, source)| source.strong_count() != 0);
+            let existing = request.key.as_ref().and_then(|key| {
+                state
+                    .live
+                    .iter()
+                    .find(|(known, _)| known == key)
+                    .and_then(|(_, source)| source.upgrade())
+            });
+            let task = if let Some(source) = existing {
+                state.next += 1;
+                let task = Arc::new(Task::new(state.next, request));
+                *task.result.lock().unwrap() = Some(Ok(source));
+                task
+            } else if let Some(task) = state.tasks.iter().find(|task| request.joins(&task.request))
+            {
+                task.clone()
+            } else {
+                state.next += 1;
+                let task = Arc::new(Task::new(state.next, request));
+                state.tasks.push(task.clone());
+                state.queue.push(task.clone());
+                task
+            };
             let id = task.next.fetch_add(1, Ordering::Relaxed);
             task.demands.lock().unwrap().push(Consumer {
                 id,
                 priority,
-                store: consumer_store.clone(),
-                retain,
                 waker: None,
             });
             Demand {
                 shared: shared.clone(),
                 task,
                 id,
-                store: consumer_store.clone(),
             }
         };
         shared.changed.notify_all();
         Ok(Ticket {
             demand,
             _owner: self.owner.clone(),
-            closed: None,
         })
     }
 }
@@ -789,10 +670,6 @@ fn run(
             shared: &shared,
             sdk,
         };
-        let _running = Running {
-            task: &task,
-            shared: &shared,
-        };
         if task.abandoned() {
             finish(&shared, &task, Err("source demand retired".into()));
             continue;
@@ -811,30 +688,8 @@ fn run(
             result => {
                 let result = result.and_then(|source| {
                     let source = source.expect("completed native step returns a source");
-                    if task.retired() || shared.state.lock().unwrap().closed {
+                    if shared.state.lock().unwrap().closed {
                         return Err("source demand retired".into());
-                    }
-                    let mut source = source;
-                    for (store, retain) in task.scopes() {
-                        if !retain || store.is_closed() {
-                            continue;
-                        }
-                        let record = document::source_metadata(
-                            &task.request.path,
-                            &source.metadata(),
-                            source.fixed_wb(),
-                        )
-                        .map_err(|e| e.to_string())?;
-                        if let Some(key) = SourceKey::from_revision(
-                            &task.request.path,
-                            task.request.file.clone(),
-                            &record.development,
-                        ) && let Some(canonical) = store
-                            .publish_source(key, source.clone())
-                            .map_err(|e| e.to_string())?
-                        {
-                            source = canonical;
-                        }
                     }
                     Ok(source)
                 });
@@ -844,49 +699,33 @@ fn run(
     }
 }
 
-// The worker-local RawFile drops before this final field. Started native backing
-// retains admission across arbitration and closure, including late joined demands.
 struct Unpacked {
     record: Source,
     raw: crate::raw::RawFile,
-    _backing: NativeBacking,
-}
-
-struct NativeBacking(Arc<Task>);
-impl Drop for NativeBacking {
-    fn drop(&mut self) {
-        self.0.native_backing.store(false, Ordering::Release);
-        self.0.release_admissions();
-    }
-}
-
-// Unstarted work can retire immediately. Running calls and parked native backing
-// retain admission until their physical work and mutable ownership end.
-struct Running<'a> {
-    task: &'a Task,
-    shared: &'a Shared,
-}
-
-impl Drop for Running<'_> {
-    fn drop(&mut self) {
-        if std::thread::panicking() || self.shared.state.lock().unwrap().closed {
-            self.task.release_unbacked_admissions();
-        }
-    }
 }
 
 fn finish(shared: &Shared, task: &Arc<Task>, result: Completion) {
     // Keep the task/result owned outside both metadata locks, including final release.
+    let live = result.as_ref().ok().and_then(|source| {
+        task.request
+            .key
+            .as_ref()
+            .filter(|key| key.current())
+            .map(|key| (key.clone(), Arc::downgrade(source)))
+    });
     *task.result.lock().unwrap() = Some(result);
     let retired = {
         let mut state = shared.state.lock().unwrap();
+        state.live.retain(|(_, source)| source.strong_count() != 0);
+        if let Some(live) = live {
+            state.live.push(live);
+        }
         state
             .tasks
             .iter()
             .position(|entry| Arc::ptr_eq(entry, task))
             .map(|index| state.tasks.remove(index))
     };
-    task.release_unbacked_admissions();
     task.wake_waiters();
     drop(retired);
     // Yielding owners sleep until eligibility changes, e.g. a foreground task ends.

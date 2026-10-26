@@ -2,7 +2,7 @@ use super::*;
 use crate::raw::fixture;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
-fn request(path: &std::path::Path, store: Arc<SourceStore>) -> Request {
+fn request(path: &std::path::Path) -> Request {
     let (expected, _) = document::open_source(path, Some([1.; 4])).unwrap();
     let file = thumbnails::FileKey::new(path);
     let key = SourceKey::from_revision(path, file.clone(), &expected.development);
@@ -12,9 +12,6 @@ fn request(path: &std::path::Path, store: Arc<SourceStore>) -> Request {
         expected: Some(expected),
         file,
         key,
-        store: Some(store),
-        parent: None,
-        retain: false,
     }
 }
 
@@ -59,14 +56,13 @@ fn poll_ticket(
 }
 
 #[test]
-fn async_joined_consumers_wake_independently_and_keep_zero_budget_native_ownership() {
+fn async_joined_consumers_wake_independently_and_share_frozen_pixels() {
     let file = fixture::bayer_dng();
     let source = Scan::open(file.path(), Some([1.; 4]))
         .unwrap()
         .source()
         .clone();
     let expected = source.clone();
-    let store = Arc::new(SourceStore::new(0));
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let scheduler = Scheduler::start(move |shared| {
@@ -76,7 +72,7 @@ fn async_joined_consumers_wake_independently_and_keep_zero_budget_native_ownersh
             Ok(Some(source.clone()))
         })
     });
-    let job = request(file.path(), store.clone());
+    let job = request(file.path());
     let mut abandoned = scheduler.submit(job.clone(), Priority::Eager).unwrap();
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
     let mut foreground = scheduler.submit(job, Priority::Foreground).unwrap();
@@ -91,15 +87,13 @@ fn async_joined_consumers_wake_independently_and_keep_zero_budget_native_ownersh
         panic!("completion was not published before wake")
     };
     assert!(Arc::ptr_eq(&source, &expected));
-    assert_eq!(store.charges().retained, 0);
     assert!(wakes.try_recv().is_err());
 }
 
 #[test]
-fn async_native_waiters_observe_store_or_scheduler_closure_without_waiting_for_native_return() {
-    for close_store in [false, true] {
+fn async_native_waiters_observe_scheduler_closure_without_waiting_for_native_return() {
+    {
         let file = fixture::bayer_dng();
-        let store = Arc::new(SourceStore::new(0));
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
         let scheduler = Scheduler::start(move |shared| {
@@ -110,16 +104,12 @@ fn async_native_waiters_observe_store_or_scheduler_closure_without_waiting_for_n
             })
         });
         let mut ticket = scheduler
-            .submit(request(file.path(), store.clone()), Priority::Foreground)
+            .submit(request(file.path()), Priority::Foreground)
             .unwrap();
         starts.recv_timeout(Duration::from_secs(5)).unwrap();
         let (wake, wakes) = mpsc::channel();
         assert!(poll_ticket(&mut ticket, 1, &wake).is_pending());
-        if close_store {
-            store.close();
-        } else {
-            scheduler.close();
-        }
+        scheduler.close();
         wakes.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(matches!(
             poll_ticket(&mut ticket, 1, &wake),
@@ -133,9 +123,8 @@ fn async_native_waiters_observe_store_or_scheduler_closure_without_waiting_for_n
 fn native_ticket_can_be_awaited_when_completion_precedes_its_first_poll() {
     let file = fixture::bayer_dng();
     let scheduler = Scheduler::new();
-    let store = Arc::new(SourceStore::new(0));
     let ticket = scheduler
-        .submit(request(file.path(), store), Priority::Foreground)
+        .submit(request(file.path()), Priority::Foreground)
         .unwrap();
     let completed = ticket.wait(|| false).unwrap();
     let awaited = futures_lite::future::block_on(ticket).unwrap();
@@ -150,7 +139,6 @@ fn foreground_runs_before_the_next_background_native_phase_on_one_thread() {
         .unwrap()
         .source()
         .clone();
-    let store = Arc::new(SourceStore::new(0));
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let trace = Arc::new(Mutex::new(Vec::new()));
@@ -172,11 +160,11 @@ fn foreground_runs_before_the_next_background_native_phase_on_one_thread() {
         });
     });
     let bg = scheduler.clone();
-    let bg_request = request(a.path(), store.clone());
+    let bg_request = request(a.path());
     let background = std::thread::spawn(move || bg.load(bg_request, Priority::Eager, || false));
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
     let fg = scheduler.clone();
-    let fg_request = request(b.path(), store);
+    let fg_request = request(b.path());
     let foreground =
         std::thread::spawn(move || fg.load(fg_request, Priority::Foreground, || false));
     until(&scheduler, |state| state.tasks.len() == 2);
@@ -195,15 +183,14 @@ fn foreground_runs_before_the_next_background_native_phase_on_one_thread() {
 }
 
 #[test]
-fn foreground_joins_started_work_after_thumbnail_waiter_cancels_at_zero_budget() {
+fn foreground_joins_started_work_after_thumbnail_waiter_cancels() {
     let file = fixture::bayer_dng();
     let source = Scan::open(file.path(), Some([1.; 4]))
         .unwrap()
         .source()
         .clone();
     let expected_source = source.clone();
-    let store = Arc::new(SourceStore::new(0));
-    let job = request(file.path(), store.clone());
+    let job = request(file.path());
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let calls = Arc::new(AtomicUsize::new(0));
@@ -242,13 +229,12 @@ fn foreground_joins_started_work_after_thumbnail_waiter_cancels_at_zero_budget()
     let completed = foreground.join().unwrap().unwrap();
     assert!(Arc::ptr_eq(&completed, &expected_source));
     assert_eq!(calls.load(Ordering::Relaxed), 2);
-    assert_eq!(store.charges().retained, 0);
 }
 
 #[test]
 fn closing_worker_wakes_waiters_without_starting_a_second_development() {
     let file = fixture::bayer_dng();
-    let job = request(file.path(), Arc::new(SourceStore::new(0)));
+    let job = request(file.path());
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let scheduler = Scheduler::start(move |shared| {
@@ -270,14 +256,10 @@ fn closing_worker_wakes_waiters_without_starting_a_second_development() {
 fn actual_native_development_preserves_frozen_pixels_and_native_charge() {
     let file = fixture::bayer_dng();
     let scheduler = Scheduler::new();
-    let store = Arc::new(SourceStore::new(8 << 20));
-    let mut job = request(file.path(), store.clone());
-    job.retain = true;
-    let key = job.key.clone().unwrap();
+    let job = request(file.path());
     let expected = Scan::open(file.path(), Some([1.; 4])).unwrap();
     let result = scheduler.load(job, Priority::Eager, || false).unwrap();
-    assert!(Arc::ptr_eq(&store.get(&key).unwrap(), &result));
-    assert!(store.charges().retained <= 8 << 20);
+    assert_eq!(result.retained_bytes(), expected.source().retained_bytes());
     let a = expected.source().camera_image().unwrap();
     let b = result.camera_image().unwrap();
     for y in 0..a.height {
@@ -360,12 +342,10 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
         .map(|path| {
             (0..3)
                 .map(|rep| {
-                    let store = Arc::new(SourceStore::new(0));
-                    let job = request(path, store.clone());
+                    let job = request(path);
                     let start = Instant::now();
                     let developed = scheduler.load(job, Priority::Foreground, || false).unwrap();
                     let wall = start.elapsed();
-                    assert_eq!(store.charges().retained, 0);
                     println!(
                         "solo {} rep {} {:?} (pressure normal: {})",
                         path.file_name().unwrap().to_string_lossy(),
@@ -380,10 +360,8 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
         .collect();
     let pairs: Vec<Timed> = (0..3)
         .map(|rep| {
-            let a_store = Arc::new(SourceStore::new(0));
-            let b_store = Arc::new(SourceStore::new(0));
-            let a_job = request(&paths[0], a_store.clone());
-            let b_job = request(&paths[1], b_store.clone());
+            let a_job = request(&paths[0]);
+            let b_job = request(&paths[1]);
             let start = Instant::now();
             let ((a_wall, a), (b_wall, b)) = std::thread::scope(|scope| {
                 let a_scheduler = scheduler.clone();
@@ -422,10 +400,8 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
     // owners admit them (no yield rule), so this measures the overlap throughput.
     let rolls: Vec<Timed> = (0..3)
         .map(|rep| {
-            let a_store = Arc::new(SourceStore::new(0));
-            let b_store = Arc::new(SourceStore::new(0));
-            let a_job = request(&paths[0], a_store.clone());
-            let b_job = request(&paths[1], b_store.clone());
+            let a_job = request(&paths[0]);
+            let b_job = request(&paths[1]);
             let start = Instant::now();
             let ((a_wall, a), (b_wall, b)) = std::thread::scope(|scope| {
                 let a_scheduler = scheduler.clone();
@@ -459,8 +435,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
     let foreground_under_load: Vec<(Duration, Developed)> =
         (0..3)
             .map(|rep| {
-                let background_store = Arc::new(SourceStore::new(0));
-                let background_job = request(&paths[1], background_store.clone());
+                let background_job = request(&paths[1]);
                 let background_scheduler = scheduler.clone();
                 let background = std::thread::spawn(move || {
                     let started = Instant::now();
@@ -472,8 +447,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
                 // The background development is inside its unpack call when the
                 // foreground demand arrives, as behind a live roll fill.
                 std::thread::sleep(Duration::from_millis(200));
-                let foreground_store = Arc::new(SourceStore::new(0));
-                let foreground_job = request(&paths[0], foreground_store.clone());
+                let foreground_job = request(&paths[0]);
                 let start = Instant::now();
                 let developed = scheduler
                     .load(foreground_job, Priority::Foreground, || false)
@@ -563,14 +537,13 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
 }
 
 #[test]
-fn cancelled_queued_demand_never_develops_or_publishes() {
+fn cancelled_queued_demand_never_runs_native_work() {
     let a = fixture::bayer_dng();
     let b = fixture::bayer_dng();
     let source = Scan::open(a.path(), Some([1.; 4]))
         .unwrap()
         .source()
         .clone();
-    let store = Arc::new(SourceStore::new(0));
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let calls = Arc::new(AtomicUsize::new(0));
@@ -584,7 +557,7 @@ fn cancelled_queued_demand_never_develops_or_publishes() {
             Ok(Some(source.clone()))
         })
     });
-    let main_request = request(a.path(), store.clone());
+    let main_request = request(a.path());
     let main_scheduler = scheduler.clone();
     let main = std::thread::spawn(move || {
         main_scheduler.load(main_request, Priority::Foreground, || false)
@@ -592,7 +565,7 @@ fn cancelled_queued_demand_never_develops_or_publishes() {
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
     let cancelled = Arc::new(AtomicBool::new(false));
     let queued_cancelled = cancelled.clone();
-    let queued_request = request(b.path(), store.clone());
+    let queued_request = request(b.path());
     let queued_scheduler = scheduler.clone();
     let queued = std::thread::spawn(move || {
         queued_scheduler.load(queued_request, Priority::Eager, || {
@@ -606,54 +579,12 @@ fn cancelled_queued_demand_never_develops_or_publishes() {
     main.join().unwrap().unwrap();
     until(&scheduler, |state| state.tasks.is_empty());
     assert_eq!(calls.load(Ordering::Relaxed), 1);
-    assert_eq!(store.charges().retained, 0);
-}
-
-#[test]
-fn closing_a_candidate_cancels_only_its_joined_waiter() {
-    let file = fixture::bayer_dng();
-    let source = Scan::open(file.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
-    let parent = Arc::new(SourceStore::new(0));
-    let candidate = Arc::new(SourceStore::new(0));
-    let parent_request = request(file.path(), parent.clone());
-    let mut candidate_request = request(file.path(), candidate.clone());
-    candidate_request.parent = Some(parent.clone());
-    let (entered, starts) = mpsc::channel();
-    let (release, resume) = mpsc::channel();
-    let scheduler = Scheduler::start(move |shared| {
-        run(shared, 0, crate::sys::memory_pressure, |task| {
-            assert_eq!(task.id, 1);
-            entered.send(()).unwrap();
-            resume.recv().unwrap();
-            Ok(Some(source.clone()))
-        })
-    });
-    let main_scheduler = scheduler.clone();
-    let main = std::thread::spawn(move || {
-        main_scheduler.load(parent_request, Priority::Visible, || false)
-    });
-    starts.recv_timeout(Duration::from_secs(5)).unwrap();
-    let candidate_scheduler = scheduler.clone();
-    let abandoned = std::thread::spawn(move || {
-        candidate_scheduler.load(candidate_request, Priority::Foreground, || false)
-    });
-    until(&scheduler, |state| {
-        state.tasks.len() == 1 && state.tasks[0].demands.lock().unwrap().len() == 2
-    });
-    candidate.close();
-    assert!(abandoned.join().unwrap().is_err());
-    assert!(!parent.is_closed());
-    release.send(()).unwrap();
-    main.join().unwrap().unwrap();
 }
 
 #[test]
 fn native_failure_fans_out_to_joined_waiters_and_allows_a_new_attempt() {
     let file = fixture::bayer_dng();
-    let job = request(file.path(), Arc::new(SourceStore::new(0)));
+    let job = request(file.path());
     let retry = job.clone();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
@@ -706,79 +637,29 @@ fn native_failure_fans_out_to_joined_waiters_and_allows_a_new_attempt() {
 // change the file beneath a live source.
 #[cfg(target_os = "macos")]
 #[test]
-fn missing_keys_different_revisions_and_unrelated_scopes_do_not_join() {
+fn joining_requires_the_same_current_versioned_source() {
     let file = fixture::bayer_dng();
-    let store = Arc::new(SourceStore::new(0));
-    let original = request(file.path(), store.clone());
+    let original = request(file.path());
     let mut unversioned = original.clone();
     unversioned.key = None;
     assert!(!unversioned.joins(&original));
-    let other_document = request(file.path(), Arc::new(SourceStore::new(0)));
-    assert!(!other_document.joins(&original));
+    let same_source = request(file.path());
+    assert!(same_source.joins(&original));
     use std::io::Write;
     let mut modified = std::fs::OpenOptions::new()
         .append(true)
         .open(file.path())
         .unwrap();
     modified.write_all(&[0]).unwrap();
-    let changed = request(file.path(), store);
+    let changed = request(file.path());
     assert!(!changed.joins(&original));
     assert!(!original.key.unwrap().current());
 }
 
 #[test]
-fn parent_joins_candidate_first_work_and_survives_candidate_retirement() {
+fn diagnostic_stop_before_unpack_rejects_without_development() {
     let file = fixture::bayer_dng();
-    let source = Scan::open(file.path(), Some([1.; 4]))
-        .unwrap()
-        .source()
-        .clone();
-    let parent = Arc::new(SourceStore::new(8 << 20));
-    let candidate = Arc::new(SourceStore::new(0));
-    let mut candidate_request = request(file.path(), candidate.clone());
-    candidate_request.parent = Some(parent.clone());
-    candidate_request.retain = true;
-    let mut parent_request = request(file.path(), parent.clone());
-    parent_request.retain = true;
-    let key = parent_request.key.clone().unwrap();
-    let (entered, starts) = mpsc::channel();
-    let (release, resume) = mpsc::channel();
-    let scheduler = Scheduler::start(move |shared| {
-        run(shared, 0, crate::sys::memory_pressure, |task| {
-            assert_eq!(task.id, 1);
-            entered.send(()).unwrap();
-            resume.recv().unwrap();
-            Ok(Some(source.clone()))
-        })
-    });
-    let child_scheduler = scheduler.clone();
-    let child = std::thread::spawn(move || {
-        child_scheduler.load(candidate_request, Priority::Foreground, || false)
-    });
-    starts.recv_timeout(Duration::from_secs(5)).unwrap();
-    let parent_scheduler = scheduler.clone();
-    let accepted = std::thread::spawn(move || {
-        parent_scheduler.load(parent_request, Priority::Visible, || false)
-    });
-    until(&scheduler, |state| {
-        state.tasks.len() == 1 && state.tasks[0].demands.lock().unwrap().len() == 2
-    });
-    candidate.close();
-    assert!(child.join().unwrap().is_err());
-    release.send(()).unwrap();
-    let handed_off = accepted.join().unwrap().unwrap();
-    assert!(Arc::ptr_eq(&parent.get(&key).unwrap(), &handed_off));
-    assert!(candidate.is_closed());
-    assert_eq!(candidate.charges().retained, 0);
-}
-
-#[test]
-fn diagnostic_stop_before_unpack_rejects_without_development_or_publication() {
-    let file = fixture::bayer_dng();
-    let store = Arc::new(SourceStore::new(8 << 20));
-    let mut job = request(file.path(), store.clone());
-    job.retain = true;
-    let key = job.key.clone().unwrap();
+    let job = request(file.path());
     let phases = Arc::new(Mutex::new(Vec::new()));
     let observed = phases.clone();
     let scheduler = Scheduler::new_observed(move |_, phase, _| {
@@ -798,8 +679,6 @@ fn diagnostic_stop_before_unpack_rejects_without_development_or_publication() {
             .contains("diagnostic stop")
     );
     assert_eq!(*phases.lock().unwrap(), ["Open", "UnpackBegin"]);
-    assert!(store.get(&key).is_none());
-    assert_eq!(store.charges().retained, 0);
 }
 
 fn normal_pressure() -> crate::sys::MemoryPressure {
@@ -807,12 +686,10 @@ fn normal_pressure() -> crate::sys::MemoryPressure {
 }
 
 fn synthetic_task(id: u64, path: &std::path::Path, priority: Priority) -> Arc<Task> {
-    let task = Arc::new(Task::new(id, request(path, Arc::new(SourceStore::new(0)))));
+    let task = Arc::new(Task::new(id, request(path)));
     task.demands.lock().unwrap().push(Consumer {
         id: 0,
         priority,
-        store: None,
-        retain: false,
         waker: None,
     });
     task
@@ -825,6 +702,7 @@ fn unowned_starts_yield_to_foreground_demand_and_collapse_under_pressure() {
     let background = synthetic_task(2, file.path(), Priority::Eager);
     let mut state = State {
         tasks: vec![foreground.clone(), background.clone()],
+        live: Vec::new(),
         queue: vec![foreground.clone(), background.clone()],
         next: 2,
         steps: 0,
@@ -878,6 +756,7 @@ fn sdk_steps_hold_native_execution_exclusive_so_they_keep_the_full_budget() {
     let raw = synthetic_task(2, file.path(), Priority::Eager);
     let mut state = State {
         tasks: vec![sdk.clone(), raw.clone()],
+        live: Vec::new(),
         queue: vec![sdk.clone(), raw.clone()],
         next: 2,
         steps: 0,
@@ -941,11 +820,10 @@ fn overlapping_owners_run_native_steps_on_separate_threads() {
             Ok(Some(source.clone()))
         })
     });
-    let store = Arc::new(SourceStore::new(0));
     let sa = scheduler.clone();
-    let job_a = request(a.path(), store.clone());
+    let job_a = request(a.path());
     let sb = scheduler.clone();
-    let job_b = request(b.path(), store.clone());
+    let job_b = request(b.path());
     let first = std::thread::spawn(move || sa.load(job_a, Priority::Eager, || false));
     let second = std::thread::spawn(move || sb.load(job_b, Priority::Eager, || false));
     let source_a = first.join().unwrap().unwrap();
@@ -980,9 +858,8 @@ fn foreground_starts_on_the_free_owner_while_a_background_step_runs() {
             Ok(Some(source.clone()))
         })
     });
-    let store = Arc::new(SourceStore::new(0));
-    let job_a = request(a.path(), store.clone());
-    let job_b = request(b.path(), store.clone());
+    let job_a = request(a.path());
+    let job_b = request(b.path());
     let bg_scheduler = scheduler.clone();
     let background =
         std::thread::spawn(move || bg_scheduler.load(job_a, Priority::Eager, || false));
@@ -1020,9 +897,8 @@ fn background_work_yields_while_foreground_demand_lives() {
             Ok(Some(source.clone()))
         })
     });
-    let store = Arc::new(SourceStore::new(0));
-    let job_a = request(a.path(), store.clone());
-    let job_b = request(b.path(), store.clone());
+    let job_a = request(a.path());
+    let job_b = request(b.path());
     let fg_scheduler = scheduler.clone();
     let foreground =
         std::thread::spawn(move || fg_scheduler.load(job_a, Priority::Foreground, || false));
@@ -1054,11 +930,10 @@ fn concurrent_native_development_preserves_frozen_pixels_and_sensor_identity() {
     let expected_a = Scan::open(a.path(), Some([1.; 4])).unwrap();
     let expected_b = Scan::open(b.path(), Some([1.; 4])).unwrap();
     let scheduler = Scheduler::new();
-    let store = Arc::new(SourceStore::new(0));
     let sa = scheduler.clone();
-    let job_a = request(a.path(), store.clone());
+    let job_a = request(a.path());
     let sb = scheduler.clone();
-    let job_b = request(b.path(), store.clone());
+    let job_b = request(b.path());
     let first = std::thread::spawn(move || sa.load(job_a, Priority::Eager, || false));
     let second = std::thread::spawn(move || sb.load(job_b, Priority::Eager, || false));
     let source_a = first.join().unwrap().unwrap();
@@ -1115,11 +990,10 @@ fn closing_the_pair_wakes_waiters_and_stops_both_owners() {
             Ok(Some(source.clone()))
         })
     });
-    let store = Arc::new(SourceStore::new(0));
     let sa = scheduler.clone();
-    let job_a = request(a.path(), store.clone());
+    let job_a = request(a.path());
     let sb = scheduler.clone();
-    let job_b = request(b.path(), store.clone());
+    let job_b = request(b.path());
     let first = std::thread::spawn(move || sa.load(job_a, Priority::Eager, || false));
     let second = std::thread::spawn(move || sb.load(job_b, Priority::Eager, || false));
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -1167,8 +1041,7 @@ fn sdk_development_holds_native_execution_exclusive_end_to_end() {
     );
     let mut waiters = Vec::new();
     for file in [&a, &b] {
-        let store = Arc::new(SourceStore::new(0));
-        let job = request(file.path(), store);
+        let job = request(file.path());
         let client = scheduler.clone();
         waiters.push(std::thread::spawn(move || {
             client.load(job, Priority::Eager, || false)

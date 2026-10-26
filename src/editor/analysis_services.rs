@@ -1,23 +1,21 @@
 use super::{Document, Error, Scan, SourceId, analysis, development, source};
+use crate::source_provider::{SourceLoader, SourceProvider};
 use std::sync::Arc;
 
 pub(super) use crate::cancellation::Cancellation;
 
-fn source_input(document: &Document, id: SourceId) -> Result<development::Request, Error> {
+fn source_input(document: &Document, id: SourceId) -> Result<source::Request, Error> {
     let project = &document.project;
     let expected = project.source(id)?;
     let path = document.source_path(id)?;
     let wb = expected.development.decode.fixed_wb;
     let cache = source::Cache::new(&path, Some(expected), document);
-    Ok(development::Request {
+    Ok(source::Request {
         path,
         wb: Some(wb),
         expected: Some(expected.clone()),
-        file: cache.file,
-        key: cache.key,
-        store: Some(cache.store),
-        parent: cache.parent,
-        retain: false,
+        cache: Some(cache),
+        correction: None,
     })
 }
 
@@ -92,46 +90,54 @@ impl Services {
 
     async fn acquire_captured(
         &self,
-        capture: impl FnOnce() -> Result<development::Request, Error> + Send + 'static,
+        capture: impl FnOnce() -> Result<source::Request, Error> + Send + 'static,
         cancelled: Cancellation,
     ) -> Result<Option<Scan>, Error> {
-        let scheduler = self.developments.clone();
         let retired = cancelled.clone();
-        let result = async {
-            let Some(submission) = self
-                .jobs
-                .run_admitted_cancellable(cancelled.wait(), move |admission| {
-                    if retired.is_cancelled() {
-                        return Err(Error::UnusableSample("analysis retired"));
-                    }
-                    scheduler.submit_admitted(
-                        capture()?,
-                        development::Priority::Foreground,
-                        admission,
-                    )
-                })
-                .await
-            else {
-                return Ok(None);
-            };
-            let ticket = submission.map_err(|_| {
-                Error::UnusableSample("analysis source submission worker panicked")
-            })??;
-            // Native demand can be abandoned at its service boundary, as with the
-            // synchronous ticket wait; the producer still owns mutable RAW cleanup.
-            let wait = async { ticket.await.map(Some) };
-            let stop = async {
-                cancelled.wait().await;
-                Ok(None)
-            };
-            futures_lite::future::or(stop, wait)
-                .await
-                .map(|source| source.map(Scan::from_source))
-        }
-        .await;
-        if cancelled.is_cancelled() {
+        let Some(captured) = self
+            .jobs
+            .run_admitted_cancellable(cancelled.wait(), move |_| {
+                if retired.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                let request = capture()?;
+                let key = request.load_key()?;
+                Ok((key, request.cache.expect("analysis document cache")))
+            })
+            .await
+        else {
             return Ok(None);
+        };
+        let (key, cache) = captured
+            .map_err(|_| Error::UnusableSample("analysis source capture worker panicked"))??;
+        let store = cache.store.clone();
+        let changed = store.listen_for_close();
+        let loader = SourceLoader::from_scheduler(
+            self.developments.clone(),
+            development::Priority::Foreground,
+        );
+        let provider = cache.provider(loader);
+        let load = async {
+            provider
+                .load_source(key)
+                .await
+                .map(|source| Some(Scan::from_source(source)))
+        };
+        let stop = async {
+            cancelled.wait().await;
+            Ok(None)
+        };
+        let close = async {
+            if !store.is_closed() {
+                changed.await;
+            }
+            Err(Error::UnusableSample("analysis document retired"))
+        };
+        let result = futures_lite::future::or(stop, futures_lite::future::or(close, load)).await;
+        if cancelled.is_cancelled() {
+            Ok(None)
+        } else {
+            result
         }
-        result
     }
 }

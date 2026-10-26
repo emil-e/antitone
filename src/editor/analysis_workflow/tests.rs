@@ -150,7 +150,7 @@ fn queued_user_cancel_acknowledges_without_starting_native_work() {
 }
 
 #[test]
-fn native_demand_cancellation_acknowledges_without_releasing_producer_cleanup_admission() {
+fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work() {
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
@@ -172,13 +172,8 @@ fn native_demand_cancellation_acknowledges_without_releasing_producer_cleanup_ad
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(matches!(
-            observed.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        release.send(()).unwrap();
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());
+        release.send(()).unwrap();
         drop(probe);
         app.read(|e| assert_eq!(e.document.project, before));
     });
@@ -190,7 +185,6 @@ fn document_drop_and_application_close_retire_preparation_before_native_completi
     for close_application in [false, true] {
         let (scheduler, starts, release) = paused();
         let editor = fixture(scheduler.clone());
-        let jobs = editor.workflow_jobs.clone();
         with_application(editor, |app| {
             start(app);
             await_native(app, &starts);
@@ -210,12 +204,10 @@ fn document_drop_and_application_close_retire_preparation_before_native_completi
             }
             assert!(cancelled.is_cancelled());
             assert_eq!(scheduler.waiter_count(), 0);
-            assert!(!jobs.idle());
             app.read(|e| assert!(e.document.analysis_review.is_none()));
             release.send(()).unwrap();
         });
         scheduler.close_and_wait().unwrap();
-        assert!(jobs.idle());
     }
 }
 

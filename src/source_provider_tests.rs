@@ -167,7 +167,7 @@ fn unpolled_acquisition_does_not_start_loading() {
 }
 
 #[test]
-fn concurrent_cache_misses_join_native_work_and_one_waiter_can_leave() {
+fn concurrent_document_cache_misses_join_native_work_and_one_waiter_can_leave() {
     use std::{
         sync::Mutex,
         time::{Duration, Instant},
@@ -192,17 +192,14 @@ fn concurrent_cache_misses_join_native_work_and_one_waiter_can_leave() {
         }
         Ok(())
     });
-    let loader = SourceLoader {
-        developments: scheduler.clone(),
-    };
-    let cache = Arc::new(SourceCache::new(loader, Arc::new(SourceStore::new(0))));
+    let loader = SourceLoader::from_scheduler(scheduler.clone(), development::Priority::Foreground);
+    let first_cache = SourceCache::new(loader.clone(), Arc::new(SourceStore::new(0)));
+    let second_cache = SourceCache::new(loader, Arc::new(SourceStore::new(0)));
     let executor = async_executor::Executor::new();
     futures_lite::future::block_on(executor.run(async {
-        let first_cache = cache.clone();
         let first_key = key.clone();
         let first = executor.spawn(async move { first_cache.load_source(first_key).await });
         blocking::unblock(move || starts.recv_timeout(Duration::from_secs(5)).unwrap()).await;
-        let second_cache = cache.clone();
         let second = executor.spawn(async move { second_cache.load_source(key).await });
         let deadline = Instant::now() + Duration::from_secs(5);
         while scheduler.waiter_count() != 2 {
@@ -222,6 +219,47 @@ fn concurrent_cache_misses_join_native_work_and_one_waiter_can_leave() {
         assert_eq!(developments.load(Ordering::Relaxed), 1);
         assert!(lease.camera_image().is_ok());
     }));
+}
+
+#[test]
+fn completed_native_result_is_reused_before_any_cache_wrapper_has_published_it() {
+    use std::time::{Duration, Instant};
+    let (_file, key, _original) = input();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
+        if matches!(phase, development::NativePhase::DevelopBegin) {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    });
+    let first = scheduler
+        .submit_key(key.clone(), development::Priority::Foreground)
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let produced = loop {
+        if let Some(source) = first.result().unwrap() {
+            break source;
+        }
+        assert!(Instant::now() < deadline, "native source did not complete");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    let weak = Arc::downgrade(&produced);
+    let store = Arc::new(SourceStore::new(0));
+    let loader = SourceLoader::from_scheduler(scheduler, development::Priority::Foreground);
+    let cache = SourceCache::new(loader, store);
+    let lease = futures_lite::future::block_on(cache.load_source(key)).unwrap();
+    assert!(Arc::ptr_eq(&lease, &produced));
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        1,
+        "publication handoff must not cause another development"
+    );
+    drop((first, produced, lease));
+    assert!(
+        weak.upgrade().is_none(),
+        "loader discovery must not become optional strong retention"
+    );
 }
 
 #[test]

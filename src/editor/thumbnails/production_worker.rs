@@ -1,10 +1,15 @@
 use super::*;
 use crate::scan::DevelopedSource;
+use crate::source_provider::{SourceCache, SourceLoader, SourceProvider};
 
 enum Input {
     Proxy(Arc<Proxy>),
     Source(Arc<DevelopedSource>),
-    Native(development::Ticket),
+    Loading(
+        std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Arc<DevelopedSource>, Error>> + Send>,
+        >,
+    ),
     Positive,
     Retired,
 }
@@ -84,25 +89,16 @@ impl Worker {
             if !self.active(&job) {
                 return Ok(Input::Retired);
             }
-            if let Some(source) = native_key.as_ref().and_then(|key| job.store.get(key)) {
-                metrics.native_hit = true;
-                return Ok(Input::Source(source));
-            }
-            self.developments
-                .submit(
-                    development::Request {
-                        path: job.path.clone(),
-                        wb: Some(job.key.source.source.decode.fixed_wb),
-                        expected: Some(job.source.clone()),
-                        file: job.key.source.file.clone(),
-                        key: native_key,
-                        store: Some(job.store.clone()),
-                        parent: None,
-                        retain: true,
-                    },
-                    job.priority,
-                )
-                .map(Input::Native)
+            let key = crate::source_store::SourceKey::for_load(
+                &job.path,
+                job.key.source.file.clone(),
+                &job.source.development,
+            );
+            let loader = SourceLoader::from_scheduler(self.developments.clone(), job.priority);
+            let provider = SourceCache::new(loader, job.store.clone());
+            Ok(Input::Loading(Box::pin(async move {
+                provider.load_source(key).await
+            })))
         })();
         Work {
             job,
@@ -297,7 +293,7 @@ impl Worker {
                     work.metrics.proxy_seconds = tick.elapsed().as_secs_f64();
                     proxy
                 }
-                Input::Native(_) => unreachable!("native completion precedes proxy work"),
+                Input::Loading(_) => unreachable!("source acquisition precedes proxy work"),
             };
             let previous_reference = proxy.reference_exposure.get().cloned();
             if job.render
@@ -407,21 +403,19 @@ pub(super) fn worker(
             pending.push((worker.begin(submission.job), submission.reply));
         }
         for (work, _) in &mut pending {
-            if let Ok(Input::Native(ticket)) = &work.input {
-                match ticket.result() {
-                    Ok(None) => {}
-                    result => {
-                        work.metrics.development_seconds =
-                            work.started.elapsed().as_secs_f64() - work.metrics.disk_seconds;
-                        work.input = result.map(|source| Input::Source(source.unwrap()));
-                    }
+            if let Ok(Input::Loading(load)) = &mut work.input {
+                let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+                if let std::task::Poll::Ready(result) = load.as_mut().poll(&mut cx) {
+                    work.metrics.development_seconds =
+                        work.started.elapsed().as_secs_f64() - work.metrics.disk_seconds;
+                    work.input = result.map(Input::Source);
                 }
             }
         }
         if let Some(index) = pending
             .iter()
             .enumerate()
-            .filter(|(_, (work, _))| !matches!(work.input, Ok(Input::Native(_))))
+            .filter(|(_, (work, _))| !matches!(work.input, Ok(Input::Loading(_))))
             .min_by_key(|(_, (work, _))| work.job.priority)
             .map(|(index, _)| index)
         {

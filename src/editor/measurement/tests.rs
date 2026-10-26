@@ -342,9 +342,6 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
                 expected: None,
                 file: thumbnails::FileKey::new(file.path()),
                 key: None,
-                store: Some(store.clone()),
-                parent: None,
-                retain: false,
             },
             development::Priority::Foreground,
         )

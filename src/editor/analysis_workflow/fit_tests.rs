@@ -4,7 +4,7 @@ use crate::{
     application::test_support::{TestApplication, with_application},
     editor::{Document, Preparation, development, history::Direction},
 };
-use std::{sync::mpsc, time::Duration};
+use std::sync::mpsc;
 
 fn review(app: &mut TestApplication<'_, Editor>) {
     start(app);
@@ -140,7 +140,7 @@ fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibra
 }
 
 #[test]
-fn native_fit_demand_cancellation_preserves_accepted_data_and_cleanup_admission() {
+fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cpu_work() {
     let (scheduler, enabled, starts, release) = gated();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
@@ -166,13 +166,8 @@ fn native_fit_demand_cancellation_preserves_accepted_data_and_cleanup_admission(
                 jobs.run(move || entered.send(()).unwrap()).await.unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(matches!(
-            observed.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        release.send(()).unwrap();
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());
+        release.send(()).unwrap();
         drop(probe);
         app.read(|e| assert_eq!(e.document.project, before));
     });
@@ -184,7 +179,6 @@ fn fitting_document_and_application_retirement_cannot_publish_late_results() {
     for close_application in [false, true] {
         let (scheduler, enabled, starts, release) = gated();
         let editor = fixture(scheduler.clone());
-        let jobs = editor.workflow_jobs.clone();
         with_application(editor, |app| {
             review(app);
             enabled.store(true, Ordering::Relaxed);
@@ -211,11 +205,9 @@ fn fitting_document_and_application_retirement_cannot_publish_late_results() {
             }
             assert!(cancelled.is_cancelled());
             assert_eq!(scheduler.waiter_count(), 0);
-            assert!(!jobs.idle());
             release.send(()).unwrap();
         });
         scheduler.close_and_wait().unwrap();
-        assert!(jobs.idle());
     }
 }
 

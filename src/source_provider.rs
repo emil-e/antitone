@@ -24,6 +24,7 @@ pub trait SourceProvider: Send + Sync {
 #[derive(Clone)]
 pub struct SourceLoader {
     developments: development::Scheduler,
+    priority: development::Priority,
 }
 
 impl Default for SourceLoader {
@@ -36,6 +37,17 @@ impl SourceLoader {
     pub fn new() -> Self {
         Self {
             developments: development::Scheduler::new(),
+            priority: development::Priority::Foreground,
+        }
+    }
+
+    pub(crate) fn from_scheduler(
+        developments: development::Scheduler,
+        priority: development::Priority,
+    ) -> Self {
+        Self {
+            developments,
+            priority,
         }
     }
 }
@@ -44,7 +56,8 @@ impl SourceProvider for SourceLoader {
     async fn load_source(&self, key: SourceKey) -> Result<Arc<DevelopedSource>, Error> {
         let developments = self.developments.clone();
         let request = key.clone();
-        let ticket = blocking::unblock(move || developments.submit_key(request)).await?;
+        let priority = self.priority;
+        let ticket = blocking::unblock(move || developments.submit_key(request, priority)).await?;
         let source = ticket.await?;
         if !key.matches(&source) {
             return Err(Error::Project(

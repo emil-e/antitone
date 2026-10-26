@@ -298,20 +298,15 @@ fn profile_complete_roll_area_preparation() {
                 let wb = expected.development.decode.fixed_wb;
                 let cache = LoadCache::new(&path, Some(expected), &document);
                 let source = monitor.phase("region_seed_one_source", || {
-                    scheduler.load(
-                        development::Request {
-                            path,
-                            wb: Some(wb),
-                            expected: Some(document.project.source(id).unwrap().clone()),
-                            file: cache.file,
-                            key: cache.key,
-                            store: Some(cache.store),
-                            parent: cache.parent,
-                            retain: true,
-                        },
-                        development::Priority::Foreground,
-                        || start.elapsed() >= LIMIT,
-                    )
+                    source::Request {
+                        path,
+                        wb: Some(wb),
+                        expected: Some(expected.clone()),
+                        cache: Some(cache),
+                        correction: None,
+                    }
+                    .load(&scheduler, &|| start.elapsed() >= LIMIT)
+                    .map(|developed| developed.context.source)
                 })?;
                 let bytes = source
                     .retained_bytes()
