@@ -811,7 +811,12 @@ fn automatic_import_fallback_does_not_discard_partial_or_nondefault_stage_settin
             1 => *dmax = Some(glam::DVec3::splat(0.02)),
             2 => *gamma = 0.9,
             3 => balance.warmth = 0.1,
-            4 => *response = crate::processing::Response::Original,
+            4 => {
+                *response = crate::processing::Response {
+                    toe: 3.,
+                    shoulder: 0.,
+                }
+            }
             _ => unreachable!(),
         }
         assert!(

@@ -10,11 +10,15 @@ use antitone::processing::{
 use antitone::sampling::{mean, photo_neutral, roll_neutral, weighted_mean, weighted_mean_iter};
 use glam::{DMat3, DVec3};
 
-/// A negative interpretation over measured anchors (the response is the film prior).
+/// A negative interpretation over measured anchors. The response is the identity (toe 1, no
+/// shoulder) because these oracles express the plain anchored gamma formula.
 fn neg(cal: Calibration, gamma: f64, balance: Balance) -> NegativeInput {
     NegativeInput {
         calibration: cal,
-        response: Response::Original,
+        response: Response {
+            toe: 1.,
+            shoulder: 0.,
+        },
         gamma,
         balance,
     }
@@ -26,7 +30,10 @@ fn inp(cal: Calibration, gamma: f64, balance: Balance) -> InputSettings {
         dmin: Some(cal.dmin),
         dmax: Some(cal.dmax),
         input_floor: cal.input_floor,
-        response: Response::Original,
+        response: Response {
+            toe: 1.,
+            shoulder: 0.,
+        },
         gamma,
         balance,
     }

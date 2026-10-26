@@ -61,8 +61,11 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
                 input_floor: CAMERA_INPUT_FLOOR * MAX_SOURCE_GAIN * gain.max_element(),
             };
             for response in [
-                Response::Original,
-                Response::Film {
+                Response {
+                    toe: 1.,
+                    shoulder: 0.,
+                },
+                Response {
                     toe: 2.5,
                     shoulder: 0.02,
                 },

@@ -154,7 +154,7 @@ fn film_shapes_camera_matrices_balance_and_exposure_match_the_scalar_model() {
                 };
                 let interpretation = negative(
                     cal,
-                    Response::Film { toe, shoulder },
+                    Response { toe, shoulder },
                     gamma,
                     balances[case / 13 % 4],
                 );
@@ -233,7 +233,7 @@ fn scalar_valid_floor_anchor_is_rejected_or_stays_finite_with_packed_parameters(
             dmax: DVec3::splat(floor),
             input_floor: floor,
         },
-        Response::Film {
+        Response {
             toe: 2.5,
             shoulder: 0.02,
         },
@@ -276,7 +276,7 @@ fn response_rejects_a_pole_inside_the_supported_sample_domain() {
             dmax: DVec3::splat(0.01),
             input_floor: 1e-5,
         },
-        Response::Film {
+        Response {
             toe: 2.5,
             shoulder: 0.02,
         },

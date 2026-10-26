@@ -103,7 +103,7 @@ fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_t
             else {
                 panic!("calibrated negative fixture");
             };
-            *response = crate::processing::Response::Film {
+            *response = crate::processing::Response {
                 toe: 2.5,
                 shoulder: 0.02,
             };
@@ -201,7 +201,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         harness.read(|editor| {
             assert_eq!(
                 editor.response(),
-                crate::processing::Response::Film {
+                crate::processing::Response {
                     toe: 2.789123456789,
                     shoulder: 0.003123456789
                 }
@@ -293,29 +293,34 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             );
         }
         save_existing_project(&mut harness);
-        let mut classic = harness.read(|editor| editor.document.project.clone());
-        classic.set_response(crate::processing::Response::Original);
-        let classic_path = directory.path().join("classic.antitone.json");
-        classic
-            .save(&classic_path, crate::project::Save::New)
+        let mut adjusted = harness.read(|editor| editor.document.project.clone());
+        adjusted.set_response(crate::processing::Response {
+            toe: 3.25,
+            shoulder: 0.004,
+        });
+        let adjusted_path = directory.path().join("adjusted.antitone.json");
+        adjusted
+            .save(&adjusted_path, crate::project::Save::New)
             .unwrap();
-        open_project(&mut harness, classic_path);
+        open_project(&mut harness, adjusted_path);
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert_eq!(editor.document.project, classic));
-        let classic_pixel = compare_pixel(&harness);
+        harness.read(|editor| assert_eq!(editor.document.project, adjusted));
+        let adjusted_pixel = compare_pixel(&harness);
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Tint", "-0.05");
-        harness.read(|editor| classic = editor.document.project.clone());
-        let classic_pixel_edited = compare_pixel(&harness);
-        assert_ne!(classic_pixel_edited, classic_pixel);
+        harness.read(|editor| adjusted = editor.document.project.clone());
+        let adjusted_pixel_edited = compare_pixel(&harness);
+        assert_ne!(adjusted_pixel_edited, adjusted_pixel);
         save_existing_project(&mut harness);
-        open_project(&mut harness, directory.path().join("classic.antitone.json"));
+        open_project(
+            &mut harness,
+            directory.path().join("adjusted.antitone.json"),
+        );
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.response().is_original()));
-        harness.read(|editor| assert_eq!(editor.document.project, classic));
+        harness.read(|editor| assert_eq!(editor.document.project, adjusted));
         harness.read(|editor| assert!(!editor.document.dirty()));
         wait_settled(&mut harness);
-        assert_eq!(compare_pixel(&harness), classic_pixel_edited);
+        assert_eq!(compare_pixel(&harness), adjusted_pixel_edited);
         let selected = harness.read(|editor| editor.current_source);
         let ready =
             harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().proxy.clone());
@@ -324,7 +329,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             ("missing", ids[1], true),
             ("incompatible", ids[2], false),
         ] {
-            let mut rejected = classic.clone();
+            let mut rejected = adjusted.clone();
             if missing {
                 rejected.source_mut(id).unwrap().path = directory.path().join("missing.dng");
             } else {
@@ -345,7 +350,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                     editor.status
                 )
             });
-            harness.read(|editor| assert_eq!(editor.document.project, classic));
+            harness.read(|editor| assert_eq!(editor.document.project, adjusted));
             harness.read(|editor| assert_eq!(editor.current_source, selected));
             harness.read(|editor| {
                 assert!(
@@ -365,7 +370,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             e.thumbnails.ready_count(&e.document, e.target)
                 >= e.document.project.order.len().min(16)
         });
-        harness.read(|editor| assert_eq!(editor.document.project, classic));
+        harness.read(|editor| assert_eq!(editor.document.project, adjusted));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "0.5");
         let dirty = harness.read(|editor| editor.document.project.clone());

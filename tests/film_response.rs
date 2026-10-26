@@ -1,9 +1,6 @@
 use antitone::{
     color::Balance,
-    processing::{
-        Calibration, DEFAULT_GAMMA, InputSettings, Inversion, NegativeInput, PhotoSettings,
-        Pipeline, Response, RollSettings,
-    },
+    processing::{Calibration, DEFAULT_GAMMA, Inversion, NegativeInput, Response},
     sampling::{mean, roll_neutral},
 };
 use glam::DVec3;
@@ -22,17 +19,6 @@ fn negative(cal: Calibration, response: Response, gamma: f64, balance: Balance) 
         response,
         gamma,
         balance,
-    }
-}
-
-fn input(negative: NegativeInput) -> InputSettings {
-    InputSettings::Negative {
-        dmin: Some(negative.calibration.dmin),
-        dmax: Some(negative.calibration.dmax),
-        input_floor: negative.calibration.input_floor,
-        response: negative.response,
-        gamma: negative.gamma,
-        balance: negative.balance,
     }
 }
 
@@ -58,58 +44,15 @@ fn forward(cal: Calibration, negative: NegativeInput, exposure: DVec3) -> DVec3 
 }
 
 #[test]
-fn response_defaults_and_processing_models_are_explicit() {
+fn response_defaults_are_explicit() {
     assert_eq!(
         Response::film(),
-        Response::Film {
+        Response {
             toe: 2.5,
             shoulder: 0.
         }
     );
-    assert_eq!(Response::Original.processing_model(), 4);
-    assert_eq!(Response::film().processing_model(), 4);
     assert_eq!(DEFAULT_GAMMA, 0.60);
-}
-
-#[test]
-fn film_one_zero_is_bit_identical_to_original_scalar_execution() {
-    let cal = calibration();
-    for gamma in [0.1, 0.65, 3.] {
-        let original = negative(cal, Response::Original, gamma, Balance::default());
-        let film = negative(
-            cal,
-            Response::Film {
-                toe: 1.,
-                shoulder: 0.,
-            },
-            gamma,
-            Balance::default(),
-        );
-        let a = Pipeline::new(
-            input(original),
-            RollSettings::default(),
-            PhotoSettings::default(),
-            glam::DMat3::IDENTITY,
-        )
-        .unwrap();
-        let b = Pipeline::new(
-            input(film),
-            RollSettings::default(),
-            PhotoSettings::default(),
-            glam::DMat3::IDENTITY,
-        )
-        .unwrap();
-        for scan in [
-            cal.dmin,
-            cal.dmax,
-            cal.dmin * (1. + 1e-12),
-            cal.dmin * (1. - 1e-12),
-            cal.dmin * 0.3,
-            DVec3::splat(-0.1),
-        ] {
-            assert_eq!(a.apply(scan).unwrap(), b.apply(scan).unwrap());
-        }
-    }
 }
 
 #[test]
@@ -119,7 +62,7 @@ fn film_anchors_forward_inverse_and_monotonic_floor_domain() {
         for shoulder in [0., 0.005, 0.02] {
             let neg = negative(
                 cal,
-                Response::Film { toe, shoulder },
+                Response { toe, shoulder },
                 DEFAULT_GAMMA,
                 Balance::default(),
             );
@@ -159,7 +102,7 @@ fn signed_continuation_has_no_pedestal_or_above_base_clamp() {
     for toe in [1., 2.5, 4.] {
         let neg = negative(
             cal,
-            Response::Film {
+            Response {
                 toe,
                 shoulder: 0.02,
             },
@@ -201,7 +144,7 @@ fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
         assert!(
             Inversion::new(negative(
                 cal,
-                Response::Film { toe, shoulder },
+                Response { toe, shoulder },
                 DEFAULT_GAMMA,
                 Balance::default()
             ))
@@ -211,7 +154,7 @@ fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
     assert!(
         Inversion::new(negative(
             cal,
-            Response::Film {
+            Response {
                 toe: 2.5,
                 shoulder: 0.02
             },
@@ -223,7 +166,7 @@ fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
     assert!(
         Inversion::new(negative(
             cal,
-            Response::Original,
+            Response::film(),
             DEFAULT_GAMMA,
             Balance::default()
         ))
@@ -237,9 +180,8 @@ fn invalid_shapes_nonfinite_inputs_and_floor_poles_are_rejected() {
 fn neutral_fit_uses_actual_response_and_keeps_unrelated_settings() {
     let cal = calibration();
     for response in [
-        Response::Original,
         Response::film(),
-        Response::Film {
+        Response {
             toe: 3.875,
             shoulder: 0.02,
         },

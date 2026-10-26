@@ -49,7 +49,7 @@ The names Dmin and Dmax come from film density, but the stored values are **line
 
 Consequently, Dmin's measured value must be greater than Dmax's in each channel. The RGB anchors need not come from one jointly neutral pixel; their role is to establish each channel's response, not to declare a sampled object white.
 
-Between the anchors, the curve works with relative log attenuation: how much less light a sample transmits than the Dmin reference. Gamma controls the response through that interval; toe and shoulder change its shape. New grades use the adjustable response — the classic response is another shape within the same native-camera model, not a compatibility path for old AP0 grades, and **Use adjustable response** is its explicit opt-in.
+Between the anchors, the curve works with relative log attenuation: how much less light a sample transmits than the Dmin reference. Gamma controls the response through that interval; toe and shoulder change its shape. Toe 1 with no shoulder removes that shaping; gamma still sets the curve's contrast between the anchors.
 
 New grades and gamma resets start at **0.60**, a shared practical response prior rather than a measured film gamma: using one common value leaves stock/process contrast differences available. Analyze fits relative channel balance while preserving the selected global gamma. The anchors are not clipping limits — samples can lie beyond them, and the input precision floor prevents interpreting values below the developed scan's precision as reliable density.
 

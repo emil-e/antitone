@@ -60,9 +60,9 @@ neutral area.
 ## Toe & shoulder
 
 **Toe** and **Shoulder** shape the ends of the response: how quickly the deepest shadows
-and brightest highlights roll off; 0 turns the shoulder off. If the project shows "Classic
-curve", the roll is using a fixed stock-style response; **Use adjustable response** swaps
-to the editable curve.
+and brightest highlights roll off; 0 turns the shoulder off. New rolls start at toe 2.5
+with the shoulder off; a toe of 1 with no shoulder removes that shaping, and gamma still
+sets the contrast between the anchors.
 
 ## White balance
 

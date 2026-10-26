@@ -189,9 +189,8 @@ fn roll_neutral_fits_actual_response_to_unequal_camera_white_not_equal_channels(
     let target = matrix().inverse() * DVec3::ONE;
     assert!(target.min_element() > 0. && target.max_element() - target.min_element() > 0.1);
     for response in [
-        Response::Original,
         Response::film(),
-        Response::Film {
+        Response {
             toe: 3.875,
             shoulder: 0.02,
         },
@@ -272,7 +271,14 @@ fn gpu_range_gate_covers_above_base_continuation_after_camera_mapping() {
         input_floor: 0.001 * (1. - 1.1e-6),
     };
     let result = antitone::gpu::ProcessingParameters::positive(
-        negative(cal, Response::Original, Balance::default()),
+        negative(
+            cal,
+            Response {
+                toe: 1.,
+                shoulder: 0.,
+            },
+            Balance::default(),
+        ),
         RollSettings::default(),
         PhotoSettings::default(),
         DMat3::from_diagonal(DVec3::splat(3e32)),

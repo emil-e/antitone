@@ -59,8 +59,8 @@ fn camera_model_roundtrips_explicit_response_and_rejects_missing_or_unknown_shap
         Response::film()
     );
     for response in [
-        Response::Original,
-        Response::Film {
+        Response::film(),
+        Response {
             toe: 2.543210987654321,
             shoulder: 0.003210987654321,
         },
@@ -79,11 +79,9 @@ fn camera_model_roundtrips_explicit_response_and_rejects_missing_or_unknown_shap
         let mut unknown = serde_json::to_value(&film).unwrap();
         unknown["input"]["response"]["kind"] = "unknown".into();
         assert!(serde_json::from_value::<Project>(unknown).is_err());
-        if matches!(response, Response::Film { .. }) {
-            let mut unknown = serde_json::to_value(&film).unwrap();
-            unknown["input"]["response"]["unexpected"] = true.into();
-            assert!(serde_json::from_value::<Project>(unknown).is_err());
-        }
+        let mut unknown = serde_json::to_value(&film).unwrap();
+        unknown["input"]["response"]["unexpected"] = true.into();
+        assert!(serde_json::from_value::<Project>(unknown).is_err());
     }
 }
 
@@ -97,7 +95,7 @@ fn project_validation_rejects_shape_and_calibrated_shoulder_pole() {
         ..
     } = &mut p.input
     {
-        *response = Response::Film {
+        *response = Response {
             toe: 4.1,
             shoulder: 0.,
         };
@@ -112,7 +110,7 @@ fn project_validation_rejects_shape_and_calibrated_shoulder_pole() {
         ..
     } = &mut p.input
     {
-        *response = Response::Film {
+        *response = Response {
             toe: 2.5,
             shoulder: 0.02,
         };

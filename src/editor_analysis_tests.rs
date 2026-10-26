@@ -99,7 +99,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status);
         assert_eq!(editor.current_source, selected);
         assert_eq!(editor.gamma(), 0.7);
-        assert_eq!(editor.response(), before.input.response());
+        assert_eq!(Some(editor.response()), Editor::response_of(before.input));
         assert_eq!(editor.document.project.orientation, before.orientation);
         for (source, prior) in editor.document.project.sources.iter().zip(&before.sources) {
             assert_eq!(source.orientation, prior.orientation);
@@ -376,7 +376,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert_eq!(editor.dmax().unwrap(), DVec3::new(0.04, 0.02, 0.01));
     assert_eq!(editor.roll.exposure, 2.1);
     assert_eq!(editor.gamma(), before.input.gamma());
-    assert_eq!(editor.response(), before.input.response());
+    assert_eq!(Some(editor.response()), Editor::response_of(before.input));
     assert_eq!(editor.roll.wb, expected.roll.wb);
     assert_eq!(editor.photo, expected.sources[0].photo);
     assert_ne!(editor.photo, before.sources[0].photo);
@@ -445,7 +445,7 @@ fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
             result
                 .document
                 .project
-                .set_response(crate::processing::Response::Film {
+                .set_response(crate::processing::Response {
                     toe: 1.,
                     shoulder: 0.02,
                 });
@@ -815,7 +815,7 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
             editor.status
         );
         assert_eq!(editor.gamma(), before.input.gamma());
-        assert_eq!(editor.response(), before.input.response());
+        assert_eq!(Some(editor.response()), Editor::response_of(before.input));
         for (mut after, prior) in editor
             .document
             .project
