@@ -16,8 +16,7 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
             })
         });
         // Hold physical acquisition, not the UI executor or frame-bound colour work.
-        let jobs = harness.read(|editor| editor.workflow_jobs.clone());
-        let hold = crate::editor::tests::hold_blocking_work(&jobs);
+        let hold = crate::background::testing::pause();
         for (index, delta) in [
             egui::vec2(500., 0.),
             egui::vec2(-1000., 300.),

@@ -46,7 +46,6 @@ fn fixture() -> (
         device: device.clone(),
         queue: queue.clone(),
         developments: scheduler.clone(),
-        jobs: e.workflow_jobs.clone(),
         renderers: Arc::default(),
     });
     e.working = WorkingView::new(device, queue.clone());
@@ -78,7 +77,7 @@ fn physical_support_completes_without_backend_or_another_paint() {
 #[test]
 fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_output_changes() {
     let (e, input, mut spec, scheduler) = fixture();
-    let hold = crate::editor::tests::hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(e, |app| {
         for _ in 0..40 {
             spec.frame.min.0[0] += 1.;
@@ -136,7 +135,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
 }
 
 #[test]
-fn retiring_running_support_keeps_native_lease_and_physical_admission_through_submission() {
+fn retiring_running_support_keeps_its_native_lease_through_submission() {
     let (e, input, mut spec, scheduler) = fixture();
     let source = Arc::downgrade(&input.source);
     let scan = Scan::open(
@@ -177,18 +176,16 @@ fn retiring_running_support_keeps_native_lease_and_physical_admission_through_su
         });
         app.pump();
         assert!(source.upgrade().is_some());
-        assert!(!app.read(|e| e.workflow_jobs.idle()));
         assert_eq!(
             count.load(Ordering::Relaxed),
             1,
-            "a departed acquisition still owns physical admission"
+            "a running acquisition keeps its source lease"
         );
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
         assert!(source.upgrade().is_none());
         app.read(|e| {
             assert!(e.working.source.as_ref().unwrap().spec == spec);
-            assert!(e.workflow_jobs.idle());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -198,7 +195,7 @@ fn retiring_running_support_keeps_native_lease_and_physical_admission_through_su
 fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
     let (e, input, spec, scheduler) = fixture();
     let source = Arc::downgrade(&input.source);
-    let hold = crate::editor::tests::hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(e, |app| {
         app.enter(|e, access| {
             e.request_working(spec, input, access);
@@ -229,7 +226,7 @@ fn save_completion_readmits_existing_working_demand_without_another_paint() {
             assert!(e.document_pending.is_some());
             assert!(
                 e.document.visit.working.task.is_none(),
-                "foreground admission is paused"
+                "working-source dispatch is paused"
             );
         });
         app.run_until(Duration::from_secs(15), |e| {

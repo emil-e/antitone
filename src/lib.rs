@@ -4,7 +4,7 @@ pub mod application;
 #[cfg(feature = "project")]
 pub mod auto_crop;
 #[cfg(feature = "editor")]
-mod blocking_jobs;
+mod background;
 #[cfg(feature = "editor")]
 mod cancellation;
 pub mod color;

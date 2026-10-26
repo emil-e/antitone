@@ -140,11 +140,9 @@ impl Editor {
             self.finish_pick(cx);
             return;
         };
-        let blocking = self.workflow_jobs.clone();
         let view = self.document.visit.view;
         let Some(task) = cx.spawn(move |cx| async move {
-            let result = blocking
-                .run(move || input.measure())
+            let result = crate::background::run(move || input.measure())
                 .await
                 .map_err(|_| "Measurement worker panicked".to_owned())
                 .and_then(|result| result.map_err(|error| error.to_string()));

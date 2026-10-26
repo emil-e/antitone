@@ -153,7 +153,6 @@ impl Editor {
         let allowed = self.thumbnail_work_allowed();
         let eager = allowed && self.thumbnails.budgets.pressure == memory::Pressure::Normal;
         let idle = allowed
-            && self.workflow_jobs.idle()
             && self.original.refining.is_none()
             && if self.working.revision().is_some() {
                 self.working.idle()

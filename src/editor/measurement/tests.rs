@@ -1,8 +1,8 @@
 use super::*;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot};
 use crate::application::Application;
-use crate::editor::{development, thumbnails};
-use crate::{blocking_jobs::BlockingJobs, raw::Rect, source_store::SourceStore};
+use crate::editor::development;
+use crate::{raw::Rect, source_store::SourceStore};
 use std::{
     sync::{Mutex, mpsc},
     time::{Duration, Instant},
@@ -84,7 +84,6 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
         let scheduler = development::Scheduler::new();
         editor.source_services = Some(crate::editor::source::Services {
             developments: scheduler.clone(),
-            jobs: editor.workflow_jobs.clone(),
             renderers,
             device: device.clone(),
             queue: queue.clone(),
@@ -102,7 +101,7 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
         editor.sync_document();
         editor.document.cache().set_budget(0);
         drop(scan);
-        let hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
+        let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
             let tasks = app.access();
             app.enter(|editor, cx| {
@@ -162,7 +161,6 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
         app.pump();
         app.read(|editor| {
             assert!(editor.document.visit.measurement.is_none() && !editor.busy);
-            assert!(editor.workflow_jobs.idle());
             assert_eq!(editor.document.project, before);
         });
         assert!(source.upgrade().is_none());
@@ -231,7 +229,20 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
             crate::editor::tests::with_document_services(crate::editor::tests::fixture());
         crate::editor::tests::add_ready_fixture(&mut editor);
         let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
-        let hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
+        let (release_next, resume_next) = mpsc::channel();
+        let resume_next = Mutex::new(resume_next);
+        let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
+            if matches!(phase, development::NativePhase::UnpackBegin) {
+                resume_next
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+            }
+            Ok(())
+        });
+        editor.source_services.as_mut().unwrap().developments = scheduler.clone();
+        let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, access| {
                 editor.begin_pick(Pick::Dmin, access);
@@ -247,7 +258,7 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
             app.pump();
             let (status, activity) = app.enter(|editor, cx| {
                 if replace {
-                    editor.load("next.dng".into(), cx);
+                    editor.load(fixture("patches.dng"), cx);
                     assert!(editor.document.visit.source.pending());
                 } else {
                     editor.finish_pick(cx);
@@ -260,14 +271,27 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
                     editor.tasks.view().map(|view| view.title),
                 )
             });
-            app.run_until(Duration::from_secs(5), |_| source.upgrade().is_none());
             drop(hold);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while source.upgrade().is_some() {
+                app.pump();
+                assert!(
+                    Instant::now() < deadline,
+                    "retired measurement kept its input"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
             app.read(|editor| {
                 assert_eq!(editor.busy, replace);
                 assert_eq!(editor.status, status);
                 assert_eq!(editor.tasks.view().map(|view| view.title), activity);
             });
+            if replace {
+                release_next.send(()).unwrap();
+                app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+            }
         });
+        scheduler.close_and_wait().unwrap();
     }
 }
 
@@ -290,13 +314,12 @@ fn cancelling_a_running_measurement_retains_its_source_until_the_computation_ret
     let state = std::cell::RefCell::new(Some(()));
     let (mut application, wakes) = application();
     let access = application.access(&state);
-    let jobs = BlockingJobs::new(1);
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let (finished, finishes) = mpsc::channel();
     let task = access
         .spawn(move |_| async move {
-            jobs.run(move || {
+            crate::background::run(move || {
                 entered.send(()).unwrap();
                 resume.recv().unwrap();
                 let result = input.measure();
@@ -340,7 +363,6 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
                 path: file.path().to_owned(),
                 wb: Some([1.; 4]),
                 expected: None,
-                file: thumbnails::FileKey::new(file.path()),
                 key: None,
             },
             development::Priority::Foreground,
@@ -348,8 +370,6 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
         .unwrap();
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
     let executor = async_executor::LocalExecutor::new();
-    let jobs = BlockingJobs::new(1);
-    let measurement_jobs = jobs.clone();
     let measurement = executor.spawn(async move {
         let source = ticket.await.map_err(|error| error.to_string())?;
         let scan = Scan::from_source(source.clone());
@@ -372,12 +392,11 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
             upstream: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             layer: None,
         };
-        measurement_jobs
-            .run(move || input.measure().map_err(|error| error.to_string()))
+        crate::background::run(move || input.measure().map_err(|error| error.to_string()))
             .await
             .map_err(|_| "worker panicked".to_owned())?
     });
-    let unrelated = executor.spawn(async move { jobs.run(|| 42).await });
+    let unrelated = executor.spawn(async move { crate::background::run(|| 42).await });
     let value = futures_lite::future::block_on(executor.run(async {
         assert_eq!(unrelated.await.unwrap(), 42);
         release.send(()).unwrap();

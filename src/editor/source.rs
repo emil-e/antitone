@@ -104,7 +104,6 @@ pub(super) struct Developed {
 #[derive(Clone)]
 pub(super) struct Services {
     pub developments: development::Scheduler,
-    pub jobs: crate::blocking_jobs::BlockingJobs,
     pub renderers: Arc<crate::renderer::RendererCache>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -121,15 +120,14 @@ impl Services {
             .clone()
             .develop(request, cancelled.clone(), false)
             .await?;
-        self.jobs
-            .run(move || {
-                developed.prepare_gpu(&self.renderers, &self.device, &self.queue, &|| {
-                    cancelled.load(std::sync::atomic::Ordering::Relaxed)
-                })
+        crate::background::run(move || {
+            developed.prepare_gpu(&self.renderers, &self.device, &self.queue, &|| {
+                cancelled.load(std::sync::atomic::Ordering::Relaxed)
             })
-            .await
-            .map_err(|_| "Source preparation worker panicked".to_owned())?
-            .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|_| "Source preparation worker panicked".to_owned())?
+        .map_err(|error| error.to_string())
     }
 
     /// Export demand owns its lifetime; document caches supply optional reuse only.
@@ -151,21 +149,20 @@ impl Services {
     ) -> Result<Developed, String> {
         let started = std::time::Instant::now();
         let retired = cancelled.clone();
-        let (request, key, cache) = self
-            .jobs
-            .run(move || {
-                let mut request = request;
-                let cache = request.cache.clone();
-                if independent {
-                    request.cache = None;
-                }
-                request.require_live(&|| retired.load(std::sync::atomic::Ordering::Relaxed))?;
-                let key = request.load_key()?;
-                Ok::<_, Error>((request, key, cache))
-            })
-            .await
-            .map_err(|_| "Source capture worker panicked".to_owned())?
-            .map_err(|error| error.to_string())?;
+
+        let (request, key, cache) = crate::background::run(move || {
+            let mut request = request;
+            let cache = request.cache.clone();
+            if independent {
+                request.cache = None;
+            }
+            request.require_live(&|| retired.load(std::sync::atomic::Ordering::Relaxed))?;
+            let key = request.load_key()?;
+            Ok::<_, Error>((request, key, cache))
+        })
+        .await
+        .map_err(|_| "Source capture worker panicked".to_owned())?
+        .map_err(|error| error.to_string())?;
         let references = cache.as_ref().map_or_else(
             || Arc::new(SourceStore::new(0)), |cache| cache.store.clone(),
         );
@@ -202,20 +199,19 @@ impl Services {
             verification_seconds: 0.,
         };
         let file = key.file().clone();
-        self.jobs
-            .run(move || {
 
-                request.accept(
-                    source,
-                    file,
-                    references,
-                    &|| cancelled.load(std::sync::atomic::Ordering::Relaxed),
-                    timing,
-                )
-            })
-            .await
-            .map_err(|_| "Source preparation worker panicked".to_owned())?
-            .map_err(|error| error.to_string())
+        crate::background::run(move || {
+            request.accept(
+                source,
+                file,
+                references,
+                &|| cancelled.load(std::sync::atomic::Ordering::Relaxed),
+                timing,
+            )
+        })
+        .await
+        .map_err(|_| "Source preparation worker panicked".to_owned())?
+        .map_err(|error| error.to_string())
     }
 }
 

@@ -10,7 +10,6 @@ fn request(path: &std::path::Path) -> Request {
         path: path.to_owned(),
         wb: Some([1.; 4]),
         expected: Some(expected),
-        file,
         key,
     }
 }

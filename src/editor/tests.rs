@@ -90,8 +90,7 @@ pub(super) fn authored_fixture(paths: &[&str]) -> Editor {
 
 pub(super) fn with_document_services(mut editor: Editor) -> Editor {
     let mut resources = authored_fixture(&[]);
-    let mut services = resources.source_services.take().unwrap();
-    services.jobs = editor.workflow_jobs.clone();
+    let services = resources.source_services.take().unwrap();
     editor.source_services = Some(services);
     editor
 }
@@ -825,36 +824,6 @@ fn closed_application_clears_pick_busy_and_stale_samples_do_not_apply() {
             assert_eq!(editor.adjustment_layer_settings, old);
         });
     });
-}
-
-pub(super) struct ExecutionHold {
-    release: mpsc::Sender<()>,
-    worker: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Drop for ExecutionHold {
-    fn drop(&mut self) {
-        let _ = self.release.send(());
-        self.worker.take().unwrap().join().unwrap();
-    }
-}
-
-pub(super) fn hold_blocking_work(jobs: &crate::blocking_jobs::BlockingJobs) -> ExecutionHold {
-    let jobs = jobs.clone();
-    let (started, starts) = mpsc::channel();
-    let (release, released) = mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        futures_lite::future::block_on(jobs.run(move || {
-            started.send(()).unwrap();
-            let _ = released.recv();
-        }))
-        .unwrap();
-    });
-    starts.recv_timeout(Duration::from_secs(5)).unwrap();
-    ExecutionHold {
-        release,
-        worker: Some(worker),
-    }
 }
 
 // Geometry/presentation fixtures use authored native ownership but synthetic display geometry.

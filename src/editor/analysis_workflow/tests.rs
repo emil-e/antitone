@@ -27,7 +27,6 @@ pub(super) fn fixture(scheduler: development::Scheduler) -> Editor {
     let initial = development::Scheduler::new();
     editor.source_services = Some(source::Services {
         developments: initial.clone(),
-        jobs: editor.workflow_jobs.clone(),
         renderers: Arc::default(),
         device,
         queue,
@@ -131,12 +130,12 @@ fn queued_user_cancel_acknowledges_without_starting_native_work() {
     let scheduler = development::Scheduler::new();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
-    let jobs = editor.workflow_jobs.clone();
-    let admission = jobs.hold();
+    let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         start(app);
         app.pump();
         app.update(Editor::cancel_analysis);
+        drop(admission);
         app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
         app.read(|e| {
             assert!(!e.busy && e.document.analysis_review.is_none());
@@ -144,7 +143,6 @@ fn queued_user_cancel_acknowledges_without_starting_native_work() {
             assert!(e.tasks.view().is_none());
         });
         assert_eq!(scheduler.waiter_count(), 0);
-        drop(admission);
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -154,7 +152,6 @@ fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work()
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -169,7 +166,9 @@ fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work()
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());

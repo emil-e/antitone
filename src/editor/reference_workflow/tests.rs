@@ -1,12 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{
-        development,
-        document::Document,
-        source,
-        tests::{fixture, hold_blocking_work},
-    },
+    editor::{development, document::Document, source, tests::fixture},
 };
 use std::{
     path::PathBuf,
@@ -39,7 +34,6 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     });
     e.source_services = Some(source::Services {
         developments: scheduler,
-        jobs: e.workflow_jobs.clone(),
         renderers: Arc::default(),
         device,
         queue,
@@ -147,7 +141,7 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
                 begin(app, "bare-light.dng");
                 wait(app);
             }
-            let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
+            let hold = crate::background::testing::pause();
             if accept {
                 apply(app);
             } else {
@@ -196,7 +190,7 @@ fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_r
         });
         begin(app, "bare-light.dng");
         wait(app);
-        let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
+        let hold = crate::background::testing::pause();
         apply(app);
         let old = app.read(|e| e.id);
         app.pump();
@@ -233,7 +227,7 @@ fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_r
 }
 
 #[test]
-fn departed_reference_waiter_keeps_native_admission_until_running_unpack_and_cleanup_finish() {
+fn departed_reference_waiter_can_join_running_unpack_without_stale_publication() {
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     let resume = Mutex::new(resume);
@@ -254,13 +248,22 @@ fn departed_reference_waiter_keeps_native_admission_until_running_unpack_and_cle
     });
     with_application(editor(scheduler.clone()), |app| {
         begin(app, "bare-light.dng");
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(15)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            app.pump();
+            if starts.try_recv().is_ok() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "reference source did not reach unpack"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         app.update(Editor::finish_flat_edit);
         begin(app, "bare-light.dng");
         app.pump();
         assert_eq!(count.load(Ordering::Relaxed), 1);
-        assert!(!app.read(|e| e.workflow_jobs.idle()));
         release.send(()).unwrap();
         wait(app);
         app.read(|e| {
@@ -553,7 +556,6 @@ fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
             app.read(|e| {
                 assert!(e.flat_edit.is_none() && !e.busy && e.document_pending.is_none());
                 assert_eq!(e.document.project, before);
-                assert!(e.workflow_jobs.idle());
             });
             if accept {
                 begin(app, "bare-light.dng");

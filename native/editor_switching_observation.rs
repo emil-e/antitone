@@ -207,24 +207,20 @@ fn workload(
     editor.set_dmax(Some(DVec3::new(0.028, 0.020, 0.014)));
     editor.sync_document();
     editor.initialize_viewer(device, queue);
-    let jobs = editor.workflow_jobs.clone();
     editor.source_services = Some(source::Services {
         developments: scheduler.clone(),
-        jobs: jobs.clone(),
         renderers: renderers.clone(),
         device: device.clone(),
         queue: queue.clone(),
     });
     let screening = Arc::new(crate::gpu::dust_screening::Cache::default());
     editor.dust_services = Some(dust_workflow::Services::new(
-        jobs.clone(),
         device.clone(),
         queue.clone(),
         editor.submissions.clone(),
         screening.clone(),
     ));
     editor.export_services = Some(export_services::Services::new(
-        jobs,
         renderers.clone(),
         device.clone(),
         queue.clone(),

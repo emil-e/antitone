@@ -1048,12 +1048,6 @@ impl Editor {
         self.thumbnails.cache.retain(|key, _| key.field == field);
         self.thumbnails.apply_budgets(budgets);
         let visible_allowed = self.thumbnail_work_allowed();
-        let physical_idle = self.workflow_jobs.idle();
-        if !physical_idle {
-            // A retired foreground waiter no longer supplies UI wakes. Revisit
-            // background eligibility until its physical work releases admission.
-            ui.ctx().request_repaint_after(Duration::from_millis(50));
-        }
         let max_height = (ui.ctx().content_rect().height() * 0.35).clamp(52., 240.);
         let mut protected = Vec::new();
         let mut camera_wanted = Vec::new();

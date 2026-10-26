@@ -163,8 +163,7 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
         open(&mut harness);
         choose(&mut harness, "Format", "EXR");
         choose(&mut harness, "Precision", "Full float · 32-bit");
-        let jobs = harness.read(|editor| editor.workflow_jobs.clone());
-        let admission = jobs.hold();
+        let admission = crate::background::testing::pause();
         harness.get_by_label("Export 2 photos").click();
         harness.step();
         harness.update(|editor| editor.tasks.elapse(Duration::from_secs(1)));

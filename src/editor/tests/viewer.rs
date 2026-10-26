@@ -966,7 +966,7 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
     for pick in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb] {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
-        let _hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
+        let _hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
             app.update(|editor| editor.viewport.zoom = Some(2.));
             let context = egui::Context::default();
@@ -1417,7 +1417,7 @@ fn pick_apply_is_present_but_disabled_until_selection_and_while_measuring() {
     let size = egui::vec2(800., 600.);
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    let _hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
+    let _hold = crate::background::testing::pause();
     crate::application::test_support::with_application(editor, |app| {
         let context = egui::Context::default();
         app.enter(|editor, cx| editor.begin_pick(Pick::Gamma, cx));

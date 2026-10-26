@@ -27,7 +27,6 @@ pub(super) struct Request {
     pub path: PathBuf,
     pub wb: Option<[f64; 4]>,
     pub expected: Option<Source>,
-    pub file: thumbnails::FileKey,
     pub key: Option<SourceKey>,
 }
 
@@ -511,7 +510,6 @@ impl Scheduler {
                 path: key.path().to_owned(),
                 wb: Some(key.development().decode.fixed_wb),
                 expected: None,
-                file: key.file().clone(),
                 key: Some(key),
             },
             priority,

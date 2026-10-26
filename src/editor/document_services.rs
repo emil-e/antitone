@@ -185,18 +185,15 @@ impl PreparationServices {
         let Candidate {
             mut prepared,
             source,
-        } = self
-            .0
-            .jobs
-            .run(move || {
-                if retired.load(std::sync::atomic::Ordering::Relaxed) {
-                    return Err(Error::UnusableSample("document preparation retired"));
-                }
-                candidate(request, &device, progress)
-            })
-            .await
-            .map_err(|_| "Document preparation worker panicked".to_owned())?
-            .map_err(|error| error.to_string())?;
+        } = crate::background::run(move || {
+            if retired.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(Error::UnusableSample("document preparation retired"));
+            }
+            candidate(request, &device, progress)
+        })
+        .await
+        .map_err(|_| "Document preparation worker panicked".to_owned())?
+        .map_err(|error| error.to_string())?;
         if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
             return Err("Document preparation retired".into());
         }
@@ -218,14 +215,12 @@ impl PreparationServices {
 
 #[derive(Clone)]
 pub(super) struct Services {
-    pub jobs: crate::blocking_jobs::BlockingJobs,
     pub device: wgpu::Device,
 }
 
 impl Services {
     pub async fn write(self, write: Write) -> Result<Document, String> {
-        self.jobs
-            .run(move || write.save(&self.device))
+        crate::background::run(move || write.save(&self.device))
             .await
             .map_err(|_| "Document write worker panicked".to_owned())?
             .map_err(|error| error.to_string())

@@ -65,8 +65,8 @@ fn assert_source_corners(uv: TextureMapping, frame: FrameRaster, crop: Crop) {
 }
 
 fn provisional_then_physical(app: &mut TestApplication<'_, Editor>) {
-    let (jobs, crop) = app.read(|editor| (editor.workflow_jobs.clone(), editor.crop.unwrap()));
-    let admission = jobs.hold();
+    let crop = app.read(|editor| editor.crop.unwrap());
+    let admission = crate::background::testing::pause();
     let (uv, frame, physical) = mapping(app);
     assert!(
         !physical,

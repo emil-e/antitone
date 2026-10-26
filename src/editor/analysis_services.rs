@@ -21,7 +21,6 @@ fn source_input(document: &Document, id: SourceId) -> Result<source::Request, Er
 
 #[derive(Clone)]
 pub(super) struct Services {
-    pub jobs: crate::blocking_jobs::BlockingJobs,
     pub developments: development::Scheduler,
     pub device: wgpu::Device,
 }
@@ -29,7 +28,6 @@ pub(super) struct Services {
 impl From<&source::Services> for Services {
     fn from(source: &source::Services) -> Self {
         Self {
-            jobs: source.jobs.clone(),
             developments: source.developments.clone(),
             device: source.device.clone(),
         }
@@ -43,18 +41,13 @@ impl Services {
         job: impl FnOnce() -> Result<T, Error> + Send + 'static,
     ) -> Result<Option<T>, Error> {
         let stopped = cancelled.clone();
-        let result = self
-            .jobs
-            .run_admitted_cancellable(cancelled.wait(), move |_| {
-                if stopped.is_cancelled() {
-                    return Ok(None);
-                }
-                job().map(Some)
-            })
-            .await;
-        let Some(result) = result else {
-            return Ok(None);
-        };
+        let result = crate::background::run(move || {
+            if stopped.is_cancelled() {
+                return Ok(None);
+            }
+            job().map(Some)
+        })
+        .await;
         let result = result.map_err(|_| Error::UnusableSample("analysis worker panicked"))?;
         if cancelled.is_cancelled() {
             Ok(None)
@@ -63,8 +56,8 @@ impl Services {
         }
     }
 
-    /// Native production owns admission through cleanup. Awaiting it holds no blocking
-    /// worker, and analysis demands do not retain full RAWs as optional cache data.
+    /// Await a source lease without occupying a blocking-pool thread. Optional
+    /// retention belongs to the cache; analysis owns each frame's sampling inputs.
     pub async fn acquire(
         &self,
         request: Arc<analysis::Request>,
@@ -94,20 +87,18 @@ impl Services {
         cancelled: Cancellation,
     ) -> Result<Option<Scan>, Error> {
         let retired = cancelled.clone();
-        let Some(captured) = self
-            .jobs
-            .run_admitted_cancellable(cancelled.wait(), move |_| {
-                if retired.is_cancelled() {
-                    return Err(Error::Cancelled);
-                }
-                let request = capture()?;
-                let key = request.load_key()?;
-                Ok((key, request.cache.expect("analysis document cache")))
-            })
-            .await
-        else {
+        let captured = crate::background::run(move || {
+            if retired.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let request = capture()?;
+            let key = request.load_key()?;
+            Ok((key, request.cache.expect("analysis document cache")))
+        })
+        .await;
+        if cancelled.is_cancelled() {
             return Ok(None);
-        };
+        }
         let (key, cache) = captured
             .map_err(|_| Error::UnusableSample("analysis source capture worker panicked"))??;
         let store = cache.store.clone();

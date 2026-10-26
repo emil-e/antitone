@@ -3,8 +3,7 @@ use crate::{
     application::test_support::with_application,
     editor::{
         OriginalPurpose, OutputTarget, ProcessingInput, ProcessingParameters, ViewRequest,
-        development,
-        tests::{fixture, hold_blocking_work},
+        development, tests::fixture,
     },
 };
 use std::time::{Duration, Instant};
@@ -26,7 +25,6 @@ fn editor() -> (Editor, development::Scheduler) {
         device,
         queue,
         developments: scheduler.clone(),
-        jobs: e.workflow_jobs.clone(),
         renderers: Arc::default(),
     });
     (e, scheduler)
@@ -94,7 +92,7 @@ fn original_reconstruction_finishes_without_backend_or_another_paint() {
 #[test]
 fn rapid_output_demand_drops_queued_inputs_and_only_latest_reconstruction_can_publish() {
     let (e, scheduler) = editor();
-    let hold = hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(e, |app| {
         let mut retired = Vec::new();
         for n in 0..40 {
@@ -125,7 +123,7 @@ fn rapid_output_demand_drops_queued_inputs_and_only_latest_reconstruction_can_pu
 #[test]
 fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisit() {
     let (e, scheduler) = editor();
-    let hold = hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(e, |app| {
         let (old, resource) = app.enter(|e, access| {
             let resource = demand(e, 0., access);
@@ -152,9 +150,9 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
 }
 
 #[test]
-fn leaving_a_purpose_retires_queued_input_without_waiting_for_physical_admission() {
+fn leaving_a_purpose_releases_input_before_worker_dispatch() {
     let (e, scheduler) = editor();
-    let hold = hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(e, |app| {
         let source = app.enter(|e, access| demand(e, 0., access));
         app.pump();
@@ -171,7 +169,7 @@ fn leaving_a_purpose_retires_queued_input_without_waiting_for_physical_admission
 }
 
 #[test]
-fn retired_running_original_keeps_its_source_and_admission_until_the_submitted_unit_returns() {
+fn retired_running_original_keeps_its_source_until_the_submitted_unit_returns() {
     let (e, scheduler) = editor();
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
@@ -201,7 +199,6 @@ fn retired_running_original_keeps_its_source_and_admission_until_the_submitted_u
             source.upgrade().is_some(),
             "running work still owns the native input after its UI waiter departs"
         );
-        assert!(!app.read(|e| e.workflow_jobs.idle()));
         assert_eq!(
             submissions.load(Ordering::Relaxed),
             1,
@@ -215,7 +212,6 @@ fn retired_running_original_keeps_its_source_and_admission_until_the_submitted_u
                 e.original.settled.as_ref().unwrap().0,
                 e.original.revision()
             );
-            assert!(e.workflow_jobs.idle());
         });
     });
     scheduler.close_and_wait().unwrap();

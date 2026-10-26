@@ -1,12 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{
-        Preparation, development,
-        document::Document,
-        source,
-        tests::{fixture, hold_blocking_work},
-    },
+    editor::{Preparation, development, document::Document, source, tests::fixture},
 };
 use std::{
     path::{Path, PathBuf},
@@ -39,7 +34,6 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     });
     editor.source_services = Some(source::Services {
         developments: scheduler,
-        jobs: editor.workflow_jobs.clone(),
         renderers: Arc::default(),
         device,
         queue,
@@ -410,7 +404,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
 fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_new_work() {
     let scheduler = development::Scheduler::new();
     let e = editor(scheduler.clone());
-    let hold = hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(e, |app| {
         app.enter(|e, access| {
             e.add_raws(vec![path("patches.dng")], access);

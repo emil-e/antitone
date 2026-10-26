@@ -1,6 +1,5 @@
 use super::*;
 use crate::{
-    blocking_jobs::BlockingJobs,
     editor::analysis_review::preparation_tests::{observed, request},
     scan_regions::Areas,
 };
@@ -60,7 +59,6 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
-        jobs: BlockingJobs::new(1),
         developments: scheduler.clone(),
         device,
     };
@@ -144,7 +142,6 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
-        jobs: BlockingJobs::new(1),
         developments: scheduler.clone(),
         device,
     };
@@ -177,7 +174,6 @@ fn changed_source_after_sampling_rejects_the_complete_candidate_before_publicati
     let path = request.document.source_path(request.selected).unwrap();
     let (scheduler, _) = observed();
     let services = Services {
-        jobs: BlockingJobs::new(1),
         developments: scheduler.clone(),
         device,
     };

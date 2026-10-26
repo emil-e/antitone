@@ -292,9 +292,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             assert_eq!(cpu.evaluated.donors, gpu.donors);
             assert_eq!(exact_values(&cpu.evaluated), exact_values(gpu));
         }
-
-        let jobs = h.read(|editor| editor.workflow_jobs.clone());
-        let hold = crate::editor::tests::hold_blocking_work(&jobs);
+        let hold = crate::background::testing::pause();
         open_project(&mut h, directory.path().join("missing.antitone"));
         for _ in 0..5 {
             h.step();

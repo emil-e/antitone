@@ -91,7 +91,6 @@ fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting(
     for fitting in [false, true] {
         let scheduler = development::Scheduler::new();
         let editor = fixture(scheduler.clone());
-        let jobs = editor.workflow_jobs.clone();
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
         let (returned, returns) = mpsc::channel();
@@ -112,7 +111,7 @@ fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting(
                         || e.document.analysis_pending.is_some()
                 );
             });
-            assert!(!continued.get() && !jobs.idle());
+            assert!(!continued.get());
             assert!(matches!(returns.try_recv(), Err(mpsc::TryRecvError::Empty)));
             release.send(()).unwrap();
             app.run_until(LIMIT, |e| !e.busy);
@@ -132,10 +131,9 @@ fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting(
 }
 
 #[test]
-fn application_retirement_drops_cpu_continuation_without_releasing_running_admission() {
+fn application_retirement_drops_cpu_continuation_while_the_worker_finishes() {
     let scheduler = development::Scheduler::new();
     let editor = fixture(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let (returned, returns) = mpsc::channel();
@@ -153,12 +151,12 @@ fn application_retirement_drops_cpu_continuation_without_releasing_running_admis
                 .clone()
         });
         app.close_execution();
-        assert!(stopped.is_cancelled() && !continued.get() && !jobs.idle());
+        assert!(stopped.is_cancelled() && !continued.get());
         release.send(()).unwrap();
         returns.recv_timeout(LIMIT).unwrap();
     });
-    futures_lite::future::block_on(jobs.run(|| {})).unwrap();
-    assert!(jobs.idle() && !continued.get());
+    futures_lite::future::block_on(crate::background::run(|| {})).unwrap();
+    assert!(!continued.get());
     scheduler.close_and_wait().unwrap();
 }
 

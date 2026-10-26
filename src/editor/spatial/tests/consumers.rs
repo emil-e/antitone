@@ -183,8 +183,7 @@ fn selected_targets_are_captured_at_request_time_and_cancel_does_not_accept_marg
     editor
         .roll_selection
         .reconcile(&editor.document.project.order, Some(first));
-    let jobs = editor.workflow_jobs.clone();
-    let admission = jobs.hold();
+    let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Selected, cx));
         app.update(|editor| {

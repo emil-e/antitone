@@ -36,7 +36,6 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     });
     editor.source_services = Some(source::Services {
         developments: scheduler,
-        jobs: editor.workflow_jobs.clone(),
         renderers: Arc::default(),
         device,
         queue,
@@ -154,7 +153,6 @@ fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels
 fn retired_visit_cannot_publish_or_block_unrelated_cpu_work() {
     let (scheduler, starts, release) = paused();
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -170,7 +168,9 @@ fn retired_visit_cannot_publish_or_block_unrelated_cpu_work() {
         let access = app.access();
         let probe = access
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
@@ -185,8 +185,7 @@ fn retired_visit_cannot_publish_or_block_unrelated_cpu_work() {
 }
 
 #[test]
-fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_an_unrelated_call()
-{
+fn cancelling_an_unstarted_native_demand_does_not_wait_for_unrelated_calls() {
     // Both owners must stay inside their unrelated calls for the demand below to
     // stay unstarted, so this scenario fixes the pressure reading it needs.
     let (scheduler, starts, release) = paused_with_pressure(normal_pressure);
@@ -199,7 +198,6 @@ fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_
                         path: path(),
                         wb: None,
                         expected: None,
-                        file: super::super::thumbnails::FileKey::new(&path()),
                         key: None,
                     },
                     development::Priority::Eager,
@@ -208,11 +206,10 @@ fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_
         );
     }
     // Both native owners are inside unrelated calls, so the demand below
-    // stays unstarted; cancelling it must release admission without waiting.
+    // stays unstarted; cancelling its waiter must not wait for those calls.
     starts.recv_timeout(Duration::from_secs(10)).unwrap();
     starts.recv_timeout(Duration::from_secs(10)).unwrap();
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
         app.run_until(Duration::from_secs(10), |_| scheduler.waiter_count() == 3);
@@ -226,7 +223,9 @@ fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
@@ -274,7 +273,6 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
         normal_pressure,
     );
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
         await_native(app, &at_park);
@@ -292,7 +290,6 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
                 scheduler
                     .submit(
                         development::Request {
-                            file: super::super::thumbnails::FileKey::new(&other),
                             path: other.clone(),
                             wb: None,
                             expected: None,
@@ -312,7 +309,9 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
@@ -327,7 +326,6 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
 fn worker_closure_finishes_the_waiter_while_native_cleanup_continues() {
     let (scheduler, starts, release) = paused();
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -338,7 +336,9 @@ fn worker_closure_finishes_the_waiter_while_native_cleanup_continues() {
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
@@ -414,7 +414,7 @@ fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
 
 #[test]
 fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
-    // Typed-outcome ordering is a controller test. Worker/admission cases above
+    // Typed-outcome ordering is a controller test. Worker-lifetime cases above
     // exercise physical source execution; this case does not simulate that timing.
     for complete_first in [false, true] {
         let editor = super::super::tests::authored_fixture(&["patches.dng"]);
@@ -501,7 +501,6 @@ fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product()
 fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
     let (scheduler, starts, release) = paused();
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -529,7 +528,9 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());

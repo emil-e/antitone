@@ -13,7 +13,6 @@ use std::sync::{
 
 #[derive(Clone)]
 pub(super) struct Services {
-    jobs: crate::blocking_jobs::BlockingJobs,
     device: wgpu::Device,
     queue: wgpu::Queue,
     submissions: crate::platform::SubmissionGate,
@@ -22,14 +21,12 @@ pub(super) struct Services {
 
 impl Services {
     pub fn new(
-        jobs: crate::blocking_jobs::BlockingJobs,
         device: wgpu::Device,
         queue: wgpu::Queue,
         submissions: crate::platform::SubmissionGate,
         screening: Arc<crate::gpu::dust_screening::Cache>,
     ) -> Self {
         Self {
-            jobs,
             device,
             queue,
             submissions,
@@ -43,8 +40,7 @@ impl Services {
         input: source::Context,
         source_epoch: Arc<AtomicU64>,
     ) -> Result<Option<dust::Response>, String> {
-        let jobs = self.jobs.clone();
-        jobs.run(move || {
+        crate::background::run(move || {
             let cancelled = || {
                 if source_epoch.load(Ordering::Relaxed) != request.loaded {
                     request.cancelled.store(true, Ordering::Relaxed);

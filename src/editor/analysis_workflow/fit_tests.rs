@@ -144,7 +144,6 @@ fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cp
     let (scheduler, enabled, starts, release) = gated();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         review(app);
         enabled.store(true, Ordering::Relaxed);
@@ -163,7 +162,9 @@ fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cp
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());
@@ -241,10 +242,9 @@ fn live_edits_during_fit_discard_the_entire_candidate_without_installing_reviewe
 fn new_document_supersedes_a_queued_fit_without_consuming_its_areas_or_history() {
     let scheduler = development::Scheduler::new();
     let editor = fixture(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         review(app);
-        let admission = jobs.hold();
+        let admission = crate::background::testing::pause();
         confirm(app);
         app.pump();
         app.enter(|e, access| {

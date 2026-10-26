@@ -11,10 +11,8 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
         let expected = reference.propose_flat_field_area().unwrap();
         let before = codes(&reference);
         let scheduler = development::Scheduler::new();
-        let jobs = crate::blocking_jobs::BlockingJobs::new(1);
         let services = source::Services {
             developments: scheduler.clone(),
-            jobs: jobs.clone(),
             renderers,
             device,
             queue,
@@ -37,13 +35,10 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
             .await
             .unwrap();
         assert_eq!(ready.analysis_support, None);
-        let support = support_workflow::prepare(
-            jobs,
-            source::Context {
-                source: ready.developed,
-                correction: None,
-            },
-        )
+        let support = support_workflow::prepare(source::Context {
+            source: ready.developed,
+            correction: None,
+        })
         .await
         .unwrap();
         assert_eq!(

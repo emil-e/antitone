@@ -180,8 +180,7 @@ fn queued_shared_preparation_cancels_without_native_work_or_accepted_changes() {
     let (scheduler, starts) = observed();
     let editor = fixture(scheduler.clone());
     let accepted = editor.document.project.clone();
-    let jobs = editor.workflow_jobs.clone();
-    let admission = jobs.hold();
+    let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_analysis(cx));
         app.pump();
@@ -271,10 +270,9 @@ fn retiring_a_photo_visit_does_not_retire_document_region_preparation() {
 }
 
 #[test]
-fn document_retirement_cancels_publication_but_native_cleanup_keeps_physical_admission() {
+fn document_retirement_cancels_publication_without_blocking_unrelated_cpu_work() {
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Roll, cx));
         await_native(app, &starts);
@@ -293,28 +291,18 @@ fn document_retirement_cancels_publication_but_native_cleanup_keeps_physical_adm
         app.update(|editor| editor.document = Document::default().into());
         app.pump();
         assert!(cancelled.is_cancelled());
-        assert!(
-            !jobs.idle(),
-            "logical retirement must not release native producer cleanup admission"
-        );
         assert!(snapshot.cache().is_closed());
         let (entered, observed) = mpsc::channel();
-        let work = jobs.clone();
         let probe = app
             .access()
             .spawn(move |_| async move {
-                work.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(matches!(
-            observed.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        release.send(()).unwrap();
-        // A physical permit release alone need not wake a retired UI continuation. The
-        // queued real CPU job supplies a live executor wake and proves serialization.
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());
+        release.send(()).unwrap();
         drop(probe);
         app.read(|editor| {
             assert!(editor.document.spatial.ready().groups.is_empty());
@@ -328,7 +316,6 @@ fn document_retirement_cancels_publication_but_native_cleanup_keeps_physical_adm
 fn application_retirement_cancels_shared_continuation_before_native_cleanup_returns() {
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Roll, cx));
         await_native(app, &starts);
@@ -343,7 +330,6 @@ fn application_retirement_cancels_shared_continuation_before_native_cleanup_retu
         });
         app.close_execution();
         assert!(cancelled.is_cancelled());
-        assert!(!jobs.idle());
         app.read(|editor| {
             assert!(editor.document.spatial.ready().groups.is_empty());
             assert!(editor.document.auto_crop_edit.is_none());
@@ -351,5 +337,4 @@ fn application_retirement_cancels_shared_continuation_before_native_cleanup_retu
         release.send(()).unwrap();
     });
     scheduler.close_and_wait().unwrap();
-    assert!(jobs.idle());
 }

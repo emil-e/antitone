@@ -1,10 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{
-        Preparation, document_services, source,
-        tests::{fixture, hold_blocking_work},
-    },
+    editor::{Preparation, document_services, source, tests::fixture},
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -32,7 +29,6 @@ fn editor() -> (Editor, crate::editor::development::Scheduler) {
     let scheduler = crate::editor::development::Scheduler::new();
     editor.source_services = Some(source::Services {
         developments: scheduler.clone(),
-        jobs: editor.workflow_jobs.clone(),
         renderers: Arc::default(),
         device,
         queue,
@@ -43,7 +39,7 @@ fn editor() -> (Editor, crate::editor::development::Scheduler) {
 #[test]
 fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_source_locators() {
     let (editor, scheduler) = editor();
-    let hold = hold_blocking_work(&editor.workflow_jobs);
+    let hold = crate::background::testing::pause();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("written.antitone");
     with_application(editor, |app| {
@@ -123,8 +119,7 @@ fn failed_live_save_preserves_destination_dirty_state_and_guarded_transition() {
 #[test]
 fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operation() {
     let (editor, scheduler) = editor();
-    let hold = hold_blocking_work(&editor.workflow_jobs);
-    let jobs = editor.workflow_jobs.clone();
+    let hold = crate::background::testing::pause();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("retired.antitone");
     with_application(editor, |app| {
@@ -137,7 +132,7 @@ fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operatio
         let current = app.read(|e| e.document_pending.unwrap());
         app.pump();
         drop(hold);
-        pollster::block_on(jobs.run(|| {})).unwrap();
+        pollster::block_on(crate::background::run(|| {})).unwrap();
         app.enter(|e, cx| e.save_result(retired, Err("stale write failure".into()), cx));
         app.read(|e| {
             assert_eq!(e.document_pending, Some(current));
@@ -152,7 +147,7 @@ fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operatio
 #[test]
 fn cancelling_the_after_save_decision_does_not_cancel_the_accepted_write_or_close() {
     let (editor, scheduler) = editor();
-    let hold = hold_blocking_work(&editor.workflow_jobs);
+    let hold = crate::background::testing::pause();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("saved.antitone");
     with_application(editor, |app| {

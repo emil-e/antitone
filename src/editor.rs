@@ -255,7 +255,6 @@ pub struct Editor {
     viewport: Viewport,
     fullscreen: Option<FullscreenView>,
     // Running physical work outlives logical cancellation.
-    workflow_jobs: crate::blocking_jobs::BlockingJobs,
     id: u64,
     pending_preview: Option<thumbnails::SelectedPreview>,
     preview_rendered: Option<(
@@ -347,9 +346,7 @@ impl Editor {
         editor.input = editor.document.project.input;
         editor.submissions = submissions.clone();
         editor.initialize_viewer(&device, &queue);
-        let jobs = editor.workflow_jobs.clone();
         editor.look_services = Some(look_workflow::Services::new(
-            jobs.clone(),
             renderers.clone(),
             device.clone(),
             queue.clone(),
@@ -357,21 +354,18 @@ impl Editor {
         ));
         editor.source_services = Some(source::Services {
             developments: developments.clone(),
-            jobs: jobs.clone(),
             renderers: renderers.clone(),
             device: device.clone(),
             queue: queue.clone(),
         });
         let screening = Arc::new(crate::gpu::dust_screening::Cache::default());
         editor.dust_services = Some(dust_workflow::Services::new(
-            jobs.clone(),
             device.clone(),
             queue.clone(),
             submissions.clone(),
             screening.clone(),
         ));
         editor.export_services = Some(export_services::Services::new(
-            jobs,
             renderers,
             device,
             queue,
@@ -441,7 +435,6 @@ impl Editor {
             fullscreen: None,
             started: false,
             menus: menu::Menus::default(),
-            workflow_jobs: crate::blocking_jobs::BlockingJobs::new(1),
             id: 0,
             pending_preview: None,
             preview_rendered: None,
