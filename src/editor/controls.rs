@@ -241,7 +241,9 @@ fn parameter_help(kind: Parameter) -> &'static str {
             "Trim each edge by a percentage of the detected frame's shorter side."
         }
         Parameter::FilmAmount => "Relative grain strength at original resolution; 0 removes grain.",
-        Parameter::FilmSize => "Grain scale as a percentage of the source frame height.",
+        Parameter::FilmSize => {
+            "MTF and grain scale as a percentage of the cropped frame's shorter side."
+        }
         Parameter::FilmColour => {
             "0 is monochrome; 0.5 matches the reference colour grain; 1 increases chroma."
         }

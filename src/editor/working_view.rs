@@ -849,11 +849,7 @@ impl Editor {
                 .map(|correction| correction.gpu.field().clone()),
         )?
         .with_repairs(input.repairs.clone())
-        .with_support(
-            input
-                .pixel_pipeline(frame.composition.area().height)?
-                .support([1., 1.])?,
-        );
+        .with_support(input.pixel_pipeline()?.support([1., 1.])?);
         self.request_working(spec, source_input, cx);
         self.working.render(input, self.target, context)?;
 

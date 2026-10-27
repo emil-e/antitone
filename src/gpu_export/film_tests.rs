@@ -239,6 +239,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
             Composition::with_crop(scan.area, Default::default(), Default::default(), crop)
                 .unwrap();
         let frame = FrameRaster::full(composition).unwrap();
+        let input = input.clone().with_frame_size(composition.crop().size);
         let view = crate::refinement::refine(
             &renderer,
             &device,

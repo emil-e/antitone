@@ -7,8 +7,9 @@ fn processed(
     kernels: &crate::gpu::pixel_pipeline::Kernels,
     bounds: SourceRegion,
     settings: FilmEmulationSettings,
+    frame_size: [u32; 2],
 ) -> Vec<[f32; 4]> {
-    processed_with_flags(device, queue, kernels, bounds, settings, 0.)
+    processed_with_flags(device, queue, kernels, bounds, settings, 0., frame_size)
 }
 
 fn processed_with_flags(
@@ -18,6 +19,7 @@ fn processed_with_flags(
     bounds: SourceRegion,
     settings: FilmEmulationSettings,
     flags: f32,
+    frame_size: [u32; 2],
 ) -> Vec<[f32; 4]> {
     let values: Vec<_> = (bounds.y..bounds.y + bounds.height)
         .flat_map(|y| {
@@ -43,7 +45,8 @@ fn processed_with_flags(
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    let plan = crate::pixel_pipeline::PixelPipeline::film(settings, 6000, (1 << 60) + 17).unwrap();
+    let plan =
+        crate::pixel_pipeline::PixelPipeline::film(settings, frame_size, (1 << 60) + 17).unwrap();
     let prepared = crate::gpu::pixel_pipeline::Prepared::new(
         device,
         &plan,
@@ -76,16 +79,19 @@ fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf
     let bounds: SourceRegion = [1048, 980, 64, 64].into();
     let settings = FilmEmulationSettings {
         amount: 0.,
+        size: 0.030,
         ..FilmEmulationPreset::Medium.settings()
     };
-    // Medium at original height6000 is sigma1.8; this is independent of the GPU stencil.
+    // Declared Size0.030% at extent6000 gives sigma1.8, independently of the GPU stencil.
     let sigma = 1.8_f64;
     let radius = (4. * sigma).ceil() as i32;
     let mass: f64 = (-radius..=radius)
         .map(|i| (-0.5 * (i * i) as f64 / (sigma * sigma)).exp())
         .sum();
     for flags in [0., 7.] {
-        let active = processed_with_flags(&device, &queue, &kernels, bounds, settings, flags);
+        let active = processed_with_flags(
+            &device, &queue, &kernels, bounds, settings, flags, [6000; 2],
+        );
         let clean = processed_with_flags(
             &device,
             &queue,
@@ -93,6 +99,7 @@ fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf
             bounds,
             FilmEmulationSettings::default(),
             flags,
+            [6000; 2],
         );
         for x in [1076, 1079, 1080, 1083] {
             let expected: f64 = (-radius..=radius)
@@ -117,28 +124,40 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
     let (device, queue, _) = super::super::tests::context();
     let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
     let area: SourceRegion = [100, 80, 6000, 6000].into();
-    let whole: SourceRegion = [900, 950, 350, 350].into();
+    let whole: SourceRegion = [1000, 780, 420, 420].into();
     let composition = Composition::with_crop(
         area,
         Default::default(),
         Default::default(),
         Some(crate::crop::Crop {
-            center: [1080., 1100.],
-            size: [240, 220],
+            center: [2800., 3080.],
+            size: [4000, 4000],
             angle: 0.13,
         }),
     )
     .unwrap();
-    let settings = FilmEmulationPreset::Coarse.settings();
-    let reference = processed(&device, &queue, &kernels, whole, settings);
+    // Resolve sigma2 in a large logical crop while evaluating only bounded output units.
+    let settings = FilmEmulationSettings {
+        size: 0.050,
+        ..FilmEmulationPreset::Coarse.settings()
+    };
+    let reference = processed(
+        &device,
+        &queue,
+        &kernels,
+        whole,
+        settings,
+        composition.crop().size,
+    );
     let engine = Reconstructor::new(&device).unwrap();
+    let mut unpadded_defect = false;
     for origin in [[0, 0], [128, 0], [0, 128], [128, 128]] {
         let extent = std::array::from_fn(|i| (composition.size()[i] - origin[i]).min(128));
         let mut unit = Unit::with_support(
             composition,
             origin,
             extent,
-            crate::pixel_pipeline::PixelPipeline::film(settings, area.height, 17)
+            crate::pixel_pipeline::PixelPipeline::film(settings, composition.crop().size, 17)
                 .unwrap()
                 .support([1., 1.])
                 .unwrap(),
@@ -152,7 +171,14 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
                 && b.x + b.width <= whole.x + whole.width
                 && b.y + b.height <= whole.y + whole.height
         );
-        let tile = processed(&device, &queue, &kernels, b, settings);
+        let tile = processed(
+            &device,
+            &queue,
+            &kernels,
+            b,
+            settings,
+            composition.crop().size,
+        );
         let actual = super::tests::reconstructed(
             &device,
             &queue,
@@ -161,6 +187,33 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
             |[x, y]| tile[((y - b.y) * b.width + x - b.x) as usize],
             None,
         );
+        let unpadded = (origin == [0, 0]).then(|| {
+            let mut clipped = Unit::with_support(
+                composition,
+                origin,
+                extent,
+                crate::processing_support::Support::NONE,
+            )
+            .unwrap();
+            clipped.mapping.space[0] = 1;
+            let bounds = clipped.bounds;
+            let pixels = processed(
+                &device,
+                &queue,
+                &kernels,
+                bounds,
+                settings,
+                composition.crop().size,
+            );
+            super::tests::reconstructed(
+                &device,
+                &queue,
+                &engine,
+                &clipped,
+                |[x, y]| pixels[((y - bounds.y) * bounds.width + x - bounds.x) as usize],
+                None,
+            )
+        });
         for y in 0..extent[1] {
             for x in 0..extent[0] {
                 let coverage = composition
@@ -179,6 +232,12 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
                     total += weight;
                 }
                 for c in 0..3 {
+                    if let Some(control) = &unpadded {
+                        unpadded_defect |= (control[(y * extent[0] + x) as usize][c] as f64
+                            - expected[c] / total)
+                            .abs()
+                            > 0.001;
+                    }
                     assert!(
                         (actual[(y * extent[0] + x) as usize][c] as f64 - expected[c] / total)
                             .abs()
@@ -189,6 +248,10 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
             }
         }
     }
+    assert!(
+        unpadded_defect,
+        "the export fixture must distinguish missing MTF neighbours from a padded tile"
+    );
 }
 
 #[test]

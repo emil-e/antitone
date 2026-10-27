@@ -103,7 +103,7 @@ impl ImageRecipe {
     pub fn pixel_pipeline(&self) -> Result<crate::pixel_pipeline::PixelPipeline, Error> {
         crate::pixel_pipeline::PixelPipeline::film(
             self.film_emulation,
-            self.neutral.source_development.active_area[3],
+            self.composition.crop().size,
             self.neutral.source.0,
         )
     }

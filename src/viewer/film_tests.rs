@@ -41,6 +41,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         let film = clean
             .clone()
             .with_film_emulation(FilmEmulationPreset::Medium.settings())
+            .with_frame_size([1200; 2])
             .with_film_seed(17);
         image.require_processing(&clean).unwrap();
         assert!(
@@ -108,7 +109,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
 }
 
 #[test]
-fn reused_global_grade_does_not_supply_the_film_source_frame_height() {
+fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
         film_emulation::FilmEmulationPreset,
@@ -120,8 +121,8 @@ fn reused_global_grade_does_not_supply_the_film_source_frame_height() {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
-        let small = [0, 0, 64, 3000].into();
-        let large = [0, 0, 64, 6000].into();
+        let small = [0, 0, 6000, 3000].into();
+        let large = [0, 0, 6000, 6000].into();
         let roll = RollSettings {
             exposure: 0.5,
             ..Default::default()
@@ -148,7 +149,7 @@ fn reused_global_grade_does_not_supply_the_film_source_frame_height() {
         image
             .set_geometry(SourceGeometry::new([0, 0, 64, 64], [64, 64]).unwrap())
             .unwrap();
-        let render = |grade, area| {
+        let render = |grade, area, frame_size| {
             let pipeline = GpuPipeline::compose(
                 &device,
                 GpuInputProgram::new(InputSettings::Digital, DMat3::IDENTITY).unwrap(),
@@ -158,6 +159,7 @@ fn reused_global_grade_does_not_supply_the_film_source_frame_height() {
             .unwrap();
             let input = ProcessingInput::from(Arc::new(pipeline))
                 .with_film_emulation(FilmEmulationPreset::Coarse.settings())
+                .with_frame_size(frame_size)
                 .with_film_seed(17);
             let mut encoder = device.create_command_encoder(&Default::default());
             image
@@ -166,9 +168,10 @@ fn reused_global_grade_does_not_supply_the_film_source_frame_height() {
             queue.submit([encoder.finish()]);
             crate::viewer::readback::image_pixels(&device, &queue, &image)
         };
-        let expected = render(fresh, large);
-        let actual = render(shared.clone(), large);
-        let other_frame = render(shared, small);
+        let expected = render(fresh, large, [3200, 2400]);
+        let actual = render(shared.clone(), large, [3200, 2400]);
+        let other_source = render(shared.clone(), small, [3200, 2400]);
+        let other_frame = render(shared, large, [3200, 1200]);
         let difference = |a: &[[f32; 4]], b: &[[f32; 4]]| {
             a.iter()
                 .zip(b)
@@ -177,7 +180,11 @@ fn reused_global_grade_does_not_supply_the_film_source_frame_height() {
         };
         assert!(
             difference(&expected, &actual) < 1e-5,
-            "reusing a global grade must retain the actual source's film scale"
+            "reusing a global grade must retain the captured crop's film scale"
+        );
+        assert!(
+            difference(&expected, &other_source) < 1e-5,
+            "uncropped source dimensions must not redefine a captured crop's film scale"
         );
         assert!(
             difference(&expected, &other_frame) > 0.001,

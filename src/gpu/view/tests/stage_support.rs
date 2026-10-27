@@ -11,13 +11,19 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
             Default::default(),
             Default::default(),
             Some(crate::crop::Crop {
-                center: [1040., 1032.],
-                size: [64, 64],
+                center: [3008., 3000.],
+                size: [4000, 4000],
                 angle: 0.,
             }),
         )
         .unwrap();
-        let small = FrameRaster::full(cropped).unwrap();
+        let small = FrameRaster::new(
+            cropped,
+            FramePoint([0., 0.]),
+            FramePoint([64., 64.]),
+            [64, 64],
+        )
+        .unwrap();
         let wide = FrameRaster::new(
             full,
             FramePoint([892., 920.]),
@@ -44,10 +50,20 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                 amount: 0.,
                 colour: 0.5,
             })
+            .with_frame_size([6000; 2])
             .with_film_seed(17);
-        let plan = input.pixel_pipeline(6000).unwrap();
+        let plan = input.pixel_pipeline().unwrap();
         let support = plan.support([1., 1.]).unwrap();
-        let make = |frame, support| {
+        let make = |frame: FrameRaster, support| {
+            // Hold the resolved sigma at two source pixels to isolate boundary handling.
+            let dimensions = frame.composition.crop().size;
+            let input = input
+                .clone()
+                .with_frame_size(dimensions)
+                .with_film_emulation(FilmEmulationSettings {
+                    size: 2. / f64::from(dimensions[0].min(dimensions[1])) * 100.,
+                    ..input.film_emulation()
+                });
             let spec =
                 ViewSourceSpec::new(17, frame, InputSettings::Digital, DMat3::IDENTITY, None)
                     .unwrap()

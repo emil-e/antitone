@@ -117,6 +117,7 @@ fn configured_probe(
             amount: config.amount,
             colour: config.colour,
         })
+        .with_frame_size(composition.crop().size)
         .with_film_seed(seed);
     RenderedView::new(device, source, &input, OutputTarget::Srgb, None).unwrap()
 }

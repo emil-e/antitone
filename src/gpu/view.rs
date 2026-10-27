@@ -948,7 +948,7 @@ impl RenderedView {
             None => {
                 let frame = source.spec.input_frame()?;
                 let view = ViewUniform::new(frame, pipeline.grade.parameters);
-                let pixel_pipeline = input.pixel_pipeline(source.spec.area.height)?;
+                let pixel_pipeline = input.pixel_pipeline()?;
                 let previous = previous
                     .filter(|p| p.spec.authority == source.spec.authority)
                     .and_then(|p| p.graded.as_ref())

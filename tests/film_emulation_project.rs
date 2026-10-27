@@ -20,7 +20,7 @@ fn projects_without_film_settings_keep_the_clean_plate_and_custom_disabled_value
         project.output.film_emulation = FilmEmulationSettings {
             enabled,
             amount: 0.083,
-            size: 0.042,
+            size: 0.083,
             colour: 0.73,
         };
         // Digital-only visibility must not become a saved/processing-stage restriction.

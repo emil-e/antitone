@@ -32,8 +32,12 @@ pub struct PixelPipeline {
 }
 
 impl PixelPipeline {
-    pub fn film(settings: FilmEmulationSettings, height: u32, seed: u64) -> Result<Self, Error> {
-        let Some(parameters) = settings.parameters(height)? else {
+    pub fn film(
+        settings: FilmEmulationSettings,
+        frame_size: [u32; 2],
+        seed: u64,
+    ) -> Result<Self, Error> {
+        let Some(parameters) = settings.parameters(frame_size)? else {
             return Ok(Self::default());
         };
         let stages = vec![

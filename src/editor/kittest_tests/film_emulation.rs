@@ -70,6 +70,17 @@ fn film_controls_persist_render_and_reset_without_changing_target_at_both_displa
                     .click();
                 h.step();
             }
+            h.get_by_role_and_label(egui::accesskit::Role::Button, "Coarse")
+                .click();
+            h.step();
+            h.read(|editor| {
+                assert_eq!(
+                    editor.film_emulation,
+                    crate::film_emulation::FilmEmulationPreset::Coarse.settings()
+                )
+            });
+            enter_numeric(&mut h, "Size", "0.090");
+            h.try_run_realtime().unwrap();
             enter_numeric(&mut h, "Amount", "0.071");
             h.try_run_realtime().unwrap();
             painted(&mut h);
@@ -80,6 +91,7 @@ fn film_controls_persist_render_and_reset_without_changing_target_at_both_displa
                     editor.status
                 );
                 assert_eq!(editor.document.project.output.film_emulation.amount, 0.071);
+                assert_eq!(editor.document.project.output.film_emulation.size, 0.090);
                 assert!(editor.document.dirty());
                 let serialized = serde_json::to_string(&editor.document.project).unwrap();
                 let reopened: crate::project::Project = serde_json::from_str(&serialized).unwrap();

@@ -200,6 +200,7 @@ impl Worker {
         let input = crate::gpu::ProcessingInput::from(grade)
             .with_look(recipe.look.clone())
             .with_film_emulation(recipe.film_emulation)
+            .with_frame_size(recipe.composition.crop().size)
             .with_film_seed(recipe.neutral.source.0);
         let view = RenderedView::new(
             &self.device,

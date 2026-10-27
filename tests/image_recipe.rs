@@ -151,6 +151,49 @@ fn film_emulation_is_captured_immutably_without_changing_neutral_repair_identity
 }
 
 #[test]
+fn emulation_resolves_from_the_captured_crop_not_its_source_bounds_or_orientation() {
+    use antitone::{film_emulation::FilmEmulationSettings, pixel_pipeline::PixelStage};
+    let (mut project, id) = project();
+    project.output.film_emulation = FilmEmulationSettings {
+        enabled: true,
+        size: 0.040,
+        ..Default::default()
+    };
+    let full = project.image_recipe(id).unwrap();
+    project.source_mut(id).unwrap().crop = Some(antitone::crop::Crop {
+        center: [444., 300.],
+        size: [432, 288],
+        angle: 0.21,
+    });
+    let cropped = project.image_recipe(id).unwrap();
+    assert!(
+        full.same_neutral_content(&cropped),
+        "crop scale is downstream of healing"
+    );
+    let check = |recipe: &antitone::image_recipe::ImageRecipe, expected: f64| {
+        let pipeline = recipe.pixel_pipeline().unwrap();
+        match pipeline.stages.as_slice() {
+            [
+                PixelStage::Gaussian { sigma },
+                PixelStage::Grain { parameters, .. },
+            ] => {
+                assert!((sigma - expected).abs() < 1e-12);
+                assert!((parameters.grain_size - expected).abs() < 1e-12);
+            }
+            _ => panic!("expected the complete MTF/grain pipeline"),
+        }
+    };
+    check(&full, 0.2304);
+    check(&cropped, 0.1152);
+    project.orientation.turn_clockwise();
+    check(&project.image_recipe(id).unwrap(), 0.1152);
+    project.source_mut(id).unwrap().development.active_area[3] = 588;
+    check(&project.image_recipe(id).unwrap(), 0.1152);
+    project.source_mut(id).unwrap().crop = None;
+    check(&cropped, 0.1152); // An in-flight recipe retains its accepted crop.
+}
+
+#[test]
 fn accepted_look_identity_is_numeric_immutable_and_downstream_of_neutral_repairs() {
     use antitone::looks::{LookAsset, LookOrigin, Lut3D};
     use std::sync::Arc;

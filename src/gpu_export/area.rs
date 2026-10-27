@@ -429,7 +429,7 @@ pub(super) fn write(
     )?);
     let pipeline = crate::pixel_pipeline::PixelPipeline::film(
         request.film_emulation,
-        request.scan.area.height,
+        request.composition.crop().size,
         request.film_seed,
     )?;
     let support = pipeline.support([1., 1.])?;

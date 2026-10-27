@@ -6,16 +6,16 @@
 use crate::Error;
 
 /// Fine/Medium/Coarse are frame-relative presets. They are not a per-stock catalogue.
-pub const FINE_SIZE: f64 = 0.018;
-pub const MEDIUM_SIZE: f64 = 0.030;
-pub const COARSE_SIZE: f64 = 0.050;
+pub const FINE_SIZE: f64 = 0.025;
+pub const MEDIUM_SIZE: f64 = 0.040;
+pub const COARSE_SIZE: f64 = 0.065;
 pub const DEFAULT_SIZE: f64 = MEDIUM_SIZE;
 
 pub const DEFAULT_AMOUNT: f64 = 0.055;
 pub const MIN_AMOUNT: f64 = 0.;
 pub const MAX_AMOUNT: f64 = 0.20;
 pub const MIN_SIZE: f64 = 0.005;
-pub const MAX_SIZE: f64 = 0.060;
+pub const MAX_SIZE: f64 = 0.100;
 pub const DEFAULT_COLOUR: f64 = 0.5;
 pub const MIN_COLOUR: f64 = 0.;
 pub const MAX_COLOUR: f64 = 1.;
@@ -34,7 +34,7 @@ pub struct FilmEmulationSettings {
     pub enabled: bool,
     /// Green log-light RMS at the original source-pixel footprint; reduction loses variance.
     pub amount: f64,
-    /// Visible grain scale as a percentage of the source frame height.
+    /// MTF/grain scale as a percentage of the cropped frame's shorter side.
     pub size: f64,
     /// Monochrome at zero, fitted scan colour at 0.5, and stronger chroma above it.
     pub colour: f64,
@@ -134,7 +134,7 @@ impl FilmEmulationPreset {
 /// Resolved source-scale parameters for one photo. All lengths are source pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FilmEmulationParameters {
-    pub source_height: u32,
+    pub frame_extent: u32,
     pub grain_size: f64,
     pub image_mtf_sigma: f64,
     pub amplitude: f64,
@@ -180,7 +180,7 @@ impl FilmEmulationSettings {
         }
         if !(MIN_SIZE..=MAX_SIZE).contains(&self.size) {
             return Err(Error::InvalidParameter(
-                "film emulation size must be within 0.005%..=0.060% of frame height",
+                "film emulation size must be within 0.005%..=0.100% of the cropped frame's shorter side",
             ));
         }
         if !(MIN_COLOUR..=MAX_COLOUR).contains(&self.colour) {
@@ -191,18 +191,22 @@ impl FilmEmulationSettings {
         Ok(())
     }
 
-    /// Resolve the source-scale model. Disabled settings have no parameters.
-    pub fn parameters(self, source_height: u32) -> Result<Option<FilmEmulationParameters>, Error> {
+    /// Resolve source-unit lengths from the logical crop, never the viewport or padded raster.
+    pub fn parameters(
+        self,
+        frame_size: [u32; 2],
+    ) -> Result<Option<FilmEmulationParameters>, Error> {
         self.validate()?;
         if !self.enabled {
             return Ok(None);
         }
-        if source_height == 0 {
+        let frame_extent = frame_size[0].min(frame_size[1]);
+        if frame_extent == 0 {
             return Err(Error::InvalidParameter(
-                "film emulation requires a source frame height",
+                "film emulation requires cropped frame dimensions",
             ));
         }
-        let grain_size = self.size / 100.0 * f64::from(source_height);
+        let grain_size = self.size / 100.0 * f64::from(frame_extent);
         if !grain_size.is_finite() || grain_size <= 0. {
             return Err(Error::InvalidParameter(
                 "film emulation grain scale is not finite",
@@ -210,7 +214,7 @@ impl FilmEmulationSettings {
         }
         let image_mtf_sigma = MTF_SIGMA * grain_size;
         Ok(Some(FilmEmulationParameters {
-            source_height,
+            frame_extent,
             grain_size,
             image_mtf_sigma,
             amplitude: self.amount,
@@ -228,7 +232,7 @@ mod tests {
         let settings = FilmEmulationSettings::default();
         settings.validate().unwrap();
         assert!(!settings.enabled);
-        assert_eq!(settings.parameters(6000).unwrap(), None);
+        assert_eq!(settings.parameters([6000; 2]).unwrap(), None);
     }
 
     #[test]
@@ -240,21 +244,37 @@ mod tests {
         ] {
             let settings = preset.settings();
             settings.validate().unwrap();
-            let parameters = settings.parameters(6000).unwrap().unwrap();
-            assert_eq!(parameters.source_height, 6000);
+            let parameters = settings.parameters([6000; 2]).unwrap().unwrap();
+            assert_eq!(parameters.frame_extent, 6000);
             assert!((parameters.grain_size - settings.size / 100.0 * 6000.).abs() < 1e-9);
             assert!((parameters.image_mtf_sigma - MTF_SIGMA * parameters.grain_size).abs() < 1e-12);
         }
     }
 
     #[test]
-    fn same_frame_fraction_scales_with_source_height_not_output_size() {
+    fn tighter_crop_reduces_source_blur_and_preserves_the_frame_fraction() {
         let settings = FilmEmulationPreset::Medium.settings();
-        let small = settings.parameters(4000).unwrap().unwrap();
-        let large = settings.parameters(8000).unwrap().unwrap();
+        let small = settings.parameters([4000; 2]).unwrap().unwrap();
+        let large = settings.parameters([8000; 2]).unwrap().unwrap();
         assert!((small.grain_size / 4000. - large.grain_size / 8000.).abs() < 1e-12);
         assert!(large.grain_size > small.grain_size);
         assert!(large.image_mtf_sigma > small.image_mtf_sigma);
+    }
+
+    #[test]
+    fn shorter_crop_dimension_controls_both_stages_without_orientation_dependence() {
+        let settings = FilmEmulationSettings {
+            enabled: true,
+            size: 0.040,
+            ..Default::default()
+        };
+        let landscape = settings.parameters([6000, 3000]).unwrap().unwrap();
+        let portrait = settings.parameters([3000, 6000]).unwrap().unwrap();
+        assert_eq!(landscape.frame_extent, 3000);
+        assert_eq!(landscape.grain_size, portrait.grain_size);
+        assert_eq!(landscape.image_mtf_sigma, portrait.image_mtf_sigma);
+        assert!((landscape.grain_size - 1.2).abs() < 1e-12);
+        assert!((landscape.image_mtf_sigma - 1.2).abs() < 1e-12);
     }
 
     fn grain_psd(f: f64) -> f64 {
@@ -277,7 +297,7 @@ mod tests {
     fn fitted_covariance_has_scan_like_channel_statistics() {
         let parameters = FilmEmulationPreset::Medium
             .settings()
-            .parameters(6000)
+            .parameters([6000; 2])
             .unwrap()
             .unwrap();
         let c = parameters.covariance(1.);
@@ -339,7 +359,7 @@ mod tests {
                 colour,
                 ..Default::default()
             };
-            let parameters = settings.parameters(6000).unwrap().unwrap();
+            let parameters = settings.parameters([6000; 2]).unwrap().unwrap();
             let covariance = parameters.covariance(1.);
             assert!((covariance[1][1] - 1.).abs() < 1e-12);
             if colour == 0. {
@@ -366,6 +386,10 @@ mod tests {
             },
             FilmEmulationSettings {
                 size: MIN_SIZE / 2.,
+                ..base
+            },
+            FilmEmulationSettings {
+                size: MAX_SIZE + 1e-9,
                 ..base
             },
             FilmEmulationSettings {
@@ -400,8 +424,9 @@ mod tests {
     }
 
     #[test]
-    fn enabled_settings_require_a_source_height() {
+    fn enabled_settings_require_cropped_frame_dimensions() {
         let settings = FilmEmulationPreset::Fine.settings();
-        assert!(settings.parameters(0).is_err());
+        assert!(settings.parameters([0; 2]).is_err());
+        assert!(settings.parameters([4000, 0]).is_err());
     }
 }
