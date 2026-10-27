@@ -179,7 +179,9 @@ impl Editor {
     }
 
     pub(super) fn validate_document_candidate(&self, document: &Document) -> Result<(), Error> {
-        document.validate_with_device(self.grades.device.as_ref())
+        let mut candidate = document.clone();
+        candidate.capture_exposure(&self.document.cache);
+        candidate.validate_with_device(self.grades.device.as_ref())
     }
 
     pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {

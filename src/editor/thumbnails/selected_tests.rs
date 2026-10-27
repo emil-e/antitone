@@ -396,12 +396,19 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
                     editor.document.file_key(&path),
                     proxy(),
                 );
-                editor.document.project.development_mut().unwrap().fixed_wb[0] *= 1.01;
+                editor
+                    .document
+                    .project
+                    .source_mut(id)
+                    .unwrap()
+                    .development
+                    .dimensions[0] += 1;
+                editor
+                    .validate_document_candidate(&editor.document)
+                    .unwrap();
                 editor.load(path.clone(), cx);
                 assert!(editor.pending_preview.is_none());
-                std::fs::remove_file(&path).unwrap();
-                editor.load(path, cx);
-                assert!(editor.pending_preview.is_none());
+
                 assert_eq!(
                     editor
                         .source_input(editor.document.source_path(id).unwrap())

@@ -36,6 +36,7 @@ fn request(name: &str) -> (DocumentScope, Request) {
     let document: DocumentScope = document.into();
     let file = document.file_key(&path);
     let request = Request {
+        reference: None,
         input: document.project.input,
         path,
         wb,

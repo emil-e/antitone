@@ -1,13 +1,9 @@
 use super::*;
+use crate::project::Development;
 use crate::raw::fixture;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 fn request(path: &std::path::Path) -> Request {
-<<<<<<<< HEAD:src/editor/development/tests.rs
-    let (expected, _) = document::open_source(path, Some([1.; 4])).unwrap();
-    let file = thumbnails::FileKey::new(path);
-    let key = SourceKey::from_revision(path, file.clone(), &expected.development);
-========
     let (expected, _) = source_metadata::open_source(path, Some([1.; 4])).unwrap();
     let file = crate::source::FileKey::new(path);
     let key = SourceKey::from_revision_with_development(
@@ -16,7 +12,7 @@ fn request(path: &std::path::Path) -> Request {
         &expected.development,
         &Development::for_source(&expected.development, [1.; 4]),
     );
->>>>>>>> dee7199 (Make the native backend SourceLoader and remove in-session file rechecks):src/source_loader_tests.rs
+
     Request {
         path: path.to_owned(),
         wb: Some([1.; 4]),

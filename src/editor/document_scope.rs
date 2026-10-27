@@ -38,6 +38,7 @@ impl DocumentScope {
     pub fn capture(&self) -> Document {
         let mut document = self.state.clone();
         document.spatial_metadata = self.spatial.ready();
+        document.capture_exposure(&self.cache);
         document
     }
 
@@ -49,6 +50,17 @@ impl DocumentScope {
 
     pub fn install(&mut self, document: Document) {
         self.state = document;
+    }
+
+    pub(super) fn positive_matrix(
+        &self,
+        source: &crate::project::Source,
+        input: crate::processing::InputSettings,
+    ) -> Result<glam::DMat3, crate::Error> {
+        match self.state.source_key(source) {
+            Some(key) => self.cache.positive_matrix(&key, &input),
+            None => self.state.positive_matrix(source, input),
+        }
     }
 
     pub fn cache_ready(&self, ready: &Ready) {
@@ -89,12 +101,20 @@ impl DocumentScope {
 
 impl From<Document> for DocumentScope {
     fn from(state: Document) -> Self {
+        let cache = Arc::new(crate::source::SourceCache::new(0));
+        cache.restore_exposure_metadata(&state.exposure_metadata, &state.project, |id| {
+            state
+                .project
+                .source(id)
+                .ok()
+                .and_then(|source| state.source_key(source))
+        });
         Self {
             spatial: crate::spatial_metadata::Store::restored((*state.spatial_metadata).clone()),
             spatial_preparing: None,
             spatial_consumer: None,
             state,
-            cache: Arc::new(crate::source::SourceCache::new(0)),
+            cache,
             history: History::default(),
             visit: PhotoScope::default(),
             embedded_preview: None,

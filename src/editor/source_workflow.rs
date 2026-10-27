@@ -56,6 +56,7 @@ impl Editor {
         let wb = self.document.project.acquisition_wb(expected.as_ref());
         let file = self.document.file_key(&path);
         source::Request {
+            reference: None,
             input: self.input(),
             path,
             wb,
@@ -262,7 +263,6 @@ impl Editor {
                         id,
                         &ready.developed.metadata(),
                         ready.developed.fixed_wb(),
-                        ready.developed.file.clone(),
                     );
                 }
                 self.document.visit.ready = Some(*ready);

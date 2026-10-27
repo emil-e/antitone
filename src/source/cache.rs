@@ -1,18 +1,15 @@
 //! Document-scoped camera data reuse; native and proxy ownership share one byte LRU.
-use super::{SourceKey, FileKey};
+use super::{FileKey, SourceKey};
 use crate::{
     Error,
     embedded_preview::Preview,
     project::SourceDevelopment,
-
     scan::{CameraProxy, DevelopedSource},
 };
 use std::{
     collections::VecDeque,
-    path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, Weak},
 };
-
 
 /// Optional retained ownership and evicted-but-leased storage, not process footprint.
 /// Protected proxy ownership is reported separately by `protected_bytes`.
@@ -116,13 +113,6 @@ enum KeyRef<'a> {
 }
 
 impl KeyRef<'_> {
-    fn current(self) -> bool {
-        match self {
-            Self::Source(key) => key.current(),
-            Self::Preview(file) => file.current_at(&file.path),
-        }
-    }
-
     fn matches(self, key: &ResourceKey) -> bool {
         match (self, key) {
             (Self::Source(a), ResourceKey::Source(b)) => a == b.as_ref(),
@@ -137,18 +127,6 @@ impl ResourceKey {
         match self {
             Self::Source(key) => KeyRef::Source(key),
             Self::Preview(file) => KeyRef::Preview(file),
-        }
-    }
-
-    fn current(&self) -> bool {
-        self.as_ref().current()
-    }
-
-    #[cfg(feature = "editor")]
-    fn allowed(&self, sources: &[SourceKey]) -> bool {
-        match self {
-            Self::Source(key) => sources.contains(key.as_ref()),
-            Self::Preview(file) => sources.iter().any(|source| source.file == *file),
         }
     }
 }
@@ -233,7 +211,6 @@ impl State {
     }
 }
 
-
 type PreviewResult = Result<Option<Arc<Preview>>, String>;
 type PreviewFlight = OnceLock<PreviewResult>;
 type PreviewLease = (FileKey, Weak<PreviewFlight>, Weak<Preview>);
@@ -248,8 +225,8 @@ pub struct PreparedSource {
 /// immutable metering and in-flight preview work. Active leases survive eviction/closure.
 pub struct SourceCache {
     state: Mutex<State>,
-    preview_flights: Arc<Mutex<Vec<PreviewLease>>>,
-    exposures: Arc<Mutex<Vec<(SourceKey, ExposureMemo)>>>,
+    preview_flights: Mutex<Vec<PreviewLease>>,
+    exposures: Mutex<Vec<(SourceKey, ExposureMemo)>>,
     #[cfg(feature = "editor")]
     closed: event_listener::Event,
 }
@@ -257,8 +234,8 @@ pub struct SourceCache {
 impl SourceCache {
     pub fn new(budget: u64) -> Self {
         Self {
-            preview_flights: Arc::new(Mutex::new(Vec::new())),
-            exposures: Arc::new(Mutex::new(Vec::new())),
+            preview_flights: Mutex::new(Vec::new()),
+            exposures: Mutex::new(Vec::new()),
             #[cfg(feature = "editor")]
             closed: event_listener::Event::new(),
             state: Mutex::new(State {
@@ -271,8 +248,8 @@ impl SourceCache {
         }
     }
 
-    // Preparation interprets an already captured pixel lease. Acquisition/publication owns
-    // locator freshness; looking up that snapshot must not stat or relabel it.
+    // Interpretation can reuse captured storage even after optional reuse closes;
+    // independent export still owns its source lease and canonical reference.
     fn peek_resource(&self, key: KeyRef<'_>, kind: Kind) -> Option<Owned> {
         self.state
             .lock()
@@ -284,7 +261,6 @@ impl SourceCache {
     }
 
     fn get_resource(&self, key: KeyRef<'_>, kind: Kind) -> Option<Owned> {
-
         let mut removed = Vec::new();
         let result = {
             let mut state = self.state.lock().unwrap();
@@ -327,7 +303,7 @@ impl SourceCache {
     pub fn exposure_metadata(
         &self,
         project: &crate::project::Project,
-        path: impl Fn(crate::project::SourceId) -> Result<PathBuf, Error>,
+        key: impl Fn(crate::project::SourceId) -> Option<SourceKey>,
     ) -> crate::exposure_metadata::Metadata {
         let ready = self
             .exposures
@@ -345,10 +321,10 @@ impl SourceCache {
             .iter()
             .filter(|source| project.order.contains(&source.id))
         {
-            let Some(key) = path(source.id)
-                .ok()
-                .and_then(|path| SourceKey::capture(&path, &source.development))
-            else {
+            let Some(key) = key(source.id) else {
+                continue;
+            };
+            let Some(revision) = key.file.revision.clone() else {
                 continue;
             };
             let Some((_, value)) = ready.iter().find(|(existing, _)| *existing == key) else {
@@ -357,7 +333,7 @@ impl SourceCache {
             metadata.entries.push(crate::exposure_metadata::Entry {
                 source: source.id,
                 development: source.development.clone(),
-                revision: key.file.revision.clone().unwrap(),
+                revision,
                 reference: value.clone(),
             });
         }
@@ -368,13 +344,10 @@ impl SourceCache {
         &self,
         metadata: &crate::exposure_metadata::Metadata,
         project: &crate::project::Project,
-        path: impl Fn(crate::project::SourceId) -> Result<PathBuf, Error>,
+        key: impl Fn(crate::project::SourceId) -> Option<SourceKey>,
     ) {
         for entry in metadata.for_project(project).entries {
-            let Some(key) = path(entry.source)
-                .ok()
-                .and_then(|path| SourceKey::capture(&path, &entry.development))
-            else {
+            let Some(key) = key(entry.source) else {
                 continue;
             };
             if key.file.revision.as_ref() == Some(&entry.revision) {
@@ -518,9 +491,7 @@ impl SourceCache {
         load: impl FnOnce() -> PreviewResult,
     ) -> PreviewResult {
         let key = ResourceKey::Preview(file.clone());
-        if !key.current() {
-            return Err("embedded preview source changed".into());
-        }
+
         if let Some(Owned::Preview(preview)) = self.get_resource(key.as_ref(), Kind::Preview) {
             return Ok(Some(preview));
         }
@@ -565,9 +536,7 @@ impl SourceCache {
                 }
             })
             .clone()?;
-        if !key.current() {
-            return Err("embedded preview source changed during extraction".into());
-        }
+
         if let Some(preview) = &result {
             if let Some((_, _, ready)) = self
                 .preview_flights
@@ -594,9 +563,6 @@ impl SourceCache {
         key: SourceKey,
         source: Arc<DevelopedSource>,
     ) -> Result<Option<Arc<DevelopedSource>>, Error> {
-        if !key.current() {
-            return Ok(None);
-        }
         if !key.matches(&source) {
             return Err(Error::Project(
                 "native source differs from its development key".into(),
@@ -875,5 +841,9 @@ impl SourceCache {
 }
 
 #[cfg(all(test, feature = "editor"))]
-#[path = "cache_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod exposure_tests;
+#[cfg(test)]
+mod preview_tests;

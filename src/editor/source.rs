@@ -53,6 +53,7 @@ impl Context {
 
 pub(super) struct Request {
     pub input: crate::processing::InputSettings,
+    pub reference: Option<crate::exposure_reference::ReferenceExposure>,
     pub path: PathBuf,
     pub wb: Option<[f64; 4]>,
     pub expected: Option<Source>,
@@ -80,7 +81,6 @@ pub(super) struct Services {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
 }
-
 
 impl Services {
     pub async fn prepare(
@@ -132,7 +132,6 @@ impl Services {
             request.require_live(&|| retired.load(std::sync::atomic::Ordering::Relaxed))?;
             let key = request.load_key()?;
             Ok::<_, Error>((request, key, cache))
-
         };
         let captured = if needs_header {
             crate::background::run(capture)
@@ -142,7 +141,9 @@ impl Services {
             capture()
         };
         let (request, key, cache) = captured.map_err(|error| error.to_string())?;
-        let references = cache.clone().unwrap_or_else(|| Arc::new(SourceCache::new(0)));
+        let references = cache
+            .clone()
+            .unwrap_or_else(|| Arc::new(SourceCache::new(0)));
         let store = if independent { None } else { cache.clone() };
         let loader = self.developments.clone();
         let load = async {
@@ -210,7 +211,6 @@ impl Request {
         Ok(())
     }
 
-
     pub(super) fn load_key(&self) -> Result<SourceKey, Error> {
         let record = match &self.expected {
             Some(expected) => {
@@ -277,10 +277,10 @@ impl Request {
             registration_seconds: 0.,
             verification_seconds: 0.,
         };
-        let references = self.cache.as_ref().map_or_else(
-            || Arc::new(SourceStore::new(0)),
-            |cache| cache.store.clone(),
-        );
+        let references = self
+            .cache
+            .as_ref()
+            .map_or_else(|| Arc::new(SourceCache::new(0)), |cache| cache.clone());
         self.accept(source, file, references, cancelled, timing)
     }
 
@@ -288,7 +288,7 @@ impl Request {
         self,
         source: Arc<DevelopedSource>,
         file: thumbnails::FileKey,
-        references: Arc<SourceStore>,
+        references: Arc<SourceCache>,
         cancelled: &dyn Fn() -> bool,
         mut timing: Timing,
     ) -> Result<Developed, Error> {
@@ -303,6 +303,12 @@ impl Request {
         let mut scan = Scan::from_source(source);
         document::verify_scan(&record, &scan)?;
         timing.verification_seconds = tick.elapsed().as_secs_f64();
+        if let Some(reference) = &self.reference {
+            let key = SourceKey::for_load(&self.path, file.clone(), &record.development);
+            references
+                .exposure_memo(&key)
+                .get_or_init(|| reference.clone());
+        }
         let prepared = references.prepare_source(self.input, scan.source())?;
         let camera_proxy = prepared.proxy;
         scan = Scan::from_source(prepared.source);
@@ -350,7 +356,6 @@ impl Developed {
                     .as_ref()
                     .and_then(|cache| self.key.as_ref().and_then(|key| cache.get_proxy(key)))
             })
-
             .map_or_else(|| thumbnails::Proxy::from_scan(&scan).map(Arc::new), Ok)?;
         if let Some(cache) = &self.cache
             && let Some(key) = &self.key

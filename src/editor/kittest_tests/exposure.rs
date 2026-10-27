@@ -187,8 +187,12 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
                 "the original unity/as-shot basis is unchanged"
             );
             assert!(
-                Arc::ptr_eq(&native, &ready.developed),
+                native.shares_native_storage(&ready.developed),
                 "the selected pixels must not be redeveloped"
+            );
+            assert!(
+                native.reference_exposure.get().is_none(),
+                "the previous interpretation must remain unchanged"
             );
             let reference = ready
                 .developed
@@ -230,11 +234,12 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
         ),
     )
     .unwrap();
+    let document: crate::editor::document_scope::DocumentScope = document.into();
     document
-        .cache()
+        .cache
         .prepare_source(document.project.input, native.source())
         .unwrap();
-    document.save(&first, Save::New).unwrap();
+    document.capture().save(&first, Save::New).unwrap();
     let mut saved = Project::load(&first).unwrap();
     let entry = &mut saved.exposure_metadata.as_mut().unwrap().entries[0];
     assert!((entry.reference.ev() - 1.3).abs() < 0.03);

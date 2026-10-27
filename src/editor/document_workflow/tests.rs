@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "ocio-reference")]
+mod rebase_exposure;
 use crate::{
     application::test_support::with_application,
     editor::{Preparation, document::Document, source, source_loading, tests::fixture},
@@ -234,12 +236,9 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
 
 #[test]
 fn input_switch_clears_live_correction_atomically_and_history_restores_activation() {
-
-
     use crate::{flat_field::FlatField, processing::InputSettings, project::FlatFieldSettings};
 
     let scheduler = source_loading::SourceLoader::new();
-
 
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));

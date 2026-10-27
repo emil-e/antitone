@@ -23,6 +23,7 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
         let ready = services
             .prepare(
                 source::Request {
+                    reference: None,
                     input: document.project.input,
                     path: path.clone(),
                     wb: wb(&document),

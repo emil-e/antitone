@@ -96,23 +96,21 @@ fn exposure_metadata_is_bound_to_the_ordered_source_interpretation() {
 
 #[cfg(feature = "raw")]
 #[test]
-fn restoring_exposure_metadata_checks_current_file_revision_before_populating_the_memo() {
+fn restoring_exposure_metadata_matches_the_captured_open_identity() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("source.raw");
     std::fs::write(&path, b"first").unwrap();
     let (project, metadata) = fixture(&path);
-    let store = crate::source_store::SourceStore::new(0);
-    store.restore_exposure_metadata(&metadata, &project, |_| Ok(path.clone()));
-    let key =
-        crate::source_store::SourceKey::capture(&path, &project.sources[0].development).unwrap();
+    let store = crate::source::SourceCache::new(0);
+    let key = crate::source::SourceKey::capture(&path, &project.sources[0].development).unwrap();
+    store.restore_exposure_metadata(&metadata, &project, |_| Some(key.clone()));
     assert_eq!(
         store.exposure_memo(&key).get(),
         Some(&metadata.entries[0].reference)
     );
     std::fs::write(&path, b"a changed capture").unwrap();
-    let next = crate::source_store::SourceStore::new(0);
-    next.restore_exposure_metadata(&metadata, &project, |_| Ok(path.clone()));
-    let key =
-        crate::source_store::SourceKey::capture(&path, &project.sources[0].development).unwrap();
+    let next = crate::source::SourceCache::new(0);
+    let key = crate::source::SourceKey::capture(&path, &project.sources[0].development).unwrap();
+    next.restore_exposure_metadata(&metadata, &project, |_| Some(key.clone()));
     assert!(next.exposure_memo(&key).get().is_none());
 }

@@ -17,23 +17,16 @@ fn failure(error: impl std::fmt::Display) -> Error {
     Error::Project(error.to_string())
 }
 
-
-// Captured freshness lets parameter preflight address completed metering without filesystem IO.
 #[derive(Clone)]
-struct HeaderPreview {
-    view: crate::raw::SourcePreview,
-    file: crate::source_revision::FileKey,
-}
 
-#[derive(Clone)]
 pub(super) struct Document {
     pub project: Project,
     pub path: Option<PathBuf>,
     pub spatial_metadata: Arc<crate::spatial_metadata::Metadata>,
+    pub exposure_metadata: Arc<crate::exposure_metadata::Metadata>,
     saved: Project,
 
-    source_previews: std::collections::HashMap<SourceId, HeaderPreview>,
-
+    source_previews: std::collections::HashMap<SourceId, crate::raw::SourcePreview>,
 
     // Keep identities for undo; each record locator follows project-path rebasing on Save As.
     source_files: std::collections::HashMap<SourceId, (PathBuf, crate::source::FileKey)>,
@@ -49,6 +42,7 @@ impl Default for Document {
             project,
             path: None,
             spatial_metadata: Arc::default(),
+            exposure_metadata: Arc::default(),
             source_previews: Default::default(),
             source_files: Default::default(),
             #[cfg(test)]
@@ -127,55 +121,69 @@ impl Document {
         }
     }
 
-
     pub(super) fn remember_source_preview(
         &mut self,
         id: SourceId,
         metadata: &Metadata,
         fixed_wb: [f64; 4],
-        file: crate::source_revision::FileKey,
     ) {
-        self.source_previews.insert(
-            id,
-            HeaderPreview {
-                view: metadata.source_preview(fixed_wb),
-                file,
-            },
-        );
+        self.source_previews
+            .insert(id, metadata.source_preview(fixed_wb));
     }
 
     pub(super) fn source_preview(&self, source: &Source) -> crate::raw::SourcePreview {
         self.source_previews
             .get(&source.id)
-            .map(|header| header.view)
+            .copied()
             .unwrap_or_default()
     }
 
-    fn read_source_preview(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, HeaderPreview)> {
+    fn read_source_preview(
+        path: &Path,
+        wb: Option<[f64; 4]>,
+    ) -> Result<(Source, crate::raw::SourcePreview)> {
         let (source, raw) = open_source(path, wb)?;
         let preview = raw
             .metadata
             .source_preview(source.development.decode.fixed_wb);
-        Ok((
-            source,
-            HeaderPreview {
-                view: preview,
-                file: raw.file.clone(),
-            },
-        ))
+        Ok((source, preview))
+    }
+
+    pub(super) fn capture_exposure(&mut self, cache: &crate::source::SourceCache) {
+        self.exposure_metadata = Arc::new(cache.exposure_metadata(&self.project, |id| {
+            self.project
+                .source(id)
+                .ok()
+                .and_then(|source| self.source_key(source))
+        }));
+    }
+
+    pub(super) fn source_key(&self, source: &Source) -> Option<crate::source::SourceKey> {
+        let path = self.source_path(source.id).ok()?;
+        crate::source::SourceKey::from_revision(&path, self.file_key(&path), &source.development)
+    }
+
+    pub(super) fn reference_exposure(
+        &self,
+        source: &Source,
+    ) -> Option<&crate::exposure_reference::ReferenceExposure> {
+        if self.project.input.is_negative() {
+            return None;
+        }
+        let key = self.source_key(source)?;
+        self.exposure_metadata
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.source == source.id
+                    && entry.development == source.development
+                    && key.file().revision.as_ref() == Some(&entry.revision)
+            })
+            .map(|entry| &entry.reference)
     }
 
     fn has_normalization(&self, source: &Source) -> Result<bool> {
-        let Some(header) = self.source_previews.get(&source.id) else {
-            return Ok(false);
-        };
-        Ok(SourceKey::from_revision(
-            &self.source_path(source.id)?,
-            header.file.clone(),
-            &source.development,
-        )
-        .and_then(|key| self.cache().completed_reference(&key))
-        .is_some())
+        Ok(self.reference_exposure(source).is_some())
     }
 
     pub(super) fn positive_matrix(
@@ -183,17 +191,11 @@ impl Document {
         source: &Source,
         input: crate::processing::InputSettings,
     ) -> Result<glam::DMat3> {
-        let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
-        if let Some(header) = self.source_previews.get(&source.id)
-            && let Some(key) = SourceKey::from_revision(
-                &self.source_path(source.id)?,
-                header.file.clone(),
-                &source.development,
-            )
-        {
-            return self.cache().positive_matrix(&key, &input);
-        }
-        Ok(matrix)
+        crate::scan::positive_matrix(
+            &input,
+            glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
+            self.reference_exposure(source),
+        )
     }
 
     pub(super) fn refresh_source(&mut self, id: SourceId) -> Result<()> {
@@ -353,12 +355,17 @@ impl Document {
     ) -> Result<Self> {
         let path = absolute(path)?;
         let (mut project, spatial_metadata) = Project::load_with_spatial_metadata(&path)?;
-        let exposure_metadata = project.exposure_metadata.take().unwrap_or_default();
+        let exposure_metadata = project
+            .exposure_metadata
+            .take()
+            .unwrap_or_default()
+            .for_project(&project);
         let mut document = Self {
             saved: project.clone(),
             project,
             path: Some(path),
             spatial_metadata: Arc::new(spatial_metadata),
+            exposure_metadata: Arc::new(exposure_metadata),
             source_previews: Default::default(),
             source_files: Default::default(),
             #[cfg(test)]
@@ -373,11 +380,7 @@ impl Document {
             progress(index + 1, total);
         }
         document.spatial_metadata = Arc::new(document.ready_spatial_metadata());
-        document
-            .cache()
-            .restore_exposure_metadata(&exposure_metadata, &document.project, |id| {
-                document.source_path(id)
-            });
+
         document.validate_with_device(device)?;
         Ok(document)
     }
@@ -555,6 +558,7 @@ impl Document {
                 "project destination must use an .antitone extension",
             ));
         }
+        self.validate_with_device(device)?;
         let mut candidate = self.clone();
         for source in &mut candidate.project.sources {
             let resolved = self.source_path(source.id)?;
@@ -574,12 +578,10 @@ impl Document {
                 )?;
             }
         }
-        candidate.validate_with_device(device)?;
+
         let metadata = self.ready_spatial_metadata();
         let mut snapshot = candidate.project.clone();
-        let exposure = self
-            .cache()
-            .exposure_metadata(&self.project, |id| self.source_path(id));
+        let exposure = self.exposure_metadata.for_project(&self.project);
         snapshot.exposure_metadata = (!exposure.entries.is_empty()).then_some(exposure);
         snapshot.save_with_spatial_metadata(&path, policy, &metadata)?;
         candidate.spatial_metadata = Arc::new(metadata);
@@ -653,7 +655,6 @@ fn rebase_relative(path: &Path, old_parent: &Path, new_parent: &Path) -> Result<
     }
     Ok(relative)
 }
-
 
 #[cfg(test)]
 pub(super) fn read_source(path: &Path, wb: Option<[f64; 4]>) -> Result<Source> {

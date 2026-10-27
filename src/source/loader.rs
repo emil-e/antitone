@@ -732,7 +732,4 @@ fn finish(shared: &Shared, task: &Arc<Task>, result: Completion) {
 }
 
 #[cfg(test)]
-
-#[path = "loader_tests.rs"]
-
 mod tests;

@@ -45,7 +45,7 @@ fn negative_preparation_does_not_require_a_file_preview_or_an_exposure_memo() {
     let file = FileKey::new(std::path::Path::new("nonexistent-reference-source.raw"));
     let development = development();
     proxy(
-        &SourceStore::new(0),
+        &SourceCache::new(0),
         &file.path,
         &file,
         &development,
@@ -154,7 +154,7 @@ fn source_exposure_survives_pixel_eviction_and_does_not_re_meter_a_later_proxy()
         b"not a RAW: repeated extraction must not occur",
     );
     let file = FileKey::new(path.path());
-    let store = SourceStore::new(1 << 20);
+    let store = SourceCache::new(1 << 20);
     let (data, reference) = control(0.7);
     store
         .preview(&file, || Ok(Some(Arc::new(reference))))

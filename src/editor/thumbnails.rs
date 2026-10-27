@@ -3,7 +3,8 @@ use super::*;
 use crate::project::SourceDevelopment;
 pub(super) use crate::source::FileKey;
 #[cfg(test)]
-use crate::source::{FileRevision, SourceKey as NativeKey, SourceCache};
+use crate::source::FileRevision;
+use crate::source::{SourceCache, SourceKey as NativeKey};
 mod disk;
 mod lru;
 use lru::Cache;

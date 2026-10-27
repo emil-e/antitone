@@ -48,7 +48,7 @@ Digital uses the embedded camera preview as a per-capture brightness reference, 
 
 The estimator compares interior luminance quantiles from an as-shot AP1 proxy before brightness normalization with a colour-managed preview. A small [generated inverse neutral-ACES lookup](../assets/ocio/README.md#neutral-exposure-reference) translates display luminance into the current 100-nit rendering convention. This chooses roughly camera-like brightness without copying the camera's contrast, saturation or monochrome style. Photographer-set exposure compensation is not subtracted.
 
-[Lazy source preparation](architecture.md#services-workers-and-admission) resolves the value before publishing a processed positive, including cache hits and cold exports. Edits to crop, WB, exposure or look do not re-meter the capture. Missing usable colour/framing or insufficient nonclipped luminance produces an explicit unavailable result with zero starting EV; manual exposure remains available. [Projects](projects.md#save-accepted-choices-not-working-machinery) retain completed values separately from accepted controls.
+[Lazy source preparation](architecture.md#services-and-workers) resolves the value before publishing a processed positive, including cache hits and cold exports. Edits to crop, WB, exposure or look do not re-meter the capture. Missing usable colour/framing or insufficient nonclipped luminance produces an explicit unavailable result with zero starting EV; manual exposure remains available. [Projects](projects.md#save-accepted-choices-not-working-machinery) retain completed values separately from accepted controls.
 
 ## Two anchors define the response
 

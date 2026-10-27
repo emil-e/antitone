@@ -29,7 +29,7 @@ fn canonical_reference_rebinds_cached_pixels_without_mutating_existing_leases() 
     let development =
         SourceDevelopment::from_metadata(&original.metadata(), original.fixed_wb()).unwrap();
     let key = SourceKey::capture(file.path(), &development).unwrap();
-    let store = SourceStore::new(64 << 20);
+    let store = SourceCache::new(64 << 20);
     store.publish_source(key.clone(), original.clone()).unwrap();
     store.publish_proxy(key.clone(), proxy.clone()).unwrap();
     let canonical = matched(2.25);
@@ -72,7 +72,7 @@ fn canonical_reference_rebinds_cached_pixels_without_mutating_existing_leases() 
 }
 
 #[test]
-fn cache_fork_shares_unresolved_metering_cells_and_preserves_results_without_pixels() {
+fn scope_consumers_share_metering_and_closed_cache_keeps_results_for_leased_pixels() {
     let file = fixture::bayer_dng();
     let scan = Scan::from_raw(
         RawFile::open_uncorrected(file.path()).unwrap(),
@@ -83,16 +83,16 @@ fn cache_fork_shares_unresolved_metering_cells_and_preserves_results_without_pix
         SourceDevelopment::from_metadata(&scan.source().metadata(), scan.source().fixed_wb())
             .unwrap();
     let key = SourceKey::capture(file.path(), &development).unwrap();
-    let store = SourceStore::new(0);
+    let store = Arc::new(SourceCache::new(0));
     let memo = store.exposure_memo(&key);
-    let fork = store.fork(0);
+    let consumer = store.clone();
     assert!(
-        Arc::ptr_eq(&memo, &fork.exposure_memo(&key)),
+        Arc::ptr_eq(&memo, &consumer.exposure_memo(&key)),
         "unresolved work must share its synchronization cell"
     );
     memo.set(matched(1.75)).unwrap();
     store.close();
-    let prepared = fork
+    let prepared = consumer
         .prepare_source(InputSettings::Digital, scan.source())
         .unwrap();
     assert_eq!(
@@ -103,8 +103,8 @@ fn cache_fork_shares_unresolved_metering_cells_and_preserves_results_without_pix
         scan.camera_to_ap1 * 1.75_f64.exp2()
     );
     assert!(prepared.proxy.is_none());
-    assert_eq!(fork.charges().retained, 0);
-    assert!(fork.preview_flights.lock().unwrap().is_empty());
+    assert_eq!(consumer.charges().retained, 0);
+    assert!(consumer.preview_flights.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn cpu_only_publication_applies_known_defaults_before_pending_preview_consumptio
     let development =
         SourceDevelopment::from_metadata(&source.metadata(), source.fixed_wb()).unwrap();
     let key = SourceKey::capture(file.path(), &development).unwrap();
-    let store = SourceStore::new(64 << 20);
+    let store = SourceCache::new(64 << 20);
     store.publish_source(key.clone(), source.clone()).unwrap();
     store.publish_proxy(key.clone(), proxy.clone()).unwrap();
     let canonical = matched(2.25);

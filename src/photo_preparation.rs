@@ -7,27 +7,27 @@ use crate::{
     processing::{InputSettings, exposure_multiplier},
     project::SourceDevelopment,
     scan::{CameraProxy, DevelopedSource, Scan},
-    source_revision::FileKey,
-    source_store::{SourceKey, SourceStore},
+    source::FileKey,
+    source::{SourceCache, SourceKey},
 };
 use std::sync::Arc;
 
 pub(crate) fn native(
-    store: &SourceStore,
+    store: &SourceCache,
     path: &std::path::Path,
     file: &FileKey,
     development: &SourceDevelopment,
     input: InputSettings,
     source: &Arc<DevelopedSource>,
-) -> Result<crate::source_store::PreparedSource, Error> {
+) -> Result<crate::source::PreparedSource, Error> {
     if input.is_negative() {
-        return Ok(crate::source_store::PreparedSource {
+        return Ok(crate::source::PreparedSource {
             source: source.clone(),
             proxy: None,
         });
     }
     let Some(key) = SourceKey::from_revision(path, file.clone(), development) else {
-        return Ok(crate::source_store::PreparedSource {
+        return Ok(crate::source::PreparedSource {
             source: source.interpreted(&ReferenceExposure::Unavailable(Unavailable::ReadFailed)),
             proxy: None,
         });
@@ -52,14 +52,14 @@ pub(crate) fn native(
             Ok(proxy)
         })
     });
-    Ok(crate::source_store::PreparedSource {
+    Ok(crate::source::PreparedSource {
         source: source.interpreted(value),
         proxy: sampled.map(|proxy| proxy.interpreted(value)),
     })
 }
 
 pub(crate) fn proxy(
-    store: &SourceStore,
+    store: &SourceCache,
     path: &std::path::Path,
     file: &FileKey,
     development: &SourceDevelopment,
@@ -84,7 +84,7 @@ pub(crate) fn proxy(
 }
 
 fn resolve(
-    store: &SourceStore,
+    store: &SourceCache,
     path: &std::path::Path,
     file: &FileKey,
     development: &SourceDevelopment,

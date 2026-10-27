@@ -28,7 +28,7 @@ pub(crate) fn write(
     };
     check()?;
     job.recipe.neutral.require_scan(job.scan)?;
-    let prepared = crate::source_store::SourceStore::new(0)
+    let prepared = crate::source::SourceCache::new(0)
         .prepare_source(job.recipe.neutral.input, job.scan.source())?;
     let mut scan = Scan::from_source(prepared.source);
     scan.set_flat_field(job.scan.flat_field().cloned())?;

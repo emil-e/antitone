@@ -73,7 +73,7 @@ pub(super) fn candidate(
         | Preparation::History(_, selected, _) => Some(*selected),
         _ => None,
     };
-    let (document, reuse) = match work {
+    let (mut document, reuse) = match work {
         Preparation::Import(mut document, paths, reuse) => {
             document.import_with_progress(&paths, Some(device), &mut progress)?;
             (document, reuse)
@@ -90,6 +90,9 @@ pub(super) fn candidate(
             (document, None)
         }
         Preparation::History(mut document, _, _) => {
+            if let Some(cache) = &cache {
+                document.capture_exposure(cache);
+            }
             document.validate_for_device(device)?;
             for id in document.project.order.clone() {
                 document.refresh_source(id)?;
@@ -97,6 +100,9 @@ pub(super) fn candidate(
             (document, None)
         }
     };
+    if let Some(cache) = &cache {
+        document.capture_exposure(cache);
+    }
     let correction = Correction::prepare(device, &document, previous_correction.as_ref())?;
     for record in &document.project.sources {
         crate::gpu::ProcessingSource::new(
@@ -158,6 +164,7 @@ fn source_request(
     let wb = Some(expected.development.decode.fixed_wb);
     let file = document.file_key(&path);
     Ok(source::Request {
+        reference: document.reference_exposure(&expected).cloned(),
         input: document.project.input,
         path,
         expected: Some(expected),
@@ -178,6 +185,7 @@ impl PreparationServices {
         cancelled: Arc<std::sync::atomic::AtomicBool>,
         progress: impl FnMut(usize, usize) + Send + 'static,
     ) -> Result<Prepared, String> {
+        let cache = request.cache.clone();
         let device = self.0.device.clone();
         let retired = cancelled.clone();
         let Candidate {
@@ -198,16 +206,38 @@ impl PreparationServices {
         if let Some(source) = source {
             prepared.ready = Some(self.0.clone().prepare(source, cancelled).await?);
         }
+        if let Some(id) = prepared.selected
+            && let Some(ready) = &prepared.ready
+            && let Some(reference) = ready.developed.reference_exposure.get()
+            && let Some(revision) = &ready.file.revision
+        {
+            let development = prepared
+                .document
+                .project
+                .source(id)
+                .map_err(|e| e.to_string())?
+                .development
+                .clone();
+            let metadata = Arc::make_mut(&mut prepared.document.exposure_metadata);
+            metadata.entries.retain(|entry| entry.source != id);
+            metadata.entries.push(crate::exposure_metadata::Entry {
+                source: id,
+                development,
+                revision: revision.clone(),
+                reference: reference.clone(),
+            });
+        }
         let device = self.0.device.clone();
-        self.0
-            .jobs
-            .run(move || {
-                prepared.document.validate_with_device(Some(&device))?;
-                Ok(prepared)
-            })
-            .await
-            .map_err(|_| "Document admission worker panicked".to_owned())?
-            .map_err(|error: Error| error.to_string())
+        crate::background::run(move || {
+            if let Some(cache) = &cache {
+                prepared.document.capture_exposure(cache);
+            }
+            prepared.document.validate_with_device(Some(&device))?;
+            Ok(prepared)
+        })
+        .await
+        .map_err(|_| "Document admission worker panicked".to_owned())?
+        .map_err(|error: Error| error.to_string())
     }
 }
 

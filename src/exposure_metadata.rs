@@ -2,7 +2,7 @@
 use crate::{
     exposure_reference::ReferenceExposure,
     project::{Project, SourceDevelopment, SourceId},
-    source_revision::FileRevision,
+    source::FileRevision,
 };
 use serde::{Deserialize, Serialize};
 

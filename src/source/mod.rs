@@ -12,7 +12,9 @@ pub use key::SourceKey;
 #[cfg(all(feature = "raw", feature = "project"))]
 mod cache;
 #[cfg(all(feature = "raw", feature = "project"))]
-pub use cache::{Charges, SourceCache, PreparedSource};
+pub(crate) use cache::PreparedSource;
+#[cfg(all(feature = "raw", feature = "project"))]
+pub use cache::{Charges, SourceCache};
 
 #[cfg(feature = "editor")]
 mod loader;

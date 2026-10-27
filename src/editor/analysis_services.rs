@@ -15,6 +15,8 @@ fn source_input(
     let wb = expected.development.decode.fixed_wb;
     let file = document.file_key(&path);
     Ok(source::Request {
+        reference: None,
+        input: project.input,
         path,
         wb: Some(wb),
         expected: Some(expected.clone()),

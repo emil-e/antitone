@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     dust_repair::{DonorChoice, RepairId, RepairOrigin, SupportMask},
     processing::{Calibration, InputSettings, Pipeline, RollSettings},
-    source_store::SourceStore,
+    source::SourceCache,
 };
 use glam::DVec3;
 
@@ -29,7 +29,7 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
         scan.pixel(16, 16).unwrap().max_element() < samples.min_element() * 0.1,
         "fixture must contain an actual sensor defect, not merely a mask"
     );
-    let prepared = SourceStore::new(0)
+    let prepared = SourceCache::new(0)
         .prepare_source(InputSettings::Digital, scan.source())
         .unwrap();
     assert!(

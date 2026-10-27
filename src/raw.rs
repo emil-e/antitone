@@ -548,7 +548,7 @@ pub struct RawFile {
     corrected: Option<lens_source::CorrectedImage>,
     #[cfg(feature = "dng-sdk")]
     path: std::path::PathBuf,
-    pub(crate) file: crate::source_revision::FileKey,
+    pub(crate) file: crate::source::FileKey,
     #[cfg(feature = "dng-sdk")]
     dng_source: Option<crate::dng::Source>,
 }
@@ -572,7 +572,7 @@ impl RawFile {
         lens_correction: bool,
         fixed_wb: Option<[f64; 4]>,
     ) -> Result<Self, Error> {
-        let file = crate::source_revision::FileKey::new(source_path);
+        let file = crate::source::FileKey::new(source_path);
         let path = CString::new(source_path.as_os_str().as_encoded_bytes())
             .map_err(|_| Error::Raw("source path contains NUL".into()))?;
         let mut metadata = std::mem::MaybeUninit::<NativeMetadata>::zeroed();

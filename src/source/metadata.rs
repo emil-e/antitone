@@ -22,18 +22,7 @@ pub(crate) fn metadata_development(
     metadata: &Metadata,
     fixed_wb: [f64; 4],
 ) -> Result<SourceDevelopment> {
-    let matrix = metadata.camera_to_ap1()?;
-    let area = metadata.image_area()?;
-    Ok(SourceDevelopment {
-        decode: metadata.development(fixed_wb),
-        lens_correction: metadata.lens_identity()?,
-        dng_development: metadata.dng_identity(),
-        dimensions: metadata.source_dimensions()?,
-        active_area: [area.x, area.y, area.width, area.height],
-        camera_model: metadata.camera_model(),
-        camera_to_ap1: matrix.to_cols_array_2d(),
-        input_floor: metadata.input_floor()?,
-    })
+    SourceDevelopment::from_metadata(metadata, fixed_wb)
 }
 
 pub(crate) fn open_source(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, RawFile)> {

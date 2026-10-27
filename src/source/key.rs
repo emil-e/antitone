@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 /// Capture before development; grade/crop/correction/target/priority and SourceId are excluded.
 #[derive(Clone, Debug)]
 pub struct SourceKey {
-    locator: PathBuf,
-    file: FileKey,
-    source: SourceDevelopment,
+    pub(super) locator: PathBuf,
+    pub(super) file: FileKey,
+    pub(super) source: SourceDevelopment,
 }
 
 #[cfg(test)]

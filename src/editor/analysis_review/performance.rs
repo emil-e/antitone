@@ -300,6 +300,8 @@ fn profile_complete_roll_area_preparation() {
                 let file = document.file_key(&path);
                 let source = monitor.phase("region_seed_one_source", || {
                     source::Request {
+                        input: document.project.input,
+                        reference: None,
                         path,
                         wb: Some(wb),
                         expected: Some(expected.clone()),

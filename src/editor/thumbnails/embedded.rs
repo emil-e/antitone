@@ -11,7 +11,7 @@ struct Request {
     key: SourceKey,
     path: PathBuf,
     source: Source,
-    store: Arc<crate::source_store::SourceStore>,
+    store: Arc<crate::source::SourceCache>,
 }
 
 enum Completion {
@@ -216,7 +216,7 @@ impl EmbeddedPreviews {
                 key: key.clone(),
                 path: path.clone(),
                 source,
-                store: document.cache().clone(),
+                store: document.cache.clone(),
             },
             cancelled,
         ))

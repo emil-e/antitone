@@ -19,7 +19,7 @@ fn photographic_reference_initialization() {
         let file = raw.file.clone();
         let development = SourceDevelopment::from_metadata(&raw.metadata, wb).unwrap();
         let header_ms = start.elapsed().as_secs_f64() * 1000.;
-        let store = SourceStore::new(128 << 20);
+        let store = SourceCache::new(128 << 20);
         let tick = Instant::now();
         let preview = store
             .preview(&file, || embedded_preview::read(&path, &development))

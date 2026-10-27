@@ -187,6 +187,7 @@ impl Editor {
         let wb = self.document.project.acquisition_wb(expected.as_ref());
         let file = self.document.file_key(&path);
         source::Request {
+            reference: None,
             input: self.input(),
             path,
             wb,

@@ -70,7 +70,7 @@ pub struct AnalysisSamples {
 #[derive(Clone)]
 pub struct DevelopedSource {
     raw: Arc<FrozenRaw>,
-    pub(crate) file: crate::source_revision::FileKey,
+    pub(crate) file: crate::source::FileKey,
     camera_to_ap1: DMat3,
     camera_model: String,
     area: Rect,
@@ -82,12 +82,18 @@ pub struct DevelopedSource {
 }
 
 impl DevelopedSource {
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(crate) fn shares_native_storage(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.raw, &other.raw)
+    }
+
+    // The loader shares this development across documents; interpretation must not
+    // initialize its cell in place and leak a document's restored reference.
     #[cfg(feature = "project")]
     pub(crate) fn interpreted(
         self: &Arc<Self>,
         value: &crate::exposure_reference::ReferenceExposure,
     ) -> Arc<Self> {
-        let _ = self.reference_exposure.set(value.clone());
         if self.reference_exposure.get() == Some(value) {
             return self.clone();
         }
