@@ -4,15 +4,12 @@ use glam::DVec3;
 use std::sync::Arc;
 
 #[cfg(feature = "project")]
-#[path = "looks_builtin.rs"]
 pub mod builtin;
 
 #[cfg(feature = "project")]
-#[path = "looks_cache.rs"]
 pub mod cache;
 
 #[cfg(feature = "project")]
-#[path = "looks_storage.rs"]
 mod storage;
 #[cfg(feature = "project")]
 pub(crate) use storage::MAX_EMBEDDED_TEXT_BYTES;

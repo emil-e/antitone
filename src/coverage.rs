@@ -259,7 +259,6 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
 }
 
 #[cfg(test)]
-#[path = "coverage_weight_tests.rs"]
 mod weight_tests;
 
 #[cfg(test)]

@@ -1,6 +1,5 @@
 //! Spatial dependencies of processing, independent of the stages requesting them.
 #[cfg(test)]
-#[path = "processing_support_tests.rs"]
 mod tests;
 use crate::{
     Error,

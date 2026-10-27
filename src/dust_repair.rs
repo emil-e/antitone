@@ -4,7 +4,6 @@
 //! supports differ only in UI provenance; both enter [`heal_ranked`] identically.
 use crate::{Error, geometry::SourceRegion};
 use std::collections::VecDeque;
-#[path = "dust_repair_screening.rs"]
 mod screening;
 pub(crate) use screening::Execution;
 #[cfg(feature = "editor")]
@@ -14,7 +13,6 @@ pub type Ap1 = [f32; 3];
 pub(crate) const CONTEXT_PADDING: u32 = 10;
 pub(crate) const AUTOMATIC_PADDING: u32 = 128 + 4;
 
-#[path = "dust_repair_support.rs"]
 mod support;
 #[cfg(all(test, feature = "editor"))]
 pub(crate) use support::{MAX_MASK_PIXELS, MAX_MASK_WORK_PIXELS};
@@ -1573,5 +1571,4 @@ fn limited_biharmonic(
 }
 
 #[cfg(test)]
-#[path = "dust_repair_tests.rs"]
 mod tests;

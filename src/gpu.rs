@@ -1,18 +1,13 @@
 use bytemuck::Zeroable;
 use std::{num::NonZeroU64, sync::Arc};
 
-#[path = "gpu_flat_field.rs"]
 mod flat;
-#[path = "gpu_look.rs"]
 pub mod look;
 pub use flat::{GpuFlatField, SourceGeometry};
-#[path = "gpu_adjustment_layers.rs"]
 mod adjustment_layers;
 pub use adjustment_layers::GpuGrade;
-#[path = "gpu_input_program.rs"]
 mod input_program;
 pub use input_program::{GpuInputProgram, InputSignature};
-#[path = "gpu_pipeline.rs"]
 mod pipeline;
 pub use pipeline::GpuPipeline;
 
@@ -21,44 +16,35 @@ pub use pipeline::GpuPipeline;
     all(feature = "ui", feature = "render"),
     all(feature = "raw", feature = "export")
 ))]
-#[path = "gpu_grain.rs"]
 pub(crate) mod grain;
 #[cfg(any(
     feature = "editor",
     all(feature = "ui", feature = "render"),
     all(feature = "raw", feature = "export")
 ))]
-#[path = "gpu_image_mtf.rs"]
 pub(crate) mod image_mtf;
 #[cfg(any(
     feature = "editor",
     all(feature = "ui", feature = "render"),
     all(feature = "raw", feature = "export")
 ))]
-#[path = "gpu_pixel_pipeline.rs"]
 pub(crate) mod pixel_pipeline;
 #[cfg(any(
     feature = "editor",
     all(feature = "ui", feature = "render"),
     all(feature = "raw", feature = "export")
 ))]
-#[path = "gpu_raster.rs"]
 pub(crate) mod raster;
 
-#[path = "gpu_processing_input.rs"]
 mod input;
 pub use input::{ProcessingInput, ProcessingSignature};
-#[path = "gpu_submission.rs"]
 mod submission;
 #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
-#[path = "gpu_timestamp_ledger.rs"]
 pub(crate) mod timestamp_ledger;
 pub use submission::SubmissionGate;
 #[cfg(feature = "editor")]
-#[path = "gpu_dust_screening.rs"]
 pub(crate) mod dust_screening;
 #[cfg(feature = "editor")]
-#[path = "gpu_working_view.rs"]
 pub(crate) mod view;
 
 use glam::{DMat3, DVec3, Vec4};
@@ -399,7 +385,6 @@ impl CameraMatrix {
 }
 
 #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
-#[path = "gpu_repairs.rs"]
 pub(crate) mod repairs;
 
 pub struct ProcessingSource {
@@ -873,14 +858,10 @@ pub fn instance() -> wgpu::Instance {
 }
 
 #[cfg(all(test, target_os = "macos"))]
-#[path = "gpu_execution_tests.rs"]
 mod execution_tests;
 #[cfg(test)]
-#[path = "gpu_flat_field_tests.rs"]
 mod flat_tests;
 #[cfg(test)]
-#[path = "gpu_input_grading_tests.rs"]
 mod input_grading_tests;
 #[cfg(test)]
-#[path = "gpu_tests.rs"]
 mod tests;

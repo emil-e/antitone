@@ -108,11 +108,9 @@ fn resolve(
 }
 
 #[cfg(test)]
-#[path = "photo_preparation_tests.rs"]
 mod tests;
 
 #[cfg(all(test, feature = "ocio-reference"))]
-#[path = "photo_preparation_photographic_tests.rs"]
 mod photographic;
 
 fn estimate(proxy: &CameraProxy, preview: &Preview, floor: f64) -> ReferenceExposure {

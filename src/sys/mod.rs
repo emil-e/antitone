@@ -1,13 +1,16 @@
 //! Process, filesystem and hardware facts shared by modules that do not depend on the desktop UI.
 #[cfg(target_os = "macos")]
-#[path = "apple.rs"]
-mod imp;
-#[cfg(target_os = "windows")]
-#[path = "windows.rs"]
-mod imp;
+mod apple;
 #[cfg(target_os = "linux")]
-#[path = "linux.rs"]
-mod imp;
+mod linux;
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "macos")]
+use self::apple as imp;
+#[cfg(target_os = "linux")]
+use self::linux as imp;
+#[cfg(target_os = "windows")]
+use self::windows as imp;
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 compile_error!("sys support is implemented for macOS, Windows and Linux");
 

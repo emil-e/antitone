@@ -305,10 +305,8 @@ impl State {
 }
 
 #[cfg(test)]
-#[path = "source_store_exposure_tests.rs"]
 mod exposure_tests;
 #[cfg(test)]
-#[path = "source_store_preview_tests.rs"]
 mod preview_tests;
 
 type PreviewResult = Result<Option<Arc<Preview>>, String>;

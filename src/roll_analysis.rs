@@ -11,7 +11,6 @@ use crate::{
     sampling,
 };
 
-#[path = "roll_analysis_gamma.rs"]
 mod gamma;
 
 pub const MAX_SAMPLES_PER_FRAME: usize = 8192;

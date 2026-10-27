@@ -30,22 +30,22 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Area | Start here | Responsibility |
 | --- | --- | --- |
 | Processing | [processing](../src/processing.rs), [photographic](../src/photographic.rs), [colour](../src/color.rs) | Scalar reference, response and positive grading |
-| Adjustment layers | [scalar processing](../src/adjustment_layers.rs), [GPU grades](../src/gpu_adjustment_layers.rs), [editor routing](../src/editor_processing.rs) | Immutable snapshots, analytic masks, source-owned layers, whole-document admission |
-| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source preparation](../src/editor_source.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and capture diagnostics |
+| Adjustment layers | [scalar processing](../src/adjustment_layers.rs), [GPU grades](../src/gpu/adjustment_layers.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers, whole-document admission |
+| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source preparation](../src/editor/source.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and capture diagnostics |
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |
-| Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu_flat_field.rs) | Source-coordinate illumination gains |
-| Image recipe and repairs | [accepted recipe](../src/image_recipe.rs), [source evaluator](../src/repair_source.rs), [repair model](../src/dust_repair.rs), [controller](../src/editor_dust.rs), [GPU patches](../src/gpu_repairs.rs) | Shared accepted recipe; consumer-owned repair execution |
-| Roll analysis | [spatial support](../src/scan_regions.rs), [estimator](../src/roll_analysis.rs), [fitter](../src/roll_analysis_gamma.rs) | Source-owned sampling hypotheses, sample-derived starting settings |
+| Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu/flat.rs) | Source-coordinate illumination gains |
+| Image recipe and repairs | [accepted recipe](../src/image_recipe.rs), [source evaluator](../src/repair_source.rs), [repair model](../src/dust_repair.rs), [controller](../src/editor/dust.rs), [GPU patches](../src/gpu/repairs.rs) | Shared accepted recipe; consumer-owned repair execution |
+| Roll analysis | [spatial support](../src/scan_regions.rs), [estimator](../src/roll_analysis.rs), [fitter](../src/roll_analysis/gamma.rs) | Source-owned sampling hypotheses, sample-derived starting settings |
 | GPU | [processing](../src/gpu.rs), [renderer](../src/renderer.rs) | Interactive processing and reusable rendering resources |
 | Rendering/output | [rendering](../src/rendering.rs), [export](../src/export.rs), [native transform](../native/rendering_transform.h) | ACES, file encoding and output safety |
-| Film Emulation | [model/settings](../src/film_emulation.rs), [stage executor](../src/gpu_pixel_pipeline.rs) | Source-scale image MTF and RGB grain before look/output |
-| Creative looks | [asset/import](../src/looks.rs), [native generation](../src/looks_builtin.rs), [GPU execution](../src/gpu_look.rs), [selection](../src/editor_looks.rs) | Project-wide embedded immutable LUTs before selected-output ACES |
+| Film Emulation | [model/settings](../src/film_emulation.rs), [stage executor](../src/gpu/pixel_pipeline.rs) | Source-scale image MTF and RGB grain before look/output |
+| Creative looks | [asset/import](../src/looks.rs), [native generation](../src/looks/builtin.rs), [GPU execution](../src/gpu/look.rs), [selection](../src/editor/look_ui.rs) | Project-wide embedded immutable LUTs before selected-output ACES |
 | Geometry | [geometry](../src/geometry.rs), [coverage](../src/coverage.rs), [crop](../src/crop.rs), [auto-crop](../src/auto_crop.rs) | Coordinate mappings, source-cell coverage, measured-frame proposals |
-| Viewer | [working owner](../src/editor_working_view.rs), [GPU view](../src/gpu_working_view.rs), [viewer](../src/viewer.rs), [original-view owner](../src/editor_original_view.rs), [refinement](../src/refinement.rs), [viewport](../src/viewport.rs) | Physical-view grading/inspection, original comparison, refinement |
+| Viewer | [working owner](../src/editor/working_view.rs), [GPU view](../src/gpu/view.rs), [viewer](../src/viewer.rs), [original-view owner](../src/editor/original_view.rs), [refinement](../src/refinement.rs), [viewport](../src/viewport.rs) | Physical-view grading/inspection, original comparison, refinement |
 | Scopes | [measurement](../src/scopes.rs), [GPU reduction](../src/gpu_scopes.rs) | Approximate visible-image output statistics |
 | Editor | [editor](../src/editor.rs) and its feature modules | Live state, controls and transactions |
-| Workflows | [application](../src/application.rs), [blocking admission](../src/blocking_jobs.rs), [measurement](../src/editor_measurement.rs), [workflow modules](../src/editor_export_workflow.rs) | UI-thread async execution, borrowed UI context, off-thread services |
-| Persistence | [project](../src/project.rs), [document](../src/editor_document.rs), [document owner](../src/editor_document_scope.rs) | Accepted state, history and cache lifetime, compatibility |
+| Workflows | [application](../src/application.rs), [blocking admission](../src/blocking_jobs.rs), [measurement](../src/editor/measurement.rs), [workflow modules](../src/editor/export_workflow.rs) | UI-thread async execution, borrowed UI context, off-thread services |
+| Persistence | [project](../src/project.rs), [document](../src/editor/document.rs), [document owner](../src/editor/document_scope.rs) | Accepted state, history and cache lifetime, compatibility |
 | Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [Windows](../src/platform/windows.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, presentation, native menus, window coverage |
 | Branding | [assets](../assets/branding/README.md), [generator](../native/branding_assets.swift), [macOS packaging](../scripts/package-macos.py) | Portable artwork and relocatable local-test application bundle |
 

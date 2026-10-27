@@ -26,161 +26,98 @@ use std::{
     time::Duration,
 };
 
-#[path = "editor_cache_limits.rs"]
 mod cache_limits;
-#[path = "editor_controls.rs"]
 mod controls;
-#[path = "editor_development.rs"]
 mod development;
-#[path = "editor_source.rs"]
 mod source;
 use source::Cache as LoadCache;
-#[path = "editor_document.rs"]
 mod document;
-#[path = "editor_document_scope.rs"]
 mod document_scope;
 use document_scope::DocumentScope;
-#[path = "editor_editing.rs"]
 mod editing;
-#[path = "editor_history.rs"]
 mod history;
-#[path = "editor_icons.rs"]
 mod icons;
-#[path = "editor_menu.rs"]
 mod menu;
-#[path = "editor_preferences.rs"]
 mod preferences;
-#[path = "editor_ui.rs"]
 mod presentation;
 use crate::project::{Source, SourceId};
 use document::Document;
-#[path = "editor_files.rs"]
 mod files;
 use files::{FileAction, Transition};
-#[path = "editor_feedback.rs"]
 mod feedback;
 use feedback::{Failure, FailureKind};
-#[path = "editor_activity.rs"]
 mod activity;
 use activity::{Task, TaskActivity, TaskProgress, TaskRequest};
-#[path = "editor_fullscreen.rs"]
 mod fullscreen;
 use fullscreen::FullscreenView;
-#[path = "editor_thumbnails.rs"]
 mod thumbnails;
 use thumbnails::Thumbnails;
-#[path = "editor_looks.rs"]
 mod look_ui;
-#[path = "editor_look_workflow.rs"]
 mod look_workflow;
-#[path = "editor_processing.rs"]
 mod processing;
 use processing::Grades;
-#[path = "editor_adjustment_layers.rs"]
 mod adjustment_layers;
 use adjustment_layers::AdjustmentLayerEditor;
-#[path = "editor_working_view.rs"]
 mod working_view;
-#[path = "editor_working_workflow.rs"]
 mod working_workflow;
 use working_view::WorkingView;
-#[path = "editor_grade_scope.rs"]
 mod grade_scope;
-#[path = "editor_original_view.rs"]
 mod original_view;
-#[path = "editor_original_workflow.rs"]
 mod original_workflow;
 use original_view::{OriginalPurpose, OriginalView};
-#[path = "editor_selected_preview.rs"]
 mod selected_preview;
 use selected_preview::{SelectionPaint, SelectionTiming};
-#[path = "editor_scopes.rs"]
 mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
-#[path = "editor_analysis.rs"]
 mod analysis;
-#[path = "editor_analysis_review.rs"]
 mod analysis_review;
-#[path = "editor_analysis_services.rs"]
 mod analysis_services;
-#[path = "editor_analysis_workflow.rs"]
 mod analysis_workflow;
-#[path = "editor_dust.rs"]
 mod dust;
-#[path = "editor_dust_workflow.rs"]
 mod dust_workflow;
-#[path = "editor_flat_field.rs"]
 mod flat;
-#[path = "editor_reference_services.rs"]
 mod reference_services;
-#[path = "editor_reference_workflow.rs"]
 mod reference_workflow;
-#[path = "editor_spatial.rs"]
 mod spatial;
-#[path = "editor_support_workflow.rs"]
 mod support_workflow;
 #[cfg(test)]
 use flat::FlatPreview;
 use flat::{Correction, FlatEdit};
-#[path = "editor_auto_crop.rs"]
 mod auto_crop;
-#[path = "editor_crop.rs"]
 mod crop_editor;
 use crop_editor::CropEdit;
-#[path = "editor_masks.rs"]
 mod mask_editor;
 use mask_editor::MaskEdit;
 #[cfg(test)]
-#[path = "editor_cache_preferences_tests.rs"]
 mod cache_preferences_tests;
-#[path = "editor_canvas.rs"]
 mod canvas;
-#[path = "editor_document_services.rs"]
 mod document_services;
-#[path = "editor_document_workflow.rs"]
 mod document_workflow;
 use document_services::{Preparation, Prepared, Request as DocumentRequest};
 #[cfg(all(test, feature = "raw", feature = "export"))]
-#[path = "editor_ab_probe_tests.rs"]
 mod ab_probe_tests;
-#[path = "editor_export_batch.rs"]
 mod export_batch;
-#[path = "editor_export_dialog.rs"]
 mod export_dialog;
-#[path = "editor_export_services.rs"]
 mod export_services;
 #[cfg(test)]
-#[path = "editor_export_tests.rs"]
 mod export_tests;
-#[path = "editor_export_workflow.rs"]
 mod export_workflow;
-#[path = "editor_frame.rs"]
 mod frame;
 #[cfg(all(test, feature = "ui-tests"))]
-#[path = "editor_kittest.rs"]
 mod kittest_tests;
-#[path = "editor_measurement.rs"]
 mod measurement;
-#[path = "editor_memory.rs"]
 mod memory;
-#[path = "editor_photo_scope.rs"]
 mod photo_scope;
-#[path = "editor_save.rs"]
 mod save;
-#[path = "editor_source_workflow.rs"]
 mod source_workflow;
 #[cfg(test)]
 use measurement::Measurement;
-#[path = "editor_navigation.rs"]
 mod navigation;
 #[cfg(test)]
 use crate::export::Overwrite;
-#[path = "editor_roll_selection.rs"]
 mod roll_selection;
 #[cfg(test)]
-#[path = "editor_tests.rs"]
 mod tests;
-#[path = "editor_viewer.rs"]
 mod viewer_ui;
 use roll_selection::RollSelection;
 

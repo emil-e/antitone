@@ -1,6 +1,6 @@
 # Editor fonts
 
-The editor embeds unmodified static IBM Plex Sans Text (450) and Medium (500) faces under the [SIL Open Font License 1.1](OFL.txt). Their reading and instrument roles are owned by [shared presentation](../../src/editor_ui.rs); see [typography guidance](../../docs/editor.md#typography-roles).
+The editor embeds unmodified static IBM Plex Sans Text (450) and Medium (500) faces under the [SIL Open Font License 1.1](OFL.txt). Their reading and instrument roles are owned by [shared presentation](../../src/editor/presentation.rs); see [typography guidance](../../docs/editor.md#typography-roles).
 
 Both faces and the licence come from [IBM/plex at c5f949677f6f163e8dfe98ca2c326bd48b42fa1b](https://github.com/IBM/plex/tree/c5f949677f6f163e8dfe98ca2c326bd48b42fa1b/packages/plex-sans). The files are `fonts/complete/ttf/IBMPlexSans-{Text,Medium}.ttf` and `LICENSE.txt` in that package.
 

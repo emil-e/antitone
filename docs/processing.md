@@ -92,11 +92,11 @@ Healing and nonlinear grading do not commute, so pre-grade donor matching can di
 
 ### Input and grading have separate contracts
 
-CPU `GradingPipeline` and GPU `GpuGrade` consume working positives and own Roll/layer controls, independently of calibration and camera conversion. The GPU source adapter is [`GpuInputProgram`](../src/gpu_input_program.rs); [`GpuPipeline`](../src/gpu_pipeline.rs) composes source execution with a grade, retains the original source extent for spatial execution and checks the complete operation. Source programs own their transforms and opaque signatures, so reconstruction obtains source execution from the input rather than retrieving a camera matrix from a grade. CPU sampling and GPU command encoding express the same stage boundary differently; GPU composition retains fused shader execution.
+CPU `GradingPipeline` and GPU `GpuGrade` consume working positives and own Roll/layer controls, independently of calibration and camera conversion. The GPU source adapter is [`GpuInputProgram`](../src/gpu/input_program.rs); [`GpuPipeline`](../src/gpu/pipeline.rs) composes source execution with a grade, retains the original source extent for spatial execution and checks the complete operation. Source programs own their transforms and opaque signatures, so reconstruction obtains source execution from the input rather than retrieving a camera matrix from a grade. CPU sampling and GPU command encoding express the same stage boundary differently; GPU composition retains fused shader execution.
 
 ### One accepted image recipe
 
-[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, Film Emulation, composition and the immutable creative-look asset. Navigation recipes retain grade/emulation/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Resolved image sources](../src/image_source.rs) share the input sampling boundary across interactive and offscreen [repair evaluation](../src/repair_source.rs).
+[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, Film Emulation, composition and the immutable creative-look asset. Navigation recipes retain grade/emulation/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Resolved image sources](../src/scan/image_source.rs) share the input sampling boundary across interactive and offscreen [repair evaluation](../src/repair_source.rs).
 
 ### Photo contrast and saturation
 
@@ -143,6 +143,6 @@ The current model is **5**. Negative calibration must be finite and satisfy `Dmi
 - [Photographic grading](../src/photographic.rs): contrast/saturation and stable signed evaluation.
 - [Sampling](../src/sampling.rs): manual reference and neutral fitting.
 - [GPU processing](../src/gpu.rs): the production implementation and preflight.
-- [Adjustment layers](../src/adjustment_layers.rs) and [GPU grades](../src/gpu_adjustment_layers.rs): coverage, shared control settings and complete ordered snapshots.
+- [Adjustment layers](../src/adjustment_layers.rs) and [GPU grades](../src/gpu/adjustment_layers.rs): coverage, shared control settings and complete ordered snapshots.
 
 The scalar photographic implementation is the f64 reference. Exact equations, supported ranges and numerical gates live with the implementation and its tests: [camera inversion](../tests/camera_inversion.rs), [film response](../tests/film_response.rs), [photographic grading](../tests/photographic.rs) and [GPU processing](../tests/gpu_processing.rs). Start with the relevant [development checks](development.md#feature-specific-checks).

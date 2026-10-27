@@ -89,5 +89,4 @@ fn inverse_neutral(display: f64) -> f64 {
 }
 
 #[cfg(test)]
-#[path = "exposure_reference_tests.rs"]
 mod tests;

@@ -404,5 +404,4 @@ fn sample(values: &[f64], w: usize, h: usize, x: f64, y: f64) -> f64 {
     a * (1. - dy) + b * dy
 }
 #[cfg(test)]
-#[path = "flat_field_tests.rs"]
 mod tests;

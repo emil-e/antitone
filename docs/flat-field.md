@@ -40,6 +40,6 @@ Projects save the map and its development identity, allowing correction to be us
 
 ## Working on this area
 
-[Scan](../src/scan.rs) gathers reference statistics; [flat-field](../src/flat_field.rs) owns estimation, interpolation and precision; [GPU evaluation](../src/gpu_flat_field.rs) shares the source mapping. [Editor correction](../src/editor_flat_field.rs) owns the temporary reference transaction, and [project correction](../src/project_flat_field.rs) owns saved-map validation.
+[Scan](../src/scan.rs) gathers reference statistics; [flat-field](../src/flat_field.rs) owns estimation, interpolation and precision; [GPU evaluation](../src/gpu/flat.rs) shares the source mapping. [Editor correction](../src/editor/flat.rs) owns the temporary reference transaction, and [project correction](../src/project/flat.rs) owns saved-map validation.
 
-Start with [project tests](../tests/flat_field_project.rs), [export tests](../tests/flat_field_export.rs) and [editor tests](../src/editor_flat_field_tests.rs). [Diagnostics](diagnostics.md#flat-field-correction) provides sample-dependent exercises.
+Start with [project tests](../tests/flat_field_project.rs), [export tests](../tests/flat_field_export.rs) and [editor tests](../src/editor/flat/tests.rs). [Diagnostics](diagnostics.md#flat-field-correction) provides sample-dependent exercises.

@@ -9,15 +9,11 @@ use crate::Error;
 use crate::color::{AP1_TO_XYZ, BRADFORD};
 use crate::sampling::mean;
 
-#[path = "raw_sony.rs"]
 mod sony;
 pub use sony::{SonyLensData, SonyLensDataStatus};
-#[path = "raw_eligibility.rs"]
 mod eligibility;
-#[path = "raw_lens.rs"]
 mod lens_source;
 #[cfg(feature = "editor")]
-#[path = "raw_source_preview.rs"]
 mod source_preview;
 #[cfg(feature = "editor")]
 pub(crate) use source_preview::{SourcePreview, SourceWhiteBalance};

@@ -201,11 +201,8 @@ fn material_rejects_malformed_grids_and_checks_interior_cells_not_just_corners()
 }
 
 #[cfg(feature = "raw")]
-#[path = "comparison_tests.rs"]
 mod comparison;
-#[path = "opening_tests.rs"]
 mod opening_tests;
-#[path = "rectangle_tests.rs"]
 mod rectangles_tests;
 
 #[cfg(feature = "raw")]

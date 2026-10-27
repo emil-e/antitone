@@ -317,7 +317,7 @@ for module in application:: blocking_jobs:: editor::development:: editor::measur
 done
 ```
 
-The [live application fixture](../src/application_test_support.rs) exposes short state transactions, explicit workflow entry and bounded wake pumping without painting. For feature transactions, filter the owning module: for example `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests`, `editor::feedback::tests` or `editor::scopes::tests`. Use [layout/GPU diagnostics](diagnostics.md#editor-and-layout-checks) when painting changes. For wordmark/icon changes, also [regenerate the branding assets](../assets/branding/README.md#regenerate) and inspect the generated artwork. For user-visible UI changes, [regenerate the guide screenshots](../assets/docs/README.md) and inspect them; the new images belong to that change.
+The [live application fixture](../src/application/test_support.rs) exposes short state transactions, explicit workflow entry and bounded wake pumping without painting. For feature transactions, filter the owning module: for example `editor::analysis::tests`, `editor::flat::tests`, `editor::files::tests`, `editor::navigation::tests`, `editor::preferences::tests`, `editor::feedback::tests` or `editor::scopes::tests`. Use [layout/GPU diagnostics](diagnostics.md#editor-and-layout-checks) when painting changes. For wordmark/icon changes, also [regenerate the branding assets](../assets/branding/README.md#regenerate) and inspect the generated artwork. For user-visible UI changes, [regenerate the guide screenshots](../assets/docs/README.md) and inspect them; the new images belong to that change.
 
 Physical pointer/trackpad behavior, native folder selection and Finder reveal, VoiceOver, preference relaunch and wheel semantics need real-use checks.
 
@@ -331,7 +331,7 @@ cargo test --locked --release --features ui-tests --lib editor::kittest_tests --
 cargo clippy --locked --features ui-tests --lib --tests -- -D warnings
 ```
 
-The [harness](../src/editor_kittest.rs) uses the Editor's device, queue and submission gate to paint production callbacks into RGBA16Float. CPU source-rendering agreement checks are not an independent ACES oracle; rendering changes also need the relevant [OCIO/Apple references](diagnostics.md#rendering-gamut-and-icc). Worker/readback waits are bounded; an unfinished operation must fail at its deadline.
+The [harness](../src/editor/kittest_tests.rs) uses the Editor's device, queue and submission gate to paint production callbacks into RGBA16Float. CPU source-rendering agreement checks are not an independent ACES oracle; rendering changes also need the relevant [OCIO/Apple references](diagnostics.md#rendering-gamut-and-icc). Worker/readback waits are bounded; an unfinished operation must fail at its deadline.
 
 Known Save destinations and chooser results are fixture setup; menu actions, guards and workers remain production code. Native file dialogs are not automated. For optional inspection artifacts:
 

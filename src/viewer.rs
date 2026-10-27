@@ -11,17 +11,13 @@ use crate::{
 use glam::{DMat3, Vec4};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
-#[path = "viewer_proxy.rs"]
 mod proxy;
 pub(crate) use proxy::GpuProxy;
 #[cfg(test)]
-#[path = "viewer_film_tests.rs"]
 mod film_tests;
 #[cfg(test)]
-#[path = "viewer_look_tests.rs"]
 mod look_tests;
 #[cfg(test)]
-#[path = "viewer_readback_tests.rs"]
 pub(crate) mod readback;
 
 #[repr(C)]

@@ -244,9 +244,10 @@ pub fn with_native_dialog<T>(show: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(target_os = "macos")]
-#[path = "menu_macos.rs"]
-pub(crate) mod native;
-
+pub(crate) mod macos;
 #[cfg(windows)]
-#[path = "menu_windows.rs"]
-pub(crate) mod native;
+pub(crate) mod windows;
+#[cfg(target_os = "macos")]
+pub(crate) use self::macos as native;
+#[cfg(windows)]
+pub(crate) use self::windows as native;

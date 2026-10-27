@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 pub const VERSION: u32 = 1;
 
 #[cfg(test)]
-#[path = "exposure_metadata_tests.rs"]
 mod tests;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

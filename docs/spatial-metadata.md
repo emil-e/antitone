@@ -56,7 +56,7 @@ cargo clippy --locked --offline --features project --lib --tests -- -D warnings
 
 The opt-in `observe_spatial_metadata_cached_roll` check uses `raw,project`, an explicit version-1 protocol and a fresh ignored output directory. It reads frozen camera-code proxies and runs native line detection, not RAW development or the editor. This evidence predates corrected Sony/HDR/direct-DNG paths; agreement and marked-window accounting are not current-development or independent whole-picture acceptance. Native setup follows the normal [contributor workflow](native-development.md#reusing-native-builds).
 
-Start in [spatial metadata](../src/spatial_metadata.rs), [preparation](../src/scan_regions/framing/mod.rs), [consumer geometry](../src/auto_crop.rs) and [project I/O](../src/project.rs).
+Start in [spatial metadata](../src/spatial_metadata.rs), [preparation](../src/scan_regions/material/framing/mod.rs), [consumer geometry](../src/auto_crop.rs) and [project I/O](../src/project.rs).
 
 ## Evidence and remaining acceptance
 

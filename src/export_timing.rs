@@ -14,7 +14,6 @@ macro_rules! timed {
 pub(crate) use timed;
 
 #[cfg(test)]
-#[path = "export_pixel_receipt.rs"]
 pub(crate) mod pixels;
 
 #[cfg(test)]

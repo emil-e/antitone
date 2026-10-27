@@ -13,7 +13,6 @@ use std::{path::Path, sync::Arc};
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[path = "image_source.rs"]
 mod image_source;
 pub use image_source::{ImageIdentity, ImageSource};
 
@@ -280,10 +279,8 @@ impl CameraProxy {
 }
 
 #[cfg(test)]
-#[path = "scan_proxy_tests.rs"]
 mod proxy_tests;
 #[cfg(all(test, feature = "project"))]
-#[path = "scan_source_scale_tests.rs"]
 mod source_scale_tests;
 
 pub(crate) fn positive_matrix(
