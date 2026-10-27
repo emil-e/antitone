@@ -18,6 +18,7 @@ pub struct ProcessingInput {
     look: Option<Arc<crate::looks::LookAsset>>,
     film_emulation: FilmEmulationSettings,
     film_seed: Option<u64>,
+    frame_size: [u32; 2],
     #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     pub(crate) repairs: super::repairs::Snapshot,
 }
@@ -32,6 +33,7 @@ impl From<ProcessingParameters> for ProcessingInput {
     fn from(parameters: ProcessingParameters) -> Self {
         Self {
             processing: Processing::Parameters(Arc::new(parameters)),
+            frame_size: [0; 2],
             look: None,
             film_emulation: FilmEmulationSettings::default(),
             film_seed: None,
@@ -45,6 +47,7 @@ impl From<Arc<GpuPipeline>> for ProcessingInput {
     fn from(grade: Arc<GpuPipeline>) -> Self {
         Self {
             processing: Processing::Grade(grade),
+            frame_size: [0; 2],
             look: None,
             film_emulation: FilmEmulationSettings::default(),
             film_seed: None,
@@ -78,6 +81,16 @@ impl ProcessingInput {
         self
     }
 
+    /// Capture the photograph's crop dimensions independently of source/tile/view geometry.
+    pub fn with_frame_size(mut self, size: [u32; 2]) -> Self {
+        self.frame_size = if self.parameters().graded() {
+            size
+        } else {
+            [0; 2]
+        };
+        self
+    }
+
     pub fn with_film_seed(mut self, seed: u64) -> Self {
         self.film_seed = Some(seed);
         self
@@ -94,11 +107,10 @@ impl ProcessingInput {
     #[cfg(all(feature = "ui", feature = "render"))]
     pub(crate) fn pixel_pipeline(
         &self,
-        source_height: u32,
     ) -> Result<crate::pixel_pipeline::PixelPipeline, crate::Error> {
         crate::pixel_pipeline::PixelPipeline::film(
             self.film_emulation,
-            source_height,
+            self.frame_size,
             self.film_seed.unwrap_or(0),
         )
     }
@@ -118,6 +130,7 @@ impl ProcessingInput {
             look: self.look.as_ref().map(|look| look.lut().id()),
             film_emulation: self.film_emulation,
             film_seed: self.film_seed,
+            frame_size: self.film_emulation.enabled.then_some(self.frame_size),
             #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
             repairs: self.repairs.clone(),
         }
@@ -167,6 +180,7 @@ pub struct ProcessingSignature {
     look: Option<crate::looks::LookId>,
     film_emulation: FilmEmulationSettings,
     film_seed: Option<u64>,
+    frame_size: Option<[u32; 2]>,
     #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
     repairs: super::repairs::Snapshot,
 }
@@ -185,6 +199,7 @@ impl ProcessingSignature {
         self.parameters == other.parameters
             && self.film_emulation == other.film_emulation
             && self.film_seed == other.film_seed
+            && self.frame_size == other.frame_size
             && match (&self.grade, &other.grade) {
                 (None, None) => true,
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a.same_content(b),
@@ -226,6 +241,43 @@ mod tests {
             .with_film_emulation(FilmEmulationPreset::Coarse.settings());
         assert_eq!(source.signature(), film.signature());
         assert!(!film.film_emulation().enabled);
+    }
+
+    #[test]
+    fn captured_crop_dimensions_change_emulation_identity_but_not_the_clean_plate() {
+        let base = ProcessingInput::from(
+            ProcessingParameters::interpret(
+                crate::processing::InputSettings::Digital,
+                Default::default(),
+                glam::DMat3::IDENTITY,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            base.clone().with_frame_size([6000, 4000]).signature(),
+            base.clone().with_frame_size([3000, 2000]).signature()
+        );
+        let film = base.with_film_emulation(FilmEmulationPreset::Medium.settings());
+        assert_ne!(
+            film.clone().with_frame_size([6000, 4000]).signature(),
+            film.with_frame_size([3000, 2000]).signature()
+        );
+    }
+
+    #[cfg(all(feature = "ui", feature = "render"))]
+    #[test]
+    fn enabled_processing_requires_explicit_crop_context_not_a_source_or_tile_fallback() {
+        let input = ProcessingInput::from(
+            ProcessingParameters::interpret(
+                crate::processing::InputSettings::Digital,
+                Default::default(),
+                glam::DMat3::IDENTITY,
+            )
+            .unwrap(),
+        )
+        .with_film_emulation(FilmEmulationPreset::Medium.settings());
+        assert!(input.pixel_pipeline().is_err());
+        assert!(input.with_frame_size([3000, 2000]).pixel_pipeline().is_ok());
     }
 
     #[test]

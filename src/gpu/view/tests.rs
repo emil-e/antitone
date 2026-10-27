@@ -11,6 +11,7 @@ use std::sync::atomic::AtomicU64;
 #[cfg(target_os = "macos")]
 mod adjustment_layer_resources;
 mod colour;
+mod crop_scale;
 mod film_emulation;
 mod identity;
 mod inspection;

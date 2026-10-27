@@ -36,10 +36,18 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.render().unwrap();
         let image = h.read(|editor| {
             assert!(!editor.source);
-            let ready = editor.document.visit.ready.as_ref().unwrap();
             let support = crate::pixel_pipeline::PixelPipeline::film(
                 editor.film_emulation,
-                ready.developed.area().height,
+                editor
+                    .source_composition(
+                        editor
+                            .document
+                            .project
+                            .source(editor.current_source.unwrap())
+                            .unwrap(),
+                    )
+                    .crop()
+                    .size,
                 0,
             )
             .unwrap()

@@ -174,7 +174,7 @@ fn film_emulation_gpu_rgb_covariance_matches_the_cpu_gain_compensation() {
                 ..Default::default()
             };
             let expected = settings
-                .parameters(6000)
+                .parameters([6000; 2])
                 .unwrap()
                 .unwrap()
                 .covariance(footprint);

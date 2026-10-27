@@ -154,7 +154,7 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
     pollster::block_on(async {
         let (device, queue, _, kernels) = context().await;
         let settings = crate::film_emulation::FilmEmulationPreset::Medium.settings();
-        let parameters = settings.parameters(64).unwrap().unwrap();
+        let parameters = settings.parameters([64; 2]).unwrap().unwrap();
         // Small sources integrate many lattice samples; their actual finite gain is exercised.
         let raster = crate::gpu::raster::Raster::native([1000, 1000, 16, 16].into());
         let plan = crate::pixel_pipeline::PixelPipeline {

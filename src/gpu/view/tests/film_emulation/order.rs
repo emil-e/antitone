@@ -41,6 +41,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             .unwrap(),
         ))
         .with_film_emulation(settings)
+        .with_frame_size(source.spec.frame.composition.crop().size)
         .with_film_seed(17);
         let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None).unwrap();
         view.ensure_submitted(
@@ -71,7 +72,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             .map(|i| (-0.5 * f64::from(i * i) / (sigma * sigma)).exp())
             .sum();
         let variance = settings
-            .parameters(6000)
+            .parameters([6000; 2])
             .unwrap()
             .unwrap()
             .channel_variance(1.);

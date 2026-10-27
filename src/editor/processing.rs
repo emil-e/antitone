@@ -241,6 +241,7 @@ impl Editor {
                 input
                     .with_look(look)
                     .with_film_emulation(recipe.film_emulation)
+                    .with_frame_size(recipe.composition.crop().size)
                     .with_film_seed(source.id.0)
             })
     }

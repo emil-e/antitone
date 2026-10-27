@@ -444,13 +444,7 @@ impl Editor {
         }
         .ok()?
         .with_repairs(parameters.repairs.clone())
-        .with_support(
-            parameters
-                .pixel_pipeline(frame.composition.area().height)
-                .ok()?
-                .support([1., 1.])
-                .ok()?,
-        );
+        .with_support(parameters.pixel_pipeline().ok()?.support([1., 1.]).ok()?);
         let source = proxy.view_source(queue, kernels, spec).ok()?;
         let previous = self.preview_rendered.as_ref().map(|entry| &entry.4);
         let rendered = if inspection {

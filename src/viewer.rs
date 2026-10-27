@@ -410,10 +410,13 @@ impl GpuImage {
             crate::gpu::look::Lut::require_limits(&self.device_limits, asset.lut())?;
         }
         input.require_source(&processing.source)?;
-        if input.has_pixel_stages() && processing.source.geometry().is_none() {
-            return Err(Error::Gpu(
-                "pixel processing requires declared raster geometry".into(),
-            ));
+        if input.has_pixel_stages() {
+            if processing.source.geometry().is_none() {
+                return Err(Error::Gpu(
+                    "pixel processing requires declared raster geometry".into(),
+                ));
+            }
+            input.pixel_pipeline()?;
         }
         Ok(())
     }
@@ -475,11 +478,7 @@ impl GpuImage {
                 .source
                 .geometry()
                 .expect("validated raster geometry");
-            let pipeline = input.pixel_pipeline(
-                input
-                    .pipeline()
-                    .map_or(geometry.region().height, |grade| grade.area().height),
-            )?;
+            let pipeline = input.pixel_pipeline()?;
             let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
             Some((
                 processing.renderer.pixel_kernels(device)?,

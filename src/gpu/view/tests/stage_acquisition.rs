@@ -20,6 +20,7 @@ fn input(device: &wgpu::Device, scan: &Scan, film: FilmEmulationSettings) -> Pro
         .unwrap(),
     ))
     .with_film_emulation(film)
+    .with_frame_size([scan.area.width, scan.area.height])
     .with_film_seed(17)
 }
 
@@ -68,13 +69,7 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
             None,
         )
         .unwrap()
-        .with_support(
-            input
-                .pixel_pipeline(scan.area.height)
-                .unwrap()
-                .support([1., 1.])
-                .unwrap(),
-        );
+        .with_support(input.pixel_pipeline().unwrap().support([1., 1.]).unwrap());
         let source = ViewSource::acquire(
             &device,
             &queue,
@@ -154,13 +149,9 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
                 amount: 0.,
                 colour: 0.5,
             };
-            let input = input(&device, &scan, film);
+            let input = input(&device, &scan, film).with_frame_size(composition.crop().size);
             let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
-            let support = input
-                .pixel_pipeline(scan.area.height)
-                .unwrap()
-                .support([1., 1.])
-                .unwrap();
+            let support = input.pixel_pipeline().unwrap().support([1., 1.]).unwrap();
             let spec = ViewSourceSpec::new(17, frame, InputSettings::Digital, matrix, None)
                 .unwrap()
                 .with_support(support);
@@ -195,7 +186,7 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
                 continue;
             }
             let sigma = film
-                .parameters(scan.area.height)
+                .parameters(frame.composition.crop().size)
                 .unwrap()
                 .unwrap()
                 .image_mtf_sigma;
@@ -283,15 +274,21 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
                 Default::default(),
                 Some(crate::crop::Crop {
                     center: [
-                        f64::from(point[0]) + if at_source_edge { 6. } else { 11. },
-                        f64::from(point[1]) + 1.,
+                        f64::from(point[0]) + if at_source_edge { 254. } else { 259. },
+                        f64::from(point[1]) + 249.,
                     ],
-                    size: [16, 16],
+                    size: [512, 512],
                     angle: 0.,
                 }),
             )
             .unwrap();
-            let frame = FrameRaster::full(composition).unwrap();
+            let frame = FrameRaster::new(
+                composition,
+                FramePoint([0., 0.]),
+                FramePoint([16., 16.]),
+                [16, 16],
+            )
+            .unwrap();
             if !at_source_edge {
                 assert!(evaluated.support().selected_points().all(|p| {
                     frame
@@ -305,11 +302,11 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
             }
             let film = FilmEmulationSettings {
                 enabled: true,
-                size: 0.060,
+                size: 0.100,
                 amount: 0.,
                 colour: 0.5,
             };
-            let mut input = input(&device, &scan, film);
+            let mut input = input(&device, &scan, film).with_frame_size(composition.crop().size);
             input.repairs = patches.clone();
             let spec = ViewSourceSpec::new(
                 17,
@@ -319,13 +316,7 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
                 None,
             )
             .unwrap()
-            .with_support(
-                input
-                    .pixel_pipeline(scan.area.height)
-                    .unwrap()
-                    .support([1., 1.])
-                    .unwrap(),
-            );
+            .with_support(input.pixel_pipeline().unwrap().support([1., 1.]).unwrap());
             let acquire = |spec| {
                 ViewSource::acquire(
                     &device,

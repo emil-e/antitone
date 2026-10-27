@@ -44,7 +44,7 @@ pub fn refine(
     ))?;
     let tile_width = 512;
     let tile_height = 128;
-    let support = input.pixel_pipeline(scan.area.height)?.support([1., 1.])?;
+    let support = input.pixel_pipeline()?.support([1., 1.])?;
     let mut expanded: Option<GpuImage> = None;
     let mut tile = if support != crate::processing_support::Support::NONE {
         pollster::block_on(GpuImage::new_rendered_shared(

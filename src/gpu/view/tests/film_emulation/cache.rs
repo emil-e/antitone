@@ -25,6 +25,7 @@ fn candidate(
     );
     let input = ProcessingInput::from(grade)
         .with_film_emulation(film)
+        .with_frame_size(source.spec.frame.composition.crop().size)
         .with_film_seed(17);
     RenderedView::new(device, source, &input, OutputTarget::Srgb, previous).unwrap()
 }
@@ -131,7 +132,7 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         let cached = read(&device, &queue, &edited.graded.as_ref().unwrap().pixels);
         let generated = read(&device, &queue, &field(&edited).pixels);
         let variance = settings
-            .parameters(6000)
+            .parameters([6000; 2])
             .unwrap()
             .unwrap()
             .channel_variance(1.);
