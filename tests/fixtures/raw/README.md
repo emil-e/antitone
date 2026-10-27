@@ -60,7 +60,7 @@ From the repository root, after normal native setup:
 cargo test --locked --offline --features raw --test raw_dng --test raw_flat_field --test raw_roll
 cargo test --locked --offline --features raw,export,project,ocio-reference --test raw_dng --test raw_flat_field --test raw_roll
 # Native/editor/Metal worker checks; no desktop window, preferences or user thumbnail cache:
-cargo test --locked --offline --features editor --lib authored_ -- --test-threads=1
+cargo test --locked --offline --features editor --lib authored_
 # Independent ImageIO storage/profile check; Apple Clang, temporary products, no window:
 cargo test --locked --offline --features raw,export,ocio-reference --test raw_dng \
   authored_dng_tiffs_reopen_with_independent_imageio_storage_and_profiles \

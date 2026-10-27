@@ -112,29 +112,27 @@ cargo test --locked --features editor,ocio-reference --test dng_integration
 cargo test --locked --features raw,export,project,ocio-reference --test raw_dng --test raw_flat_field --test raw_roll
 
 # Document-owned look selection, cancellation acknowledgement and physical bake/cache retirement.
-cargo test --locked --features editor --lib editor::look_workflow:: -- --test-threads=1
+cargo test --locked --features editor --lib editor::look_workflow::
 
 # Reference-session and lazy-support completion, retirement and correction transactions without painting.
 cargo test --locked --features editor --lib -- \
-  editor::reference_workflow:: editor::support_workflow:: \
-  --test-threads=1
+  editor::reference_workflow:: editor::support_workflow::
 
 # Effective grade ownership, physical support and purpose-bound reconstruction without painting.
 cargo test --locked --features editor --lib -- \
-  editor::grade_scope:: editor::original_workflow:: editor::working_view::workflow_tests:: \
-  --test-threads=1
+  editor::grade_scope:: editor::original_workflow:: editor::working_view::workflow_tests::
 
 # Candidate preparation/promotion, history and physical retirement without painting.
-cargo test --locked --features editor --lib editor::document_workflow:: -- --test-threads=1
+cargo test --locked --features editor --lib editor::document_workflow::
 
 # Captured writes, baseline/history/visit preservation and guarded continuation retirement.
-cargo test --locked --features editor --lib editor::save:: -- --test-threads=1
+cargo test --locked --features editor --lib editor::save::
 
 # Visit-owned source workflow and native physical admission, including pending candidates.
-cargo test --locked --features editor --lib editor::source_workflow:: -- --test-threads=1
+cargo test --locked --features editor --lib editor::source_workflow::
 
 # Authored import/correction/Analyze/JPEG/cache workers; native setup and GPU, no desktop window.
-cargo test --locked --features editor --lib authored_ -- --test-threads=1
+cargo test --locked --features editor --lib authored_
 
 # Production GPU math; requires a GPU, not native RAW/rendering libraries.
 cargo test --locked --features gpu --test gpu_processing --test gpu_film_response
@@ -143,7 +141,7 @@ cargo test --locked --features gpu --test gpu_processing --test gpu_film_respons
 cargo test --locked --features editor,ocio-reference --lib --test scopes --test viewer
 ```
 
-The [authored RAW fixtures](../tests/fixtures/raw/README.md) supply declared sensor data for API, worker and UI checks. The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs); a missing GPU device is a verification limit, not a numerical pass.
+The [authored RAW fixtures](../tests/fixtures/raw/README.md) supply declared sensor data for API, worker and UI checks. The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs); a missing GPU device is a verification limit, not a numerical pass. A command runs its tests concurrently, so a test that only passes serially depends on shared state that needs fixing rather than on a pinned runner.
 
 After native setup, use broader integration/lints when the change warrants them:
 
@@ -156,10 +154,10 @@ cargo clippy --locked --all-features --all-targets -- -D warnings
 
 ```sh
 # Production services/workflows, immutable snapshots/operation identity, encoders and destination safety; no OCIO.
-cargo test --locked --features editor --lib export -- --test-threads=1
+cargo test --locked --features editor --lib export
 # Independent original-sample processing/reconstruction and reopened files, including correction/locals.
 cargo test --locked --features raw,gpu,export,project,ocio-reference \
-  --lib gpu_export:: -- --test-threads=1
+  --lib gpu_export::
 cargo test --locked --features raw,gpu,export,project,ocio-reference \
   --test gpu_export --test export --test geometry_export --test adjustment_layer_export
 cargo build --locked --release --features editor --bin antitone
@@ -170,7 +168,7 @@ Check captured service output separately from UI decisions/activity, and disting
 ```sh
 ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \
   cargo test --locked --features ui-tests --lib -- \
-  editor::kittest_tests::export:: editor::kittest_tests::progress:: --test-threads=1
+  editor::kittest_tests::export:: editor::kittest_tests::progress::
 ```
 
 The opt-in [ImageIO export check](diagnostics.md#export) independently reopens TIFF storage/profiles; it needs no private files.
@@ -182,7 +180,7 @@ Exercise the [shared cancellation pattern](architecture.md#cooperative-cancellat
 ```sh
 cargo test --locked --features editor --lib -- \
   cancellation:: editor::analysis_workflow::acknowledgement_tests:: \
-  editor::export_workflow:: editor::export_batch:: --test-threads=1
+  editor::export_workflow:: editor::export_batch::
 ```
 
 ## Roll analysis
@@ -192,9 +190,9 @@ cargo test --locked --features editor --lib -- \
 ```sh
 cargo test --locked --no-default-features --test roll_analysis --test roll_sampling
 cargo test --locked --lib roll_analysis::
-cargo test --locked --features editor --lib editor::analysis:: -- --test-threads=1
-cargo test --locked --features editor --lib editor::analysis_review:: -- --test-threads=1
-cargo test --locked --features editor --lib editor::analysis_workflow:: -- --test-threads=1
+cargo test --locked --features editor --lib editor::analysis::
+cargo test --locked --features editor --lib editor::analysis_review::
+cargo test --locked --features editor --lib editor::analysis_workflow::
 ```
 
 Core checks use synthetic populations. Editor checks exercise preparation and transactional installation; changes to inference scratch must preserve exact outputs and source freshness across reuse and reacquisition.
@@ -202,7 +200,7 @@ Core checks use synthetic populations. Editor checks exercise preparation and tr
 For the actual sampling-area review and Analyze controls with authored RAWs, use the [framework prerequisites](#framework-ui-regressions) and run:
 
 ```sh
-cargo test --locked --features ui-tests --lib editor::kittest_tests::analyze -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::kittest_tests::analyze
 ```
 
 Optional captures use `analyze-` filenames. [Real-RAW diagnostics](diagnostics.md#analyze-roll) evaluate supplied photographs separately.
@@ -210,9 +208,9 @@ Optional captures use `analyze-` filenames. [Real-RAW diagnostics](diagnostics.m
 ## Auto-crop
 
 ```sh
-cargo test --locked --features editor --lib auto_crop -- --test-threads=1
-cargo test --locked --features ui-tests --lib editor::kittest_tests::auto_crop -- --test-threads=1
-cargo test --locked --release --features ui-tests --lib editor::kittest_tests::auto_crop -- --test-threads=1
+cargo test --locked --features editor --lib auto_crop
+cargo test --locked --features ui-tests --lib editor::kittest_tests::auto_crop
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests::auto_crop
 ```
 
 Check both proposal geometry and the composed Apply/Cancel workflow described in [the editor guide](editor.md#auto-crop-is-an-explicit-accepted-edit). Batch proposals must survive browsing without retargeting. `ANTITONE_UI_CAPTURE` enables `auto-crop-` inspection images.
@@ -228,8 +226,8 @@ cargo test --locked --features project --lib project::json
 cargo test --locked --release --features gpu,render,project --test gpu_look_sampling --test gpu_looks
 # Add the independent OCIO CPU all-node forward-reference oracle and original TIFF/EXR checks.
 cargo test --locked --release --features editor,ocio-reference --test gpu_looks --test gpu_look_export
-cargo test --locked --features editor --lib editor::look_ui::tests -- --test-threads=1
-cargo test --locked --features ui-tests --lib editor::kittest_tests::looks -- --test-threads=1
+cargo test --locked --features editor --lib editor::look_ui::tests
+cargo test --locked --features ui-tests --lib editor::kittest_tests::looks
 cargo test --locked --features ui-tests --lib viewer::look_tests
 ```
 
@@ -255,12 +253,12 @@ cargo test --locked --features export,project,ocio-reference --test adjustment_l
 cargo test --locked --features gpu --lib gpu::
 cargo test --locked --features gpu --test gpu_adjustment_layers
 cargo test --locked --features editor,ocio-reference --test adjustment_layer_consumers --test viewer --test scopes
-cargo test --locked --features editor --lib editor::processing::tests -- --test-threads=1
-cargo test --locked --features editor --lib editor::adjustment_layers::tests -- --test-threads=1
-cargo test --locked --features ui-tests --lib editor::kittest_tests::adjustment_layers -- --test-threads=1
-cargo test --locked --features editor --lib editor::mask_editor:: -- --test-threads=1
-cargo test --locked --features editor --lib editor::document::tests::admission -- --test-threads=1
-cargo test --locked --features ui-tests --lib editor::kittest_tests::masks -- --test-threads=1
+cargo test --locked --features editor --lib editor::processing::tests
+cargo test --locked --features editor --lib editor::adjustment_layers::tests
+cargo test --locked --features ui-tests --lib editor::kittest_tests::adjustment_layers
+cargo test --locked --features editor --lib editor::mask_editor::
+cargo test --locked --features editor --lib editor::document::tests::admission
+cargo test --locked --features ui-tests --lib editor::kittest_tests::masks
 ```
 
 Processing admission, source-owned transactions and downstream consumers need separate checks; one supported fixture does not establish admission for every response or control combination. Use [performance/RAW diagnostics](diagnostics.md#adjustment-layer-processing-and-reuse) for opt-in resource observations.
@@ -268,9 +266,9 @@ Processing admission, source-owned transactions and downstream consumers need se
 ## Undo/redo
 
 ```sh
-cargo test --locked --features editor --lib editor::history:: -- --test-threads=1
-cargo test --locked --features ui-tests --lib editor::kittest_tests::history:: -- --test-threads=1
-cargo test --locked --release --features ui-tests --lib editor::kittest_tests::history:: -- --test-threads=1
+cargo test --locked --features editor --lib editor::history::
+cargo test --locked --features ui-tests --lib editor::kittest_tests::history::
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests::history::
 ```
 
 Exercise accepted-state hooks separately from snapshot storage: zero idle history snapshots on repair-bearing projects, gesture grouping, drafts/text ownership, exact values outside slider spans, redo branching, failed restoration and stale worker replies.
@@ -279,16 +277,16 @@ Exercise accepted-state hooks separately from snapshot storage: zero idle histor
 
 ```sh
 cargo test --locked --features project --test dust_project --test image_recipe
-cargo test --locked --features editor --lib repair_tests -- --test-threads=1
-cargo test --locked --features editor --lib recipe_tests -- --test-threads=1
+cargo test --locked --features editor --lib repair_tests
+cargo test --locked --features editor --lib recipe_tests
 # Navigation proxy pixels against scalar grading and independent OCIO output.
 cargo test --locked --features editor,ocio-reference \
-  --lib editor::thumbnails::recipe_tests::pixel_tests -- --test-threads=1
-cargo test --locked --features ui-tests --lib dust -- --test-threads=1
+  --lib editor::thumbnails::recipe_tests::pixel_tests
+cargo test --locked --features ui-tests --lib dust
 # Captured evaluation, physical retirement, source/grade lifetime and shared GPU cache.
-cargo test --locked --features editor --lib editor::dust_workflow:: -- --test-threads=1
-cargo test --locked --features ui-tests --lib editor::document::tests -- --test-threads=1
-cargo test --locked --release --features ui-tests --lib editor::kittest_tests::dust -- --test-threads=1
+cargo test --locked --features editor --lib editor::dust_workflow::
+cargo test --locked --features ui-tests --lib editor::document::tests
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests::dust
 ```
 
 Test [saved repair intent](projects.md#source-owned-dust-repairs) separately from evaluation. Project checks need malformed-record rejection, destination safety and lossless masks/IDs at uneven roll scale. Composed checks need accepted-only dirty state, failure-safe Save/Open/Save As, reopened donor metadata and repaired f32 bits. Viewer/export pixels need repairs before filtering: a nonconstant look must not hide missing repairs, and disabling repairs must restore unrepaired pixels. Navigation checks cover independent proxy grading and card readiness through pending/failed repair work. Optional captures use `dust-persistence-{normal,narrow}-offscreen.png`.
@@ -313,7 +311,7 @@ For scoped execution, admission, source demand and measurement:
 
 ```sh
 for module in application:: blocking_jobs:: editor::development:: editor::measurement:: editor::photo_scope::; do
-  cargo test --locked --features editor --lib "$module" -- --test-threads=1 || break
+  cargo test --locked --features editor --lib "$module" -- || break
 done
 ```
 
@@ -326,8 +324,8 @@ Physical pointer/trackpad behavior, native folder selection and Finder reveal, V
 The optional `ui-tests` feature pins egui_kittest to the application's egui version. It exercises the production UI offscreen, with authored RAWs and no desktop window. Native setup, OCIO and a **GPU device** are required; missing hardware fails rather than silently skipping. Run both profiles:
 
 ```sh
-cargo test --locked --features ui-tests --lib editor::kittest_tests -- --test-threads=1
-cargo test --locked --release --features ui-tests --lib editor::kittest_tests -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::kittest_tests
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests
 cargo clippy --locked --features ui-tests --lib --tests -- -D warnings
 ```
 
@@ -338,7 +336,7 @@ Known Save destinations and chooser results are fixture setup; menu actions, gua
 ```sh
 ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \
   cargo test --locked --features ui-tests --lib dmin_picker_cancels_or_applies \
-  -- --test-threads=1
+
 ```
 
 Captures are clipped/quantized from float output for inspection, not approval of appearance or proof of native surface presentation. Use [native-host checks](#explicit-native-host-checks) for the native-surface boundary.
@@ -374,17 +372,17 @@ Lifecycle success requires actual surface paints and explicit completion; premat
 The native-menu executable also requires explicit `--run`: it activates real AppKit menu items/accelerators, verifies dynamic Undo/Redo labels, and checks event-loop wakeup, minimized-window restoration and temporary native-responder Edit routing. Editor controller/composed checks separately cover unsaved-change protection, numeric commits and Settings:
 
 ```sh
-cargo test --locked --features ui-tests --lib editor::menu::tests -- --test-threads=1
-cargo test --locked --features ui-tests --lib editor::kittest_tests::menus -- --test-threads=1
-cargo test --locked --release --features ui-tests --lib editor::kittest_tests::menus -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::menu::tests
+cargo test --locked --features ui-tests --lib editor::kittest_tests::menus
+cargo test --locked --release --features ui-tests --lib editor::kittest_tests::menus
 ```
 
 The native-termination executable launches children that send real AppKit termination requests and check deferred painting, repeated-request coalescing, rejection/retry and cleanup-before-exit; negative cases cover an interrupted host, a panic while a reply is pending and an incompatible pre-existing delegate method. No child initiates logout/shutdown. Editor controller tests separately exercise dirty/clean requests and blocking tools:
 
 ```sh
-cargo test --locked --features ui-tests --lib editor::menu::quit_tests -- --test-threads=1
-cargo test --locked --release --features ui-tests --lib editor::menu::quit_tests -- --test-threads=1
-cargo test --locked --features ui-tests --lib system_quit_preserves_leading_paste -- --test-threads=1
+cargo test --locked --features ui-tests --lib editor::menu::quit_tests
+cargo test --locked --release --features ui-tests --lib editor::menu::quit_tests
+cargo test --locked --features ui-tests --lib system_quit_preserves_leading_paste
 ```
 
 These checks require an unlocked desktop for focus and native paints; headless or locked-session timeouts are not passes. Fullscreen checks current-Space borderless display coverage and restoration of window bounds/presentation options — do not substitute kittest viewport metadata for that round trip. [Presentation references/stress checks](diagnostics.md#macos-presentation) address a separate boundary.

@@ -12,7 +12,7 @@ use std::path::Path;
 /// ```sh
 /// ANTITONE_DOC_SCANS=/absolute/roll ANTITONE_UI_CAPTURE=assets/docs \
 ///   cargo test --locked --features ui-tests \
-///   --lib editor::kittest_tests::guide_shots -- --test-threads=1
+///   --lib editor::kittest_tests::guide_shots
 /// ```
 ///
 /// `assets/docs/README.md` owns the regeneration procedure; the capture also writes
