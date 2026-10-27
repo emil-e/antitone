@@ -2,9 +2,9 @@
 use super::*;
 
 #[cfg(feature = "project")]
-mod framing;
+mod fit;
 
-pub(super) use framing::prepare;
+pub(super) use fit::prepare;
 
 #[cfg(test)]
 mod tests;
