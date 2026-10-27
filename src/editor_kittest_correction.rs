@@ -530,7 +530,14 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.read(|editor| {
             assert!(editor.correction.is_some(), "{}", editor.status);
             let mut expected = cleared.clone();
-            expected.set_flat_field(editor.document.project.flat_field().cloned());
+            let mut reference = saved.source(settings.reference).unwrap().clone();
+            reference.id = SourceId(expected.next_source_id);
+            expected.next_source_id += 1;
+            let reapplied = editor.document.project.flat_field().cloned().unwrap();
+            assert_eq!(reapplied.reference, reference.id);
+            expected.sources.push(reference);
+            expected.set_flat_field(Some(reapplied));
+            expected.validate().unwrap();
             assert_eq!(editor.document.project, expected);
         });
         std::fs::remove_file(&reference).unwrap();

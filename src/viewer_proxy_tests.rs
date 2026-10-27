@@ -102,6 +102,7 @@ fn selected_proxy_has_one_immutable_source_and_lazy_active_target_output() {
     });
 }
 
+#[cfg(feature = "editor")]
 #[test]
 fn proxy_view_source_accepts_a_cropped_frame_output() {
     pollster::block_on(async {
