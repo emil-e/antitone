@@ -301,6 +301,7 @@ fn cancelling_a_running_measurement_retains_its_source_until_the_computation_ret
     let source = scan.source().clone();
     let lease = Arc::downgrade(&source);
     let input = Input {
+        reference: None,
         source,
         correction: None,
         kind: Pick::Dmin,
@@ -383,6 +384,7 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
             height: area.height - 16,
         };
         let input = Input {
+            reference: None,
             source,
             correction: None,
             kind: Pick::Dmin,
@@ -444,6 +446,7 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
     };
     for kind in [Pick::Dmin, Pick::Dmax] {
         let input = Input {
+            reference: None,
             source: source.clone(),
             correction: Some(correction.clone()),
             kind,
@@ -478,6 +481,7 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
             ..AdjustmentLayerSettings::default()
         };
         let input = Input {
+            reference: None,
             source: source.clone(),
             correction: None,
             kind,
@@ -782,4 +786,111 @@ fn a_completed_wb_pick_cannot_write_to_a_different_selected_layer() {
             assert!(editor.pick.is_none());
         });
     });
+}
+
+#[test]
+fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
+    use crate::exposure_reference::{ReferenceExposure, StartingExposure};
+    let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
+    let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
+    editor.input = InputSettings::Digital;
+    editor.document.project.input = InputSettings::Digital;
+    editor.roll = RollSettings::default();
+    let id = editor.current_source.unwrap();
+    let baseline = ReferenceExposure::Matched(StartingExposure {
+        ev: 2.75,
+        samples: 1024,
+        spread: 0.,
+    });
+    editor.document.visit.ready.as_mut().unwrap().reference = Some(baseline.clone());
+    let ready = editor.document.visit.ready.as_ref().unwrap();
+    let scan = Scan::with_reference(ready.developed.clone(), Some(baseline));
+    let patch = Rect {
+        x: scan.area.x + 8,
+        y: scan.area.y + 8,
+        width: 32,
+        height: 32,
+    };
+    let mut layers = crate::project::AdjustmentLayers::with_global(AdjustmentLayerSettings {
+        contrast: 0.6,
+        ..Default::default()
+    });
+    let upstream = layers.layers[0].adjustment;
+    let selected = layers
+        .add(
+            "WB target".into(),
+            AdjustmentLayer::global(Default::default()),
+        )
+        .unwrap();
+    editor
+        .document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers = Some(layers);
+    editor.refresh_adjustment_layer_selection();
+    editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(selected));
+
+    let expected_signature = crate::scan::ImageSource::new(&scan, InputSettings::Digital)
+        .unwrap()
+        .gpu_program()
+        .unwrap()
+        .signature()
+        .unwrap();
+    assert_eq!(
+        editor
+            .neutral_source_signature(&InputSettings::Digital)
+            .unwrap(),
+        expected_signature
+    );
+    let captured = editor
+        .measurement_input(Pick::Wb, Coverage::rectangle(patch))
+        .unwrap();
+    let mut zero_start = editor
+        .measurement_input(Pick::Wb, Coverage::rectangle(patch))
+        .unwrap();
+    zero_start.reference = None;
+    let Measurement::Balance(control) = zero_start.measure().unwrap() else {
+        panic!("expected WB");
+    };
+    editor.document.visit.ready.as_mut().unwrap().reference = None;
+    let Measurement::Balance(balance) = captured.measure().unwrap() else {
+        panic!("expected WB");
+    };
+
+    let rendered = |balance| {
+        let target = AdjustmentLayer::global(AdjustmentLayerSettings {
+            wb: balance,
+            ..Default::default()
+        });
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+            InputSettings::Digital,
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![upstream, target]).unwrap(),
+            scan.positive_matrix(&InputSettings::Digital).unwrap(),
+        )
+        .unwrap();
+        let mut mean = DVec3::ZERO;
+        for y in patch.y..patch.y + patch.height {
+            for x in patch.x..patch.x + patch.width {
+                mean += pipeline
+                    .apply(scan.pixel(x, y).unwrap(), [x, y])
+                    .unwrap()
+                    .rgb;
+            }
+        }
+        mean / f64::from(patch.width * patch.height)
+    };
+    let correct = rendered(balance);
+    let wrong = rendered(control);
+    let chroma =
+        |rgb: DVec3| (rgb - DVec3::splat(rgb.y)).abs().max_element() / rgb.abs().max_element();
+    assert!(
+        chroma(wrong) > 1e-3,
+        "control must distinguish the lost baseline: {wrong:?}"
+    );
+    assert!(
+        chroma(correct) < 1e-7,
+        "captured pick must neutralize the displayed patch: {correct:?}"
+    );
 }

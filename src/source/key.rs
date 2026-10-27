@@ -2,7 +2,7 @@
 use super::FileKey;
 use crate::{
     project::SourceDevelopment,
-    scan::{CameraProxy, DevelopedSource},
+    scan::{CameraPixels, DevelopedSource},
 };
 use std::path::{Path, PathBuf};
 
@@ -109,11 +109,11 @@ impl SourceKey {
             }
     }
 
-    pub(super) fn matches_proxy(&self, proxy: &CameraProxy) -> bool {
+    pub(super) fn matches_proxy(&self, proxy: &CameraPixels) -> bool {
         proxy.width > 0
             && proxy.height > 0
-            && proxy.width <= CameraProxy::MAX_EDGE
-            && proxy.height <= CameraProxy::MAX_EDGE
+            && proxy.width <= CameraPixels::MAX_EDGE
+            && proxy.height <= CameraPixels::MAX_EDGE
             && proxy.pixels.len() == proxy.width as usize * proxy.height as usize
             && proxy.matrix.to_cols_array_2d() == self.source.camera_to_ap1
     }

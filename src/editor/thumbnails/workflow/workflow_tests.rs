@@ -45,7 +45,7 @@ fn editor(
         });
         editor
             .thumbnails
-            .bind_sources(editor.document.cache.clone());
+            .bind_sources(editor.document.cache.clone(), &editor.document);
         editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
         editor.developments = Some(scheduler);
         editor
@@ -335,7 +335,7 @@ fn document_replacement_retires_old_publication_without_stopping_the_shared_work
             editor.document = second.into();
             editor
                 .thumbnails
-                .bind_sources(editor.document.cache.clone());
+                .bind_sources(editor.document.cache.clone(), &editor.document);
             begin(editor, access, Demand::Hidden);
         });
         app.pump();
@@ -404,7 +404,7 @@ fn document_retirement_drops_thumbnail_demand_queued_behind_unrelated_native_wor
             editor.document = Document::default().into();
             editor
                 .thumbnails
-                .bind_sources(editor.document.cache.clone());
+                .bind_sources(editor.document.cache.clone(), &editor.document);
         });
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while scheduler.waiter_count() != 1 {

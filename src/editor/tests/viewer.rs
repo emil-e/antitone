@@ -681,6 +681,7 @@ fn flat_fixture(editor: &mut Editor) {
     record.path = "light.ARW".into();
     record.reference_only = true;
     let reference = Ready {
+        reference: None,
         developed: ready.developed.clone(),
         file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,

@@ -168,7 +168,7 @@ pub(super) fn develop_scan(
 ) -> Result<Option<Scan>, Error> {
     let request = source::Request {
         input: document.project.input,
-        reference: None,
+        reference: Arc::default(),
         path: path.to_owned(),
         wb: Some(wb),
         expected: Some(expected.clone()),

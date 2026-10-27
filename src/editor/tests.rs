@@ -321,6 +321,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     "a-long-scanning-session-directory/".repeat(12)
                 ));
                 editor.document.visit.ready = Some(Ready {
+                    reference: None,
                     developed: developed_fixture(),
                     file: thumbnails::FileKey::new(&path),
                     thumbnail: None,
@@ -930,6 +931,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
     );
     editor.document.visit.view = editor.id;
     editor.document.visit.ready = Some(Ready {
+        reference: None,
         developed: developed_fixture(),
         file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,
@@ -2269,6 +2271,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
             editor.source_result(
                 editor.id,
                 Ok(Box::new(Ready {
+                    reference: None,
                     developed: ready.developed,
                     file: thumbnails::FileKey::new(&record.path),
                     thumbnail: None,

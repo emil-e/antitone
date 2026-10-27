@@ -150,6 +150,7 @@ struct PickView {
 #[derive(Clone)]
 struct Ready {
     developed: Arc<crate::scan::DevelopedSource>,
+    reference: Option<crate::exposure_reference::ReferenceExposure>,
     file: thumbnails::FileKey,
     thumbnail: Option<(thumbnails::FileKey, Arc<thumbnails::Proxy>)>,
     path: PathBuf,
@@ -230,7 +231,7 @@ fn prepare_source_scheduled(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Ready, Scan), Error> {
     let developed = source::Request {
-        reference: None,
+        reference: Arc::default(),
         input: Default::default(),
         path: path.clone(),
         wb,
@@ -387,7 +388,7 @@ impl Editor {
         editor.thumbnails = thumbnails;
         editor
             .thumbnails
-            .bind_sources(editor.document.cache.clone());
+            .bind_sources(editor.document.cache.clone(), &editor.document);
         editor.preferences.cache_limits = Some(editor.thumbnails.limits);
         editor.scopes = scopes;
         editor
@@ -424,7 +425,7 @@ impl Editor {
         };
         let document: document_scope::DocumentScope = document.into();
         let mut thumbnails = Thumbnails::default();
-        thumbnails.bind_sources(document.cache.clone());
+        thumbnails.bind_sources(document.cache.clone(), &document);
         Self {
             submissions: crate::platform::SubmissionGate::default(),
             developments: None,
@@ -759,7 +760,8 @@ impl Editor {
     }
 
     fn seed_thumbnail(&mut self) {
-        self.thumbnails.bind_sources(self.document.cache.clone());
+        self.thumbnails
+            .bind_sources(self.document.cache.clone(), &self.document);
         let Some(ready) = &mut self.document.visit.ready else {
             return;
         };

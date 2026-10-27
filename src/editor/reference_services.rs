@@ -1,9 +1,6 @@
 use super::{Document, Source, SourceId, document_services, flat::FlatPreview, source};
 use crate::{Error, raw::Rect};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 pub(super) struct Acceptance {
     pub region: Rect,
@@ -34,10 +31,15 @@ impl Acceptance {
             crate::project::FlatFieldSettings::new(self.document.project.source(reference)?, map);
         settings.enabled = enabled;
         self.document.project.set_flat_field(Some(settings));
+        let exposures = Arc::new(crate::exposure_metadata::Store::restored(
+            &self.document.exposure_metadata,
+            |id| self.document.exposure_origin(id),
+        ));
         Ok(document_services::Request {
             work: document_services::Preparation::Correction(self.document, self.selected),
             source: None,
             cache: Some(self.cache),
+            exposures: Some(exposures),
             correction: self.correction,
         })
     }
@@ -50,18 +52,19 @@ impl Services {
     pub async fn preview(
         self,
         request: source::Request,
-        cancelled: Arc<AtomicBool>,
+        cancelled: crate::cancellation::Cancellation,
     ) -> Result<FlatPreview, String> {
         if request.correction.is_some() {
             return Err("Flat-field reference must be uncorrected".into());
         }
         let ready = self.0.clone().prepare(request, cancelled.clone()).await?;
         crate::background::run(move || {
-            if cancelled.load(Ordering::Relaxed) {
+            if cancelled.is_cancelled() {
                 return Err(Error::UnusableSample("reference retired"));
             }
             let scan = source::Context {
                 source: ready.developed.clone(),
+                reference: ready.reference.clone(),
                 correction: None,
             }
             .scan()?;
@@ -76,10 +79,10 @@ impl Services {
     pub async fn estimate(
         &self,
         request: Acceptance,
-        cancelled: Arc<AtomicBool>,
+        cancelled: crate::cancellation::Cancellation,
     ) -> Result<document_services::Request, String> {
         crate::background::run(move || {
-            if cancelled.load(Ordering::Relaxed) {
+            if cancelled.is_cancelled() {
                 return Err(Error::UnusableSample("reference retired"));
             }
             request.estimate()

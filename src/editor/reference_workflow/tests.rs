@@ -3,6 +3,7 @@ use crate::{
     application::test_support::{TestApplication, with_application},
     editor::{document::Document, source, source_loading, tests::fixture},
 };
+use std::sync::{Arc, atomic::Ordering};
 use std::{
     path::PathBuf,
     sync::{Mutex, atomic::AtomicUsize},

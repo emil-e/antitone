@@ -15,7 +15,12 @@ fn source_input(
     let wb = expected.development.decode.fixed_wb;
     let file = document.file_key(&path);
     Ok(source::Request {
-        reference: None,
+        reference: Arc::new(
+            document
+                .reference_exposure(expected)
+                .cloned()
+                .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
+        ),
         input: project.input,
         path,
         wb: Some(wb),
@@ -31,14 +36,20 @@ pub(super) struct Services {
     pub developments: source_loading::SourceLoader,
     pub device: wgpu::Device,
     pub cache: Arc<SourceCache>,
+    pub exposures: Arc<crate::exposure_metadata::Store>,
 }
 
 impl Services {
-    pub fn new(source: &source::Services, cache: Arc<SourceCache>) -> Self {
+    pub fn new(
+        source: &source::Services,
+        cache: Arc<SourceCache>,
+        exposures: Arc<crate::exposure_metadata::Store>,
+    ) -> Self {
         Self {
             developments: source.developments.clone(),
             device: source.device.clone(),
             cache,
+            exposures,
         }
     }
 
@@ -106,30 +117,33 @@ impl Services {
         if cancelled.is_cancelled() {
             return Ok(None);
         }
-        let request = capture()?;
+        let mut request = capture()?;
+        if let Some(expected) = &request.expected {
+            request.reference = self.exposures.memo(expected.id, &request.file.path);
+        }
         let key = request.load_key()?;
-        let cache = request.cache.expect("analysis document cache");
-        let store = cache.clone();
-        let changed = store.listen_for_close();
+        let cache = request.cache.clone().expect("analysis document cache");
+        let input = request.input;
+        let reference = request.reference;
+
         let loader = self.developments.clone();
 
         let load = async {
-            cache
+            let source = cache
                 .load_source(&loader, key, source_loading::Priority::Foreground)
-                .await
-                .map(|source| Some(Scan::from_source(source)))
+                .await?;
+            crate::background::run(move || {
+                crate::photo_preparation::native(Some(&cache), &reference, input, &source)
+                    .map(|prepared| Some(prepared.scan()))
+            })
+            .await
+            .map_err(|_| Error::UnusableSample("analysis preparation panicked"))?
         };
         let stop = async {
             cancelled.wait().await;
             Ok(None)
         };
-        let close = async {
-            if !store.is_closed() {
-                changed.await;
-            }
-            Err(Error::UnusableSample("analysis document retired"))
-        };
-        let result = futures_lite::future::or(stop, futures_lite::future::or(close, load)).await;
+        let result = futures_lite::future::or(stop, load).await;
         if cancelled.is_cancelled() {
             Ok(None)
         } else {

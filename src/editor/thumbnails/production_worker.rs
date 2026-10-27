@@ -35,7 +35,7 @@ struct Worker {
 impl Worker {
     fn active(&self, job: &Job) -> bool {
         self.generation.load(std::sync::atomic::Ordering::Relaxed) == job.ticket
-            && !job.store.is_closed()
+            && !job.cancelled.is_cancelled()
     }
 
     fn begin(&self, job: Job) -> Work {
@@ -112,7 +112,7 @@ impl Worker {
     fn positive(
         &self,
         job: &Job,
-        proxy: Option<&Proxy>,
+        proxy: Option<&crate::scan::CameraProxy>,
         metrics: &mut ThumbnailMetrics,
     ) -> Result<Option<Arc<Product>>, Error> {
         use crate::gpu::view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec};
@@ -271,7 +271,7 @@ impl Worker {
                     let tick = std::time::Instant::now();
                     document::verify_scan(&job.source, &scan)?;
                     work.metrics.verification_seconds = tick.elapsed().as_secs_f64();
-                    if job.store.is_closed() {
+                    if job.cancelled.is_cancelled() {
                         return Ok(None);
                     }
                     if let Some(key) = job.key.source.store_key_at(&job.path)
@@ -295,23 +295,9 @@ impl Worker {
                 }
                 Input::Loading(_) => unreachable!("source acquisition precedes proxy work"),
             };
-            let previous_reference = proxy.reference_exposure.get().cloned();
-            if job.render
-                && let Ok(Some(recipe)) = &job.key.recipe
-            {
-                let key = job
-                    .key
-                    .source
-                    .store_key_at(&job.path)
-                    .ok_or(Error::UnusableSample(
-                        "thumbnail source freshness unavailable",
-                    ))?;
-                proxy = job
-                    .store
-                    .prepare_proxy(&key, recipe.neutral.input, &proxy)?;
-            }
+
             // Proper CPU/disk completion is document demand, not the disposable GPU ticket.
-            if job.store.is_closed() {
+            if job.cancelled.is_cancelled() {
                 return Ok(None);
             }
             if let Some(key) = job.key.source.store_key_at(&job.path)
@@ -320,12 +306,7 @@ impl Worker {
                 proxy = canonical;
             }
             if let Some(disk) = &self.disk
-                && let Err(error) = if previous_reference.as_ref() != proxy.reference_exposure.get()
-                {
-                    disk.store(&job.key.source, &proxy)
-                } else {
-                    disk.store_if_missing(&job.key.source, &proxy)
-                }
+                && let Err(error) = disk.store_if_missing(&job.key.source, &proxy)
             {
                 log::warn!(
                     source_id = job.source.id.0,
@@ -338,7 +319,17 @@ impl Worker {
                 return Ok(None);
             }
             if matches!(&job.key.recipe, Ok(Some(_))) {
-                return self.positive(job, Some(&proxy), &mut work.metrics);
+                let recipe = job.key.recipe.as_ref().unwrap().as_ref().unwrap();
+                let prepared = crate::photo_preparation::proxy(
+                    Some(&job.store),
+                    &job.reference,
+                    &job.path,
+                    &job.key.source.file,
+                    &job.source.development,
+                    recipe.neutral.input,
+                    &proxy,
+                );
+                return self.positive(job, Some(&prepared), &mut work.metrics);
             }
             make_image(
                 &self.device,
@@ -364,9 +355,13 @@ impl Worker {
             phases:? = work.metrics;
             "thumbnail"
         );
+        let mut key = job.key.clone();
+        if let Ok(Some(recipe)) = &mut key.recipe {
+            Arc::make_mut(recipe).neutral.reference = job.reference.get().cloned();
+        }
         Outcome {
             ticket: job.ticket,
-            key: job.key.clone(),
+            key,
             image,
             proper,
         }
@@ -403,7 +398,7 @@ pub(super) fn worker(
             pending.push((worker.begin(submission.job), submission.reply));
         }
         for (work, _) in &mut pending {
-            if work.job.store.is_closed() {
+            if work.job.cancelled.is_cancelled() {
                 work.input = Ok(Input::Retired);
                 continue;
             }

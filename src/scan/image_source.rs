@@ -110,10 +110,8 @@ mod tests {
     fn resolved_images_keep_their_normalization_and_identity_after_native_rebinding() {
         let file = crate::raw::fixture::bayer_dng();
         let native = Scan::open(file.path(), Some([1.; 4])).unwrap();
-        let first_native = native.source().interpreted(&reference(1.));
-        let second_native = native.source().interpreted(&reference(2.));
-        let first_scan = Scan::from_source(first_native);
-        let second_scan = Scan::from_source(second_native);
+        let first_scan = Scan::with_reference(native.source().clone(), Some(reference(1.)));
+        let second_scan = Scan::with_reference(native.source().clone(), Some(reference(2.)));
         let first = ImageSource::new(&first_scan, InputSettings::Digital).unwrap();
         let before = first.sample([32, 32]).unwrap();
         let identity = first.identity().clone();
@@ -124,7 +122,7 @@ mod tests {
         assert!(first.identity() == &identity);
         assert_eq!(first.sample([32, 32]).unwrap(), before);
         let reloaded = Scan::open(file.path(), Some([1.; 4])).unwrap();
-        let reloaded = Scan::from_source(reloaded.source().interpreted(&reference(1.)));
+        let reloaded = Scan::with_reference(reloaded.source().clone(), Some(reference(1.)));
         let image = ImageSource::new(&reloaded, InputSettings::Digital).unwrap();
         assert!(
             image.identity() == first.identity(),

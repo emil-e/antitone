@@ -84,6 +84,7 @@ struct Task {
     share: AtomicUsize,
     sdk: std::sync::atomic::AtomicBool,
     result: Mutex<Option<Completion>>,
+    #[cfg(test)]
     ready: Condvar,
 }
 
@@ -99,6 +100,7 @@ impl Task {
             share: AtomicUsize::new(1),
             sdk: std::sync::atomic::AtomicBool::new(false),
             result: Mutex::new(None),
+            #[cfg(test)]
             ready: Condvar::new(),
         }
     }
@@ -111,6 +113,7 @@ impl Task {
             .iter_mut()
             .filter_map(|consumer| consumer.waker.take())
             .collect();
+        #[cfg(test)]
         self.ready.notify_all();
         for waker in wakers {
             waker.wake();
@@ -190,28 +193,22 @@ pub struct SourceLoader {
     workers: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
 }
 
-struct Demand {
+struct LoadFuture {
     shared: Arc<Shared>,
     task: Arc<Task>,
     id: u64,
-}
 
-pub(crate) struct Ticket {
-    demand: Demand,
     _owner: Arc<Owner>,
 }
 
-impl Future for Ticket {
+impl Future for LoadFuture {
     type Output = Result<Arc<DevelopedSource>, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Register before checking completion. Publication/closure can race the first poll.
         {
-            let mut demands = self.demand.task.demands.lock().unwrap();
-            if let Some(consumer) = demands
-                .iter_mut()
-                .find(|consumer| consumer.id == self.demand.id)
-            {
+            let mut demands = self.task.demands.lock().unwrap();
+            if let Some(consumer) = demands.iter_mut().find(|consumer| consumer.id == self.id) {
                 match &mut consumer.waker {
                     Some(waker) => waker.clone_from(cx.waker()),
                     None => consumer.waker = Some(cx.waker().clone()),
@@ -226,13 +223,12 @@ impl Future for Ticket {
     }
 }
 
-impl Ticket {
-    pub fn result(&self) -> Result<Option<Arc<DevelopedSource>>, Error> {
-        if self.demand.shared.state.lock().unwrap().closed {
+impl LoadFuture {
+    fn result(&self) -> Result<Option<Arc<DevelopedSource>>, Error> {
+        if self.shared.state.lock().unwrap().closed {
             return Err(Error::UnusableSample("RAW development worker stopped"));
         }
-        self.demand
-            .task
+        self.task
             .result
             .lock()
             .unwrap()
@@ -250,11 +246,10 @@ impl Ticket {
             if let Some(source) = self.result()? {
                 return Ok(source);
             }
-            let result = self.demand.task.result.lock().unwrap();
+            let result = self.task.result.lock().unwrap();
             if result.is_none() {
                 drop(
-                    self.demand
-                        .task
+                    self.task
                         .ready
                         .wait_timeout(result, Duration::from_millis(20))
                         .unwrap(),
@@ -264,7 +259,7 @@ impl Ticket {
     }
 }
 
-impl Drop for Demand {
+impl Drop for LoadFuture {
     fn drop(&mut self) {
         let mut demands = self.task.demands.lock().unwrap();
         if let Some(index) = demands.iter().position(|consumer| consumer.id == self.id) {
@@ -513,11 +508,11 @@ impl SourceLoader {
         if cancelled() {
             return Err(Error::UnusableSample("source demand retired"));
         }
-        self.submit(request, priority)?.wait(cancelled)
+        self.submit_request(request, priority)?.wait(cancelled)
     }
 
-    pub(crate) fn submit_key(&self, key: SourceKey, priority: Priority) -> Result<Ticket, Error> {
-        self.submit(
+    fn submit_key(&self, key: SourceKey, priority: Priority) -> Result<LoadFuture, Error> {
+        self.submit_request(
             Request {
                 path: key.path().to_owned(),
                 wb: Some(key.development().decode.fixed_wb),
@@ -528,13 +523,18 @@ impl SourceLoader {
         )
     }
 
-    pub(crate) fn submit(&self, request: Request, priority: Priority) -> Result<Ticket, Error> {
+    #[cfg(test)]
+    pub(crate) fn submit(
+        &self,
+        request: Request,
+        priority: Priority,
+    ) -> Result<impl Future<Output = Result<Arc<DevelopedSource>, Error>> + Send, Error> {
         self.submit_request(request, priority)
     }
 
-    fn submit_request(&self, request: Request, priority: Priority) -> Result<Ticket, Error> {
+    fn submit_request(&self, request: Request, priority: Priority) -> Result<LoadFuture, Error> {
         let shared = self.owner.0.clone();
-        let demand = {
+        let future = {
             let mut state = shared.state.lock().unwrap();
             if state.closed {
                 return Err(Error::UnusableSample("RAW development worker stopped"));
@@ -568,17 +568,15 @@ impl SourceLoader {
                 priority,
                 waker: None,
             });
-            Demand {
+            LoadFuture {
                 shared: shared.clone(),
                 task,
                 id,
+                _owner: self.owner.clone(),
             }
         };
         shared.changed.notify_all();
-        Ok(Ticket {
-            demand,
-            _owner: self.owner.clone(),
-        })
+        Ok(future)
     }
 }
 

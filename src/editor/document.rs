@@ -149,36 +149,60 @@ impl Document {
         Ok((source, preview))
     }
 
-    pub(super) fn capture_exposure(&mut self, cache: &crate::source::SourceCache) {
-        self.exposure_metadata = Arc::new(cache.exposure_metadata(&self.project, |id| {
-            self.project
-                .source(id)
-                .ok()
-                .and_then(|source| self.source_key(source))
-        }));
+    pub(super) fn image_recipe(&self, id: SourceId) -> Result<crate::image_recipe::ImageRecipe> {
+        let mut recipe = self.project.image_recipe(id)?;
+        recipe.neutral.reference = self.reference_exposure(self.project.source(id)?).cloned();
+        Ok(recipe)
     }
 
-    pub(super) fn source_key(&self, source: &Source) -> Option<crate::source::SourceKey> {
-        let path = self.source_path(source.id).ok()?;
-        crate::source::SourceKey::from_revision(&path, self.file_key(&path), &source.development)
+    pub(super) fn thumbnail_recipe(
+        &self,
+        id: SourceId,
+    ) -> Result<crate::image_recipe::ImageRecipe> {
+        let mut recipe = self.project.thumbnail_recipe(id)?;
+        recipe.neutral.reference = self.reference_exposure(self.project.source(id)?).cloned();
+        Ok(recipe)
+    }
+
+    pub(super) fn exposure_origin(&self, id: SourceId) -> Option<PathBuf> {
+        self.source_path(id)
+            .ok()
+            .map(|path| self.file_key(&path).path)
+    }
+
+    pub(super) fn exposure_slot(
+        &self,
+        exposures: &crate::exposure_metadata::Store,
+        id: SourceId,
+    ) -> Arc<std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>> {
+        exposures.memo(
+            id,
+            &self.exposure_origin(id).expect("registered photo locator"),
+        )
+    }
+
+    pub(super) fn capture_exposure(&mut self, exposures: &crate::exposure_metadata::Store) {
+        let mut metadata = self.exposure_metadata.as_ref().clone();
+        for entry in exposures
+            .snapshot(&self.project, |id| self.exposure_origin(id))
+            .entries
+        {
+            metadata
+                .entries
+                .retain(|existing| existing.source != entry.source);
+            metadata.entries.push(entry);
+        }
+        self.exposure_metadata = Arc::new(metadata.for_project(&self.project));
     }
 
     pub(super) fn reference_exposure(
         &self,
         source: &Source,
     ) -> Option<&crate::exposure_reference::ReferenceExposure> {
-        if self.project.input.is_negative() {
-            return None;
-        }
-        let key = self.source_key(source)?;
         self.exposure_metadata
             .entries
             .iter()
-            .find(|entry| {
-                entry.source == source.id
-                    && entry.development == source.development
-                    && key.file().revision.as_ref() == Some(&entry.revision)
-            })
+            .find(|entry| entry.source == source.id)
             .map(|entry| &entry.reference)
     }
 

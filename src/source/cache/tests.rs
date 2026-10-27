@@ -249,17 +249,19 @@ fn completed_native_result_is_reused_before_any_cache_wrapper_has_published_it()
         }
         Ok(())
     });
-    let first = scheduler
-        .submit_key(key.clone(), source_loading::Priority::Foreground)
-        .unwrap();
+    let mut first =
+        Box::pin(scheduler.load_source(key.clone(), source_loading::Priority::Foreground));
     let deadline = Instant::now() + Duration::from_secs(5);
     let produced = loop {
-        if let Some(source) = first.result().unwrap() {
-            break source;
+        if let Some(source) =
+            futures_lite::future::block_on(futures_lite::future::poll_once(&mut first))
+        {
+            break source.unwrap();
         }
         assert!(Instant::now() < deadline, "native source did not complete");
         std::thread::sleep(Duration::from_millis(1));
     };
+    drop(first);
     let weak = Arc::downgrade(&produced);
     let store = Arc::new(SourceCache::new(0));
     let provider = scheduler;
@@ -276,11 +278,53 @@ fn completed_native_result_is_reused_before_any_cache_wrapper_has_published_it()
         1,
         "publication handoff must not cause another development"
     );
-    drop((first, produced, lease));
+    drop((produced, lease));
     assert!(
         weak.upgrade().is_none(),
         "loader discovery must not become optional strong retention"
     );
+}
+
+#[test]
+fn an_interpreted_pixel_lease_remains_discoverable_across_cache_scopes() {
+    let (_file, key, _original) = input();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let loader = SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::DevelopBegin) {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    });
+    let cache = SourceCache::new(0);
+    let physical = futures_lite::future::block_on(cache.load_source(
+        &loader,
+        key.clone(),
+        source_loading::Priority::Foreground,
+    ))
+    .unwrap();
+    let interpreted = crate::photo_preparation::native(
+        Some(&cache),
+        &OnceLock::new(),
+        crate::processing::InputSettings::Digital,
+        &physical,
+    )
+    .unwrap();
+    drop(physical);
+    drop(cache);
+    let next = futures_lite::future::block_on(SourceCache::new(0).load_source(
+        &loader,
+        key,
+        source_loading::Priority::Foreground,
+    ))
+    .unwrap();
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        1,
+        "live interpreted pixels must not require another native development"
+    );
+    drop((interpreted, next));
+    loader.close_and_wait().unwrap();
 }
 
 #[test]

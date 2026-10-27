@@ -23,7 +23,7 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
         let ready = services
             .prepare(
                 source::Request {
-                    reference: None,
+                    reference: Arc::default(),
                     input: document.project.input,
                     path: path.clone(),
                     wb: wb(&document),
@@ -32,12 +32,13 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
                     cache: Some(document.cache.clone()),
                     file: document.file_key(&path),
                 },
-                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                crate::cancellation::Cancellation::default(),
             )
             .await
             .unwrap();
         assert_eq!(ready.analysis_support, None);
         let support = support_workflow::prepare(source::Context {
+            reference: None,
             source: ready.developed,
             correction: None,
         })

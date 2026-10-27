@@ -187,7 +187,10 @@ impl Editor {
         let wb = self.document.project.acquisition_wb(expected.as_ref());
         let file = self.document.file_key(&path);
         source::Request {
-            reference: None,
+            reference: expected.as_ref().map_or_else(Arc::default, |source| {
+                self.document
+                    .exposure_slot(&self.document.exposures, source.id)
+            }),
             input: self.input(),
             path,
             wb,
@@ -222,6 +225,7 @@ impl Editor {
             selected: self.current_source,
             source: source::Context {
                 source: ready.developed.clone(),
+                reference: ready.reference.clone(),
                 correction: None,
             },
             record: ready.record.clone(),

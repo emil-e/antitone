@@ -488,6 +488,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
         };
         let path = PathBuf::from("scope-fixture.ARW");
         let mut ready = Ready {
+            reference: None,
             developed: crate::editor::tests::developed_fixture(),
             file: thumbnails::FileKey::new(&path),
             thumbnail: None,

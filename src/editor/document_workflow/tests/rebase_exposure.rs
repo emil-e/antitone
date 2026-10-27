@@ -52,8 +52,7 @@ fn opening_without_saved_exposure_is_independent_of_the_previous_documents_refer
     document.exposure_metadata = Arc::new(Metadata {
         entries: vec![Entry {
             source: source.id,
-            development: source.development.clone(),
-            revision: document.file_key(raw.path()).revision.unwrap(),
+
             reference: unavailable.clone(),
         }],
         ..Default::default()
@@ -70,7 +69,7 @@ fn opening_without_saved_exposure_is_independent_of_the_previous_documents_refer
                 app.run_until(Duration::from_secs(15), |e| !e.busy);
                 app.read(|e| {
                     let ready = e.document.visit.ready.as_ref().expect("opened source");
-                    values.push(ready.developed.reference_exposure.get().unwrap().clone());
+                    values.push(ready.reference.as_ref().unwrap().clone());
                     leases.push(ready.developed.clone());
                 });
             }
@@ -87,6 +86,72 @@ fn opening_without_saved_exposure_is_independent_of_the_previous_documents_refer
 }
 
 #[test]
+fn reopening_keeps_the_recorded_baseline_when_legacy_fingerprints_differ() {
+    let raw = crate::exposure_fixture::neutral_dng(1.3);
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("recorded.antitone");
+    let saved_again = directory.path().join("saved-again.antitone");
+    let mut document = digital(&[raw.path().to_owned()]);
+    let id = document.project.order[0];
+    let baseline = reference(2.75);
+    document.exposure_metadata = Arc::new(Metadata {
+        entries: vec![Entry {
+            source: id,
+            reference: baseline.clone(),
+        }],
+        ..Default::default()
+    });
+    document.save(&project, crate::project::Save::New).unwrap();
+
+    // Older projects carried decoder/file checks alongside the value. Keep the
+    // real source compatible, but make both saved estimator fingerprints differ.
+    let mut encoded: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&project).unwrap()).unwrap();
+    let mut previous_development = document.project.source(id).unwrap().development.clone();
+    previous_development.decode.backend_version = "previous developer version".into();
+    encoded["exposure_metadata"]["entries"][0]["development"] =
+        serde_json::to_value(previous_development).unwrap();
+    encoded["exposure_metadata"]["entries"][0]["revision"] =
+        serde_json::to_value(crate::source::FileRevision::read(raw.path()).unwrap()).unwrap();
+    std::fs::write(&project, serde_json::to_vec(&encoded).unwrap()).unwrap();
+    std::fs::File::open(raw.path())
+        .unwrap()
+        .set_times(
+            std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1)),
+        )
+        .unwrap();
+
+    let loader = source_loading::SourceLoader::new();
+    with_application(editor(loader.clone()), |app| {
+        app.enter(|e, cx| e.start_document(Preparation::Open(project), cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert_eq!(
+                e.document
+                    .visit
+                    .ready
+                    .as_ref()
+                    .expect("opened photo")
+                    .reference
+                    .as_ref(),
+                Some(&baseline)
+            );
+            assert_eq!(e.document.project.roll.exposure, 0.);
+            e.document
+                .capture()
+                .save(&saved_again, crate::project::Save::New)
+                .unwrap();
+        });
+    });
+    let restored = crate::project::Project::load(&saved_again).unwrap();
+    assert_eq!(
+        restored.exposure_metadata.unwrap().entries[0].reference,
+        baseline
+    );
+    loader.close_and_wait().unwrap();
+}
+
+#[test]
 fn relative_save_as_keeps_normalized_range_admission() {
     let raw = crate::exposure_fixture::neutral_dng(1.3);
     let destination = tempfile::tempdir().unwrap();
@@ -100,8 +165,11 @@ fn relative_save_as_keeps_normalized_range_admission() {
     range_stack(&mut document, id);
     document.validate_with_device(None).unwrap();
     let scope: crate::editor::document_scope::DocumentScope = document.into();
-    let key = scope.source_key(scope.project.source(id).unwrap()).unwrap();
-    scope.cache.exposure_memo(&key).set(reference(3.)).unwrap();
+
+    scope
+        .exposure_slot(&scope.exposures, id)
+        .set(reference(3.))
+        .unwrap();
     let snapshot = scope.capture();
     assert!(
         snapshot.validate_with_device(None).is_err(),
@@ -125,14 +193,10 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
     document.validate_with_device(None).unwrap();
     editor.document.install(document);
     let historical = editor.document.project.clone();
-    let key = editor
-        .document
-        .source_key(editor.document.project.source(offscreen).unwrap())
-        .unwrap();
+
     editor
         .document
-        .cache
-        .exposure_memo(&key)
+        .exposure_slot(&editor.document.exposures, offscreen)
         .set(reference(3.))
         .unwrap();
     editor
@@ -147,6 +211,7 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
     let prepare = |cache| {
         super::super::super::document_services::candidate(
             crate::editor::DocumentRequest {
+                exposures: None,
                 work: Preparation::History(
                     target.clone(),
                     Some(selected),
@@ -182,6 +247,76 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
                 Some("Remove photo")
+            );
+        });
+    });
+    loader.close_and_wait().unwrap();
+}
+
+#[test]
+fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseline() {
+    let first = crate::exposure_fixture::neutral_dng(0.3);
+    let removed = crate::exposure_fixture::neutral_dng(1.3);
+    let replacement = crate::exposure_fixture::neutral_dng(2.3);
+    let loader = source_loading::SourceLoader::new();
+    let mut editor = editor(loader.clone());
+    editor.input = InputSettings::Digital;
+    editor.document.project.input = InputSettings::Digital;
+    with_application(editor, |app| {
+        for path in [first.path(), removed.path()] {
+            app.enter(|e, cx| e.add_raws(vec![path.to_owned()], cx));
+            app.run_until(Duration::from_secs(15), |e| !e.busy);
+        }
+        let removed_id = app.read(|e| e.document.project.order[1]);
+        app.enter(|e, cx| e.load_source(removed.path().to_owned(), true, cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert!(
+                (e.document
+                    .visit
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .reference
+                    .as_ref()
+                    .unwrap()
+                    .ev()
+                    - 1.3)
+                    .abs()
+                    < 0.03
+            )
+        });
+        app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| assert_eq!(e.document.project.order.len(), 1));
+        app.enter(|e, cx| e.add_raws(vec![replacement.path().to_owned()], cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert_eq!(
+                e.document.project.order[1], removed_id,
+                "exercise actual numeric ID reuse"
+            )
+        });
+        app.enter(|e, cx| e.load_source(replacement.path().to_owned(), true, cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert!(
+                (e.document
+                    .visit
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .reference
+                    .as_ref()
+                    .unwrap()
+                    .ev()
+                    - 2.3)
+                    .abs()
+                    < 0.03
+            );
+            assert!(
+                e.history_label(crate::editor::history::Direction::Redo)
+                    .is_none()
             );
         });
     });

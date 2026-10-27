@@ -8,6 +8,7 @@ fn awaited_native_stages_reuse_exact_scratch_and_fall_back_without_changing_area
     let before = request.document.project.clone();
     let (scheduler, count) = observed();
     let services = Services {
+        exposures: Arc::default(),
         cache: Arc::new(crate::source::SourceCache::new(0)),
         developments: scheduler.clone(),
         device,
@@ -49,6 +50,7 @@ fn async_roll_barrier_cancellation_does_not_reacquire_or_return_partial_support(
     let result = futures_lite::future::block_on(prepare(
         request.clone(),
         Services {
+            exposures: Arc::default(),
             cache: Arc::new(crate::source::SourceCache::new(0)),
             developments: scheduler.clone(),
             device,

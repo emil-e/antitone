@@ -58,7 +58,7 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     )
     .unwrap();
     let proxy = Arc::new(Proxy::from_scan(&scan).unwrap());
-    thumbnails.bind_sources(document.cache.clone());
+    thumbnails.bind_sources(document.cache.clone(), &document);
     thumbnails.seed(
         &source,
         FileKey::new(&document.source_path(id).unwrap()),
@@ -193,12 +193,11 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
         .project
         .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let id = document.project.order[0];
-    thumbnails.bind_sources(document.cache.clone());
+    thumbnails.bind_sources(document.cache.clone(), &document);
     thumbnails.seed(
         document.project.source(id).unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
         Arc::new(Proxy {
-            reference_exposure: Default::default(),
             width: 8,
             height: 6,
             pixels: vec![[5000., 7000., 9000., 0.]; 48].into(),
@@ -638,7 +637,7 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     editor.thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 64 << 20,
@@ -750,7 +749,7 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
         .unwrap(),
     ));
     let document: crate::editor::document_scope::DocumentScope = document.into();
-    thumbnails.bind_sources(document.cache.clone());
+    thumbnails.bind_sources(document.cache.clone(), &document);
     for &id in &document.project.order {
         let product = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
         assert!(product.positive.is_some());

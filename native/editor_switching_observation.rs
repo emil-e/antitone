@@ -202,7 +202,7 @@ fn workload(
     });
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     editor.set_dmin(Some(DVec3::new(0.28, 0.20, 0.14)));
     editor.set_dmax(Some(DVec3::new(0.028, 0.020, 0.014)));
     editor.sync_document();

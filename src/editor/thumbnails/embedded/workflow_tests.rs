@@ -40,7 +40,7 @@ fn editor(document: Document, services: Services) -> Editor {
     editor.thumbnails.embedded.services = Some(services);
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     editor
 }
 
@@ -158,7 +158,7 @@ fn document_retirement_discards_old_results_and_queues_current_demand() {
             editor.document = second.into();
             editor
                 .thumbnails
-                .bind_sources(editor.document.cache.clone());
+                .bind_sources(editor.document.cache.clone(), &editor.document);
             editor.request_embedded_previews(&next, true, &context, access);
         });
         app.pump();

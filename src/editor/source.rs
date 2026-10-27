@@ -15,6 +15,7 @@ mod tests;
 #[derive(Clone)]
 pub(super) struct Context {
     pub source: Arc<DevelopedSource>,
+    pub reference: Option<crate::exposure_reference::ReferenceExposure>,
     pub correction: Option<Arc<Correction>>,
 }
 
@@ -22,6 +23,7 @@ impl Editor {
     pub(super) fn source_context(&self) -> Option<Context> {
         Some(Context {
             source: self.document.visit.ready.as_ref()?.developed.clone(),
+            reference: self.document.visit.ready.as_ref()?.reference.clone(),
             correction: if self.flat_edit.is_some() {
                 None
             } else {
@@ -41,7 +43,7 @@ impl Context {
                     self.source.fixed_wb(),
                 )?)?;
         }
-        let mut scan = Scan::from_source(self.source.clone());
+        let mut scan = Scan::with_reference(self.source.clone(), self.reference.clone());
         scan.set_flat_field(
             self.correction
                 .as_ref()
@@ -53,7 +55,7 @@ impl Context {
 
 pub(super) struct Request {
     pub input: crate::processing::InputSettings,
-    pub reference: Option<crate::exposure_reference::ReferenceExposure>,
+    pub reference: Arc<std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>>,
     pub path: PathBuf,
     pub wb: Option<[f64; 4]>,
     pub expected: Option<Source>,
@@ -71,7 +73,7 @@ pub(super) struct Developed {
     cache: Option<Arc<SourceCache>>,
     key: Option<SourceKey>,
     timing: Timing,
-    camera_proxy: Option<Arc<crate::scan::CameraProxy>>,
+    camera_proxy: Option<Arc<crate::scan::CameraPixels>>,
 }
 
 #[derive(Clone)]
@@ -86,15 +88,12 @@ impl Services {
     pub async fn prepare(
         self,
         request: Request,
-        cancelled: Arc<std::sync::atomic::AtomicBool>,
+        cancelled: crate::cancellation::Cancellation,
     ) -> Result<Ready, String> {
-        let developed = self
-            .clone()
-            .develop(request, cancelled.clone(), false)
-            .await?;
+        let developed = self.clone().develop(request, cancelled.clone()).await?;
         crate::background::run(move || {
             developed.prepare_gpu(&self.renderers, &self.device, &self.queue, &|| {
-                cancelled.load(std::sync::atomic::Ordering::Relaxed)
+                cancelled.is_cancelled()
             })
         })
         .await
@@ -108,7 +107,7 @@ impl Services {
         request: Request,
         cancelled: crate::cancellation::Cancellation,
     ) -> Result<Context, String> {
-        self.develop(request, cancelled.flag(), true)
+        self.develop(request, cancelled)
             .await
             .map(|value| value.context)
     }
@@ -116,22 +115,16 @@ impl Services {
     async fn develop(
         self,
         request: Request,
-        cancelled: Arc<std::sync::atomic::AtomicBool>,
-        independent: bool,
+        cancelled: crate::cancellation::Cancellation,
     ) -> Result<Developed, String> {
         let started = std::time::Instant::now();
         let retired = cancelled.clone();
 
         let needs_header = request.expected.is_none();
         let capture = move || {
-            let mut request = request;
-            let cache = request.cache.clone();
-            if independent {
-                request.cache = None;
-            }
-            request.require_live(&|| retired.load(std::sync::atomic::Ordering::Relaxed))?;
+            request.require_live(&|| retired.is_cancelled())?;
             let key = request.load_key()?;
-            Ok::<_, Error>((request, key, cache))
+            Ok::<_, Error>((request, key))
         };
         let captured = if needs_header {
             crate::background::run(capture)
@@ -140,11 +133,8 @@ impl Services {
         } else {
             capture()
         };
-        let (request, key, cache) = captured.map_err(|error| error.to_string())?;
-        let references = cache
-            .clone()
-            .unwrap_or_else(|| Arc::new(SourceCache::new(0)));
-        let store = if independent { None } else { cache.clone() };
+        let (request, key) = captured.map_err(|error| error.to_string())?;
+        let cache = request.cache.clone();
         let loader = self.developments.clone();
         let load = async {
             match cache {
@@ -160,19 +150,13 @@ impl Services {
                 }
             }
         };
-        let source = if let Some(store) = store {
-            let changed = store.listen_for_close();
-            let close = async {
-                if !store.is_closed() {
-                    changed.await;
-                }
-                Err(Error::UnusableSample("document source work retired"))
-            };
-            futures_lite::future::or(close, load).await
-        } else {
-            load.await
-        }
-        .map_err(|error| error.to_string())?;
+        let stop = async {
+            cancelled.wait().await;
+            Err(Error::Cancelled)
+        };
+        let source = futures_lite::future::or(stop, load)
+            .await
+            .map_err(|error| error.to_string())?;
         let timing = Timing {
             started,
             development_seconds: started.elapsed().as_secs_f64(),
@@ -182,13 +166,7 @@ impl Services {
         let file = key.file().clone();
 
         crate::background::run(move || {
-            request.accept(
-                source,
-                file,
-                references,
-                &|| cancelled.load(std::sync::atomic::Ordering::Relaxed),
-                timing,
-            )
+            request.accept(source, file, &|| cancelled.is_cancelled(), timing)
         })
         .await
         .map_err(|_| "Source preparation worker panicked".to_owned())?
@@ -205,7 +183,7 @@ struct Timing {
 
 impl Request {
     fn require_live(&self, cancelled: &dyn Fn() -> bool) -> Result<(), Error> {
-        if cancelled() || self.cache.as_ref().is_some_and(|cache| cache.is_closed()) {
+        if cancelled() {
             return Err(Error::UnusableSample("document source work retired"));
         }
         Ok(())
@@ -277,18 +255,14 @@ impl Request {
             registration_seconds: 0.,
             verification_seconds: 0.,
         };
-        let references = self
-            .cache
-            .as_ref()
-            .map_or_else(|| Arc::new(SourceCache::new(0)), |cache| cache.clone());
-        self.accept(source, file, references, cancelled, timing)
+        self.accept(source, file, cancelled, timing)
     }
 
     fn accept(
         self,
         source: Arc<DevelopedSource>,
         file: thumbnails::FileKey,
-        references: Arc<SourceCache>,
+
         cancelled: &dyn Fn() -> bool,
         mut timing: Timing,
     ) -> Result<Developed, Error> {
@@ -303,15 +277,14 @@ impl Request {
         let mut scan = Scan::from_source(source);
         document::verify_scan(&record, &scan)?;
         timing.verification_seconds = tick.elapsed().as_secs_f64();
-        if let Some(reference) = &self.reference {
-            let key = SourceKey::for_load(&self.path, file.clone(), &record.development);
-            references
-                .exposure_memo(&key)
-                .get_or_init(|| reference.clone());
-        }
-        let prepared = references.prepare_source(self.input, scan.source())?;
+        let prepared = crate::photo_preparation::native(
+            self.cache.as_deref(),
+            &self.reference,
+            self.input,
+            scan.source(),
+        )?;
         let camera_proxy = prepared.proxy;
-        scan = Scan::from_source(prepared.source);
+        scan = Scan::with_reference(prepared.source, prepared.reference);
         self.require_live(cancelled)?;
         let key = SourceKey::from_revision(&self.path, file.clone(), &record.development);
         if let Some(correction) = &self.correction {
@@ -319,6 +292,7 @@ impl Request {
         }
         let context = Context {
             source: scan.source().clone(),
+            reference: scan.reference_exposure.clone(),
             correction: self.correction,
         };
         context.scan()?;
@@ -343,7 +317,7 @@ impl Developed {
         queue: &wgpu::Queue,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Ready, Error> {
-        if cancelled() || self.cache.as_ref().is_some_and(|cache| cache.is_closed()) {
+        if cancelled() {
             return Err(Error::UnusableSample("document source work retired"));
         }
         let scan = self.context.scan()?;
@@ -402,6 +376,7 @@ impl Developed {
 
         Ok(Ready {
             developed: self.context.source,
+            reference: self.context.reference,
             file: self.file,
             thumbnail,
             path: self.path,

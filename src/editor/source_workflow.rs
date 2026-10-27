@@ -4,10 +4,7 @@ use super::{
 use crate::processing::InputSettings;
 use crate::source::SourceKey;
 use std::path::PathBuf;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 #[cfg(test)]
 mod tests;
@@ -39,13 +36,6 @@ impl State {
     }
 }
 
-struct Retire(Arc<AtomicBool>);
-impl Drop for Retire {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-}
-
 impl Editor {
     pub(super) fn source_input(&self, path: PathBuf) -> source::Request {
         let expected = self
@@ -56,7 +46,10 @@ impl Editor {
         let wb = self.document.project.acquisition_wb(expected.as_ref());
         let file = self.document.file_key(&path);
         source::Request {
-            reference: None,
+            reference: expected.as_ref().map_or_else(Arc::default, |source| {
+                self.document
+                    .exposure_slot(&self.document.exposures, source.id)
+            }),
             input: self.input(),
             path,
             wb,
@@ -146,8 +139,8 @@ impl Editor {
         });
         let view = self.document.visit.view;
         let services = self.source_services.clone();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let retire = Retire(cancelled.clone());
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
             let result = match services {
@@ -265,6 +258,7 @@ impl Editor {
                         ready.developed.fixed_wb(),
                     );
                 }
+                self.document.cache_ready(&ready);
                 self.document.visit.ready = Some(*ready);
             }
             Err(error) => {

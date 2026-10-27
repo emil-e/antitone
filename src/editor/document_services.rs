@@ -21,6 +21,7 @@ pub(super) struct Request {
     pub source: Option<(u64, Ready)>,
     pub correction: Option<Arc<Correction>>,
     pub cache: Option<Arc<crate::source::SourceCache>>,
+    pub exposures: Option<Arc<crate::exposure_metadata::Store>>,
 }
 
 pub(super) struct Prepared {
@@ -62,6 +63,7 @@ pub(super) fn candidate(
         source: previous,
         correction: previous_correction,
         cache,
+        exposures,
     } = request;
     let preserve_view = matches!(
         work,
@@ -90,8 +92,8 @@ pub(super) fn candidate(
             (document, None)
         }
         Preparation::History(mut document, _, _) => {
-            if let Some(cache) = &cache {
-                document.capture_exposure(cache);
+            if let Some(exposures) = &exposures {
+                document.capture_exposure(exposures);
             }
             document.validate_for_device(device)?;
             for id in document.project.order.clone() {
@@ -100,8 +102,8 @@ pub(super) fn candidate(
             (document, None)
         }
     };
-    if let Some(cache) = &cache {
-        document.capture_exposure(cache);
+    if let Some(exposures) = &exposures {
+        document.capture_exposure(exposures);
     }
     let correction = Correction::prepare(device, &document, previous_correction.as_ref())?;
     for record in &document.project.sources {
@@ -117,8 +119,7 @@ pub(super) fn candidate(
             .project
             .source(selected)
             .is_ok_and(|source| source.development == ready.record.development)
-        && (document.project.input.is_negative()
-            || ready.developed.reference_exposure.get().is_some())
+        && (document.project.input.is_negative() || ready.reference.is_some())
     {
         return Ok(Candidate {
             prepared: Prepared {
@@ -138,7 +139,15 @@ pub(super) fn candidate(
             .or_else(|| document.project.order.first().copied())
     });
     let source = selected
-        .map(|id| source_request(&document, id, correction.clone(), cache.clone()))
+        .map(|id| {
+            source_request(
+                &document,
+                id,
+                correction.clone(),
+                cache.clone(),
+                exposures.as_deref(),
+            )
+        })
         .transpose()?;
     Ok(Candidate {
         prepared: Prepared {
@@ -158,13 +167,24 @@ fn source_request(
     id: SourceId,
     correction: Option<Arc<Correction>>,
     cache: Option<Arc<crate::source::SourceCache>>,
+    exposures: Option<&crate::exposure_metadata::Store>,
 ) -> Result<source::Request, Error> {
     let path = document.source_path(id)?;
     let expected = document.project.source(id)?.clone();
     let wb = Some(expected.development.decode.fixed_wb);
     let file = document.file_key(&path);
     Ok(source::Request {
-        reference: document.reference_exposure(&expected).cloned(),
+        reference: exposures.map_or_else(
+            || {
+                Arc::new(
+                    document
+                        .reference_exposure(&expected)
+                        .cloned()
+                        .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
+                )
+            },
+            |store| document.exposure_slot(store, id),
+        ),
         input: document.project.input,
         path,
         expected: Some(expected),
@@ -182,17 +202,17 @@ impl PreparationServices {
     pub async fn prepare(
         self,
         request: Request,
-        cancelled: Arc<std::sync::atomic::AtomicBool>,
+        cancelled: crate::cancellation::Cancellation,
         progress: impl FnMut(usize, usize) + Send + 'static,
     ) -> Result<Prepared, String> {
-        let cache = request.cache.clone();
+        let exposures = request.exposures.clone();
         let device = self.0.device.clone();
         let retired = cancelled.clone();
         let Candidate {
             mut prepared,
             source,
         } = crate::background::run(move || {
-            if retired.load(std::sync::atomic::Ordering::Relaxed) {
+            if retired.is_cancelled() {
                 return Err(Error::UnusableSample("document preparation retired"));
             }
             candidate(request, &device, progress)
@@ -200,7 +220,7 @@ impl PreparationServices {
         .await
         .map_err(|_| "Document preparation worker panicked".to_owned())?
         .map_err(|error| error.to_string())?;
-        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+        if cancelled.is_cancelled() {
             return Err("Document preparation retired".into());
         }
         if let Some(source) = source {
@@ -208,29 +228,20 @@ impl PreparationServices {
         }
         if let Some(id) = prepared.selected
             && let Some(ready) = &prepared.ready
-            && let Some(reference) = ready.developed.reference_exposure.get()
-            && let Some(revision) = &ready.file.revision
+            && let Some(reference) = &ready.reference
         {
-            let development = prepared
-                .document
-                .project
-                .source(id)
-                .map_err(|e| e.to_string())?
-                .development
-                .clone();
             let metadata = Arc::make_mut(&mut prepared.document.exposure_metadata);
             metadata.entries.retain(|entry| entry.source != id);
             metadata.entries.push(crate::exposure_metadata::Entry {
                 source: id,
-                development,
-                revision: revision.clone(),
+
                 reference: reference.clone(),
             });
         }
         let device = self.0.device.clone();
         crate::background::run(move || {
-            if let Some(cache) = &cache {
-                prepared.document.capture_exposure(cache);
+            if let Some(exposures) = &exposures {
+                prepared.document.capture_exposure(exposures);
             }
             prepared.document.validate_with_device(Some(&device))?;
             Ok(prepared)

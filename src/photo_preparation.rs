@@ -6,91 +6,89 @@ use crate::{
     exposure_reference::{self, ReferenceExposure, UnavailableReference as Unavailable},
     processing::{InputSettings, exposure_multiplier},
     project::SourceDevelopment,
-    scan::{CameraProxy, DevelopedSource, Scan},
+    scan::{CameraPixels, CameraProxy, DevelopedSource, Scan},
     source::FileKey,
     source::{SourceCache, SourceKey},
 };
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+pub(crate) struct PreparedSource {
+    pub source: Arc<DevelopedSource>,
+    pub reference: Option<ReferenceExposure>,
+    pub proxy: Option<Arc<CameraPixels>>,
+}
+
+impl PreparedSource {
+    pub fn scan(&self) -> Scan {
+        Scan::with_reference(self.source.clone(), self.reference.clone())
+    }
+}
 
 pub(crate) fn native(
-    store: &SourceCache,
-    path: &std::path::Path,
-    file: &FileKey,
-    development: &SourceDevelopment,
+    store: Option<&SourceCache>,
+    reference: &OnceLock<ReferenceExposure>,
     input: InputSettings,
     source: &Arc<DevelopedSource>,
-) -> Result<crate::source::PreparedSource, Error> {
+) -> Result<PreparedSource, Error> {
     if input.is_negative() {
-        return Ok(crate::source::PreparedSource {
+        return Ok(PreparedSource {
             source: source.clone(),
+            reference: None,
             proxy: None,
         });
     }
-    let Some(key) = SourceKey::from_revision(path, file.clone(), development) else {
-        return Ok(crate::source::PreparedSource {
-            source: source.interpreted(&ReferenceExposure::Unavailable(Unavailable::ReadFailed)),
-            proxy: None,
-        });
-    };
-    let memo = store.exposure_memo(&key);
+    let development = SourceDevelopment::from_metadata(&source.metadata(), source.fixed_wb())?;
+    let key = SourceKey::from_revision(&source.file.path, source.file.clone(), &development);
     let mut sampled = None;
-    let value = memo.get_or_init(|| {
-        if let Some(value) = source.reference_exposure.get() {
-            return value.clone();
-        }
-        if let Some(proxy) = store.get_proxy(&key)
-            && let Some(value) = proxy.reference_exposure.get()
-        {
-            return value.clone();
-        }
-        resolve(store, path, file, development, || {
-            let proxy = store.get_proxy(&key).map_or_else(
-                || CameraProxy::from_scan(&Scan::from_source(source.clone())).map(Arc::new),
-                Ok,
-            )?;
+    let value = reference.get_or_init(|| {
+        resolve(store, &source.file.path, &source.file, &development, || {
+            let proxy = key
+                .as_ref()
+                .and_then(|key| store.and_then(|store| store.get_proxy(key)))
+                .map_or_else(
+                    || CameraPixels::from_scan(&Scan::from_source(source.clone())).map(Arc::new),
+                    Ok,
+                )?;
             sampled = Some(proxy.clone());
             Ok(proxy)
         })
     });
-    Ok(crate::source::PreparedSource {
-        source: source.interpreted(value),
-        proxy: sampled.map(|proxy| proxy.interpreted(value)),
+    if let (Some(store), Some(key), Some(proxy)) = (store, key, &sampled) {
+        store.publish_proxy(key, proxy.clone())?;
+    }
+    Ok(PreparedSource {
+        source: source.clone(),
+        reference: Some(value.clone()),
+        proxy: sampled,
     })
 }
 
 pub(crate) fn proxy(
-    store: &SourceCache,
+    store: Option<&SourceCache>,
+    reference: &OnceLock<ReferenceExposure>,
     path: &std::path::Path,
     file: &FileKey,
     development: &SourceDevelopment,
     input: InputSettings,
-    proxy: &Arc<CameraProxy>,
-) -> Result<Arc<CameraProxy>, Error> {
-    if input.is_negative() {
-        return Ok(proxy.clone());
-    }
-    let Some(key) = SourceKey::from_revision(path, file.clone(), development) else {
-        return Ok(proxy.interpreted(&ReferenceExposure::Unavailable(Unavailable::ReadFailed)));
-    };
-    let memo = store.exposure_memo(&key);
-    let value = memo.get_or_init(|| {
-        proxy
-            .reference_exposure
-            .get()
-            .cloned()
-            .unwrap_or_else(|| resolve(store, path, file, development, || Ok(proxy.clone())))
+    proxy: &Arc<CameraPixels>,
+) -> CameraProxy {
+    let value = (!input.is_negative()).then(|| {
+        reference
+            .get_or_init(|| resolve(store, path, file, development, || Ok(proxy.clone())))
+            .clone()
     });
-    Ok(proxy.interpreted(value))
+    CameraProxy::new(proxy.clone(), value)
 }
 
 fn resolve(
-    store: &SourceCache,
+    store: Option<&SourceCache>,
     path: &std::path::Path,
     file: &FileKey,
     development: &SourceDevelopment,
-    sample: impl FnOnce() -> Result<Arc<CameraProxy>, Error>,
+    sample: impl FnOnce() -> Result<Arc<CameraPixels>, Error>,
 ) -> ReferenceExposure {
-    let preview = match store.preview(file, || embedded_preview::read(path, development)) {
+    let read = || embedded_preview::read(path, development);
+    let preview = match store.map_or_else(read, |store| store.preview(file, read)) {
         Ok(Some(preview)) => preview,
         Ok(None) => return ReferenceExposure::Unavailable(Unavailable::NoUsablePreview),
         Err(reason) => {
@@ -113,7 +111,7 @@ mod tests;
 #[cfg(all(test, feature = "ocio-reference"))]
 mod photographic;
 
-fn estimate(proxy: &CameraProxy, preview: &Preview, floor: f64) -> ReferenceExposure {
+fn estimate(proxy: &CameraPixels, preview: &Preview, floor: f64) -> ReferenceExposure {
     let unavailable = |reason| ReferenceExposure::Unavailable(reason);
     let native = match preview.capture_flip {
         0 | 3 => [proxy.width, proxy.height],

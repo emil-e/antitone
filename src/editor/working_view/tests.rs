@@ -54,6 +54,7 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
         )
         .unwrap();
         let input = source::Context {
+            reference: None,
             source: scan.source().clone(),
             correction: None,
         };
@@ -177,6 +178,7 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
     let mut working = WorkingView::default();
     // These requests exercise mailbox coalescing, not acquisition of the synthetic view geometry.
     let input = source::Context {
+        reference: None,
         source: crate::editor::tests::developed_fixture(),
         correction: None,
     };

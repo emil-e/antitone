@@ -838,7 +838,11 @@ impl Editor {
             Some(base) => base_input.with_calibration(self.processing_calibration(base)?),
             None => base_input,
         };
-        let matrix = ready.developed.positive_matrix(&settings)?;
+        let matrix = crate::scan::positive_matrix(
+            &settings,
+            ready.developed.camera_to_ap1(),
+            ready.reference.as_ref(),
+        )?;
         let spec = ViewSourceSpec::new(
             self.id,
             frame,

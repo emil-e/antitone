@@ -208,7 +208,6 @@ impl ImageKey {
         match &self.recipe {
             Ok(None) => true,
             Ok(Some(recipe)) => document
-                .project
                 .thumbnail_recipe(self.source.id)
                 .is_ok_and(|current| current == **recipe),
             Err(reason) => document
@@ -219,7 +218,7 @@ impl ImageKey {
     }
 }
 
-pub(super) use crate::scan::CameraProxy as Proxy;
+pub(super) use crate::scan::CameraPixels as Proxy;
 
 impl Proxy {
     pub(super) async fn image(
@@ -287,6 +286,8 @@ impl SelectedPreview {
 }
 
 struct Job {
+    cancelled: crate::cancellation::Cancellation,
+    reference: Arc<std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>>,
     ticket: u64,
     key: ImageKey,
     path: PathBuf,
@@ -418,7 +419,7 @@ impl Thumbnails {
         let Some(proxy) = self.sources.get_proxy(&native_key) else {
             return Ok(None);
         };
-        if !document.project.input.is_negative() && proxy.reference_exposure.get().is_none() {
+        if !document.project.input.is_negative() && document.reference_exposure(source).is_none() {
             return Ok(None);
         }
         let Some((device, queue, renderers)) = &self.gpu else {
@@ -513,7 +514,7 @@ impl Thumbnails {
         self.sources.protect_proxies(keys);
     }
 
-    pub(super) fn bind_sources(&mut self, sources: Arc<SourceCache>) {
+    pub(super) fn bind_sources(&mut self, sources: Arc<SourceCache>, document: &Document) {
         if !Arc::ptr_eq(&self.sources, &sources) {
             self.cancel();
             self.embedded.reset_demand();
@@ -521,37 +522,20 @@ impl Thumbnails {
             self.selected_key = None;
             self.visible_keys.clear();
             self.attempted_sources.clear();
-            // CPU source identity is not sufficient for a positive: another project may
-            // restore a different canonical normalization for the same captured pixels.
-            self.cache.retain(|key, product| {
+            // A retained positive must agree with the new document's recorded baseline.
+            self.cache.retain(|key, _| {
                 let Ok(Some(recipe)) = &key.recipe else {
                     return true;
                 };
-                if recipe.neutral.input.is_negative() {
-                    return true;
-                }
-                let Some(native) = key.source.store_key() else {
-                    return false;
-                };
-                let Some(reference) = sources.completed_reference(&native) else {
-                    return false;
-                };
-                let expected = crate::scan::positive_matrix(
-                    &recipe.neutral.input,
-                    glam::DMat3::from_cols_array_2d(&key.source.source.camera_to_ap1),
-                    Some(&reference),
-                );
-                product
-                    .as_ref()
-                    .ok()
-                    .and_then(|product| product.positive.as_ref())
-                    .is_some_and(|(source, _)| {
-                        expected
-                            .and_then(|matrix| {
-                                crate::gpu::GpuInputProgram::new(recipe.neutral.input, matrix)
-                            })
-                            .is_ok_and(|program| source.input_program() == Some(&program))
-                    })
+                recipe.neutral.input.is_negative()
+                    || document
+                        .project
+                        .source(key.source.id)
+                        .ok()
+                        .and_then(|source| document.reference_exposure(source))
+                        .is_some_and(|reference| {
+                            recipe.neutral.reference.as_ref() == Some(reference)
+                        })
             });
             self.sources = sources;
         }
@@ -809,18 +793,16 @@ impl Thumbnails {
             self.pending = None;
             self.pending_render = false;
         }
-        let source_current = !self.sources.is_closed()
-            && document
-                .project
-                .source(outcome.key.source.id)
-                .ok()
-                .is_some_and(|source| {
-                    SourceKey::new(
-                        source,
-                        document
-                            .file_key(&document.source_path(source.id).expect("thumbnail locator")),
-                    ) == outcome.key.source
-                });
+        let source_current = document
+            .project
+            .source(outcome.key.source.id)
+            .ok()
+            .is_some_and(|source| {
+                SourceKey::new(
+                    source,
+                    document.file_key(&document.source_path(source.id).expect("thumbnail locator")),
+                ) == outcome.key.source
+            });
         // CPU/disk completion belongs to the document even when its GPU ticket retired.
         if source_current
             && (outcome.proper || (matching && outcome.image.is_err()))
@@ -974,7 +956,6 @@ impl Editor {
             Ok(None)
         } else {
             self.document
-                .project
                 .thumbnail_recipe(id)
                 .map(|recipe| Some(Arc::new(recipe)))
                 .map_err(|error| error.to_string())
@@ -1021,7 +1002,8 @@ impl Editor {
     }
 
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        self.thumbnails.bind_sources(self.document.cache.clone());
+        self.thumbnails
+            .bind_sources(self.document.cache.clone(), &self.document);
         if self.thumbnails.memory_watch.is_none() {
             self.thumbnails.repaint.get_or_init(|| ui.ctx().clone());
             self.thumbnails.memory_watch = Some(memory::PressureWatch::new(ui.ctx().clone()));

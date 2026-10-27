@@ -1,7 +1,7 @@
 use super::*;
 use crate::project::Development;
 use crate::raw::fixture as raw_fixture;
-use crate::{scan::CameraProxy, source::SourceKey};
+use crate::source::SourceKey;
 
 mod dust_worker;
 mod lazy_worker;
@@ -114,7 +114,7 @@ fn same_document_install_keeps_protected_proxies_at_zero_optional_budget() {
     let cache = document.cache.clone();
     let key = key(&document);
     let scan = Scan::open(file.path(), wb(&document)).unwrap();
-    let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
+    let proxy = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
     cache
         .publish_source(key.clone(), scan.source().clone())
         .unwrap();
@@ -181,7 +181,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache.clone());
+        thumbnails.bind_sources(document.cache.clone(), &document);
         let id = document.project.order[0];
         let source = document.project.source(id).unwrap();
         let path = document.source_path(id).unwrap();
@@ -193,7 +193,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             projection: None,
         };
         let scan = Scan::open(&path, wb(&document)).unwrap();
-        let seed = Arc::new(CameraProxy::from_scan(&scan).unwrap());
+        let seed = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
         thumbnails.seed_at_path(source, &path, thumbnails::FileKey::new(&path), seed.clone());
         assert!(
             !thumbnails.attempted_sources.contains(&image_key.source),
@@ -250,7 +250,7 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache.clone());
+        thumbnails.bind_sources(document.cache.clone(), &document);
         let id = document.project.order[0];
         let source = document.project.source(id).unwrap();
         let path = document.source_path(id).unwrap();
@@ -318,7 +318,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache.clone());
+        thumbnails.bind_sources(document.cache.clone(), &document);
         let id = document.project.order[0];
         let path = document.source_path(id).unwrap();
         let expected = document.project.source(id).unwrap();
@@ -441,7 +441,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache.clone());
+        thumbnails.bind_sources(document.cache.clone(), &document);
         let image_key = |index| {
             let source = document
                 .project

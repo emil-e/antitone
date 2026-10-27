@@ -42,7 +42,7 @@ fn fixture(
     };
     let ready = futures_lite::future::block_on(services.clone().prepare(
         source::Request {
-            reference: None,
+            reference: Arc::default(),
             input: document.project.input,
             path: path.clone(),
             wb: Some(document.project.development().as_ref().unwrap().fixed_wb),
@@ -51,7 +51,7 @@ fn fixture(
             file: document.file_key(&path),
             correction: None,
         },
-        Arc::new(AtomicBool::new(false)),
+        crate::cancellation::Cancellation::default(),
     ))
     .unwrap();
     e.document.install(document);

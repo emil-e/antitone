@@ -5,7 +5,7 @@ use crate::exposure_fixture;
 
 #[test]
 fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_changes() {
-    for repaired in [false, true] {
+    for (repaired, recorded) in [(false, None), (true, None), (false, Some(2.75))] {
         let path = if repaired {
             exposure_fixture::neutral_dng_with_defect(1.3)
         } else {
@@ -14,7 +14,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
         let (device, queue, renderer) = super::super::super::tests::context();
         let gate = SubmissionGate::default();
         let directory = tempfile::tempdir().unwrap();
-        let scene = 6000. / 65535. * 2_f64.powf(1.3);
+        let scene = 6000. / 65535. * 2_f64.powf(recorded.unwrap_or(1.3));
         let reference = CpuRenderer::new(OutputTarget::Srgb)
             .unwrap()
             .render(&[DVec3::splat(scene)])
@@ -24,7 +24,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
             Format::Exr(crate::export::ExrPrecision::Full),
         ] {
             let scan = Scan::open(path.path(), Some([1.; 4])).unwrap();
-            assert!(scan.source().reference_exposure.get().is_none());
+            assert!(scan.reference_exposure.as_ref().is_none());
             let (mut project, id) = fixture(&scan);
             project.input = InputSettings::Digital;
             project.source_mut(id).unwrap().crop = None;
@@ -44,6 +44,21 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                         crate::dust_repair::DonorChoice::Offset([31, 31]),
                     )
                     .unwrap();
+            }
+            if let Some(ev) = recorded {
+                project.exposure_metadata = Some(crate::exposure_metadata::Metadata {
+                    entries: vec![crate::exposure_metadata::Entry {
+                        source: id,
+                        reference: crate::exposure_reference::ReferenceExposure::Matched(
+                            crate::exposure_reference::StartingExposure {
+                                ev,
+                                samples: 1024,
+                                spread: 0.,
+                            },
+                        ),
+                    }],
+                    ..Default::default()
+                });
             }
             let before = project.clone();
             let recipe = project.image_recipe(id).unwrap();
@@ -66,8 +81,10 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                 || Ok(()),
             )
             .unwrap();
-            let exposure = scan.source().reference_exposure.get().unwrap();
-            assert!((exposure.ev() - 1.3).abs() < 0.03, "{exposure:?}");
+            assert!(
+                scan.reference_exposure.is_none(),
+                "export must leave its caller's interpretation unchanged"
+            );
             assert_eq!(project, before);
             assert_eq!(project.roll.exposure, 0.);
             assert!(
@@ -92,12 +109,13 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                     let expected = reference.to_array().map(|v| {
                         (OutputTarget::Srgb.encode(f64::from(v)).unwrap() * 65535.).round() as u16
                     });
-                    // The camera reference was quantized to8-bit JPEG before estimating gain.
+                    // Fresh estimates include JPEG quantization; a recorded gain is exact.
                     for point in [[16, 16], [32, 32], [48, 48]] {
                         let offset = (point[0] + point[1] * 64) * 3;
                         for channel in 0..3 {
                             assert!(
-                                data[offset + channel].abs_diff(expected[channel]) <= 160,
+                                data[offset + channel].abs_diff(expected[channel])
+                                    <= if recorded.is_some() { 2 } else { 160 },
                                 "{} vs {}",
                                 data[offset + channel],
                                 expected[channel]
@@ -114,7 +132,11 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                         };
                         for point in [[16, 16], [32, 32], [48, 48]] {
                             let actual = f64::from(data[point[0] + point[1] * 64]);
-                            assert!((actual / scene - 1.).abs() < 0.03, "{actual} vs {scene}");
+                            assert!(
+                                (actual / scene - 1.).abs()
+                                    < if recorded.is_some() { 1e-5 } else { 0.03 },
+                                "{actual} vs {scene}"
+                            );
                         }
                     }
                 }

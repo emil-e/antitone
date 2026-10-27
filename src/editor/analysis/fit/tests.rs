@@ -46,6 +46,7 @@ fn input(services: &Services, request: &Request) -> source::Context {
     .unwrap()
     .unwrap();
     source::Context {
+        reference: None,
         source: scan.source().clone(),
         correction: None,
     }
@@ -59,6 +60,7 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
+        exposures: Arc::default(),
         cache: Arc::new(crate::source::SourceCache::new(0)),
         developments: scheduler.clone(),
         device,
@@ -143,6 +145,7 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
+        exposures: Arc::default(),
         cache: Arc::new(crate::source::SourceCache::new(0)),
         developments: scheduler.clone(),
         device,

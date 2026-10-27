@@ -31,6 +31,8 @@ pub(super) fn service_job(
         })
         .flatten();
     Job {
+        cancelled: crate::cancellation::Cancellation::default(),
+        reference: Arc::default(),
         ticket: thumbnails
             .generation
             .load(std::sync::atomic::Ordering::Relaxed),
@@ -166,7 +168,6 @@ fn transient_reference_with_the_same_development_cannot_seed_the_working_photo()
     ready.thumbnail = Some((
         FileKey::new(&ready.record.path),
         Arc::new(Proxy {
-            reference_exposure: Default::default(),
             width: 1,
             height: 1,
             pixels: vec![[0.; 4]].into(),
@@ -1043,7 +1044,7 @@ fn filmstrip_frame(
 ) {
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1269,7 +1270,7 @@ fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
     editor.thumbnails.cache.retain(|_, _| false);
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     let ids = editor.document.project.order.clone();
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
@@ -1315,7 +1316,7 @@ fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
             e.thumbnails.demand = Demand::Visible(vec![id]);
@@ -1352,7 +1353,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
     editor.thumbnails.services = Some(Services { commands });
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
@@ -1522,7 +1523,6 @@ fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
         source,
         FileKey::new(&document.source_path(source.id).unwrap()),
         Arc::new(Proxy {
-            reference_exposure: Default::default(),
             width: 1,
             height: 1,
             pixels: vec![[0.; 4]].into(),
@@ -1545,12 +1545,11 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     editor.thumbnails.seed(
         editor.document.project.source(id).unwrap(),
         FileKey::new(&editor.document.source_path(id).unwrap()),
         Arc::new(Proxy {
-            reference_exposure: Default::default(),
             width: 1,
             height: 1,
             pixels: vec![[1.; 4]].into(),
@@ -1617,7 +1616,6 @@ fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
         disk.store(
             &SourceKey::new(&source, FileKey::new(&path)),
             &Proxy {
-                reference_exposure: Default::default(),
                 width: 2,
                 height: 1,
                 pixels: vec![[1., 2., 3., 0.]; 2].into(),

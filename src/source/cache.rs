@@ -3,8 +3,7 @@ use super::{FileKey, SourceKey};
 use crate::{
     Error,
     embedded_preview::Preview,
-    project::SourceDevelopment,
-    scan::{CameraProxy, DevelopedSource},
+    scan::{CameraPixels, DevelopedSource},
 };
 use std::{
     collections::VecDeque,
@@ -29,25 +28,17 @@ enum Kind {
 #[derive(Clone)]
 enum Owned {
     Native(Arc<DevelopedSource>),
-    Proxy(Arc<CameraProxy>),
+    Proxy(Arc<CameraPixels>),
     Preview(Arc<Preview>),
 }
 
 enum Borrowed {
     Native(Weak<DevelopedSource>),
-    Proxy(Weak<CameraProxy>),
+    Proxy(Weak<CameraPixels>),
     Preview(Weak<Preview>),
 }
 
 impl Owned {
-    fn reference(&self) -> Option<&crate::exposure_reference::ReferenceExposure> {
-        match self {
-            Self::Native(source) => source.reference_exposure.get(),
-            Self::Proxy(proxy) => proxy.reference_exposure.get(),
-            Self::Preview(_) => None,
-        }
-    }
-
     fn kind(&self) -> Kind {
         match self {
             Self::Native(_) => Kind::Native,
@@ -214,30 +205,18 @@ impl State {
 type PreviewResult = Result<Option<Arc<Preview>>, String>;
 type PreviewFlight = OnceLock<PreviewResult>;
 type PreviewLease = (FileKey, Weak<PreviewFlight>, Weak<Preview>);
-type ExposureMemo = Arc<OnceLock<crate::exposure_reference::ReferenceExposure>>;
 
-pub struct PreparedSource {
-    pub source: Arc<DevelopedSource>,
-    pub proxy: Option<Arc<CameraProxy>>,
-}
-
-/// Pixel ownership is scoped to a document generation; same-document forks share
-/// immutable metering and in-flight preview work. Active leases survive eviction/closure.
+/// Document-scoped optional physical pixel retention. Active leases survive eviction/closure.
 pub struct SourceCache {
     state: Mutex<State>,
     preview_flights: Mutex<Vec<PreviewLease>>,
-    exposures: Mutex<Vec<(SourceKey, ExposureMemo)>>,
-    #[cfg(feature = "editor")]
-    closed: event_listener::Event,
 }
 
 impl SourceCache {
     pub fn new(budget: u64) -> Self {
         Self {
             preview_flights: Mutex::new(Vec::new()),
-            exposures: Mutex::new(Vec::new()),
-            #[cfg(feature = "editor")]
-            closed: event_listener::Event::new(),
+
             state: Mutex::new(State {
                 entries: VecDeque::new(),
                 protected: Vec::new(),
@@ -250,15 +229,6 @@ impl SourceCache {
 
     // Interpretation can reuse captured storage even after optional reuse closes;
     // independent export still owns its source lease and canonical reference.
-    fn peek_resource(&self, key: KeyRef<'_>, kind: Kind) -> Option<Owned> {
-        self.state
-            .lock()
-            .unwrap()
-            .entries
-            .iter()
-            .find(|entry| key.matches(&entry.key) && entry.resource.kind() == kind)
-            .and_then(|entry| entry.resource.upgrade())
-    }
 
     fn get_resource(&self, key: KeyRef<'_>, kind: Kind) -> Option<Owned> {
         let mut removed = Vec::new();
@@ -292,195 +262,11 @@ impl SourceCache {
         }
     }
 
-    pub fn get_proxy(&self, key: &SourceKey) -> Option<Arc<CameraProxy>> {
+    pub fn get_proxy(&self, key: &SourceKey) -> Option<Arc<CameraPixels>> {
         match self.get_resource(KeyRef::Source(key), Kind::Proxy)? {
             Owned::Proxy(proxy) => Some(proxy),
             _ => unreachable!(),
         }
-    }
-
-    /// Snapshot completed values only; saving must not start metering unvisited photos.
-    pub fn exposure_metadata(
-        &self,
-        project: &crate::project::Project,
-        key: impl Fn(crate::project::SourceId) -> Option<SourceKey>,
-    ) -> crate::exposure_metadata::Metadata {
-        let ready = self
-            .exposures
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|(key, value)| Some((key.clone(), value.get()?.clone())))
-            .collect::<Vec<_>>();
-        let mut metadata = crate::exposure_metadata::Metadata::default();
-        if project.input.is_negative() {
-            return metadata;
-        }
-        for source in project
-            .sources
-            .iter()
-            .filter(|source| project.order.contains(&source.id))
-        {
-            let Some(key) = key(source.id) else {
-                continue;
-            };
-            let Some(revision) = key.file.revision.clone() else {
-                continue;
-            };
-            let Some((_, value)) = ready.iter().find(|(existing, _)| *existing == key) else {
-                continue;
-            };
-            metadata.entries.push(crate::exposure_metadata::Entry {
-                source: source.id,
-                development: source.development.clone(),
-                revision,
-                reference: value.clone(),
-            });
-        }
-        metadata
-    }
-
-    pub fn restore_exposure_metadata(
-        &self,
-        metadata: &crate::exposure_metadata::Metadata,
-        project: &crate::project::Project,
-        key: impl Fn(crate::project::SourceId) -> Option<SourceKey>,
-    ) {
-        for entry in metadata.for_project(project).entries {
-            let Some(key) = key(entry.source) else {
-                continue;
-            };
-            if key.file.revision.as_ref() == Some(&entry.revision) {
-                let _ = self.exposure_memo(&key).set(entry.reference);
-            }
-        }
-    }
-
-    /// Resolve a developed photo's starting interpretation on a worker. Pixel eviction
-    /// cannot re-meter the same capture; an optional returned proxy reuses metering work.
-    pub fn prepare_source(
-        &self,
-        input: crate::processing::InputSettings,
-        source: &Arc<DevelopedSource>,
-    ) -> Result<PreparedSource, Error> {
-        let development = SourceDevelopment::from_metadata(&source.metadata(), source.fixed_wb())?;
-        let key = SourceKey::from_revision(&source.file.path, source.file.clone(), &development);
-        let source = key
-            .as_ref()
-            .and_then(
-                |key| match self.peek_resource(KeyRef::Source(key), Kind::Native) {
-                    Some(Owned::Native(source)) => Some(source),
-                    _ => None,
-                },
-            )
-            .unwrap_or_else(|| source.clone());
-        let mut prepared = crate::photo_preparation::native(
-            self,
-            &source.file.path,
-            &source.file,
-            &development,
-            input,
-            &source,
-        )?;
-        if let Some(key) = key {
-            if !Arc::ptr_eq(&source, &prepared.source)
-                && let Some(bytes) = prepared.source.retained_bytes()
-                && let Some(Owned::Native(source)) = self.publish_interpretation(
-                    ResourceKey::Source(Box::new(key.clone())),
-                    Owned::Native(prepared.source.clone()),
-                    bytes,
-                    true,
-                )?
-            {
-                prepared.source = source;
-            }
-            if let Some(proxy) = &prepared.proxy {
-                prepared.proxy = Some(self.prepare_proxy(&key, input, proxy)?);
-            }
-        }
-        Ok(prepared)
-    }
-
-    /// Resolve cached pixels against the document's canonical outcome; a restored value
-    /// takes precedence over disposable hints without copying the shared pixel buffer.
-    pub fn prepare_proxy(
-        &self,
-        key: &SourceKey,
-        input: crate::processing::InputSettings,
-        proxy: &Arc<CameraProxy>,
-    ) -> Result<Arc<CameraProxy>, Error> {
-        if !key.matches_proxy(proxy) {
-            return Err(Error::Project(
-                "camera proxy differs from its preparation key".into(),
-            ));
-        }
-        let cached = match self.peek_resource(KeyRef::Source(key), Kind::Proxy) {
-            Some(Owned::Proxy(proxy)) => Some(proxy),
-            _ => None,
-        };
-        let data = cached.clone().unwrap_or_else(|| proxy.clone());
-        let resolved = crate::photo_preparation::proxy(
-            self,
-            &key.locator,
-            &key.file,
-            &key.source,
-            input,
-            &data,
-        )?;
-        if cached
-            .as_ref()
-            .is_some_and(|cached| Arc::ptr_eq(cached, &resolved))
-        {
-            return Ok(resolved);
-        }
-        match self.publish_interpretation(
-            ResourceKey::Source(Box::new(key.clone())),
-            Owned::Proxy(resolved.clone()),
-            resolved.retained_bytes(),
-            true,
-        )? {
-            Some(Owned::Proxy(proxy)) => Ok(proxy),
-            _ => Ok(resolved),
-        }
-    }
-
-    pub(crate) fn exposure_memo(
-        &self,
-        key: &SourceKey,
-    ) -> Arc<OnceLock<crate::exposure_reference::ReferenceExposure>> {
-        let mut exposures = self.exposures.lock().unwrap();
-        if let Some((_, memo)) = exposures.iter().find(|(existing, _)| existing == key) {
-            return memo.clone();
-        }
-        let memo = Arc::new(OnceLock::new());
-        exposures.push((key.clone(), memo.clone()));
-        memo
-    }
-
-    pub(crate) fn completed_reference(
-        &self,
-        key: &SourceKey,
-    ) -> Option<crate::exposure_reference::ReferenceExposure> {
-        self.exposures
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|(existing, _)| existing == key)
-            .and_then(|(_, memo)| memo.get())
-            .cloned()
-    }
-
-    #[cfg(feature = "editor")]
-    pub(crate) fn positive_matrix(
-        &self,
-        key: &SourceKey,
-        input: &crate::processing::InputSettings,
-    ) -> Result<glam::DMat3, Error> {
-        crate::scan::positive_matrix(
-            input,
-            glam::DMat3::from_cols_array_2d(&key.source.camera_to_ap1),
-            self.completed_reference(key).as_ref(),
-        )
     }
 
     /// Worker-only preview acquisition: extraction/decoding is single-flight, and decoded
@@ -568,9 +354,7 @@ impl SourceCache {
                 "native source differs from its development key".into(),
             ));
         }
-        let source = self
-            .completed_reference(&key)
-            .map_or_else(|| source.clone(), |value| source.interpreted(&value));
+
         let Some(bytes) = source.retained_bytes() else {
             return Ok(None);
         };
@@ -590,13 +374,11 @@ impl SourceCache {
                 "native source differs from its development key".into(),
             ));
         }
-        let replace = source.reference_exposure.get().is_some()
-            && self.completed_reference(&key).as_ref() == source.reference_exposure.get();
-        match self.publish_interpretation(
+
+        match self.publish_resource(
             ResourceKey::Source(Box::new(key)),
             Owned::Native(source),
             bytes,
-            replace,
         )? {
             Some(Owned::Native(source)) => Ok(Some(source)),
             None => Ok(None),
@@ -607,25 +389,19 @@ impl SourceCache {
     pub fn publish_proxy(
         &self,
         key: SourceKey,
-        proxy: Arc<CameraProxy>,
-    ) -> Result<Option<Arc<CameraProxy>>, Error> {
+        proxy: Arc<CameraPixels>,
+    ) -> Result<Option<Arc<CameraPixels>>, Error> {
         if !key.matches_proxy(&proxy) {
             return Err(Error::Project(
                 "camera proxy differs from its development key".into(),
             ));
         }
-        // CPU-only warming does not meter, but must carry any already-known canonical
-        // outcome before a pending selected preview can consume these pixels.
-        let reference = self.completed_reference(&key);
-        let proxy = reference
-            .as_ref()
-            .map_or_else(|| proxy.clone(), |value| proxy.interpreted(value));
+
         let bytes = proxy.retained_bytes();
-        match self.publish_interpretation(
+        match self.publish_resource(
             ResourceKey::Source(Box::new(key)),
             Owned::Proxy(proxy),
             bytes,
-            reference.is_some(),
         )? {
             Some(Owned::Proxy(proxy)) => Ok(Some(proxy)),
             None => Ok(None),
@@ -638,16 +414,6 @@ impl SourceCache {
         key: ResourceKey,
         incoming: Owned,
         bytes: u64,
-    ) -> Result<Option<Owned>, Error> {
-        self.publish_interpretation(key, incoming, bytes, false)
-    }
-
-    fn publish_interpretation(
-        &self,
-        key: ResourceKey,
-        incoming: Owned,
-        bytes: u64,
-        replace: bool,
     ) -> Result<Option<Owned>, Error> {
         if bytes == 0 {
             return Err(Error::InvalidParameter("source charge must be nonzero"));
@@ -672,21 +438,7 @@ impl SourceCache {
                         return Err(Error::InvalidParameter("existing source charge differs"));
                     }
                     let mut entry = state.entries.remove(index).unwrap();
-                    let existing = if replace
-                        && !entry.resource.same(&weak)
-                        && existing.reference() != incoming.reference()
-                    {
-                        if let Some(owned) = entry.retained.take() {
-                            state.bytes -= entry.bytes;
-                            removed.push(owned);
-                        }
-                        removed.push(existing);
-                        entry.resource = incoming.downgrade();
-                        entry.bytes = bytes;
-                        incoming.clone()
-                    } else {
-                        existing
-                    };
+
                     state.keep(&mut entry, existing.clone());
                     state.entries.push_back(entry);
                     existing
@@ -803,11 +555,6 @@ impl SourceCache {
         self.state.lock().unwrap().protected_bytes()
     }
 
-    #[cfg(feature = "editor")]
-    pub(crate) fn listen_for_close(&self) -> event_listener::EventListener {
-        self.closed.listen()
-    }
-
     pub fn close(&self) {
         let mut removed = Vec::new();
         {
@@ -817,8 +564,7 @@ impl SourceCache {
             state.budget = 0;
             state.trim(&mut removed);
         }
-        #[cfg(feature = "editor")]
-        self.closed.notify(usize::MAX);
+
         drop(removed);
     }
 }

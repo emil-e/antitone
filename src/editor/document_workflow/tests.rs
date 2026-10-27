@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::Ordering;
 #[cfg(feature = "ocio-reference")]
 mod rebase_exposure;
 use crate::{

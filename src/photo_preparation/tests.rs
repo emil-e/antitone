@@ -1,13 +1,12 @@
 use super::*;
 
-fn flat(width: u32, height: u32) -> CameraProxy {
-    CameraProxy {
+fn flat(width: u32, height: u32) -> CameraPixels {
+    CameraPixels {
         width,
         height,
         matrix: glam::DMat3::IDENTITY,
         pixels: vec![[0.18 * 65535., 0.18 * 65535., 0.18 * 65535., 0.]; (width * height) as usize]
             .into(),
-        reference_exposure: Default::default(),
     }
 }
 
@@ -44,16 +43,16 @@ fn negative_preparation_does_not_require_a_file_preview_or_an_exposure_memo() {
     let proxy_data = Arc::new(flat(96, 64));
     let file = FileKey::new(std::path::Path::new("nonexistent-reference-source.raw"));
     let development = development();
-    proxy(
-        &SourceCache::new(0),
+    let prepared = proxy(
+        Some(&SourceCache::new(0)),
+        &OnceLock::new(),
         &file.path,
         &file,
         &development,
         InputSettings::default(),
         &proxy_data,
-    )
-    .unwrap();
-    assert!(proxy_data.reference_exposure.get().is_none());
+    );
+    assert!(prepared.reference.is_none());
 }
 
 fn development() -> SourceDevelopment {
@@ -70,7 +69,7 @@ fn development() -> SourceDevelopment {
 }
 
 #[cfg(feature = "ocio-reference")]
-fn control(desired: f64) -> (CameraProxy, Preview) {
+fn control(desired: f64) -> (CameraPixels, Preview) {
     use crate::rendering::{CpuRenderer, OutputTarget};
     let mut proxy = flat(96, 64);
     for y in 0..64 {
@@ -160,30 +159,31 @@ fn source_exposure_survives_pixel_eviction_and_does_not_re_meter_a_later_proxy()
         .preview(&file, || Ok(Some(Arc::new(reference))))
         .unwrap();
     let data = Arc::new(data);
-    proxy(
-        &store,
+    let memo = OnceLock::new();
+    let prepared = proxy(
+        Some(&store),
+        &memo,
         path.path(),
         &file,
         &development(),
         InputSettings::Digital,
         &data,
-    )
-    .unwrap();
-    let initial = data.reference_exposure.get().unwrap().clone();
+    );
+    let initial = prepared.reference.unwrap();
     assert!((initial.ev() - 0.7).abs() < 0.025);
     store.set_budget(0);
     assert_eq!(store.charges().retained, 0);
     let changed = Arc::new(flat(96, 64));
-    proxy(
-        &store,
+    let prepared = proxy(
+        Some(&store),
+        &memo,
         path.path(),
         &file,
         &development(),
         InputSettings::Digital,
         &changed,
-    )
-    .unwrap();
-    assert_eq!(changed.reference_exposure.get(), Some(&initial));
+    );
+    assert_eq!(prepared.reference.as_ref(), Some(&initial));
     assert_eq!(
         std::fs::read(path.path()).unwrap(),
         b"not a RAW: repeated extraction must not occur"

@@ -36,6 +36,7 @@ fn demand(
     cx: &UiContext<'_, Editor>,
 ) -> std::sync::Weak<crate::scan::DevelopedSource> {
     let source = source::Context {
+        reference: None,
         source: crate::editor::tests::developed_fixture(),
         correction: None,
     };
@@ -223,6 +224,7 @@ fn malformed_original_request_latches_error_and_retires_its_demand() {
     with_application(e, |app| {
         app.enter(|e, access| {
             let source = source::Context {
+                reference: None,
                 source: crate::editor::tests::developed_fixture(),
                 correction: None,
             };

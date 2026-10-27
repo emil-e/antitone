@@ -2,7 +2,7 @@
 use antitone::{
     project::{Development, Source, SourceDevelopment, SourceId},
     raw::RawFile,
-    scan::{CameraProxy, DevelopedSource, Scan},
+    scan::{CameraPixels, DevelopedSource, Scan},
     source::{Charges, SourceCache, SourceKey},
 };
 use std::sync::Arc;
@@ -118,7 +118,7 @@ fn native_and_proxy_ownership_compete_in_one_oldest_unprotected_byte_lru() {
     let input = Input::new();
     let scan = Scan::open(input.file.path(), Some(WB)).unwrap();
     let source = scan.source().clone();
-    let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
+    let proxy = Arc::new(CameraPixels::from_scan(&scan).unwrap());
     let n = source.retained_bytes().unwrap();
     let p = proxy.retained_bytes();
     let store = SourceCache::new(n + p - 1);
@@ -178,7 +178,7 @@ fn zero_limits_preserve_protected_proxies_but_never_exempt_full_native_ownership
     let input = Input::new();
     let scan = Scan::open(input.file.path(), Some(WB)).unwrap();
     let source = scan.source().clone();
-    let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
+    let proxy = Arc::new(CameraPixels::from_scan(&scan).unwrap());
     let n = source.retained_bytes().unwrap();
     let p = proxy.retained_bytes();
     let store = SourceCache::new(p);
@@ -221,7 +221,7 @@ fn zero_limits_preserve_protected_proxies_but_never_exempt_full_native_ownership
 fn closure_drops_protected_proxy_ownership_not_active_leases() {
     let input = Input::new();
     let scan = Scan::open(input.file.path(), Some(WB)).unwrap();
-    let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
+    let proxy = Arc::new(CameraPixels::from_scan(&scan).unwrap());
     let store = SourceCache::new(proxy.retained_bytes());
     store.protect_proxies(vec![input.key.clone()]);
     store
@@ -254,7 +254,7 @@ fn concurrent_mixed_publications_never_exceed_one_optional_limit() {
     let input = Input::new();
     let scan = Scan::open(input.file.path(), Some(WB)).unwrap();
     let source = scan.source().clone();
-    let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
+    let proxy = Arc::new(CameraPixels::from_scan(&scan).unwrap());
     let budget = source.retained_bytes().unwrap() + proxy.retained_bytes() - 1;
     let store = Arc::new(SourceCache::new(budget));
     let barrier = Arc::new(Barrier::new(5));
@@ -306,7 +306,7 @@ fn concurrent_mixed_publications_never_exceed_one_optional_limit() {
 fn proxy_basis_rejection_does_not_replace_a_working_entry() {
     let input = Input::new();
     let scan = Scan::open(input.file.path(), Some(WB)).unwrap();
-    let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
+    let proxy = Arc::new(CameraPixels::from_scan(&scan).unwrap());
     let store = SourceCache::new(proxy.retained_bytes());
     store
         .publish_proxy(input.key.clone(), proxy.clone())

@@ -54,6 +54,7 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
     )
     .unwrap();
     editor.document.visit.ready = Some(Ready {
+        reference: None,
         developed: crate::editor::tests::developed_fixture(),
         file: thumbnails::FileKey::new(&record.path),
         thumbnail: None,

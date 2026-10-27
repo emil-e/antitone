@@ -162,7 +162,7 @@ Two [native owners](../src/source/loader.rs) at most serve selected/reference/An
 
 Positive navigation cards interpret a small camera-RGB proxy, then apply ordered layer grading, look and output target. They favor responsive browsing and recognizable photographs over original-sample fidelity. Use the main viewer or exports to inspect Dust repairs rather than inferring their accuracy from a small navigation card.
 
-Camera preview display and Digital preparation share bounded JPEG/RGB8 extraction and decoding, including in-flight work. ICC profiles or explicit colour labels, including the matching DNG preview IFD, establish interpretation. Completed starting EV survives pixel eviction; a Digital proxy without resolved exposure waits for preparation rather than displaying an uninitialized positive.
+Camera preview display and Digital preparation share bounded JPEG/RGB8 extraction and decoding, including in-flight work. ICC profiles or explicit colour labels, including the matching DNG preview IFD, establish interpretation. The document's recorded starting EV survives pixel eviction; a Digital positive waits for that value before consuming shared proxy pixels.
 
 Compatible neutral products survive grade, look and target changes. Across project replacement, Digital positives also require a known matching normalization, even when captured pixels and photographic controls match. While an update prepares, the previous card stays visible with an updating indicator if source, correction, framing and target match. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
 

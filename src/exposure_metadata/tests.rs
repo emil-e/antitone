@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     exposure_reference::{ReferenceExposure, StartingExposure},
     processing::{CAMERA_INPUT_FLOOR, InputSettings},
-    project::{Development, Source},
+    project::{Development, Source, SourceDevelopment},
 };
 
 fn fixture(path: &std::path::Path) -> (Project, Metadata) {
@@ -36,8 +36,7 @@ fn fixture(path: &std::path::Path) -> (Project, Metadata) {
         version: VERSION,
         entries: vec![Entry {
             source: id,
-            development,
-            revision: FileRevision::read(path).unwrap(),
+
             reference: ReferenceExposure::Matched(StartingExposure {
                 ev: 1.3,
                 samples: 1024,
@@ -80,7 +79,7 @@ fn optional_invalid_exposure_metadata_is_discarded_without_reinterpreting_accept
 }
 
 #[test]
-fn exposure_metadata_is_bound_to_the_ordered_source_interpretation() {
+fn exposure_baseline_follows_the_photo_across_development_and_input_changes() {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("source.raw");
     std::fs::write(&file, b"source").unwrap();
@@ -88,29 +87,50 @@ fn exposure_metadata_is_bound_to_the_ordered_source_interpretation() {
     assert_eq!(metadata.for_project(&project), metadata);
     let mut changed = project.clone();
     changed.sources[0].development.camera_model = "other basis".into();
-    assert!(metadata.for_project(&changed).entries.is_empty());
+    assert_eq!(metadata.for_project(&changed), metadata);
     let mut negative = project;
     negative.input = InputSettings::default();
-    assert!(metadata.for_project(&negative).entries.is_empty());
+    assert_eq!(metadata.for_project(&negative), metadata);
 }
 
 #[cfg(feature = "raw")]
 #[test]
-fn restoring_exposure_metadata_matches_the_captured_open_identity() {
+fn legacy_identity_fields_do_not_discard_a_saved_photo_baseline() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("source.raw");
     std::fs::write(&path, b"first").unwrap();
-    let (project, metadata) = fixture(&path);
-    let store = crate::source::SourceCache::new(0);
-    let key = crate::source::SourceKey::capture(&path, &project.sources[0].development).unwrap();
-    store.restore_exposure_metadata(&metadata, &project, |_| Some(key.clone()));
-    assert_eq!(
-        store.exposure_memo(&key).get(),
-        Some(&metadata.entries[0].reference)
+    let (mut project, metadata) = fixture(&path);
+    let mut encoded = serde_json::to_value(&metadata).unwrap();
+    encoded["entries"][0]["development"] =
+        serde_json::to_value(&project.sources[0].development).unwrap();
+    encoded["entries"][0]["revision"] =
+        serde_json::to_value(crate::source::FileRevision::read(&path).unwrap()).unwrap();
+    std::fs::write(&path, b"a different capture revision").unwrap();
+    project.sources[0].development.decode.backend_version = "another decoder".into();
+    let restored: Metadata = serde_json::from_value(encoded).unwrap();
+    let store = Store::restored(&restored, |_| Some(path.clone()));
+    assert_eq!(store.snapshot(&project, |_| Some(path.clone())), metadata);
+}
+
+#[cfg(feature = "raw")]
+#[test]
+fn undo_branch_reusing_a_numeric_photo_id_does_not_inherit_another_photos_initialization() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("first.raw");
+    let second = directory.path().join("second.raw");
+    let (project, metadata) = fixture(&first);
+    let id = project.sources[0].id;
+    let store = Store::restored(&metadata, |_| Some(first.clone()));
+    let next = store.memo(id, &second);
+    assert!(next.get().is_none());
+    assert!(
+        store
+            .snapshot(&project, |_| Some(second.clone()))
+            .entries
+            .is_empty()
     );
-    std::fs::write(&path, b"a changed capture").unwrap();
-    let next = crate::source::SourceCache::new(0);
-    let key = crate::source::SourceKey::capture(&path, &project.sources[0].development).unwrap();
-    next.restore_exposure_metadata(&metadata, &project, |_| Some(key.clone()));
-    assert!(next.exposure_memo(&key).get().is_none());
+    assert_eq!(
+        store.get(id, &first),
+        Some(metadata.entries[0].reference.clone())
+    );
 }

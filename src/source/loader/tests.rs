@@ -50,7 +50,7 @@ impl std::task::Wake for Notify {
 }
 
 fn poll_ticket(
-    ticket: &mut Ticket,
+    ticket: &mut LoadFuture,
     id: u8,
     send: &mpsc::Sender<u8>,
 ) -> Poll<Result<Arc<DevelopedSource>, Error>> {
@@ -79,9 +79,11 @@ fn async_joined_consumers_wake_independently_and_share_frozen_pixels() {
         })
     });
     let job = request(file.path());
-    let mut abandoned = scheduler.submit(job.clone(), Priority::Eager).unwrap();
+    let mut abandoned = scheduler
+        .submit_request(job.clone(), Priority::Eager)
+        .unwrap();
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
-    let mut foreground = scheduler.submit(job, Priority::Foreground).unwrap();
+    let mut foreground = scheduler.submit_request(job, Priority::Foreground).unwrap();
     let (wake, wakes) = mpsc::channel();
     assert!(poll_ticket(&mut abandoned, 1, &wake).is_pending());
     assert!(poll_ticket(&mut foreground, 2, &wake).is_pending());
@@ -127,12 +129,14 @@ fn a_new_demand_during_native_retirement_starts_fresh_instead_of_receiving_retir
             }
         });
     });
-    let first = scheduler.submit(job.clone(), Priority::Foreground).unwrap();
+    let first = scheduler
+        .submit_request(job.clone(), Priority::Foreground)
+        .unwrap();
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
     drop(first);
     release.send(()).unwrap();
     cleanup.recv_timeout(Duration::from_secs(5)).unwrap();
-    let replacement = scheduler.submit(job, Priority::Foreground).unwrap();
+    let replacement = scheduler.submit_request(job, Priority::Foreground).unwrap();
     release_cleanup.send(()).unwrap();
     assert!(replacement.wait(|| false).is_ok());
     scheduler.close_and_wait().unwrap();
@@ -152,7 +156,7 @@ fn async_native_waiters_observe_scheduler_closure_without_waiting_for_native_ret
             })
         });
         let mut ticket = scheduler
-            .submit(request(file.path()), Priority::Foreground)
+            .submit_request(request(file.path()), Priority::Foreground)
             .unwrap();
         starts.recv_timeout(Duration::from_secs(5)).unwrap();
         let (wake, wakes) = mpsc::channel();
@@ -172,7 +176,7 @@ fn native_ticket_can_be_awaited_when_completion_precedes_its_first_poll() {
     let file = fixture::bayer_dng();
     let scheduler = SourceLoader::new();
     let ticket = scheduler
-        .submit(request(file.path()), Priority::Foreground)
+        .submit_request(request(file.path()), Priority::Foreground)
         .unwrap();
     let completed = ticket.wait(|| false).unwrap();
     let awaited = futures_lite::future::block_on(ticket).unwrap();

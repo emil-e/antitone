@@ -36,6 +36,7 @@ struct Pending {
     ticket: u64,
     generation: Arc<std::sync::atomic::AtomicU64>,
     _task: async_executor::Task<()>,
+    _retire: crate::cancellation::CancelOnDrop,
 }
 
 impl State {
@@ -84,7 +85,13 @@ impl Editor {
                     .map(|(_, product)| product.clone())
             })
             .flatten();
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
         let job = Job {
+            cancelled,
+            reference: self
+                .document
+                .exposure_slot(&self.document.exposures, source.id),
             ticket,
             key: key.clone(),
             path,
@@ -118,6 +125,10 @@ impl Editor {
                 if Arc::ptr_eq(&store, &editor.document.cache)
                     && Arc::ptr_eq(&identity, &editor.thumbnails.generation)
                 {
+                    editor
+                        .document
+                        .state
+                        .capture_exposure(&editor.document.exposures);
                     match result {
                         Ok(outcome) => editor.thumbnails.complete(outcome, &editor.document),
                         Err(_) => editor.thumbnails.stopped(ticket, key),
@@ -135,6 +146,7 @@ impl Editor {
             ticket,
             generation,
             _task: task,
+            _retire: retire,
         });
     }
 
@@ -144,12 +156,7 @@ impl Editor {
             Demand::Visible(visible) if self.fullscreen.is_none() => (visible.clone(), false),
             Demand::Visible(_) | Demand::Hidden => (Vec::new(), true),
         };
-        if self.document.cache.is_closed() {
-            if self.thumbnails.pending.is_some() {
-                self.thumbnails.cancel();
-            }
-            return;
-        }
+
         let allowed = self.thumbnail_work_allowed();
         let eager = allowed && self.thumbnails.budgets.pressure == memory::Pressure::Normal;
         let idle = allowed

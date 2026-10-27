@@ -574,7 +574,7 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
             editor.busy = true;
             editor
                 .thumbnails
-                .bind_sources(editor.document.cache.clone());
+                .bind_sources(editor.document.cache.clone(), &editor.document);
             let key = key(&editor.document, editor.document.project.order[0]);
             let context = egui::Context::default();
             context.set_pixels_per_point(scale);
@@ -651,7 +651,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     editor.current_source = Some(editor.document.project.order[0]);
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     let original = editor.document.project.clone();
     let context = egui::Context::default();
     context.enable_accesskit();
@@ -785,7 +785,6 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         .publish_proxy(
             image_key.source.store_key().unwrap(),
             Arc::new(Proxy {
-                reference_exposure: Default::default(),
                 width: 8,
                 height: 4,
                 pixels: vec![[1000., 2000., 3000., 0.]; 32].into(),

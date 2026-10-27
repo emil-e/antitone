@@ -38,6 +38,7 @@ fn fixture() -> (
     .unwrap();
     let spec = ViewSourceSpec::inspection(e.id, frame, scan.camera_to_ap1, None).unwrap();
     let input = source::Context {
+        reference: None,
         source: scan.source().clone(),
         correction: None,
     };
@@ -144,6 +145,7 @@ fn retiring_running_support_keeps_its_native_lease_through_submission() {
     )
     .unwrap();
     let next = source::Context {
+        reference: None,
         source: scan.source().clone(),
         correction: None,
     };

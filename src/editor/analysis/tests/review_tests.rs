@@ -339,6 +339,7 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
             editor.browse_analysis_review(other, cx);
             let record = editor.document.project.source(other).unwrap().clone();
             editor.document.visit.ready = Some(Ready {
+                reference: None,
                 developed: crate::editor::tests::developed_fixture(),
                 file: thumbnails::FileKey::new(&record.path),
                 thumbnail: None,

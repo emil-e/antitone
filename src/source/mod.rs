@@ -12,8 +12,6 @@ pub use key::SourceKey;
 #[cfg(all(feature = "raw", feature = "project"))]
 mod cache;
 #[cfg(all(feature = "raw", feature = "project"))]
-pub(crate) use cache::PreparedSource;
-#[cfg(all(feature = "raw", feature = "project"))]
 pub use cache::{Charges, SourceCache};
 
 #[cfg(feature = "editor")]

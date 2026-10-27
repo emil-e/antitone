@@ -1,9 +1,10 @@
 use super::*;
 use crate::{
-    exposure_reference::{ReferenceExposure, StartingExposure, UnavailableReference},
+    exposure_reference::{ReferenceExposure, StartingExposure},
     processing::InputSettings,
+    project::SourceDevelopment,
     raw::{RawFile, fixture},
-    scan::Scan,
+    scan::{CameraProxy, Scan},
 };
 
 fn matched(ev: f64) -> ReferenceExposure {
@@ -15,7 +16,7 @@ fn matched(ev: f64) -> ReferenceExposure {
 }
 
 #[test]
-fn canonical_reference_rebinds_cached_pixels_without_mutating_existing_leases() {
+fn independent_exposure_values_share_the_same_cached_native_and_proxy_pixels() {
     let file = fixture::bayer_dng();
     let scan = Scan::from_raw(
         RawFile::open_uncorrected(file.path()).unwrap(),
@@ -23,137 +24,93 @@ fn canonical_reference_rebinds_cached_pixels_without_mutating_existing_leases() 
     )
     .unwrap();
     let original = scan.source().clone();
-    let stale = ReferenceExposure::Unavailable(UnavailableReference::ReadFailed);
-    original.reference_exposure.set(stale.clone()).unwrap();
-    let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
+    let pixels = Arc::new(CameraPixels::from_scan(&scan).unwrap());
     let development =
         SourceDevelopment::from_metadata(&original.metadata(), original.fixed_wb()).unwrap();
     let key = SourceKey::capture(file.path(), &development).unwrap();
-    let store = SourceCache::new(64 << 20);
-    store.publish_source(key.clone(), original.clone()).unwrap();
-    store.publish_proxy(key.clone(), proxy.clone()).unwrap();
-    let canonical = matched(2.25);
-    store.exposure_memo(&key).set(canonical.clone()).unwrap();
-
-    let prepared = store
-        .prepare_source(InputSettings::Digital, &original)
-        .unwrap();
-    let resolved_proxy = store
-        .prepare_proxy(&key, InputSettings::Digital, &proxy)
-        .unwrap();
-    assert_eq!(prepared.source.reference_exposure.get(), Some(&canonical));
-    assert_eq!(resolved_proxy.reference_exposure.get(), Some(&canonical));
-    assert_eq!(original.reference_exposure.get(), Some(&stale));
-    assert_eq!(proxy.reference_exposure.get(), Some(&stale));
-    assert!(Arc::ptr_eq(&proxy.pixels, &resolved_proxy.pixels));
-    assert!(Arc::ptr_eq(&store.get(&key).unwrap(), &prepared.source));
-    assert!(Arc::ptr_eq(
-        &store.get_proxy(&key).unwrap(),
-        &resolved_proxy
-    ));
-    assert!(
-        prepared.proxy.is_none(),
-        "a restored result needs no reference extraction or sampling"
-    );
-    assert!(store.preview_flights.lock().unwrap().is_empty());
+    let cache = SourceCache::new(64 << 20);
+    cache.publish_source(key.clone(), original.clone()).unwrap();
+    cache.publish_proxy(key.clone(), pixels.clone()).unwrap();
+    let first_value = matched(1.);
+    let second_value = matched(2.);
+    let first = crate::photo_preparation::native(
+        Some(&cache),
+        &OnceLock::from(first_value.clone()),
+        InputSettings::Digital,
+        &original,
+    )
+    .unwrap();
+    let second = crate::photo_preparation::native(
+        Some(&cache),
+        &OnceLock::from(second_value.clone()),
+        InputSettings::Digital,
+        &original,
+    )
+    .unwrap();
+    let first_proxy = CameraProxy::new(pixels.clone(), Some(first_value));
+    let second_proxy = CameraProxy::new(pixels.clone(), Some(second_value));
+    assert!(Arc::ptr_eq(&first.source, &second.source));
+    assert!(Arc::ptr_eq(&first_proxy.data, &second_proxy.data));
+    assert!(Arc::ptr_eq(&cache.get(&key).unwrap(), &original));
+    assert!(Arc::ptr_eq(&cache.get_proxy(&key).unwrap(), &pixels));
+    for (prepared, proxy, gain) in [(&first, &first_proxy, 2.), (&second, &second_proxy, 4.)] {
+        assert_eq!(
+            prepared
+                .scan()
+                .positive_matrix(&InputSettings::Digital)
+                .unwrap(),
+            scan.camera_to_ap1 * gain
+        );
+        assert_eq!(
+            proxy.positive_matrix(&InputSettings::Digital).unwrap(),
+            scan.camera_to_ap1 * gain
+        );
+        assert!(
+            prepared.proxy.is_none(),
+            "a recorded value needs no new sampling"
+        );
+    }
     assert_eq!(
-        prepared
-            .source
+        first
+            .scan()
             .positive_matrix(&InputSettings::Digital)
             .unwrap(),
-        scan.camera_to_ap1 * 2.25_f64.exp2()
+        scan.camera_to_ap1 * 2.,
+        "a later interpretation cannot alter an earlier consumer"
     );
-    assert_eq!(
-        resolved_proxy
-            .positive_matrix(&InputSettings::Digital)
-            .unwrap(),
-        scan.camera_to_ap1 * 2.25_f64.exp2()
-    );
+    assert!(cache.preview_flights.lock().unwrap().is_empty());
 }
 
 #[test]
-fn scope_consumers_share_metering_and_closed_cache_keeps_results_for_leased_pixels() {
+fn recorded_exposure_outlives_cache_closure_without_retaining_optional_pixels() {
     let file = fixture::bayer_dng();
     let scan = Scan::from_raw(
         RawFile::open_uncorrected(file.path()).unwrap(),
         Some([1.; 4]),
     )
     .unwrap();
-    let development =
-        SourceDevelopment::from_metadata(&scan.source().metadata(), scan.source().fixed_wb())
-            .unwrap();
-    let key = SourceKey::capture(file.path(), &development).unwrap();
-    let store = Arc::new(SourceCache::new(0));
-    let memo = store.exposure_memo(&key);
-    let consumer = store.clone();
-    assert!(
-        Arc::ptr_eq(&memo, &consumer.exposure_memo(&key)),
-        "unresolved work must share its synchronization cell"
-    );
-    memo.set(matched(1.75)).unwrap();
-    store.close();
-    let prepared = consumer
-        .prepare_source(InputSettings::Digital, scan.source())
-        .unwrap();
+    let exposures = crate::exposure_metadata::Store::default();
+    let id = crate::project::SourceId(1);
+    let reference = exposures.memo(id, file.path());
+    assert!(Arc::ptr_eq(&reference, &exposures.memo(id, file.path())));
+    reference.set(matched(1.75)).unwrap();
+    let cache = SourceCache::new(0);
+    cache.close();
+    let prepared = crate::photo_preparation::native(
+        Some(&cache),
+        &reference,
+        InputSettings::Digital,
+        scan.source(),
+    )
+    .unwrap();
     assert_eq!(
         prepared
-            .source
+            .scan()
             .positive_matrix(&InputSettings::Digital)
             .unwrap(),
         scan.camera_to_ap1 * 1.75_f64.exp2()
     );
+    assert_eq!(cache.charges().retained, 0);
     assert!(prepared.proxy.is_none());
-    assert_eq!(consumer.charges().retained, 0);
-    assert!(consumer.preview_flights.lock().unwrap().is_empty());
-}
-
-#[test]
-fn cpu_only_publication_applies_known_defaults_before_pending_preview_consumption() {
-    let file = fixture::bayer_dng();
-    let scan = Scan::from_raw(
-        RawFile::open_uncorrected(file.path()).unwrap(),
-        Some([1.; 4]),
-    )
-    .unwrap();
-    let source = scan.source().clone();
-    let stale = ReferenceExposure::Unavailable(UnavailableReference::ReadFailed);
-    source.reference_exposure.set(stale.clone()).unwrap();
-    let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
-    let development =
-        SourceDevelopment::from_metadata(&source.metadata(), source.fixed_wb()).unwrap();
-    let key = SourceKey::capture(file.path(), &development).unwrap();
-    let store = SourceCache::new(64 << 20);
-    store.publish_source(key.clone(), source.clone()).unwrap();
-    store.publish_proxy(key.clone(), proxy.clone()).unwrap();
-    let canonical = matched(2.25);
-    store.exposure_memo(&key).set(canonical.clone()).unwrap();
-
-    // Neither publication invokes preparation: this is the CPU-only warming boundary.
-    let published_source = store
-        .publish_source(key.clone(), source.clone())
-        .unwrap()
-        .unwrap();
-    let published_proxy = store
-        .publish_proxy(key.clone(), proxy.clone())
-        .unwrap()
-        .unwrap();
-    assert_eq!(published_source.reference_exposure.get(), Some(&canonical));
-    assert_eq!(published_proxy.reference_exposure.get(), Some(&canonical));
-    assert_eq!(source.reference_exposure.get(), Some(&stale));
-    assert_eq!(proxy.reference_exposure.get(), Some(&stale));
-    assert!(Arc::ptr_eq(&proxy.pixels, &published_proxy.pixels));
-    assert!(store.preview_flights.lock().unwrap().is_empty());
-    // Repeated normal publication must preserve canonical lease identity and accounting.
-    let again = store
-        .publish_source(key.clone(), published_source.clone())
-        .unwrap()
-        .unwrap();
-    assert!(Arc::ptr_eq(&again, &published_source));
-    assert!(Arc::ptr_eq(
-        &store
-            .publish_proxy(key, published_proxy.clone())
-            .unwrap()
-            .unwrap(),
-        &published_proxy
-    ));
+    assert!(cache.preview_flights.lock().unwrap().is_empty());
 }

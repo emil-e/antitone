@@ -37,7 +37,6 @@ async fn gpu() -> (wgpu::Device, wgpu::Queue) {
 
 fn proxy() -> Arc<Proxy> {
     Arc::new(Proxy {
-        reference_exposure: Default::default(),
         width: 3,
         height: 2,
         pixels: vec![[8000., 6000., 4000., 0.]; 6].into(),
@@ -77,7 +76,7 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
         .unwrap();
     editor
         .thumbnails
-        .bind_sources(editor.document.cache.clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     editor.thumbnails.seed(
         editor.document.project.source(id).unwrap(),
         FileKey::new(&path),
@@ -495,6 +494,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
                 editor.validate_pending_preview();
                 assert!(editor.pending_preview.is_some());
                 let ready = Ready {
+                    reference: None,
                     developed: crate::editor::tests::developed_fixture(),
                     file: thumbnails::FileKey::new(&path),
                     thumbnail: None,

@@ -59,6 +59,7 @@ fn start_cpu(
         let services = Services::new(
             editor.source_services.as_ref().unwrap(),
             editor.document.cache.clone(),
+            editor.document.exposures.clone(),
         );
         let task = access
             .spawn(move |cx| async move {

@@ -301,7 +301,7 @@ fn profile_complete_roll_area_preparation() {
                 let source = monitor.phase("region_seed_one_source", || {
                     source::Request {
                         input: document.project.input,
-                        reference: None,
+                        reference: Arc::default(),
                         path,
                         wb: Some(wb),
                         expected: Some(expected.clone()),

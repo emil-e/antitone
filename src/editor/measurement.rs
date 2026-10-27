@@ -15,6 +15,7 @@ pub(super) enum Measurement {
 
 pub(super) struct Input {
     pub source: Arc<DevelopedSource>,
+    pub reference: Option<crate::exposure_reference::ReferenceExposure>,
     pub correction: Option<Arc<FlatField>>,
     pub kind: Pick,
     pub region: Coverage,
@@ -26,7 +27,7 @@ pub(super) struct Input {
 
 impl Input {
     pub fn measure(self) -> Result<Measurement, Error> {
-        let mut scan = Scan::from_source(self.source);
+        let mut scan = Scan::with_reference(self.source, self.reference);
         scan.set_flat_field(self.correction)?;
         match self.kind {
             Pick::Dmin | Pick::Dmax => scan
@@ -76,6 +77,7 @@ impl Editor {
     pub(super) fn measurement_input(&self, kind: Pick, region: Coverage) -> Option<Input> {
         Some(Input {
             source: self.document.visit.ready.as_ref()?.developed.clone(),
+            reference: self.document.visit.ready.as_ref()?.reference.clone(),
             correction: self
                 .correction
                 .as_ref()
