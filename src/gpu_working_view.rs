@@ -1,10 +1,11 @@
 //! Immutable physical-view acquisition and rendering. Originals remain reference/export authority.
 use super::*;
 #[cfg(test)]
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+#[cfg(test)]
 use crate::film_emulation::FilmEmulationSettings;
 use crate::processing::InputSettings;
 use crate::{
-    adjustment_layers::AdjustmentLayerSnapshot,
     frame_raster::FrameRaster,
     geometry::{Composition, TextureMapping},
     rendering::OutputTarget,
@@ -29,7 +30,7 @@ pub(crate) struct ViewSourceSpec {
     area: crate::raw::Rect,
     matrix: DMat3,
     neutral: ProcessingParameters,
-    input: InputSettings,
+    program: Option<GpuInputProgram>,
     inspection: bool,
     field: Option<Arc<crate::flat_field::FlatField>>,
     support: crate::processing_support::Support,
@@ -43,6 +44,7 @@ impl PartialEq for ViewSourceSpec {
             && self.repairs == other.repairs
             && self.area == other.area
             && self.matrix == other.matrix
+            && self.program == other.program
             && self.inspection == other.inspection
             && self.field == other.field
             && bytemuck::bytes_of(&self.neutral) == bytemuck::bytes_of(&other.neutral)
@@ -98,10 +100,10 @@ impl ViewSourceSpec {
         matrix: DMat3,
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
-        let input = input.into();
-        let neutral = ProcessingParameters::interpret(input, RollSettings::default(), matrix)?;
+        let program = GpuInputProgram::new(input, matrix)?;
+        let neutral = program.neutral_parameters()?;
         let mut spec = Self::with_parameters(authority, frame, matrix, neutral, field, false)?;
-        spec.input = input;
+        spec.program = Some(program);
         Ok(spec)
     }
 
@@ -153,7 +155,7 @@ impl ViewSourceSpec {
             area,
             matrix,
             neutral,
-            input: InputSettings::Digital,
+            program: None,
             field,
             inspection,
             support: crate::processing_support::Support::NONE,
@@ -497,8 +499,8 @@ pub(crate) struct ViewSource {
 }
 
 impl ViewSource {
-    pub(crate) fn spec_matrix(&self) -> DMat3 {
-        self.spec.matrix
+    pub(crate) fn input_program(&self) -> Option<&GpuInputProgram> {
+        self.spec.program.as_ref()
     }
 
     /// Navigation positives process the already-sampled camera raster, not the originals.
@@ -523,7 +525,10 @@ impl ViewSource {
             || !spec.repairs.0.is_empty()
             || proxy.width.max(proxy.height) > crate::scan::CameraProxy::MAX_EDGE
             || proxy.pixels.len() as u64 != u64::from(proxy.width) * u64::from(proxy.height)
-            || spec.matrix != proxy.positive_matrix(&spec.input)?
+            || !spec
+                .program
+                .as_ref()
+                .is_some_and(|program| program.matches_proxy(proxy).unwrap_or(false))
             || spec.frame != frame
             || spec.field.as_ref() != field.as_ref().map(|field| field.field())
         {
@@ -689,10 +694,13 @@ impl ViewSource {
         scan.validate_area(spec.area)?;
         if scan.area != spec.area
             || (if spec.is_inspection() {
-                scan.camera_to_ap1
+                scan.camera_to_ap1 != spec.matrix
             } else {
-                scan.positive_matrix(&spec.input)?
-            }) != spec.matrix
+                !spec
+                    .program
+                    .as_ref()
+                    .is_some_and(|program| program.matches_native(scan).unwrap_or(false))
+            })
             || scan.flat_field() != spec.field.as_ref()
             || spec.field.as_ref() != field.as_ref().map(|f| f.field())
             || specs
@@ -869,7 +877,7 @@ impl ViewSource {
 struct GradedView {
     source: Arc<ViewSource>,
     // None is the linear source-inspection bypass, never an identity photographic grade.
-    grade: Option<Arc<GpuAdjustmentLayers>>,
+    grade: Option<Arc<GpuGrade>>,
     stages: super::pixel_pipeline::Prepared,
     pixels: wgpu::Buffer,
     view: ViewUniform,
@@ -916,36 +924,14 @@ impl RenderedView {
     pub(crate) fn new(
         device: &wgpu::Device,
         source: Arc<ViewSource>,
-        settings: impl Into<InputSettings>,
-        roll: RollSettings,
-        snapshot: AdjustmentLayerSnapshot,
         input: &ProcessingInput,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
-        let settings = settings.into();
-        let expected = ProcessingParameters::interpret(settings, roll, source.spec.matrix)?;
-        if bytemuck::bytes_of(&expected) != bytemuck::bytes_of(&input.parameters())
-            || input.grade().map_or(
-                snapshot.layers().iter().any(|layer| layer.is_active()),
-                |g| g.snapshot() != &snapshot,
-            )
-        {
-            return Err(Error::Gpu(
-                "physical-view grade and processing identity differ".into(),
-            ));
-        }
-        if ViewSourceSpec::new(
-            source.spec.authority,
-            source.spec.frame,
-            settings,
-            source.spec.matrix,
-            source.spec.field.clone(),
-        )?
-        .with_repairs(source.spec.repairs.clone())
-        .with_support(source.spec.support)
-            != source.spec
-        {
+        let pipeline = input
+            .pipeline()
+            .ok_or_else(|| Error::Gpu("positive view requires a processing pipeline".into()))?;
+        if source.input_program() != Some(pipeline.input_program()) || source.spec.inspection {
             return Err(Error::Gpu("physical-view source is stale".into()));
         }
         if input.repairs != source.spec.repairs {
@@ -953,17 +939,9 @@ impl RenderedView {
                 "physical-view repairs differ from reconstructed originals".into(),
             ));
         }
+        pipeline.grade.require_extent(source.spec.area)?;
+        pipeline.validate_repairs(device, input.repairs.bound())?;
         let processing = input.signature();
-        // Validate the entire candidate even for target-only reuse, before allocating/publishing it.
-        GpuAdjustmentLayers::validate_repaired(
-            device,
-            settings,
-            roll,
-            &snapshot,
-            source.spec.matrix,
-            source.spec.area,
-            input.repairs.bound(),
-        )?;
         let graded = previous
             .filter(|p| p.spec == source.spec && p.processing.same_photographic(&processing))
             .and_then(|p| p.graded.clone());
@@ -971,28 +949,21 @@ impl RenderedView {
             Some(graded) => graded,
             None => {
                 let frame = source.spec.input_frame()?;
-                let view = ViewUniform::new(frame, input.parameters());
-                let pipeline = input.pixel_pipeline(source.spec.area.height)?;
+                let view = ViewUniform::new(frame, pipeline.grade.parameters);
+                let pixel_pipeline = input.pixel_pipeline(source.spec.area.height)?;
                 let previous = previous
                     .filter(|p| p.spec.authority == source.spec.authority)
                     .and_then(|p| p.graded.as_ref())
                     .map(|g| &g.stages);
                 let stages = super::pixel_pipeline::Prepared::new(
                     device,
-                    &pipeline,
+                    &pixel_pipeline,
                     super::raster::Raster::frame(frame),
                     previous,
                 )?;
                 Arc::new(GradedView {
                     pixels: float_buffer(device, source.spec.frame.output)?,
-                    grade: Some(Arc::new(GpuAdjustmentLayers::new(
-                        device,
-                        settings,
-                        roll,
-                        snapshot.clone(),
-                        source.spec.matrix,
-                        source.spec.area,
-                    )?)),
+                    grade: Some(pipeline.grade.clone()),
                     stages,
                     view,
                     source: source.clone(),
@@ -1018,7 +989,7 @@ impl RenderedView {
         );
         let expected = ProcessingParameters::source_with_matrix(matrix)?;
         if !source.spec.inspection
-            || input.grade().is_some()
+            || input.pipeline().is_some()
             || !matrix.is_finite()
             || matrix.determinant() == 0.
             || bytemuck::bytes_of(&expected) != bytemuck::bytes_of(&parameters)

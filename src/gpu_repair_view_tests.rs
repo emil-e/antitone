@@ -13,8 +13,7 @@ fn repaired(
     device: &wgpu::Device,
 ) -> (Snapshot, Arc<crate::dust_repair::EvaluatedRepair>) {
     let roll = RollSettings::default();
-    let scalar =
-        crate::processing::InputPipeline::new(calibration(), roll, scan.camera_to_ap1).unwrap();
+    let scalar = crate::processing::Pipeline::new(calibration(), roll, scan.camera_to_ap1).unwrap();
     let support =
         SupportMask::new([124, 40], [9, 9], (0..81).map(|i| i % 3 != 0).collect()).unwrap();
     let repair = Repair {
@@ -68,7 +67,7 @@ fn render_repaired(
         crate::adjustment_layers::AdjustmentLayer::global(photo),
     ])
     .and_then(|snapshot| {
-        crate::gpu::GpuAdjustmentLayers::new(
+        crate::gpu::GpuPipeline::new(
             device,
             calibration(),
             roll,
@@ -81,20 +80,7 @@ fn render_repaired(
     .unwrap()
     .into();
     input.repairs = snapshot.clone();
-    let view = RenderedView::new(
-        device,
-        source,
-        calibration(),
-        roll,
-        AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
-            photo,
-        )])
-        .unwrap(),
-        &input,
-        target,
-        previous,
-    )
-    .unwrap();
+    let view = RenderedView::new(device, source, &input, target, previous).unwrap();
     view.ensure_submitted(
         device,
         queue,
@@ -280,25 +266,24 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             balance: Balance::default(),
         };
         let roll = RollSettings::default();
-        let mut input: ProcessingInput =
-            ProcessingParameters::positive(negative, roll, source.spec.matrix)
-                .unwrap()
-                .into();
-        input.repairs = patches;
-        let view = RenderedView::new(
-            &device,
-            source.clone(),
-            negative,
-            roll,
-            AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
-                AdjustmentLayerSettings::default(),
-            )])
+        let mut input: ProcessingInput = Arc::new(
+            GpuPipeline::new(
+                &device,
+                negative,
+                roll,
+                AdjustmentLayerSnapshot::new(vec![
+                    crate::adjustment_layers::AdjustmentLayer::global(Default::default()),
+                ])
+                .unwrap(),
+                source.spec.matrix,
+                area,
+            )
             .unwrap(),
-            &input,
-            OutputTarget::Srgb,
-            None,
         )
-        .unwrap();
+        .into();
+        input.repairs = patches;
+        let view =
+            RenderedView::new(&device, source.clone(), &input, OutputTarget::Srgb, None).unwrap();
         view.ensure_submitted(
             &device,
             &queue,
@@ -335,7 +320,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             crate::adjustment_layers::AdjustmentLayer::global(photo),
         ])
         .and_then(|snapshot| {
-            crate::gpu::GpuAdjustmentLayers::new(
+            crate::gpu::GpuPipeline::new(
                 &device,
                 calibration(),
                 roll,
@@ -347,7 +332,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
         .map(Arc::new)
         .unwrap();
         assert!(
-            GpuAdjustmentLayers::validate_repaired(
+            GpuPipeline::validate_repaired(
                 &device,
                 calibration(),
                 roll,
@@ -370,7 +355,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let (patches, evaluated) = repaired(&scan, &device);
-        let scalar = crate::processing::InputPipeline::new(
+        let scalar = crate::processing::Pipeline::new(
             calibration(),
             RollSettings::default(),
             scan.camera_to_ap1,
@@ -532,7 +517,7 @@ fn repaired_region_updates_compose_independently_restore_removed_support_and_can
         let scan = scan();
         let (first, _) = repaired(&scan, &device);
         let scalar =
-            crate::processing::InputPipeline::ungraded(calibration(), scan.camera_to_ap1).unwrap();
+            crate::processing::InputPipeline::new(calibration(), scan.camera_to_ap1).unwrap();
         let second_repair = Repair {
             id: RepairId(2),
             enabled: true,

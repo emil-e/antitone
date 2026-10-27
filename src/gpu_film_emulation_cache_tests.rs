@@ -13,7 +13,7 @@ fn candidate(
         )])
         .unwrap();
     let grade = Arc::new(
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             device,
             InputSettings::Digital,
             RollSettings::default(),
@@ -26,17 +26,7 @@ fn candidate(
     let input = ProcessingInput::from(grade)
         .with_film_emulation(film)
         .with_film_seed(17);
-    RenderedView::new(
-        device,
-        source,
-        InputSettings::Digital,
-        RollSettings::default(),
-        snapshot,
-        &input,
-        OutputTarget::Srgb,
-        previous,
-    )
-    .unwrap()
+    RenderedView::new(device, source, &input, OutputTarget::Srgb, previous).unwrap()
 }
 
 fn field(view: &RenderedView) -> &Arc<crate::gpu::grain::Field> {

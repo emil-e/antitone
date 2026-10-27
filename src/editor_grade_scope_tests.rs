@@ -31,7 +31,7 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
                 }),
             ])
             .and_then(|snapshot| {
-                crate::gpu::GpuAdjustmentLayers::new(
+                crate::gpu::GpuPipeline::new(
                     &device,
                     e.calibration().unwrap(),
                     RollSettings::default(),

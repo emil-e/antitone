@@ -2,13 +2,11 @@
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
-use antitone::gpu::GpuAdjustmentLayers;
+use antitone::gpu::GpuPipeline;
 use antitone::{
     color::Balance,
     gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
-    processing::{
-        Calibration, InputPipeline, InputSettings, NegativeInput, Response, RollSettings,
-    },
+    processing::{Calibration, InputSettings, NegativeInput, Pipeline, Response, RollSettings},
 };
 use glam::{DMat3, DVec3};
 
@@ -41,7 +39,7 @@ fn read(
     queue: &wgpu::Queue,
     kernel: &ProcessingKernel,
     source: &ProcessingSource,
-    params: &GpuAdjustmentLayers,
+    params: &GpuPipeline,
     n: usize,
 ) -> Vec<[f32; 4]> {
     let size = n as u64 * 16;
@@ -176,7 +174,7 @@ fn film_shapes_camera_matrices_balance_and_exposure_match_the_scalar_model() {
                 let params =
                     match AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                         .and_then(|snapshot| {
-                            GpuAdjustmentLayers::new(
+                            GpuPipeline::new(
                                 &device,
                                 interpretation,
                                 roll,
@@ -229,7 +227,7 @@ fn film_shapes_camera_matrices_balance_and_exposure_match_the_scalar_model() {
                 input_floor: 2.1630933622265155e-5,
             };
             let roll = RollSettings::default();
-            let params = GpuAdjustmentLayers::new(
+            let params = GpuPipeline::new(
                 &device,
                 cal,
                 roll,
@@ -239,7 +237,7 @@ fn film_shapes_camera_matrices_balance_and_exposure_match_the_scalar_model() {
             )
             .unwrap();
             let gpu = read(&device, &queue, &kernel, &source, &params, codes.len());
-            let pipeline = InputPipeline::new(cal, roll, matrix).unwrap();
+            let pipeline = Pipeline::new(cal, roll, matrix).unwrap();
             for i in [0, 7] {
                 let expected = pipeline.apply(scans[i]).unwrap().rgb;
                 for c in 0..3 {
@@ -289,7 +287,7 @@ fn scalar_valid_floor_anchor_is_rejected_or_stays_finite_with_packed_parameters(
         let kernel = ProcessingKernel::new(&device).await.unwrap();
         let source =
             ProcessingSource::new_continuous(&device, &[[0.; 4]], DMat3::IDENTITY).unwrap();
-        let grade = GpuAdjustmentLayers::new(
+        let grade = GpuPipeline::new(
             &device,
             interpretation,
             RollSettings::default(),

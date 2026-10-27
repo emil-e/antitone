@@ -331,13 +331,11 @@ impl Originals {
         renderer: &GpuRenderer,
         request: &Request<'_>,
         bounds: SourceRegion,
+        program: &crate::gpu::GpuInputProgram,
     ) -> Result<Self, Error> {
         let size = [bounds.width, bounds.height];
-        let source = ProcessingSource::new_continuous(
-            device,
-            &vec![[0.; 4]; (size[0] * size[1]) as usize],
-            request.scan.positive_matrix(&request.input)?,
-        )?;
+        let source =
+            program.source_continuous(device, &vec![[0.; 4]; (size[0] * size[1]) as usize])?;
         let working = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bounded original graded AP1 scratch"),
             size: u64::from(size[0]) * u64::from(size[1]) * 16,
@@ -417,19 +415,18 @@ pub(super) fn write(
     {
         return Err(Error::Gpu("export source/recipe mismatch".into()));
     }
-    let input = match request.input.calibration() {
-        Some(base) => request
-            .input
-            .with_calibration(request.scan.processing_calibration(base)?),
-        None => request.input,
-    };
-    let grade = Arc::new(GpuAdjustmentLayers::new(
+    let source = crate::scan::ImageSource::new(request.scan, request.input)?;
+    let photographic = Arc::new(crate::gpu::GpuGrade::new(
         device,
-        input,
         request.roll,
         request.grade.clone(),
-        request.scan.positive_matrix(&input)?,
-        request.scan.area,
+        source.area(),
+    )?);
+    let grade = Arc::new(GpuPipeline::compose(
+        device,
+        source.gpu_program()?,
+        photographic,
+        source.area(),
     )?);
     let pipeline = crate::pixel_pipeline::PixelPipeline::film(
         request.film_emulation,
@@ -443,15 +440,7 @@ pub(super) fn write(
     let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;
     repairs.require_area(request.scan.area)?;
     if !repairs.0.is_empty() {
-        GpuAdjustmentLayers::validate_repaired(
-            device,
-            input,
-            request.roll,
-            &request.grade,
-            request.scan.positive_matrix(&input)?,
-            request.scan.area,
-            repairs.bound(),
-        )?;
+        grade.validate_repairs(device, repairs.bound())?;
     }
     let kernel = &renderer.kernel;
     let _look_resource = request
@@ -511,7 +500,13 @@ pub(super) fn write(
                 }
                 originals = Some(timed!(
                     Setup,
-                    Originals::new(device, renderer, &request, unit.bounds)
+                    Originals::new(
+                        device,
+                        renderer,
+                        &request,
+                        unit.bounds,
+                        grade.input_program()
+                    )
                 )?);
             }
             let source = originals.as_mut().unwrap();

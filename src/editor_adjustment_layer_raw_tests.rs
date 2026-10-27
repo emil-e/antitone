@@ -15,9 +15,7 @@ use api::{
     crop::Crop,
     frame_raster::FrameRaster,
     geometry::{Composition, FramePoint, SourcePoint, SourceRaster, SourceRegion},
-    gpu::{
-        GpuAdjustmentLayers, ProcessingInput, ProcessingKernel, ProcessingSource, SourceGeometry,
-    },
+    gpu::{GpuPipeline, ProcessingInput, ProcessingKernel, ProcessingSource, SourceGeometry},
     processing::RollSettings,
     refinement::{ViewRequest, refine},
     rendering::{CpuRenderer, OutputTarget},
@@ -268,7 +266,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                 )
                 .unwrap();
                 let tick = Instant::now();
-                let grade = match GpuAdjustmentLayers::new(
+                let grade = match GpuPipeline::new(
                     &device,
                     calibration,
                     roll,

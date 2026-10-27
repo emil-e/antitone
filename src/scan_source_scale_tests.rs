@@ -1,5 +1,5 @@
 use super::*;
-use crate::processing::{InputPipeline, InputSettings};
+use crate::processing::{InputSettings, Pipeline};
 use crate::raw::{RawFile, fixture};
 
 #[test]
@@ -86,7 +86,7 @@ fn digital_neutral_reference_reaches_ap1_middle_gray_at_zero_user_exposure() {
         (pixel - DVec3::splat(0.18)).abs().max_element() < 2e-5,
         "{pixel:?}"
     );
-    let pipeline = InputPipeline::new(
+    let pipeline = Pipeline::new(
         InputSettings::Digital,
         Default::default(),
         scan.camera_to_ap1,
@@ -171,7 +171,7 @@ fn sdk_developed_samples_are_not_rescaled_by_the_libraw_gain() {
         scan.source.input_floor(),
         scan.source.metadata().input_floor().unwrap()
     );
-    let ap1 = InputPipeline::ungraded(InputSettings::Digital, scan.camera_to_ap1)
+    let ap1 = crate::processing::InputPipeline::new(InputSettings::Digital, scan.camera_to_ap1)
         .unwrap()
         .apply(scan.pixel(32, 32).unwrap())
         .unwrap()

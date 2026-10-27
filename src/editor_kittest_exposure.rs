@@ -2,11 +2,23 @@ use super::*;
 
 #[test]
 fn matched_reference_reaches_selected_canvas_and_navigation_at_zero_manual_exposure() {
+    assert_matched_reference_in_views(false);
+}
+
+#[test]
+fn matched_reference_reaches_padded_film_views_at_zero_manual_exposure() {
+    assert_matched_reference_in_views(true);
+}
+
+fn assert_matched_reference_in_views(film_enabled: bool) {
     let file = crate::exposure_fixture::neutral_dng(1.3);
     editor_harness_with_thumbnails(true, |mut h, capture| {
         h.update(|editor| {
             editor.input = crate::processing::InputSettings::Digital;
             editor.target = OutputTarget::Srgb;
+            // Zero grain amplitude keeps the constant-patch oracle; MTF still needs padding.
+            editor.film_emulation.enabled = film_enabled;
+            editor.film_emulation.amount = 0.;
             editor.sync_document();
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().to_owned()], cx));
@@ -24,6 +36,19 @@ fn matched_reference_reaches_selected_canvas_and_navigation_at_zero_manual_expos
         h.render().unwrap();
         let image = h.read(|editor| {
             assert!(!editor.source);
+            let ready = editor.document.visit.ready.as_ref().unwrap();
+            let support = crate::pixel_pipeline::PixelPipeline::film(
+                editor.film_emulation,
+                ready.developed.area().height,
+                0,
+            )
+            .unwrap()
+            .support([1., 1.])
+            .unwrap();
+            assert_eq!(
+                support != crate::processing_support::Support::NONE,
+                film_enabled
+            );
             assert_eq!(editor.roll.exposure, 0.);
             assert_eq!(editor.adjustment_layer_settings.exposure, 0.);
             let reference = editor

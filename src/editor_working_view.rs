@@ -1,6 +1,5 @@
 //! Selected-view ownership: one neutral acquisition, latest-request coalescing, immutable frames.
 use super::*;
-use crate::processing::InputSettings;
 use crate::{
     frame_raster::FrameRaster,
     gpu::view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec},
@@ -279,9 +278,6 @@ impl WorkingView {
 
     fn render(
         &mut self,
-        settings: &InputSettings,
-        roll: RollSettings,
-        snapshot: AdjustmentLayerSnapshot,
         input: &ProcessingInput,
         target: OutputTarget,
         context: &egui::Context,
@@ -289,16 +285,7 @@ impl WorkingView {
         self.render_with(input, target, context, |device, source, previous| {
             let mut source_input = input.clone();
             source_input.repairs = source.spec.repairs.clone();
-            RenderedView::new(
-                device,
-                source,
-                settings,
-                roll,
-                snapshot.clone(),
-                &source_input,
-                target,
-                previous,
-            )
+            RenderedView::new(device, source, &source_input, target, previous)
         })
     }
 
@@ -854,12 +841,6 @@ impl Editor {
             None => base_input,
         };
         let matrix = ready.developed.positive_matrix(&settings)?;
-        let snapshot = match input.grade() {
-            Some(grade) => grade.snapshot().clone(),
-            None => AdjustmentLayerSnapshot::new(vec![
-                crate::adjustment_layers::AdjustmentLayer::global(self.adjustment_layer_settings),
-            ])?,
-        };
         let spec = ViewSourceSpec::new(
             self.id,
             frame,
@@ -876,8 +857,7 @@ impl Editor {
                 .support([1., 1.])?,
         );
         self.request_working(spec, source_input, cx);
-        self.working
-            .render(&settings, self.roll, snapshot, input, self.target, context)?;
+        self.working.render(input, self.target, context)?;
 
         self.working.reference = self
             .original_rendered(OriginalPurpose::Reference, input, matrix)?

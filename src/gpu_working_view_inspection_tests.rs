@@ -256,22 +256,8 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                         .is_err()
                     );
                     assert!(
-                        RenderedView::new(
-                            &device,
-                            source.clone(),
-                            calibration(),
-                            RollSettings::default(),
-                            AdjustmentLayerSnapshot::new(vec![
-                                crate::adjustment_layers::AdjustmentLayer::global(
-                                    AdjustmentLayerSettings::default()
-                                )
-                            ])
-                            .unwrap(),
-                            &positive_input,
-                            target,
-                            None
-                        )
-                        .is_err()
+                        RenderedView::new(&device, source.clone(), &positive_input, target, None,)
+                            .is_err()
                     );
                     previous = Some(view);
                 }

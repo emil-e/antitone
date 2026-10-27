@@ -61,7 +61,7 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
             ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1).unwrap();
         assert_eq!(source.byte_len(), codes.len() as u64 * 16);
         let kernel = ProcessingKernel::new(&device).await.unwrap();
-        let grade = antitone::gpu::GpuAdjustmentLayers::new(
+        let grade = antitone::gpu::GpuPipeline::new(
             &device,
             input,
             roll,

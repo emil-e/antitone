@@ -105,7 +105,7 @@ fn configured_probe(
     });
     let snapshot = AdjustmentLayerSnapshot::new(vec![]).unwrap();
     let grade = Arc::new(
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             device,
             InputSettings::Digital,
             RollSettings::default(),
@@ -123,17 +123,7 @@ fn configured_probe(
             colour: config.colour,
         })
         .with_film_seed(seed);
-    RenderedView::new(
-        device,
-        source,
-        InputSettings::Digital,
-        RollSettings::default(),
-        snapshot,
-        &input,
-        OutputTarget::Srgb,
-        None,
-    )
-    .unwrap()
+    RenderedView::new(device, source, &input, OutputTarget::Srgb, None).unwrap()
 }
 
 fn render_probe(

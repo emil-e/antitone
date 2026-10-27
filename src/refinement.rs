@@ -56,15 +56,18 @@ pub fn refine(
         ))?
     } else {
         let zeros = vec![[0.; 4]; tile_width as usize * tile_height as usize];
-        let mut tile = pollster::block_on(GpuImage::new_continuous_shared(
+        let source = match input.pipeline() {
+            Some(pipeline) => pipeline.input_program().source_continuous(device, &zeros)?,
+            None => {
+                crate::gpu::ProcessingSource::new_continuous(device, &zeros, scan.camera_to_ap1)?
+            }
+        };
+        let mut tile = pollster::block_on(GpuImage::from_source_shared(
             renderer,
             device,
             tile_width,
             tile_height,
-            &zeros,
-            input
-                .grade()
-                .map_or(scan.camera_to_ap1, |grade| grade.source_matrix()),
+            source,
             target,
         ))?;
         tile.set_flat_field(
@@ -128,16 +131,18 @@ pub fn refine(
                 if expanded.as_ref().is_none_or(|image| {
                     image.linear.width() != size[0] || image.linear.height() != size[1]
                 }) {
-                    expanded = Some(pollster::block_on(GpuImage::new_continuous_shared(
-                        renderer,
-                        device,
-                        size[0],
-                        size[1],
-                        &pixels,
-                        input
-                            .grade()
-                            .map_or(scan.camera_to_ap1, |grade| grade.source_matrix()),
-                        target,
+                    let source = match input.pipeline() {
+                        Some(pipeline) => pipeline
+                            .input_program()
+                            .source_continuous(device, &pixels)?,
+                        None => crate::gpu::ProcessingSource::new_continuous(
+                            device,
+                            &pixels,
+                            scan.camera_to_ap1,
+                        )?,
+                    };
+                    expanded = Some(pollster::block_on(GpuImage::from_source_shared(
+                        renderer, device, size[0], size[1], source, target,
                     ))?);
                 } else {
                     expanded

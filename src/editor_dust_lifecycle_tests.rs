@@ -809,7 +809,7 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         result.evaluated.pixels().collect::<Vec<_>>(),
         other.evaluated.pixels().collect::<Vec<_>>()
     );
-    let pipeline = InputPipeline::ungraded(request.input, scan.camera_to_ap1).unwrap();
+    let pipeline = InputPipeline::new(request.input, scan.camera_to_ap1).unwrap();
     let expected = crate::dust_repair::evaluate(&request.repair, scan.area, |p| {
         Ok(pipeline
             .apply(scan.pixel(p[0], p[1])?)?

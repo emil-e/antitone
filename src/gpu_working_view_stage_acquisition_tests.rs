@@ -9,7 +9,7 @@ use crate::{
 
 fn input(device: &wgpu::Device, scan: &Scan, film: FilmEmulationSettings) -> ProcessingInput {
     ProcessingInput::from(Arc::new(
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             device,
             InputSettings::Digital,
             Default::default(),
@@ -29,17 +29,7 @@ fn render(
     source: Arc<ViewSource>,
     input: &ProcessingInput,
 ) -> Vec<[f32; 4]> {
-    let view = RenderedView::new(
-        device,
-        source,
-        InputSettings::Digital,
-        Default::default(),
-        AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-        input,
-        OutputTarget::Srgb,
-        None,
-    )
-    .unwrap();
+    let view = RenderedView::new(device, source, input, OutputTarget::Srgb, None).unwrap();
     view.ensure_submitted(
         device,
         queue,
@@ -188,7 +178,7 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
             .unwrap()
             .unwrap();
             let pixels = render(&device, &queue, source, &input);
-            let scalar = InputPipeline::ungraded(InputSettings::Digital, matrix).unwrap();
+            let scalar = InputPipeline::new(InputSettings::Digital, matrix).unwrap();
             if !ramp {
                 let expected = scalar
                     .apply(scan.pixel(scan.area.x + 12, scan.area.y + 12).unwrap())

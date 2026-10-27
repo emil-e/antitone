@@ -4,9 +4,7 @@ use antitone::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::Balance,
     geometry::{SourcePoint, SourceRegion},
-    gpu::{
-        GpuAdjustmentLayers, ProcessingInput, ProcessingKernel, ProcessingSource, SourceGeometry,
-    },
+    gpu::{GpuPipeline, ProcessingInput, ProcessingKernel, ProcessingSource, SourceGeometry},
     processing::{Calibration, RollSettings},
     rendering::OutputTarget,
     viewer::GpuImage,
@@ -178,7 +176,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
                     let mut unsupported = None;
                     for _ in 0..3 {
                         let start = Instant::now();
-                        let result = GpuAdjustmentLayers::new(
+                        let result = GpuPipeline::new(
                             &device,
                             calibration,
                             roll,

@@ -236,17 +236,10 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                 ..Default::default()
             };
             let processing = processing_input(&device, input, roll, photo, &scan);
-            let snapshot = AdjustmentLayerSnapshot::new(vec![
-                crate::adjustment_layers::AdjustmentLayer::global(photo),
-            ])
-            .unwrap();
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                 let detail = RenderedView::new(
                     &device,
                     detail_source.clone(),
-                    input,
-                    roll,
-                    snapshot.clone(),
                     &processing,
                     target,
                     previous_detail.as_ref(),
@@ -255,9 +248,6 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                 let base = RenderedView::new(
                     &device,
                     base_source.clone(),
-                    input,
-                    roll,
-                    snapshot.clone(),
                     &processing,
                     target,
                     previous_base.as_ref(),
@@ -515,22 +505,7 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
                 &[value; 64],
             );
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                let make = |s| {
-                    RenderedView::new(
-                        &device,
-                        s,
-                        input,
-                        roll,
-                        AdjustmentLayerSnapshot::new(vec![
-                            crate::adjustment_layers::AdjustmentLayer::global(photo),
-                        ])
-                        .unwrap(),
-                        &processing,
-                        target,
-                        None,
-                    )
-                    .unwrap()
-                };
+                let make = |s| RenderedView::new(&device, s, &processing, target, None).unwrap();
                 let detail = make(detail_source.clone());
                 let base = make(base_source.clone());
                 let composite =
@@ -590,22 +565,7 @@ fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_
         let renderer_owner = Arc::downgrade(&renderer);
         let photo = AdjustmentLayerSettings::default();
         let input = processing_input(&device, cal, roll, photo, &scan);
-        let make = |s| {
-            RenderedView::new(
-                &device,
-                s,
-                cal,
-                roll,
-                AdjustmentLayerSnapshot::new(vec![
-                    crate::adjustment_layers::AdjustmentLayer::global(photo),
-                ])
-                .unwrap(),
-                &input,
-                OutputTarget::Srgb,
-                None,
-            )
-            .unwrap()
-        };
+        let make = |s| RenderedView::new(&device, s, &input, OutputTarget::Srgb, None).unwrap();
         let detail = make(detail_source.clone());
         let base = make(base_source.clone());
         let composite = RenderedView::composite(&device, detail, base, full, None).unwrap();
@@ -678,22 +638,7 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
         );
         let photo = AdjustmentLayerSettings::default();
         let input = processing_input(&device, cal, roll, photo, &scan);
-        let make = |s| {
-            RenderedView::new(
-                &device,
-                s,
-                cal,
-                roll,
-                AdjustmentLayerSnapshot::new(vec![
-                    crate::adjustment_layers::AdjustmentLayer::global(photo),
-                ])
-                .unwrap(),
-                &input,
-                OutputTarget::Srgb,
-                None,
-            )
-            .unwrap()
-        };
+        let make = |s| RenderedView::new(&device, s, &input, OutputTarget::Srgb, None).unwrap();
         let composite =
             RenderedView::composite(&device, make(detail_source), make(base_source), full, None)
                 .unwrap();

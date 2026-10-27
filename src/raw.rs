@@ -22,7 +22,7 @@ mod source_preview;
 #[cfg(feature = "editor")]
 pub(crate) use source_preview::{SourcePreview, SourceWhiteBalance};
 
-#[cfg(all(test, feature = "project"))]
+#[cfg(test)]
 #[path = "../tests/support/raw_fixture.rs"]
 pub(crate) mod fixture;
 #[cfg(all(test, feature = "project"))]
@@ -260,6 +260,10 @@ impl Metadata {
         Ok(self
             .lens_geometry()?
             .map_or([self.width, self.height], |g| g.size()))
+    }
+
+    pub(crate) fn lens_correction_enabled(&self) -> bool {
+        self.lens_disabled == 0
     }
 
     pub fn lens_identity(&self) -> Result<Option<String>, Error> {
@@ -557,7 +561,6 @@ pub struct RawFile {
     corrected: Option<lens_source::CorrectedImage>,
     #[cfg(feature = "dng-sdk")]
     path: std::path::PathBuf,
-    #[cfg(feature = "project")]
     pub(crate) file: crate::source_revision::FileKey,
     #[cfg(feature = "dng-sdk")]
     dng_source: Option<crate::dng::Source>,
@@ -582,7 +585,6 @@ impl RawFile {
         lens_correction: bool,
         fixed_wb: Option<[f64; 4]>,
     ) -> Result<Self, Error> {
-        #[cfg(feature = "project")]
         let file = crate::source_revision::FileKey::new(source_path);
         let path = CString::new(source_path.as_os_str().as_encoded_bytes())
             .map_err(|_| Error::Raw("source path contains NUL".into()))?;
@@ -610,7 +612,6 @@ impl RawFile {
             corrected: None,
             #[cfg(feature = "dng-sdk")]
             path: source_path.to_path_buf(),
-            #[cfg(feature = "project")]
             file,
             #[cfg(feature = "dng-sdk")]
             dng_source: None,

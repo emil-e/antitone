@@ -66,8 +66,8 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
             .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         assert!(std::ptr::eq(
-            accepted.grade().unwrap(),
-            renamed.grade().unwrap()
+            accepted.pipeline().unwrap(),
+            renamed.pipeline().unwrap()
         ));
         editor.apply_adjustment_layer_action(Action::Reorder(
             editor.order_drag(order[0]).unwrap(),
@@ -178,7 +178,7 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
         let input = editor
             .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
-        let snapshot = input.grade().unwrap().snapshot().clone();
+        let snapshot = input.pipeline().unwrap().snapshot().clone();
         let next_id = editor
             .document
             .project
@@ -209,7 +209,7 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
                 .next_id,
             next_id
         );
-        assert_eq!(input.grade().unwrap().snapshot(), &snapshot);
+        assert_eq!(input.pipeline().unwrap().snapshot(), &snapshot);
     });
 }
 
@@ -244,8 +244,8 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
                 .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap();
             assert!(std::ptr::eq(
-                input.grade().unwrap(),
-                current.grade().unwrap()
+                input.pipeline().unwrap(),
+                current.pipeline().unwrap()
             ));
         }
     });
@@ -379,8 +379,8 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
             .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         assert!(std::ptr::eq(
-            accepted.grade().unwrap(),
-            current.grade().unwrap()
+            accepted.pipeline().unwrap(),
+            current.pipeline().unwrap()
         ));
     });
 }
@@ -467,8 +467,8 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                 .unwrap();
             assert!(std::ptr::eq(
-                accepted.grade().unwrap(),
-                current.grade().unwrap()
+                accepted.pipeline().unwrap(),
+                current.pipeline().unwrap()
             ));
         }
     });

@@ -30,7 +30,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
     let logical = crate::gpu::repairs::Snapshot::logical(vec![evaluated.clone()]).unwrap();
     let photo = AdjustmentLayerSettings::default();
     let grade = Arc::new(
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             &device,
             Calibration {
                 dmin: DVec3::splat(0.8),

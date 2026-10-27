@@ -84,15 +84,19 @@ After input interpretation, each source's metadata-derived camera matrix maps th
 
 ### Ungraded positive and repair placement
 
-The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, including fixed Digital brightness normalization, but before Roll or layer controls. `InputPipeline::ungraded` consumes the source's resolved production transform: Negative includes correction and calibrated inversion; Digital supplies its normalized positive.
+The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, including fixed Digital brightness normalization, but before Roll or layer controls. `InputPipeline` consumes the resolved production transform and omits photographic grading. `ImageSource` supplies original-coordinate samples with correction and interpretation resolved for its captured source.
 
 The provisional Dust tool heals here. RAW-development WB, gamma balance and fixed Digital normalization are upstream; Roll and adjustment-layer controls are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
 
 Healing and nonlinear grading do not commute, so pre-grade donor matching can differ from matching graded input. Full-resolution repair composition precedes view filtering; saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer and TIFF/AP0 EXR consume those repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) and measurement inputs omit them.
 
+### Input and grading have separate contracts
+
+CPU `GradingPipeline` and GPU `GpuGrade` consume working positives and own Roll/layer controls, independently of calibration and camera conversion. The GPU source adapter is [`GpuInputProgram`](../src/gpu_input_program.rs); [`GpuPipeline`](../src/gpu_pipeline.rs) composes source execution with a grade, retains the original source extent for spatial execution and checks the complete operation. Source programs own their transforms and opaque signatures, so reconstruction obtains source execution from the input rather than retrieving a camera matrix from a grade. CPU sampling and GPU command encoding express the same stage boundary differently; GPU composition retains fused shader execution.
+
 ### One accepted image recipe
 
-[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, Film Emulation, composition and the immutable creative-look asset. Navigation recipes retain grade/emulation/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Source-aware resolution](../src/repair_source.rs) shares the neutral sampling boundary across interactive and offscreen work.
+[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, Film Emulation, composition and the immutable creative-look asset. Navigation recipes retain grade/emulation/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Resolved image sources](../src/image_source.rs) share the input sampling boundary across interactive and offscreen [repair evaluation](../src/repair_source.rs).
 
 ### Photo contrast and saturation
 

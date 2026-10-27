@@ -1,13 +1,11 @@
-use super::{
-    CameraMatrix, ProcessingParameters, ProcessingSource, SourceGeometry, packed_constants,
-};
+use super::{CameraMatrix, ProcessingParameters, SourceGeometry, packed_constants};
 use crate::{
     Error,
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::{Balance, ap1_to_cones},
     geometry::SourceRegion,
     photographic::Grade,
-    processing::{InputSettings, RollSettings},
+    processing::RollSettings,
 };
 use bytemuck::Zeroable;
 use glam::{DMat3, DVec2, DVec3, Vec4};
@@ -15,85 +13,52 @@ use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct AdjustmentLayerParameters {
+pub(super) struct AdjustmentLayerParameters {
     values: [Vec4; 5],
     flags: [u32; 4],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct AdjustmentLayerContext {
+pub(super) struct AdjustmentLayerContext {
     cones: CameraMatrix,
     inverse: CameraMatrix,
     area: [u32; 4],
     count: [u32; 4],
 }
 
-/// Immutable adjustment-layer resources with f32 constant and intermediate-range validation.
-/// Consumers own accepted-snapshot signatures and stale-result rejection.
-pub struct GpuAdjustmentLayers {
+/// Photographic constants independent of input interpretation and camera conversion.
+pub struct GpuGrade {
     pub(super) parameters: ProcessingParameters,
+    pub(super) roll: RollSettings,
+    pub(super) snapshot: AdjustmentLayerSnapshot,
     pub(super) buffer: wgpu::Buffer,
     pub(super) context: wgpu::Buffer,
-    snapshot: AdjustmentLayerSnapshot,
-    camera_to_ap1: DMat3,
-    area: SourceRegion,
+    pub(super) area: SourceRegion,
     spatial: bool,
 }
 
-struct Prepared {
-    parameters: ProcessingParameters,
-    packed: Vec<AdjustmentLayerParameters>,
-    area: SourceRegion,
-    active: u32,
-}
-
-impl GpuAdjustmentLayers {
-    /// Check the complete candidate and adapter limits without allocating GPU resources.
+impl GpuGrade {
     pub fn validate(
-        device: &wgpu::Device,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        snapshot: &AdjustmentLayerSnapshot,
-        camera_to_ap1: DMat3,
-        area: SourceRegion,
-    ) -> Result<(), Error> {
-        Self::validate_limits(&device.limits(), input, roll, snapshot, camera_to_ap1, area)
-    }
-
-    pub fn validate_limits(
         limits: &wgpu::Limits,
-        input: impl Into<InputSettings>,
         roll: RollSettings,
         snapshot: &AdjustmentLayerSnapshot,
-        camera_to_ap1: DMat3,
         area: SourceRegion,
     ) -> Result<(), Error> {
-        Self::prepare(limits, &input.into(), roll, snapshot, camera_to_ap1, area).map(|_| ())
+        ProcessingParameters::photographic(roll)?;
+        prepare_layers(limits, snapshot, area.validate()?).map(|_| ())
     }
 
     pub fn new(
         device: &wgpu::Device,
-        input: impl Into<InputSettings>,
         roll: RollSettings,
         snapshot: AdjustmentLayerSnapshot,
-        camera_to_ap1: DMat3,
         area: SourceRegion,
     ) -> Result<Self, Error> {
-        let input = input.into();
-        let Prepared {
-            parameters,
-            packed,
-            area,
-            active,
-        } = Self::prepare(
-            &device.limits(),
-            &input,
-            roll,
-            &snapshot,
-            camera_to_ap1,
-            area,
-        )?;
+        let parameters = ProcessingParameters::photographic(roll)?;
+        let area = area.validate()?;
+        let packed = prepare_layers(&device.limits(), &snapshot, area)?;
+        let active = snapshot.layers().iter().filter(|a| a.is_active()).count() as u32;
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("immutable photographic adjustment layers"),
             contents: bytemuck::cast_slice(&packed),
@@ -103,156 +68,40 @@ impl GpuAdjustmentLayers {
         let spatial = snapshot
             .layers()
             .iter()
-            .any(|layer| layer.is_active() && layer.mask != (AdjustmentLayerCoverage::Global {}));
+            .any(|layer| layer.is_active() && layer.mask != AdjustmentLayerCoverage::Global {});
         Ok(Self {
             parameters,
+            roll,
+            snapshot,
             buffer,
             context,
-            snapshot,
-            camera_to_ap1,
             area,
             spatial,
         })
-    }
-
-    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
-    pub(crate) fn validate_repaired(
-        device: &wgpu::Device,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        snapshot: &AdjustmentLayerSnapshot,
-        camera_to_ap1: DMat3,
-        area: SourceRegion,
-        neutral_bound: DVec3,
-    ) -> Result<(), Error> {
-        Self::prepare_with_neutral_bound(
-            &device.limits(),
-            &input.into(),
-            roll,
-            snapshot,
-            camera_to_ap1,
-            area,
-            neutral_bound,
-        )
-        .map(|_| ())
-    }
-
-    fn prepare(
-        limits: &wgpu::Limits,
-        input: &InputSettings,
-        roll: RollSettings,
-        snapshot: &AdjustmentLayerSnapshot,
-        camera_to_ap1: DMat3,
-        area: SourceRegion,
-    ) -> Result<Prepared, Error> {
-        Self::prepare_with_neutral_bound(
-            limits,
-            input,
-            roll,
-            snapshot,
-            camera_to_ap1,
-            area,
-            DVec3::ZERO,
-        )
-    }
-
-    fn prepare_with_neutral_bound(
-        limits: &wgpu::Limits,
-        input: &InputSettings,
-        roll: RollSettings,
-        snapshot: &AdjustmentLayerSnapshot,
-        camera_to_ap1: DMat3,
-        area: SourceRegion,
-        neutral_bound: DVec3,
-    ) -> Result<Prepared, Error> {
-        if !neutral_bound.is_finite() || neutral_bound.min_element() < 0. {
-            return Err(Error::Gpu("invalid neutral repair bound".into()));
-        }
-        let area = area.validate()?;
-        let (parameters, mut bound) = ProcessingParameters::interpret_with_neutral_bound(
-            *input,
-            roll,
-            camera_to_ap1,
-            neutral_bound,
-        )?;
-        let active = u32::try_from(snapshot.layers().iter().filter(|a| a.is_active()).count())
-            .map_err(|_| Error::Gpu("too many adjustment layers".into()))?;
-        if active != 0 {
-            SourceGeometry::new([area.x, area.y, area.width, area.height], [1, 1])?;
-        }
-        let bytes =
-            u64::from(active.max(1)) * std::mem::size_of::<AdjustmentLayerParameters>() as u64;
-        if bytes > limits.max_storage_buffer_binding_size || bytes > limits.max_buffer_size {
-            return Err(Error::Gpu(
-                "adjustment layers exceed GPU buffer limits".into(),
-            ));
-        }
-        let mut packed = Vec::with_capacity(active.max(1) as usize);
-        for adjustment in snapshot.layers().iter().copied().filter(|a| a.is_active()) {
-            let (peak, output) = stage_bounds(adjustment, bound)?;
-            supported(peak)?;
-            bound = output;
-            packed.push(AdjustmentLayerParameters::new(adjustment, area)?);
-        }
-        if packed.is_empty() {
-            packed.push(AdjustmentLayerParameters::zeroed());
-        }
-        Ok(Prepared {
-            parameters,
-            packed,
-            area,
-            active,
-        })
-    }
-
-    #[cfg(feature = "editor")]
-    pub(crate) fn source_matrix(&self) -> DMat3 {
-        self.camera_to_ap1
-    }
-
-    #[cfg(all(feature = "ui", feature = "render"))]
-    pub(crate) fn area(&self) -> SourceRegion {
-        self.area
     }
 
     pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {
         &self.snapshot
     }
 
-    /// Retained local constants and context; excludes per-dispatch uniforms and driver overhead.
-    #[cfg(feature = "editor")]
-    pub(crate) fn byte_len_for(snapshot: &AdjustmentLayerSnapshot) -> u64 {
-        let active = snapshot
-            .layers()
-            .iter()
-            .filter(|local| local.is_active())
-            .count()
-            .max(1);
-        (active * std::mem::size_of::<AdjustmentLayerParameters>()
-            + std::mem::size_of::<AdjustmentLayerContext>()) as u64
-    }
-
     pub fn byte_len(&self) -> u64 {
         self.buffer.size() + self.context.size()
     }
 
-    pub(super) fn same_content(&self, other: &Self) -> bool {
-        self.snapshot == other.snapshot
-            && self.camera_to_ap1 == other.camera_to_ap1
-            && self.area == other.area
-    }
-
-    pub(super) fn require_source(&self, source: &ProcessingSource) -> Result<(), Error> {
-        if source.camera_to_ap1 != self.camera_to_ap1 {
+    pub(super) fn require_extent(&self, area: SourceRegion) -> Result<(), Error> {
+        if self.spatial && self.area != area {
             return Err(Error::Gpu(
-                "adjustment layer grade and RGB16 source camera matrices differ".into(),
+                "photographic grade and input coordinate extents differ".into(),
             ));
         }
-        if self.spatial || source.geometry.is_some_and(|g| g.is_pair()) {
-            let geometry = source.geometry.ok_or_else(|| {
+        Ok(())
+    }
+
+    pub(super) fn require_geometry(&self, geometry: Option<SourceGeometry>) -> Result<(), Error> {
+        if self.spatial {
+            let geometry = geometry.ok_or_else(|| {
                 Error::Gpu("adjustment layer grade requires original-source geometry".into())
             })?;
-            // Refinement can pad a final tile; every real member still starts in this source.
             for region in geometry.regions() {
                 if region.x < self.area.x
                     || region.y < self.area.y
@@ -269,7 +118,36 @@ impl GpuAdjustmentLayers {
     }
 }
 
-fn supported(bound: f64) -> Result<(), Error> {
+fn prepare_layers(
+    limits: &wgpu::Limits,
+    snapshot: &AdjustmentLayerSnapshot,
+    area: SourceRegion,
+) -> Result<Vec<AdjustmentLayerParameters>, Error> {
+    let active = u32::try_from(snapshot.layers().iter().filter(|a| a.is_active()).count())
+        .map_err(|_| Error::Gpu("too many adjustment layers".into()))?;
+    if active != 0 {
+        SourceGeometry::new([area.x, area.y, area.width, area.height], [1, 1])?;
+    }
+    let bytes = u64::from(active.max(1)) * std::mem::size_of::<AdjustmentLayerParameters>() as u64;
+    if bytes > limits.max_storage_buffer_binding_size || bytes > limits.max_buffer_size {
+        return Err(Error::Gpu(
+            "adjustment layers exceed GPU buffer limits".into(),
+        ));
+    }
+    let mut packed = snapshot
+        .layers()
+        .iter()
+        .copied()
+        .filter(|a| a.is_active())
+        .map(|layer| AdjustmentLayerParameters::new(layer, area))
+        .collect::<Result<Vec<_>, _>>()?;
+    if packed.is_empty() {
+        packed.push(AdjustmentLayerParameters::zeroed());
+    }
+    Ok(packed)
+}
+
+pub(super) fn supported(bound: f64) -> Result<(), Error> {
     if !bound.is_finite() || bound > f32::MAX as f64 / 4. {
         Err(Error::Gpu(
             "adjustment layers can exceed the f32 intermediate working range".into(),
@@ -283,7 +161,7 @@ fn absolute_product(matrix: DMat3, bound: DVec3) -> DVec3 {
     matrix.x_axis.abs() * bound.x + matrix.y_axis.abs() * bound.y + matrix.z_axis.abs() * bound.z
 }
 
-fn stage_bounds(adjustment: AdjustmentLayer, input: f64) -> Result<(f64, f64), Error> {
+pub(super) fn stage_bounds(adjustment: AdjustmentLayer, input: f64) -> Result<(f64, f64), Error> {
     let gain = (adjustment.photo.exposure * adjustment.strength)
         .max(0.)
         .exp2();

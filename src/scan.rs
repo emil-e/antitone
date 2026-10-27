@@ -13,6 +13,10 @@ use std::{path::Path, sync::Arc};
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[path = "image_source.rs"]
+mod image_source;
+pub use image_source::{ImageIdentity, ImageSource};
+
 /// Integer inference evidence only, using the same declared camera-code scale for the whole roll.
 #[cfg(feature = "editor")]
 pub(crate) fn measurement_codes(pixel: [f32; 4], code_scale: f64) -> Result<[u16; 4]> {
@@ -67,7 +71,6 @@ pub struct AnalysisSamples {
 #[derive(Clone)]
 pub struct DevelopedSource {
     raw: Arc<FrozenRaw>,
-    #[cfg(feature = "project")]
     pub(crate) file: crate::source_revision::FileKey,
     camera_to_ap1: DMat3,
     camera_model: String,
@@ -105,7 +108,6 @@ impl DevelopedSource {
         let source_scale = raw.metadata.source_scale(wb)?;
         let input_floor = raw.metadata.source_input_floor(wb)?;
         Ok(Self {
-            #[cfg(feature = "project")]
             file: raw.file.clone(),
             raw: Arc::new(raw.freeze()?),
             camera_to_ap1: matrix,
@@ -128,7 +130,6 @@ impl DevelopedSource {
             .checked_add(size_of::<Self>() as u64)?
             .checked_add(size_of::<FrozenRaw>() as u64)?
             .checked_add(self.camera_model.capacity() as u64)?;
-        #[cfg(feature = "project")]
         let bytes = bytes.checked_add(self.file.path.capacity() as u64)?;
         Some(bytes)
     }

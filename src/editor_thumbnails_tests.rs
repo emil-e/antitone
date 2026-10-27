@@ -584,7 +584,7 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
         .unwrap()
         .signature();
     assert_eq!(
-        first.grade().unwrap().snapshot(),
+        first.pipeline().unwrap().snapshot(),
         &source.grade_snapshot().unwrap()
     );
     let unchanged_key = key(&editor.document, id);
@@ -606,7 +606,7 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
     };
     let adjusted = editor.thumbnail_parameters(&source).unwrap();
     assert_eq!(
-        adjusted.grade().unwrap().snapshot().layers()[0].photo,
+        adjusted.pipeline().unwrap().snapshot().layers()[0].photo,
         editor.adjustment_layer_settings
     );
     assert_ne!(adjusted.signature(), first.signature());
@@ -642,13 +642,13 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
         .thumbnail_parameters(editor.document.project.source(other).unwrap())
         .unwrap();
     assert_eq!(
-        other_input.grade().unwrap().snapshot().layers()[0]
+        other_input.pipeline().unwrap().snapshot().layers()[0]
             .photo
             .exposure,
         -1.25
     );
     assert_eq!(
-        other_input.grade().unwrap().snapshot(),
+        other_input.pipeline().unwrap().snapshot(),
         &editor
             .document
             .project

@@ -102,7 +102,11 @@ fn repairs(
     };
     let input = InputSettings::negative(scan.processing_calibration(calibration).unwrap());
     vec![Arc::new(
-        antitone::repair_source::evaluate(scan, &input, &repair).unwrap(),
+        antitone::repair_source::evaluate(
+            &antitone::scan::ImageSource::new(scan, input).unwrap(),
+            &repair,
+        )
+        .unwrap(),
     )]
 }
 

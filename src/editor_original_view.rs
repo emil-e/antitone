@@ -205,7 +205,7 @@ impl Editor {
                 .as_ref()
                 .map(|correction| correction.settings.map.clone())
         };
-        let spec = if input.grade().is_none() {
+        let spec = if input.pipeline().is_none() {
             ViewSourceSpec::inspection(self.id, frame, matrix, field)?
         } else {
             let settings = match self.input.calibration() {

@@ -28,7 +28,7 @@ fn process(
     source: &ProcessingSource,
     count: usize,
     parameters: ProcessingParameters,
-    grade: Option<&antitone::gpu::GpuAdjustmentLayers>,
+    grade: Option<&antitone::gpu::GpuPipeline>,
 ) -> Vec<[f32; 4]> {
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("continuous camera test"),
@@ -109,7 +109,7 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
         };
         let parameters =
             ProcessingParameters::positive(calibration, roll, DMat3::IDENTITY).unwrap();
-        let grade = antitone::gpu::GpuAdjustmentLayers::new(
+        let grade = antitone::gpu::GpuPipeline::new(
             &device,
             calibration,
             roll,

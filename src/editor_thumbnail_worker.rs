@@ -180,13 +180,21 @@ impl Worker {
             source
         };
         let tick = std::time::Instant::now();
-        let settings = recipe.neutral.processing_input()?;
-        let grade = Arc::new(crate::gpu::GpuAdjustmentLayers::new(
+        let grade = Arc::new(crate::gpu::GpuGrade::new(
             &self.device,
-            settings,
             recipe.roll,
             recipe.grade.clone(),
-            source.spec_matrix(),
+            recipe.neutral.source_development.active_area.into(),
+        )?);
+        let grade = Arc::new(crate::gpu::GpuPipeline::compose(
+            &self.device,
+            source
+                .input_program()
+                .ok_or(Error::InvalidParameter(
+                    "positive source program unavailable",
+                ))?
+                .clone(),
+            grade,
             recipe.neutral.source_development.active_area.into(),
         )?);
         let input = crate::gpu::ProcessingInput::from(grade)
@@ -196,9 +204,6 @@ impl Worker {
         let view = RenderedView::new(
             &self.device,
             source.clone(),
-            recipe.neutral.processing_input()?,
-            recipe.roll,
-            recipe.grade.clone(),
             &input,
             job.key.target,
             previous.map(|(_, view)| view),

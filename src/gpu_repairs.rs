@@ -255,15 +255,7 @@ impl Kernels {
         if !input.parameters().graded() {
             return Ok(());
         }
-        encode_original(
-            &kernel.repair,
-            device,
-            encoder,
-            kernel,
-            output,
-            input,
-            geometry,
-        )
+        encode_original(&kernel.repair, device, encoder, output, input, geometry)
     }
 
     #[cfg(feature = "editor")]
@@ -378,23 +370,19 @@ fn encode_original(
     pipeline: &wgpu::ComputePipeline,
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
-    kernel: &ProcessingKernel,
     output: &wgpu::Buffer,
     input: &ProcessingInput,
     geometry: SourceGeometry,
 ) -> Result<(), Error> {
-    let parameters = uniform(device, bytemuck::bytes_of(&input.parameters()));
+    let grade = input
+        .grade()
+        .ok_or_else(|| Error::Gpu("repair grading requires a photographic grade".into()))?;
+    let parameters = uniform(device, bytemuck::bytes_of(&grade.parameters));
     let field = uniform(
         device,
         bytemuck::bytes_of(&flat::FieldGeometry::uncorrected(Some(geometry))),
     );
-    let (layers, context) = input.grade().map_or(
-        (
-            &kernel.empty_adjustment_layers,
-            &kernel.empty_adjustment_layer_context,
-        ),
-        |g| (&g.buffer, &g.context),
-    );
+    let (layers, context) = (&grade.buffer, &grade.context);
     let mut offset = 0;
     for region in geometry.regions() {
         let tile = uniform(

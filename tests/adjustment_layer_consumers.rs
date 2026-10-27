@@ -6,11 +6,9 @@ use antitone::{
     flat_field::FlatField,
     frame_raster::FrameRaster,
     geometry::{Composition, SourcePoint, SourceRegion},
-    gpu::{
-        GpuAdjustmentLayers, GpuFlatField, ProcessingInput, ProcessingParameters, SourceGeometry,
-    },
+    gpu::{GpuFlatField, GpuPipeline, ProcessingInput, ProcessingParameters, SourceGeometry},
     gpu_scopes::{GpuScopes, ScopePaint},
-    processing::{Calibration, InputPipeline, RollSettings},
+    processing::{Calibration, Pipeline, RollSettings},
     rendering::{CpuRenderer, OutputTarget},
     scopes::{self, Plot, Settings},
     viewer::{GpuImage, ImagePaint},
@@ -80,7 +78,7 @@ fn layers() -> Vec<AdjustmentLayer> {
 
 fn input(device: &wgpu::Device, cal: Calibration, layers: Vec<AdjustmentLayer>) -> ProcessingInput {
     Arc::new(
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             device,
             cal,
             RollSettings::default(),
@@ -359,7 +357,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             ),
         ] {
             let changed: ProcessingInput = Arc::new(
-                GpuAdjustmentLayers::new(
+                GpuPipeline::new(
                     &device,
                     calibration(),
                     roll,
@@ -411,7 +409,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
                 .is_err()
         );
         let wrong_basis: ProcessingInput = Arc::new(
-            GpuAdjustmentLayers::new(
+            GpuPipeline::new(
                 &device,
                 calibration(),
                 RollSettings::default(),
@@ -507,7 +505,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
                 calibration()
             };
             let processing = input(&device, cal, layers());
-            let global = InputPipeline::new(cal, RollSettings::default(), DMat3::IDENTITY).unwrap();
+            let global = Pipeline::new(cal, RollSettings::default(), DMat3::IDENTITY).unwrap();
             let working: Vec<_> = (0..35)
                 .map(|i| {
                     let pixel = geometry.pixel(i).unwrap();
@@ -793,7 +791,7 @@ fn reusable_tiles_grade_original_pixels_before_rotated_target_averaging() {
                 calibration()
             };
             let processing = input(&device, cal, layers());
-            let global = InputPipeline::new(cal, RollSettings::default(), DMat3::IDENTITY).unwrap();
+            let global = Pipeline::new(cal, RollSettings::default(), DMat3::IDENTITY).unwrap();
             let working: Vec<_> = (AREA.y..AREA.y + AREA.height)
                 .flat_map(|y| {
                     (AREA.x..AREA.x + AREA.width)

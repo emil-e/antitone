@@ -17,7 +17,7 @@ pub(crate) use imp::allocated_resource_bytes;
 pub(crate) use imp::cache_dir;
 #[cfg(feature = "export")]
 pub(crate) use imp::exclusive_rename;
-#[cfg(feature = "project")]
+#[cfg(any(feature = "project", feature = "raw"))]
 pub(crate) use imp::file_identity;
 #[cfg(feature = "editor")]
 pub(crate) use imp::physical_memory;

@@ -74,7 +74,7 @@ pub mod sampling;
 pub mod scan;
 #[cfg(feature = "project")]
 pub mod scan_regions;
-#[cfg(feature = "project")]
+#[cfg(any(feature = "project", feature = "raw"))]
 mod source_revision;
 #[cfg(all(feature = "raw", feature = "project"))]
 pub mod source_store;
@@ -126,10 +126,7 @@ pub(crate) mod cache_observation;
 ))]
 #[path = "../tests/support/exposure_fixture.rs"]
 mod exposure_fixture;
-#[cfg(all(
-    test,
-    any(feature = "dng-sdk", all(feature = "raw", feature = "project"))
-))]
+#[cfg(all(test, any(feature = "dng-sdk", feature = "raw")))]
 #[path = "../tests/support/fixture_path.rs"]
 mod fixture_path;
 #[cfg(all(test, feature = "raw", feature = "project"))]

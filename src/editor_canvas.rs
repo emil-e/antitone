@@ -202,7 +202,7 @@ impl Editor {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust(signature, cx);
             }
-            match self.dust_gpu_snapshot(parameters.grade().map(|grade| grade.snapshot())) {
+            match self.dust_gpu_snapshot(parameters.pipeline().map(|grade| grade.snapshot())) {
                 Ok(repairs) => parameters.repairs = repairs,
                 Err(error) => self.status = format!("Dust view unavailable: {error}"),
             }
@@ -383,7 +383,7 @@ impl Editor {
             .correction
             .as_ref()
             .map(|correction| correction.settings.map.clone());
-        let inspection = parameters.grade().is_none();
+        let inspection = parameters.pipeline().is_none();
         let settings = match self.input.calibration().filter(|_| !inspection) {
             Some(base) => {
                 let source = self.document.project.source(self.current_source?).ok()?;
@@ -463,16 +463,7 @@ impl Editor {
                 previous,
             )
         } else {
-            crate::gpu::view::RenderedView::new(
-                device,
-                source,
-                settings,
-                self.roll,
-                parameters.grade()?.snapshot().clone(),
-                parameters,
-                self.target,
-                previous,
-            )
+            crate::gpu::view::RenderedView::new(device, source, parameters, self.target, previous)
         }
         .ok()?;
         self.preview_rendered = Some((self.id, signature, frame, self.target, rendered.clone()));

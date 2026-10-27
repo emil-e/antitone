@@ -2,35 +2,11 @@ use super::*;
 use crate::processing::InputSettings;
 use crate::{
     geometry::SourceRegion,
-    gpu::{GpuAdjustmentLayers, ProcessingInput},
+    gpu::{GpuPipeline, ProcessingInput},
 };
 use std::cell::RefCell;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct NeutralSourceSignature {
-    parameters: [u8; ProcessingParameters::BYTE_LEN],
-    matrix: [u64; 9],
-}
-
-#[cfg(test)]
-impl From<[u8; ProcessingParameters::BYTE_LEN]> for NeutralSourceSignature {
-    fn from(parameters: [u8; ProcessingParameters::BYTE_LEN]) -> Self {
-        Self {
-            parameters,
-            matrix: [0; 9],
-        }
-    }
-}
-
-#[cfg(test)]
-impl Default for NeutralSourceSignature {
-    fn default() -> Self {
-        Self {
-            parameters: [0; ProcessingParameters::BYTE_LEN],
-            matrix: [0; 9],
-        }
-    }
-}
+pub(super) type NeutralSourceSignature = crate::gpu::InputSignature;
 
 #[derive(PartialEq)]
 struct Key {
@@ -43,7 +19,7 @@ struct Key {
 struct Entry {
     id: SourceId,
     key: Key,
-    grade: Arc<GpuAdjustmentLayers>,
+    grade: Arc<GpuPipeline>,
 }
 
 #[derive(Default)]
@@ -87,7 +63,7 @@ impl Grades {
             .device
             .as_ref()
             .ok_or_else(|| Error::Gpu("no editor GPU device".into()))?;
-        let grade = Arc::new(GpuAdjustmentLayers::new(
+        let grade = Arc::new(GpuPipeline::new(
             device,
             key.input,
             key.roll,
@@ -131,7 +107,7 @@ pub(super) fn validate_source_with_matrix(
         return Ok(());
     }
     if let Some(device) = device {
-        GpuAdjustmentLayers::validate(
+        GpuPipeline::validate(
             device,
             input,
             roll,
@@ -140,7 +116,7 @@ pub(super) fn validate_source_with_matrix(
             source.development.active_area.into(),
         )
     } else {
-        GpuAdjustmentLayers::validate_limits(
+        GpuPipeline::validate_limits(
             &wgpu::Limits::default(),
             input,
             roll,
@@ -162,16 +138,15 @@ impl Editor {
             .ready
             .as_ref()
             .ok_or(Error::InvalidParameter("positive source unavailable"))?;
-        let input = match input.calibration() {
-            Some(base) => input.with_calibration(self.processing_calibration(base)?),
-            None => *input,
-        };
-        let matrix = ready.developed.positive_matrix(&input)?;
-        let parameters = ProcessingParameters::interpret(input, RollSettings::default(), matrix)?;
-        Ok(NeutralSourceSignature {
-            parameters: bytemuck::bytes_of(&parameters).try_into().unwrap(),
-            matrix: matrix.to_cols_array().map(f64::to_bits),
-        })
+        let mut scan = Scan::from_source(ready.developed.clone());
+        scan.set_flat_field(
+            self.correction
+                .as_ref()
+                .map(|correction| correction.settings.map.clone()),
+        )?;
+        crate::scan::ImageSource::new(&scan, *input)?
+            .gpu_program()?
+            .signature()
     }
 
     pub(super) fn validate_repaired_source(
@@ -192,7 +167,7 @@ impl Editor {
             Some(base) => input.with_calibration(self.processing_calibration(base)?),
             None => *input,
         };
-        crate::gpu::GpuAdjustmentLayers::validate_repaired(
+        crate::gpu::GpuPipeline::validate_repaired(
             device,
             input,
             roll,
@@ -332,7 +307,7 @@ pub(super) fn image_paint(
 ) -> Result<ImagePaint, Error> {
     if input
         .as_ref()
-        .is_some_and(|input| input.grade().is_some() || input.look().is_some())
+        .is_some_and(|input| input.pipeline().is_some() || input.look().is_some())
     {
         ImagePaint::with_processing(image, input, mapping)
             .map(|paint| paint.with_context(context.clone()))

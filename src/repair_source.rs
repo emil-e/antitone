@@ -1,4 +1,4 @@
-//! Source-aware neutral-AP1 sampling shared by interactive and offscreen repair consumers.
+//! Repair evaluation from resolved working-positive samples.
 #[cfg(all(test, feature = "project", feature = "ocio-reference"))]
 #[path = "repair_source_normalization_tests.rs"]
 mod normalization_tests;
@@ -6,41 +6,28 @@ mod normalization_tests;
 use crate::{
     Error,
     dust_repair::{self, EvaluatedRepair, Execution, Repair},
-    processing::{InputPipeline, InputSettings},
-    scan::Scan,
+    scan::{ImageSource, Scan},
 };
 
-/// The input is refined for this scan's correction context before interpreting.
-/// Every repair reads immutable unrepaired camera samples, evaluated in f64 then stored as f32.
-pub fn evaluate(
-    scan: &Scan,
-    input: &InputSettings,
-    repair: &Repair,
-) -> Result<EvaluatedRepair, Error> {
-    evaluate_with(scan, input, repair, &mut Execution::default())
+/// Every repair reads the same unrepaired working positive, evaluated in f64 then stored as f32.
+pub fn evaluate(source: &ImageSource<'_>, repair: &Repair) -> Result<EvaluatedRepair, Error> {
+    evaluate_with(source, repair, &mut Execution::default())
         .map(|result| result.expect("uncancelled repair evaluation"))
 }
 
 pub(crate) fn evaluate_with(
-    scan: &Scan,
-    input: &InputSettings,
+    source: &ImageSource<'_>,
     repair: &Repair,
     execution: &mut Execution<'_>,
 ) -> Result<Option<EvaluatedRepair>, Error> {
     if (execution.cancelled)() {
         return Ok(None);
     }
-    let input = match input.calibration() {
-        Some(base) => input.with_calibration(scan.processing_calibration(base)?),
-        None => *input,
-    };
-    let pipeline = InputPipeline::ungraded(input, scan.positive_matrix(&input)?)?;
     dust_repair::evaluate_with(
         repair,
-        scan.area,
-        |[x, y]| {
-            let rgb = pipeline.apply(scan.pixel(x, y)?)?.rgb;
-            let value = rgb.as_vec3().to_array();
+        source.area(),
+        |point| {
+            let value = source.sample(point)?.as_vec3().to_array();
             if value.iter().all(|channel| channel.is_finite()) {
                 Ok(value)
             } else {
@@ -109,11 +96,11 @@ fn resolve_matching(
     applicable: impl Fn(&Repair) -> bool,
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
     recipe.neutral.require_scan(scan)?;
+    let source = ImageSource::new(scan, recipe.neutral.processing_input()?)?;
     let mut evaluated = Vec::new();
     for repair in recipe.repairs().iter().filter(|repair| applicable(repair)) {
-        let Some(result) =
-            evaluate_with(scan, &recipe.neutral.processing_input()?, repair, execution)
-                .map_err(|error| Error::Raw(format!("repair {}: {error}", repair.id.0)))?
+        let Some(result) = evaluate_with(&source, repair, execution)
+            .map_err(|error| Error::Raw(format!("repair {}: {error}", repair.id.0)))?
         else {
             return Ok(None);
         };

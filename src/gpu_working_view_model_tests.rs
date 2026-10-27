@@ -58,7 +58,7 @@ fn working_positive_applies_roll_and_layer_grading_once_for_every_input_stage() 
             (negative(0.65), 1.),
         ] {
             let matrix = DMat3::IDENTITY * normalization;
-            let neutral = crate::processing::InputPipeline::ungraded(settings, matrix).unwrap();
+            let neutral = crate::processing::InputPipeline::new(settings, matrix).unwrap();
             let pixels: Vec<[f32; 4]> = camera
                 .iter()
                 .map(|&sample| {

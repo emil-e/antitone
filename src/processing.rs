@@ -526,26 +526,16 @@ impl Inversion {
     }
 }
 
-/// Source interpretation, camera conversion and Roll balance/exposure, before adjustment layers.
+/// Input interpretation and conversion to the working positive, before photographic grading.
 #[derive(Debug, Clone)]
 pub struct InputPipeline {
     interpretation: Interpretation,
     camera_to_working: DMat3,
-    roll_transform: DMat3,
 }
 
 impl InputPipeline {
-    pub fn new(
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        camera_to_ap1: DMat3,
-    ) -> Result<Self, Error> {
-        validate_camera_matrix(camera_to_ap1)?;
-        let roll_transform = wb_matrix(roll.wb)? * exposure_multiplier(roll.exposure)?;
-        let camera_to_working = roll_transform * camera_to_ap1;
-        if !camera_to_working.is_finite() {
-            return Err(Error::NumericalOverflow);
-        }
+    pub fn new(input: impl Into<InputSettings>, camera_to_working: DMat3) -> Result<Self, Error> {
+        validate_camera_matrix(camera_to_working)?;
         let interpretation = match input.into() {
             InputSettings::Digital => Interpretation::Digital,
             input @ InputSettings::Negative { .. } => {
@@ -559,21 +549,7 @@ impl InputPipeline {
         Ok(Self {
             interpretation,
             camera_to_working,
-            roll_transform,
         })
-    }
-
-    /// Absolute neutral AP1, without Roll or adjustment layers.
-    pub fn ungraded(input: impl Into<InputSettings>, camera_to_ap1: DMat3) -> Result<Self, Error> {
-        Self::new(input, RollSettings::default(), camera_to_ap1)
-    }
-
-    pub fn apply_roll(&self, mut pixel: InvertedPixel) -> Result<InvertedPixel, Error> {
-        pixel.rgb = self.roll_transform * pixel.rgb;
-        if !pixel.rgb.is_finite() {
-            return Err(Error::NumericalOverflow);
-        }
-        Ok(pixel)
     }
 
     pub fn apply(&self, scan: DVec3) -> Result<InvertedPixel, Error> {
@@ -583,6 +559,59 @@ impl InputPipeline {
             return Err(Error::NumericalOverflow);
         }
         Ok(pixel)
+    }
+}
+
+/// Shared photographic balance/exposure on an already interpreted working positive.
+#[derive(Debug, Clone)]
+pub struct RollPipeline {
+    transform: DMat3,
+}
+
+impl RollPipeline {
+    pub fn new(roll: RollSettings) -> Result<Self, Error> {
+        let transform = wb_matrix(roll.wb)? * exposure_multiplier(roll.exposure)?;
+        if !transform.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
+        Ok(Self { transform })
+    }
+
+    pub fn apply(&self, rgb: DVec3) -> Result<DVec3, Error> {
+        let output = self.transform * rgb;
+        if !output.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
+        Ok(output)
+    }
+}
+
+/// Scalar composition through Roll grading, without adjustment layers.
+#[derive(Debug, Clone)]
+pub struct Pipeline {
+    input: InputPipeline,
+    roll: RollPipeline,
+}
+
+impl Pipeline {
+    pub fn new(
+        input: impl Into<InputSettings>,
+        roll: RollSettings,
+        matrix: DMat3,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            input: InputPipeline::new(input, matrix)?,
+            roll: RollPipeline::new(roll)?,
+        })
+    }
+
+    pub fn apply(&self, camera: DVec3) -> Result<InvertedPixel, Error> {
+        self.apply_roll(self.input.apply(camera)?)
+    }
+
+    pub fn apply_roll(&self, mut positive: InvertedPixel) -> Result<InvertedPixel, Error> {
+        positive.rgb = self.roll.apply(positive.rgb)?;
+        Ok(positive)
     }
 }
 

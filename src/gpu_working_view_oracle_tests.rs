@@ -224,18 +224,13 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
             exposure: 1.,
             ..Default::default()
         };
-        let snapshot =
-            AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
-                photo,
-            )])
-            .unwrap();
         let roll = RollSettings::default();
         let input = ProcessingInput::from(
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
                 crate::adjustment_layers::AdjustmentLayer::global(photo),
             ])
             .and_then(|snapshot| {
-                crate::gpu::GpuAdjustmentLayers::new(
+                crate::gpu::GpuPipeline::new(
                     &device,
                     negative(0.65),
                     roll,
@@ -247,17 +242,8 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
             .map(Arc::new)
             .unwrap(),
         );
-        let view = RenderedView::new(
-            &device,
-            source.clone(),
-            negative(0.65),
-            roll,
-            snapshot,
-            &input,
-            OutputTarget::Srgb,
-            None,
-        )
-        .unwrap();
+        let view =
+            RenderedView::new(&device, source.clone(), &input, OutputTarget::Srgb, None).unwrap();
         let mut abandoned = device.create_command_encoder(&Default::default());
         let graded = view.graded.as_ref().unwrap();
         source.kernels.grade(&device, &mut abandoned, graded);
