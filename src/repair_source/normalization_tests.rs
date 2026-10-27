@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    dust_repair::{DonorChoice, RepairId, RepairOrigin, SupportMask},
+    dust_repair::{RepairId, RepairOrigin, SupportMask},
     processing::{Calibration, InputSettings, Pipeline, RollSettings},
     source::SourceCache,
 };
@@ -15,7 +15,7 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
         enabled: true,
         origin: RepairOrigin::Manual,
         support: SupportMask::new([10, 10], [13, 13], vec![true; 13 * 13]).unwrap(),
-        donor: DonorChoice::Offset([31, 31]),
+        offset: [31, 31],
     };
     let negative: InputSettings = Calibration {
         dmin: DVec3::splat(0.2),

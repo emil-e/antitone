@@ -43,8 +43,6 @@ mod submission;
 pub(crate) mod timestamp_ledger;
 pub use submission::SubmissionGate;
 #[cfg(feature = "editor")]
-pub(crate) mod dust_screening;
-#[cfg(feature = "editor")]
 pub(crate) mod view;
 
 use glam::{DMat3, DVec3, Vec4};

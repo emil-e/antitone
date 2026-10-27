@@ -1,5 +1,5 @@
 use super::*;
-use crate::dust_repair::{DonorChoice, RepairOrigin, SupportMask};
+use crate::dust_repair::{RepairOrigin, SupportMask, nearest_offset};
 
 #[cfg(feature = "ocio-reference")]
 mod pixel_tests;
@@ -233,7 +233,7 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
         .insert(
             SupportMask::new([120, 60], [3, 3], vec![true; 9]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Offset([-64, 0]),
+            [-64, 0],
         )
         .unwrap();
     thumbnails.cache.retain(|_, _| false);
@@ -264,7 +264,7 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
         .insert(
             SupportMask::new([120, 60], [3, 3], vec![true; 9]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Offset([-64, 0]),
+            [-64, 0],
         )
         .unwrap();
     let plain = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
@@ -801,7 +801,7 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
 }
 
 #[test]
-fn no_donor_repair_instructions_do_not_block_graded_navigation_cards() {
+fn repair_instructions_do_not_block_graded_navigation_cards() {
     let (device, queue) = gpu();
     let mut thumbnails = Thumbnails::with_disk(
         device,
@@ -818,32 +818,15 @@ fn no_donor_repair_instructions_do_not_block_graded_navigation_cards() {
         .development
         .active_area
         .into();
-    // The inset ring admits an exterior but its padded donor rectangle spans the source.
+    // Navigation omits repairs; the instruction remains authoritative.
+    let support = SupportMask::new([area.x + 20, area.y + 20], [8, 8], vec![true; 64]).unwrap();
+    let offset = nearest_offset(&support, area).unwrap();
     document
         .project
         .source_mut(id)
         .unwrap()
         .repairs
-        .insert(
-            SupportMask::new(
-                [area.x, area.y],
-                [area.width, area.height],
-                (0..area.width * area.height)
-                    .map(|index| {
-                        let x = index % area.width;
-                        let y = index / area.width;
-                        x >= 8
-                            && y >= 8
-                            && x + 8 < area.width
-                            && y + 8 < area.height
-                            && (x == 8 || y == 8 || x + 9 == area.width || y + 9 == area.height)
-                    })
-                    .collect(),
-            )
-            .unwrap(),
-            RepairOrigin::Manual,
-            DonorChoice::Automatic,
-        )
+        .insert(support, RepairOrigin::Manual, offset)
         .unwrap();
     let key = tests::key(&document, id);
     let card = complete(&mut thumbnails, &document, key.clone()).unwrap();

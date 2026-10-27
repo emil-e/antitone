@@ -3,7 +3,6 @@ use crate::project::Development;
 use crate::raw::fixture as raw_fixture;
 use crate::source::SourceKey;
 
-mod dust_worker;
 mod lazy_worker;
 
 const BUDGET: u64 = 8 << 20;

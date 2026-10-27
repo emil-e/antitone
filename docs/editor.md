@@ -34,11 +34,13 @@ Proposals remain drafts: margin edits do not modify accepted crops or dirty the 
 
 ### Provisional dust cleanup
 
-Dust is direct canvas work, not a per-repair Apply/Cancel transaction. An unmodified click or stroke on free image content creates a source-pixel mask and commits on release. Clicking an existing support or outline selects it; Shift adds, Option removes, Delete deletes that repair rather than removing the photo. Dragging a donor establishes the repair's manual offset; ordinary wheel input resizes the brush while Cmd/Ctrl-wheel zooms.
+Dust is direct canvas work, not a per-repair Apply/Cancel transaction. An unmodified click or stroke on free image content creates a source-pixel mask; release starts its donor search. Clicking an existing support or outline selects it; Shift adds, Option removes, Delete deletes that repair rather than removing the photo. Dragging a donor adjusts its stored offset; ordinary wheel input resizes the brush while Cmd/Ctrl-wheel zooms.
 
 Mask admission is based on marked pixels and a bounded processing area, not a fixed side length. If a held stroke exceeds the budget, the draft and brush turn red and release discards the whole rejected stroke, preserving existing repairs rather than committing a truncated prefix.
 
-Repairs evaluate asynchronously from the same immutable, full-resolution **ungraded AP1**: correction and camera conversion are upstream; adjustment layers are downstream. Source, input interpretation or correction changes invalidate evaluated values; downstream grading and navigation reuse them. Manual masks bypass detector thresholds; automatic proposals use conservative GPU screening. The workflow and admission lifecycle — document-owned tasks, cooperative cancellation, typed completion outside painting — is [the architecture's](architecture.md), not a per-tool mechanism.
+Repairs evaluate asynchronously from immutable, full-resolution **ungraded AP1**: correction and camera conversion are upstream; adjustment layers are downstream. Each repair stores one donor offset shared by its components. Healing is deterministic from that offset, and reopening never searches. Source, input interpretation or correction changes invalidate evaluated values; downstream grading and navigation reuse them.
+
+A released new or changed mask stays pending while a short, best-effort search finds one donor or rejects an impossible placement. Only the completed choice becomes an accepted repair and undo action. Its donor is then adjustable even if healing fails. Search retains its captured source across navigation; ordinary browsing and grading remain available. Save, Export, document replacement and Undo/Redo are unavailable until pending strokes resolve. Both operations follow [the architecture's](architecture.md) workflow and cancellation model.
 
 Accepted repair instructions participate in ordinary [project saving and dirty protection](projects.md#source-owned-dust-repairs); TIFF/EXR export consumes the accepted set, including before the photo has been viewed.
 
@@ -205,7 +207,7 @@ Use the named [contextual status pattern](../src/editor/presentation/feedback.rs
 | --- | --- |
 | Pending work | Neutral activity; a previous accepted thumbnail awaiting replacement |
 | Missing/abstained result | Warning with the specific reason: Auto-crop lacks frame evidence, Analyze lacks sampling support |
-| Failed operation | Error with the specific reason: a repair has no usable donor |
+| Failed operation | Error with the specific reason: a repair mask reaches the edge of the processed area |
 | Current/complete | No indicator; the presence of repairs is not a warning |
 
 Error takes precedence over warning, then activity, and concurrent reasons combine into one indicator per surface. Give icon-only status a meaningful accessible name; retire each condition when its owning work completes.

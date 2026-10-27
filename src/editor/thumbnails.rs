@@ -263,6 +263,25 @@ impl SelectedPreview {
         self.key.source.active_area.into()
     }
 
+    pub(super) fn current_source(
+        &self,
+        document: &Document,
+        source: Option<SourceId>,
+        correction: Option<&Arc<Correction>>,
+    ) -> bool {
+        source == Some(self.key.id)
+            && self.field == correction.map(|c| FieldKey(c.settings.map.clone()))
+            && document
+                .project
+                .source(self.key.id)
+                .ok()
+                .zip(document.source_path(self.key.id).ok())
+                .is_some_and(|(source, path)| {
+                    !source.reference_only
+                        && SourceKey::new(source, document.file_key(&path)) == self.key
+                })
+    }
+
     pub(super) fn current(
         &self,
         request: u64,

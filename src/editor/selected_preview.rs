@@ -11,6 +11,11 @@ pub(super) struct SelectionTiming {
 
 impl SelectionTiming {
     #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn pending_was_painted(&self) -> bool {
+        self.pending_painted.load(Ordering::Relaxed)
+    }
+
+    #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn ready_was_painted(&self) -> bool {
         self.ready_painted.load(Ordering::Relaxed)
     }
@@ -84,14 +89,12 @@ impl CallbackTrait for SelectionPaint {
 impl Editor {
     pub(super) fn validate_pending_preview(&mut self) {
         if self.pending_preview.as_ref().is_some_and(|preview| {
-            self.document.visit.ready.is_some()
-                || !self.busy
+            self.working.displayed.is_some()
                 || self.document_pending.is_some()
                 || self.pick.is_some()
                 || self.flat_edit.is_some()
                 || self.document.visit.crop_edit.is_some()
-                || !preview.current(
-                    self.id,
+                || !preview.current_source(
                     &self.document,
                     self.current_source,
                     self.correction.as_ref(),
@@ -102,12 +105,21 @@ impl Editor {
     }
 
     pub(super) fn selected_view(&self) -> Option<(Rect, crate::viewer::GpuProxy, bool)> {
-        if let Some(ready) = &self.document.visit.ready {
+        if let Some(ready) = &self.document.visit.ready
+            && (self.working.displayed.is_some() || self.pending_preview.is_none())
+        {
             return Some((ready.area, ready.proxy.clone(), false));
         }
 
         self.pending_preview
             .as_ref()
             .map(|preview| (preview.area(), preview.proxy.clone(), true))
+            .or_else(|| {
+                self.document
+                    .visit
+                    .ready
+                    .as_ref()
+                    .map(|ready| (ready.area, ready.proxy.clone(), false))
+            })
     }
 }

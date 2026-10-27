@@ -232,11 +232,7 @@ fn history_idle_navigation_and_cancelled_input_do_not_clone_repair_bearing_proje
             )
             .unwrap();
             let repair = repairs
-                .insert(
-                    support,
-                    crate::dust_repair::RepairOrigin::Manual,
-                    crate::dust_repair::DonorChoice::Automatic,
-                )
+                .insert(support, crate::dust_repair::RepairOrigin::Manual, [84, 0])
                 .unwrap();
             repairs.set_enabled(repair, false).unwrap();
             e.history_snapshot_clones = 0;
@@ -424,7 +420,7 @@ fn history_confirmed_multi_removal_can_restore_an_empty_roll_without_resetting_i
                     crate::dust_repair::SupportMask::new([100, 100], [2, 2], vec![true; 4])
                         .unwrap(),
                     crate::dust_repair::RepairOrigin::Manual,
-                    crate::dust_repair::DonorChoice::Automatic,
+                    [64, 0],
                 )
                 .unwrap();
         });

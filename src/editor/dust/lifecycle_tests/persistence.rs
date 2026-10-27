@@ -55,6 +55,11 @@ fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
         .pixels
         .insert([54, 50]);
     e.commit_dust_mask();
+    assert!(
+        !e.document.dirty(),
+        "pending search is not an accepted instruction"
+    );
+    finish_searches(&mut e);
     assert!(e.document.dirty());
     let changed = e.document.project.clone();
     *e.document = e
@@ -186,7 +191,7 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
             e.document.dust.cached.clear();
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             let failed = captured_request(e);
-            e.receive_dust(failed.request, Err("no eligible donor".into()));
+            e.receive_dust(failed.request, Err("evaluation failed".into()));
             assert_eq!(e.dust_render_state(), "Repair unavailable");
             assert!(!e.document.dirty());
             let saved = e

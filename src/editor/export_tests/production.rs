@@ -1,5 +1,5 @@
 use super::*;
-use crate::dust_repair::{DonorChoice, RepairOrigin, SupportMask};
+use crate::dust_repair::{RepairOrigin, SupportMask};
 
 #[test]
 fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_on_cancellation() {
@@ -50,7 +50,7 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                 )
                 .unwrap(),
                 RepairOrigin::Manual,
-                DonorChoice::Offset([-32, 0]),
+                [-32, 0],
             )
             .unwrap();
         let look = Arc::new(

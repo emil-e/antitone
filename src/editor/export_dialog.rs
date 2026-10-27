@@ -214,6 +214,10 @@ impl Editor {
     }
 
     pub(super) fn open_export_dialog(&mut self) {
+        if self.dust_search_pending() {
+            self.status = "Wait for donor selection before exporting".into();
+            return;
+        }
         let folder = self.preferences.export_folder.clone().unwrap_or_default();
         self.export_dialog = Some(Draft::new(self.target, folder));
     }

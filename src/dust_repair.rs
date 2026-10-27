@@ -4,21 +4,44 @@
 //! supports differ only in UI provenance; both enter [`heal_ranked`] identically.
 use crate::{Error, geometry::SourceRegion};
 use std::collections::VecDeque;
-mod screening;
-pub(crate) use screening::Execution;
-#[cfg(feature = "editor")]
-pub(crate) use screening::{ScreenInput, Screener};
+use std::time::{Duration, Instant};
+pub(crate) struct Execution<'a> {
+    pub cancelled: &'a dyn Fn() -> bool,
+}
+
+fn never_cancel() -> bool {
+    false
+}
+
+impl Default for Execution<'_> {
+    fn default() -> Self {
+        Self {
+            cancelled: &never_cancel,
+        }
+    }
+}
 
 pub type Ap1 = [f32; 3];
 pub(crate) const CONTEXT_PADDING: u32 = 10;
+#[allow(dead_code)]
+pub(crate) const SEARCH_ACCEPTABLE_SCORE: f64 = 0.02;
+// Grain makes small context-score differences poor evidence for moving farther.
+// Prefer spatial coherence among comparable matches, not the lowest noisy score.
+const SEARCH_COMPETITIVE_FRACTION: f64 = 0.10;
+#[allow(dead_code)]
+pub(crate) const SEARCH_BUDGET: Duration = Duration::from_millis(300);
 pub(crate) const AUTOMATIC_PADDING: u32 = 128 + 4;
 
+mod matching;
 mod support;
 #[cfg(all(test, feature = "editor"))]
 pub(crate) use support::{MAX_MASK_PIXELS, MAX_MASK_WORK_PIXELS};
-pub use support::{SupportMask, donor_target, mask_within_budget, validate_donor};
+pub use support::{
+    SupportMask, donor_target, initial_offset, mask_within_budget, nearest_offset, offset_target,
+    validate_offset,
+};
 
-pub const REPAIR_CONTRACT: &str = "ungraded-ap1-boundary-ranked-score10-grow4-v1";
+pub const REPAIR_CONTRACT: &str = "ungraded-ap1-boundary-ranked-offset-v2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
@@ -35,18 +58,6 @@ pub enum RepairOrigin {
     Detected,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(
-    feature = "project",
-    serde(rename_all = "snake_case", deny_unknown_fields)
-)]
-pub enum DonorChoice {
-    #[default]
-    Automatic,
-    Offset([i32; 2]),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "project", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "project", serde(deny_unknown_fields))]
@@ -55,7 +66,9 @@ pub struct Repair {
     pub enabled: bool,
     pub origin: RepairOrigin,
     pub support: SupportMask,
-    pub donor: DonorChoice,
+    /// One donor translation for the whole repair, shared by every component.
+    /// Stored, not recomputed: healing is deterministic from it.
+    pub offset: [i32; 2],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,7 +119,7 @@ impl RepairSet {
                     "repair support is outside the source",
                 ));
             }
-            validate_donor(repair.donor, &repair.support, active)?;
+            validate_offset(repair.offset, &repair.support, active)?;
         }
 
         for (index, repair) in self.repairs.iter().enumerate() {
@@ -129,7 +142,7 @@ impl RepairSet {
         &mut self,
         support: SupportMask,
         origin: RepairOrigin,
-        donor: DonorChoice,
+        offset: [i32; 2],
     ) -> Result<RepairId, Error> {
         self.require_independent(&support, None)?;
         let next = self
@@ -143,7 +156,7 @@ impl RepairSet {
             enabled: true,
             origin,
             support,
-            donor,
+            offset,
         });
         Ok(id)
     }
@@ -162,8 +175,8 @@ impl RepairSet {
         Ok(())
     }
 
-    pub fn set_donor(&mut self, id: RepairId, donor: DonorChoice) -> Result<(), Error> {
-        self.repair_mut(id)?.donor = donor;
+    pub fn set_offset(&mut self, id: RepairId, offset: [i32; 2]) -> Result<(), Error> {
+        self.repair_mut(id)?.offset = offset;
         Ok(())
     }
 
@@ -283,124 +296,45 @@ pub(crate) fn evaluate_with(
         ));
     }
     repair.support.validate()?;
-    let selected = repair.support.selected_indices().collect::<Vec<_>>();
-    let local_width = repair.support.size[0] as usize;
-    let min_x = repair.support.origin[0]
-        + selected
-            .iter()
-            .map(|index| index % local_width)
-            .min()
-            .unwrap() as u32;
-    let max_x = repair.support.origin[0]
-        + selected
-            .iter()
-            .map(|index| index % local_width)
-            .max()
-            .unwrap() as u32;
-    let min_y = repair.support.origin[1]
-        + selected
-            .iter()
-            .map(|index| index / local_width)
-            .min()
-            .unwrap() as u32;
-    let max_y = repair.support.origin[1]
-        + selected
-            .iter()
-            .map(|index| index / local_width)
-            .max()
-            .unwrap() as u32;
-    let target = SourceRegion {
-        x: min_x.saturating_sub(CONTEXT_PADDING).max(active.x),
-        y: min_y.saturating_sub(CONTEXT_PADDING).max(active.y),
-        width: 0,
-        height: 0,
-    };
-    let target_right = max_x
-        .saturating_add(CONTEXT_PADDING + 1)
-        .min(active.x + active.width);
-    let target_bottom = max_y
-        .saturating_add(CONTEXT_PADDING + 1)
-        .min(active.y + active.height);
-    let target = SourceRegion {
-        width: target_right - target.x,
-        height: target_bottom - target.y,
-        ..target
-    };
-    let window = match repair.donor {
-        DonorChoice::Automatic => padded(target, active, AUTOMATIC_PADDING),
-        DonorChoice::Offset([dx, dy]) => {
-            let source_x = offset(target.x as usize, dx)
-                .and_then(|value| u32::try_from(value).ok())
-                .ok_or(Error::InvalidParameter("manual donor outside source"))?;
-            let source_y = offset(target.y as usize, dy)
-                .and_then(|value| u32::try_from(value).ok())
-                .ok_or(Error::InvalidParameter("manual donor outside source"))?;
-            let source = SourceRegion {
-                x: source_x,
-                y: source_y,
-                width: target.width,
-                height: target.height,
-            };
-            if source.x < active.x
-                || source.y < active.y
-                || source.x.checked_add(source.width) > Some(active.x + active.width)
-                || source.y.checked_add(source.height) > Some(active.y + active.height)
-            {
-                return Err(Error::InvalidParameter("manual donor outside source"));
-            }
-            let union = SourceRegion {
-                x: target.x.min(source.x),
-                y: target.y.min(source.y),
-                width: target_right.max(source.x + source.width) - target.x.min(source.x),
-                height: target_bottom.max(source.y + source.height) - target.y.min(source.y),
-            };
-            padded(union, active, 4)
-        }
-    };
-    let count = window
-        .width
-        .checked_mul(window.height)
-        .filter(|count| *count <= 4_000_000)
-        .ok_or(Error::InvalidParameter(
-            "repair evaluation window is too large",
-        ))? as usize;
-    let mut image = Vec::with_capacity(count);
-    for y in window.y..window.y + window.height {
+    validate_offset(repair.offset, &repair.support, active)?;
+    let near = NearSupport::new(&repair.support);
+    let groups = repair.support.grouped_supports();
+    let mut values = vec![[0.; 3]; (repair.support.size[0] * repair.support.size[1]) as usize];
+    let mut donors = Vec::new();
+    for group in &groups {
         if (execution.cancelled)() {
             return Ok(None);
         }
-        for x in window.x..window.x + window.width {
-            image.push(base([x, y])?);
+        let Some(target) =
+            build_search_target(&repair.support, group, active, &mut base, execution)?
+        else {
+            continue;
+        };
+        let Some(donor) = fetch_crop(
+            &mut base,
+            target.origin,
+            target.size,
+            repair.offset,
+            execution,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some((donor_match, component)) = heal_crop(
+            &repair.support,
+            &near,
+            &target,
+            &donor,
+            repair.offset,
+            execution,
+        )?
+        else {
+            return Ok(None);
+        };
+        for (index, value) in component {
+            values[index] = value;
         }
-    }
-    let mut mask = vec![false; count];
-    for index in selected {
-        let x = repair.support.origin[0] + (index % local_width) as u32;
-        let y = repair.support.origin[1] + (index / local_width) as u32;
-        mask[((y - window.y) * window.width + x - window.x) as usize] = true;
-    }
-    let Some((result, mut donors)) = heal_with_execution(
-        &image,
-        [window.width, window.height],
-        &mask,
-        repair.donor,
-        DonorSearch::Bounded,
-        execution,
-    )?
-    else {
-        return Ok(None);
-    };
-    for donor in &mut donors {
-        donor.target[0] += window.x;
-        donor.target[1] += window.y;
-        donor.source[0] += window.x;
-        donor.source[1] += window.y;
-    }
-    let mut values = vec![[0.; 3]; (repair.support.size[0] * repair.support.size[1]) as usize];
-    for index in repair.support.selected_indices() {
-        let x = repair.support.origin[0] + (index % local_width) as u32;
-        let y = repair.support.origin[1] + (index / local_width) as u32;
-        values[index] = result[((y - window.y) * window.width + x - window.x) as usize];
+        donors.push(donor_match);
     }
     if (execution.cancelled)() {
         return Ok(None);
@@ -413,213 +347,272 @@ pub(crate) fn evaluate_with(
     }))
 }
 
-fn padded(region: SourceRegion, active: SourceRegion, amount: u32) -> SourceRegion {
-    let x = region.x.saturating_sub(amount).max(active.x);
-    let y = region.y.saturating_sub(amount).max(active.y);
-    let right = region
-        .x
-        .saturating_add(region.width)
-        .saturating_add(amount)
-        .min(active.x + active.width);
-    let bottom = region
-        .y
-        .saturating_add(region.height)
-        .saturating_add(amount)
-        .min(active.y + active.height);
-    SourceRegion {
-        x,
-        y,
-        width: right - x,
-        height: bottom - y,
-    }
-}
-
-/// Boundary-ranked donor healing for the current repair contract in signed/HDR AP1.
-///
-/// The returned image preserves every input bit outside `mask`. Masked input
-/// values are erased before matching or reconstruction and cannot affect output.
-pub fn heal_ranked(
-    image: &[Ap1],
-    size: [u32; 2],
-    mask: &[bool],
-    donor: DonorChoice,
-) -> Result<(Vec<Ap1>, Vec<DonorMatch>), Error> {
-    heal_ranked_with_search(image, size, mask, donor, DonorSearch::Bounded)
-}
-
-#[derive(Clone, Copy)]
-enum DonorSearch {
-    Bounded,
-    #[cfg(test)]
-    Exhaustive,
-}
-
-impl DonorSearch {
-    fn is_bounded(self) -> bool {
-        matches!(self, Self::Bounded)
-    }
-
-    fn ceiling(self, best: f64) -> Option<f64> {
-        match self {
-            Self::Bounded => Some(competitive_score(best)),
-            #[cfg(test)]
-            Self::Exhaustive => None,
-        }
-    }
-}
-
-fn competitive_score(best: f64) -> f64 {
-    best * 1.01 + 1e-12
-}
-
-fn heal_ranked_with_search(
-    image: &[Ap1],
-    size: [u32; 2],
-    mask: &[bool],
-    donor: DonorChoice,
-    search: DonorSearch,
-) -> Result<(Vec<Ap1>, Vec<DonorMatch>), Error> {
-    heal_with_execution(image, size, mask, donor, search, &mut Execution::default())
-        .map(|result| result.expect("uncancelled donor healing"))
-}
-
-type Healed = (Vec<Ap1>, Vec<DonorMatch>);
-
-fn heal_with_execution(
-    image: &[Ap1],
-    size: [u32; 2],
-    mask: &[bool],
-    donor: DonorChoice,
-    search: DonorSearch,
+fn fetch_crop(
+    base: &mut impl FnMut([u32; 2]) -> Result<Ap1, Error>,
+    origin: [u32; 2],
+    size: [usize; 2],
+    offset: [i32; 2],
     execution: &mut Execution<'_>,
-) -> Result<Option<Healed>, Error> {
-    if (execution.cancelled)() {
-        return Ok(None);
-    }
-    let [width, height] = dimensions(size, image.len())?;
-    if mask.len() != image.len() || mask.iter().all(|bit| *bit) {
-        return Err(Error::InvalidParameter("invalid repair mask"));
-    }
-    if image.iter().flatten().any(|value| !value.is_finite()) {
-        return Err(Error::InvalidParameter("repair requires finite AP1"));
-    }
-    if !mask.iter().any(|bit| *bit) {
-        return Ok(Some((image.to_vec(), Vec::new())));
-    }
-    let mut source = image.to_vec();
-    for (pixel, hidden) in source.iter_mut().zip(mask) {
-        if *hidden {
-            *pixel = [0.; 3];
+) -> Result<Option<Vec<Ap1>>, Error> {
+    let x0 = origin[0] as i32 + offset[0];
+    let y0 = origin[1] as i32 + offset[1];
+    let mut crop = Vec::with_capacity(size[0] * size[1]);
+    for y in 0..size[1] {
+        for x in 0..size[0] {
+            if (execution.cancelled)() {
+                return Ok(None);
+            }
+            crop.push(base([(x0 + x as i32) as u32, (y0 + y as i32) as u32])?);
         }
     }
-    let groups = grouped_components(mask, width, height);
-    let smooth = gaussian_blur(&source, width, height);
-    let gradients = sobel(&smooth, width, height);
-    let gradient_known = dilate(mask, width, height, 4)
-        .into_iter()
-        .map(|unknown| !unknown)
-        .collect::<Vec<_>>();
-    let masked_bounds = selected_bounds(mask, width);
-    let mut output = image.to_vec();
-    let mut matches = Vec::new();
-    for component in groups {
-        if (execution.cancelled)() {
-            return Ok(None);
-        }
-        let Some(donor_match) = heal_component(
-            &source,
-            mask,
-            masked_bounds,
-            &gradients,
-            &gradient_known,
-            width,
-            height,
-            &component,
-            donor,
-            search,
-            &mut output,
-            execution,
-        )?
-        else {
-            return Ok(None);
-        };
-        matches.push(donor_match);
-    }
-    if output.iter().flatten().any(|value| !value.is_finite())
-        || output.iter().zip(image).zip(mask).any(|((a, b), hidden)| {
-            !hidden && a.iter().zip(b).any(|(x, y)| x.to_bits() != y.to_bits())
-        })
-    {
-        return Err(Error::NumericalOverflow);
-    }
-    if (execution.cancelled)() {
-        return Ok(None);
-    }
-    Ok(Some((output, matches)))
+    Ok(Some(crop))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn heal_component(
-    image: &[Ap1],
-    mask: &[bool],
-    masked_bounds: Option<[usize; 4]>,
-    gradients: &[[f32; 6]],
-    gradient_known: &[bool],
-    width: usize,
-    height: usize,
-    component: &[usize],
-    donor_choice: DonorChoice,
-    search: DonorSearch,
-    output: &mut [Ap1],
+type HealedComponent = (DonorMatch, Vec<(usize, Ap1)>);
+
+#[allow(clippy::needless_range_loop)]
+fn heal_crop(
+    support: &SupportMask,
+    near: &NearSupport,
+    target: &SearchTarget,
+    donor: &[Ap1],
+    offset: [i32; 2],
     execution: &mut Execution<'_>,
-) -> Result<Option<DonorMatch>, Error> {
-    let min_x = component.iter().map(|index| index % width).min().unwrap();
-    let max_x = component.iter().map(|index| index % width).max().unwrap();
-    let min_y = component.iter().map(|index| index / width).min().unwrap();
-    let max_y = component.iter().map(|index| index / width).max().unwrap();
-    if min_x < 2 || min_y < 2 || max_x + 2 >= width || max_y + 2 >= height {
+) -> Result<Option<HealedComponent>, Error> {
+    let [width, height] = target.size;
+    if !target.has_exterior {
         return Err(Error::InvalidParameter(
             "biharmonic correction requires a two-pixel exterior",
         ));
     }
-    let padding = CONTEXT_PADDING as usize;
-    let x0 = min_x.saturating_sub(padding);
-    let y0 = min_y.saturating_sub(padding);
-    let x1 = (max_x + padding + 1).min(width);
-    let y1 = (max_y + padding + 1).min(height);
-    let local_width = x1 - x0;
-    let local_height = y1 - y0;
-    let mut local = vec![false; local_width * local_height];
-    for index in component {
-        local[(index / width - y0) * local_width + index % width - x0] = true;
+    let mut difference = vec![[0.; 3]; target.local.len()];
+    for index in 0..target.local.len() {
+        if target.required[index] && !target.local[index] {
+            difference[index] =
+                std::array::from_fn(|channel| target.image[index][channel] - donor[index][channel]);
+        }
     }
-    let required = dilate(&local, local_width, local_height, 2);
-    let eligibility = DonorEligibility::new(mask, width, masked_bounds, local_width, &required);
-    for y in 0..local_height {
-        for x in 0..local_width {
-            if required[y * local_width + x]
-                && mask[(y0 + y) * width + x0 + x]
-                && !local[y * local_width + x]
-            {
-                return Err(Error::InvalidParameter(
-                    "dependent repair masks were not grouped",
+    let correction = limited_biharmonic(&difference, &target.local, width, height)?;
+    if (execution.cancelled)() {
+        return Ok(None);
+    }
+    let mut component = Vec::new();
+    for y in 0..height {
+        for x in 0..width {
+            let index = y * width + x;
+            if target.local[index] {
+                let point = [target.origin[0] + x as u32, target.origin[1] + y as u32];
+                let support_index = ((point[1] - support.origin[1]) * support.size[0] + point[0]
+                    - support.origin[0]) as usize;
+                component.push((
+                    support_index,
+                    std::array::from_fn(|channel| {
+                        donor[index][channel] + correction[index][channel]
+                    }),
                 ));
             }
         }
     }
-    let known = (0..local.len())
-        .map(|index| !mask[(y0 + index / local_width) * width + x0 + index % local_width])
-        .collect::<Vec<_>>();
+    let Some(smooth) = gaussian_blur(donor, width, height, execution.cancelled) else {
+        return Ok(None);
+    };
+    let Some(donor_gradients) = sobel(&smooth, width, height, execution.cancelled) else {
+        return Ok(None);
+    };
+    let (color_error, color_weight, gradient_error, gradient_weight) =
+        crop_errors(target, support, near, offset, donor, &donor_gradients);
+    let color = if color_weight > 0. {
+        0.75 * color_error / (color_weight * 3.)
+    } else {
+        0.
+    };
+    let gradient = if gradient_weight > 0. {
+        0.25 * gradient_error / (gradient_weight * 6.)
+    } else {
+        0.
+    };
+    let matching_score = if color_weight > 0. || gradient_weight > 0. {
+        color + gradient
+    } else {
+        f64::INFINITY
+    };
+    let mut paired_context_pixels = 0usize;
+    let mut context_error = 0.;
+    for y in 0..height {
+        for x in 0..width {
+            let index = y * width + x;
+            let donor_point = [
+                target.origin[0] as i32 + x as i32 + offset[0],
+                target.origin[1] as i32 + y as i32 + offset[1],
+            ];
+            let donor_is_support = donor_point[0] >= 0
+                && donor_point[1] >= 0
+                && support.contains([donor_point[0] as u32, donor_point[1] as u32]);
+            if target.known[index] && !donor_is_support {
+                paired_context_pixels += 1;
+                for channel in 0..3 {
+                    context_error += (f64::from(target.image[index][channel])
+                        - f64::from(donor[index][channel]))
+                    .powi(2);
+                }
+            }
+        }
+    }
+    Ok(Some((
+        DonorMatch {
+            target: [
+                target.origin[0],
+                target.origin[1],
+                width as u32,
+                height as u32,
+            ],
+            source: [
+                (target.origin[0] as i32 + offset[0]) as u32,
+                (target.origin[1] as i32 + offset[1]) as u32,
+            ],
+            context_mse: if paired_context_pixels > 0 {
+                context_error / (paired_context_pixels * 3) as f64
+            } else {
+                0.
+            },
+            paired_context_pixels,
+            matching_score,
+        },
+        component,
+    )))
+}
+
+pub fn heal_ranked(
+    image: &[Ap1],
+    size: [u32; 2],
+    mask: &[bool],
+    offset: [i32; 2],
+) -> Result<(Vec<Ap1>, Vec<DonorMatch>), Error> {
+    if !mask.iter().any(|hidden| *hidden) {
+        return Ok((image.to_vec(), Vec::new()));
+    }
+    let support = SupportMask::new([0, 0], size, mask.to_vec())?;
+    let repair = Repair {
+        id: RepairId(1),
+        enabled: true,
+        origin: RepairOrigin::Manual,
+        support,
+        offset,
+    };
+    let active = SourceRegion {
+        x: 0,
+        y: 0,
+        width: size[0],
+        height: size[1],
+    };
+    let Some(evaluated) = evaluate_with(
+        &repair,
+        active,
+        |[x, y]| Ok(image[(y as usize) * (size[0] as usize) + x as usize]),
+        &mut Execution::default(),
+    )?
+    else {
+        unreachable!("uncancelled donor healing");
+    };
+    let mut output = image.to_vec();
+    for (point, value) in evaluated.pixels() {
+        output[(point[1] as usize) * (size[0] as usize) + point[0] as usize] = value;
+    }
+    Ok((output, evaluated.donors))
+}
+
+#[allow(dead_code)]
+struct SearchTarget {
+    has_exterior: bool,
+    origin: [u32; 2],
+    size: [usize; 2],
+    image: Vec<Ap1>,
+    local: Vec<bool>,
+    required: Vec<bool>,
+    known: Vec<bool>,
+    valid_target: Vec<bool>,
+    weights: Vec<f64>,
+    gradients: Vec<[f32; 6]>,
+    center: [f64; 3],
+    contrast: f64,
+    gradient_scale: f64,
+}
+
+/// One target crop for the best-effort donor search. The donor is scored from
+/// its own small crop, so candidate distance never changes the fetch size.
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
+fn build_search_target(
+    support: &SupportMask,
+    group: &SupportMask,
+    active: SourceRegion,
+    base: &mut impl FnMut([u32; 2]) -> Result<Ap1, Error>,
+    execution: &mut Execution<'_>,
+) -> Result<Option<SearchTarget>, Error> {
+    let points = group.selected_points().collect::<Vec<_>>();
+    if points.is_empty() {
+        return Ok(None);
+    }
+    let min_x = points.iter().map(|p| p[0]).min().unwrap();
+    let max_x = points.iter().map(|p| p[0]).max().unwrap();
+    let min_y = points.iter().map(|p| p[1]).min().unwrap();
+    let max_y = points.iter().map(|p| p[1]).max().unwrap();
+    let x0 = min_x.saturating_sub(CONTEXT_PADDING).max(active.x);
+    let y0 = min_y.saturating_sub(CONTEXT_PADDING).max(active.y);
+    let x1 = (max_x + CONTEXT_PADDING + 1).min(active.x + active.width);
+    let y1 = (max_y + CONTEXT_PADDING + 1).min(active.y + active.height);
+    let width = (x1 - x0) as usize;
+    let height = (y1 - y0) as usize;
+    let mut image = vec![[0.; 3]; width * height];
+    let mut known = vec![false; width * height];
+    let mut local = vec![false; width * height];
+    let mut mask = vec![false; width * height];
+    for y in 0..height {
+        if (execution.cancelled)() {
+            return Ok(None);
+        }
+        for x in 0..width {
+            let point = [x0 + x as u32, y0 + y as u32];
+            let index = y * width + x;
+            let masked = support.contains(point);
+            mask[index] = masked;
+            local[index] = group.contains(point);
+            known[index] = !masked;
+            if !masked {
+                image[index] = base(point)?;
+            }
+        }
+    }
+    let required = dilate(&local, width, height, 2);
+    for index in 0..local.len() {
+        if required[index] && mask[index] && !local[index] {
+            return Err(Error::InvalidParameter(
+                "dependent repair masks were not grouped",
+            ));
+        }
+    }
     let known_count = known.iter().filter(|bit| **bit).count();
     if known_count == 0 {
-        return Err(Error::InvalidParameter("no donor matching context"));
+        return Ok(None);
     }
+    let Some(smooth) = gaussian_blur(&image, width, height, execution.cancelled) else {
+        return Ok(None);
+    };
+    let Some(gradients) = sobel(&smooth, width, height, execution.cancelled) else {
+        return Ok(None);
+    };
+    let gradient_known = dilate(&mask, width, height, 4)
+        .into_iter()
+        .map(|unknown| !unknown)
+        .collect::<Vec<_>>();
+    let valid_target = (0..local.len())
+        .map(|index| gradient_known[index])
+        .collect::<Vec<_>>();
     let mut center = [0.; 3];
     for index in 0..local.len() {
         if known[index] {
-            let pixel = image[(y0 + index / local_width) * width + x0 + index % local_width];
             for channel in 0..3 {
-                center[channel] += f64::from(pixel[channel]);
+                center[channel] += f64::from(image[index][channel]);
             }
         }
     }
@@ -629,9 +622,8 @@ fn heal_component(
     let mut variance = 0.;
     for index in 0..local.len() {
         if known[index] {
-            let pixel = image[(y0 + index / local_width) * width + x0 + index % local_width];
             for channel in 0..3 {
-                variance += (f64::from(pixel[channel]) - center[channel]).powi(2);
+                variance += (f64::from(image[index][channel]) - center[channel]).powi(2);
             }
         }
     }
@@ -640,9 +632,7 @@ fn heal_component(
         .sqrt()
         .max(center_max * 1e-6)
         .max(1e-12);
-    let Some(distances) =
-        distance_to_unknown(&known, local_width, local_height, execution.cancelled)
-    else {
+    let Some(distances) = distance_to_unknown(&known, width, height, execution.cancelled) else {
         return Ok(None);
     };
     let mut weights = vec![0.; local.len()];
@@ -651,397 +641,363 @@ fn heal_component(
             weights[index] = 0.15 + 0.85 * (-(distances[index] - 1.).max(0.) / 3.).exp();
         }
     }
-    let valid_target = (0..local.len())
-        .map(|index| gradient_known[(y0 + index / local_width) * width + x0 + index % local_width])
-        .collect::<Vec<_>>();
-    if !valid_target.iter().any(|value| *value) {
-        return Err(Error::InvalidParameter("no known structure context"));
-    }
     let mut gradient_square = 0.;
     let mut gradient_values = 0;
     for index in 0..local.len() {
         if valid_target[index] {
-            let value = gradients[(y0 + index / local_width) * width + x0 + index % local_width];
-            for channel in value {
+            for channel in gradients[index] {
                 gradient_square += f64::from(channel).powi(2);
                 gradient_values += 1;
             }
         }
     }
-    let gradient_scale = (gradient_square / gradient_values as f64)
-        .sqrt()
-        .max(contrast * 1e-6);
-    let search_x0 = x0.saturating_sub(128);
-    let search_y0 = y0.saturating_sub(128);
-    let search_x1 = (x1 + 128).min(width);
-    let search_y1 = (y1 + 128).min(height);
-    let candidates = match donor_choice {
-        DonorChoice::Automatic => {
-            let totals = MatchWeights::new(&weights, &valid_target);
-            let filter = screening::prepare(
-                MatchContext {
-                    image,
-                    mask,
-                    gradients,
-                    gradient_known,
-                    width,
-                    target: [x0, y0],
-                    source: [0, 0],
-                    size: [local_width, local_height],
-                    known: &known,
-                    valid_target: &valid_target,
-                    weights: &weights,
-                    center,
-                    contrast,
-                    gradient_scale,
-                },
-                totals,
-                &eligibility,
-                [
-                    search_x0,
-                    search_y0,
-                    search_x1 - local_width,
-                    search_y1 - local_height,
-                ],
-                search,
-                execution,
-            )?;
-            if (execution.cancelled)() {
-                return Ok(None);
-            }
-            // A seed minimum must retain its actual candidates, especially exact zero:
-            // otherwise a cached positive score could incorrectly become the zero winner.
-            let mut candidates = filter
-                .as_ref()
-                .map(|f| {
-                    f.scores
-                        .iter()
-                        .filter(|(_, score)| **score <= competitive_score(f.best))
-                        .map(|(p, s)| (*s, p[1], p[0]))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let mut best = filter.as_ref().map_or(f64::INFINITY, |f| f.best);
-            let mut zero_winner = if best == 0. {
-                select_donor(&candidates, [x0, y0])
-            } else {
-                None
-            };
-            for sy in search_y0..=search_y1 - local_height {
-                if (execution.cancelled)() {
-                    return Ok(None);
-                }
-                for sx in search_x0..=search_x1 - local_width {
-                    if (execution.cancelled)() {
-                        return Ok(None);
-                    }
-                    if filter
-                        .as_ref()
-                        .is_some_and(|f| f.scores.contains_key(&[sx, sy]))
-                    {
-                        continue;
-                    }
-                    if zero_winner
-                        .is_some_and(|winner| !can_beat_zero_winner(winner, [sx, sy], [x0, y0]))
-                    {
-                        continue;
-                    }
-                    if !filter.as_ref().map_or_else(
-                        || eligibility.clean(sx, sy, search),
-                        |f| f.allows(sx, sy, best),
-                    ) {
-                        continue;
-                    }
-                    let context = MatchContext {
-                        image,
-                        mask,
-                        gradients,
-                        gradient_known,
-                        width,
-                        target: [x0, y0],
-                        source: [sx, sy],
-                        size: [local_width, local_height],
-                        known: &known,
-                        valid_target: &valid_target,
-                        weights: &weights,
-                        center,
-                        contrast,
-                        gradient_scale,
-                    };
-                    let score = matching_score_bounded(context, totals, search.ceiling(best));
-                    if let Ok(Some(score)) = score {
-                        best = best.min(score);
-                        let candidate = (score, sy, sx);
-                        candidates.push(candidate);
-                        if search.is_bounded() && best == 0. {
-                            zero_winner = match zero_winner {
-                                Some(winner) => Some(
-                                    if score <= competitive_score(0.)
-                                        && donor_order(&candidate, &winner, [x0, y0]).is_lt()
-                                    {
-                                        candidate
-                                    } else {
-                                        winner
-                                    },
-                                ),
-                                None => select_donor(&candidates, [x0, y0]),
-                            };
-                        }
-                    }
-                }
-            }
-            if candidates.is_empty() {
-                return Err(Error::InvalidParameter(
-                    "no eligible donor in search region",
-                ));
-            }
-            candidates
-        }
-        DonorChoice::Offset([dx, dy]) => {
-            let sx = offset(x0, dx).ok_or(Error::InvalidParameter("manual donor outside crop"))?;
-            let sy = offset(y0, dy).ok_or(Error::InvalidParameter("manual donor outside crop"))?;
-            if sx + local_width > width
-                || sy + local_height > height
-                || !eligibility.clean(sx, sy, search)
-            {
-                return Err(Error::InvalidParameter(
-                    "manual donor intersects required pixels",
-                ));
-            }
-            vec![(
-                matching_score(MatchContext {
-                    image,
-                    mask,
-                    gradients,
-                    gradient_known,
-                    width,
-                    target: [x0, y0],
-                    source: [sx, sy],
-                    size: [local_width, local_height],
-                    known: &known,
-                    valid_target: &valid_target,
-                    weights: &weights,
-                    center,
-                    contrast,
-                    gradient_scale,
-                })?,
-                sy,
-                sx,
-            )]
-        }
+    let gradient_scale = if gradient_values == 0 {
+        1.
+    } else {
+        (gradient_square / gradient_values as f64)
+            .sqrt()
+            .max(contrast * 1e-6)
     };
-    let (matching_score, source_y, source_x) = select_donor(&candidates, [x0, y0]).unwrap();
-    let mut difference = vec![[0.; 3]; local.len()];
-    let mut paired_context_pixels = 0;
-    let mut context_error = 0.;
-    for y in 0..local_height {
-        for x in 0..local_width {
-            let index = y * local_width + x;
-            let target = image[(y0 + y) * width + x0 + x];
-            let source_pixel = image[(source_y + y) * width + source_x + x];
-            if known[index] && !mask[(source_y + y) * width + source_x + x] {
-                paired_context_pixels += 1;
-                for channel in 0..3 {
-                    context_error +=
-                        (f64::from(target[channel]) - f64::from(source_pixel[channel])).powi(2);
-                }
-            }
-            if required[index] && !local[index] {
-                difference[index] =
-                    std::array::from_fn(|channel| target[channel] - source_pixel[channel]);
-            }
-        }
-    }
-    if (execution.cancelled)() {
-        return Ok(None);
-    }
-    let correction = limited_biharmonic(&difference, &local, local_width, local_height)?;
-    if (execution.cancelled)() {
-        return Ok(None);
-    }
-    for y in 0..local_height {
-        for x in 0..local_width {
-            let index = y * local_width + x;
-            if local[index] {
-                let donor_pixel = image[(source_y + y) * width + source_x + x];
-                output[(y0 + y) * width + x0 + x] = std::array::from_fn(|channel| {
-                    donor_pixel[channel] + correction[index][channel]
-                });
-            }
-        }
-    }
-    Ok(Some(DonorMatch {
-        target: [
-            x0 as u32,
-            y0 as u32,
-            local_width as u32,
-            local_height as u32,
-        ],
-        source: [source_x as u32, source_y as u32],
-        context_mse: context_error / (paired_context_pixels * 3) as f64,
-        paired_context_pixels,
-        matching_score,
+    Ok(Some(SearchTarget {
+        has_exterior: min_x - x0 >= 2 && min_y - y0 >= 2 && x1 - max_x >= 3 && y1 - max_y >= 3,
+        origin: [x0, y0],
+        size: [width, height],
+        image,
+        local,
+        required,
+        known,
+        valid_target,
+        weights,
+        gradients,
+        center,
+        contrast,
+        gradient_scale,
     }))
 }
 
-fn donor_order(
-    a: &(f64, usize, usize),
-    b: &(f64, usize, usize),
-    target: [usize; 2],
-) -> std::cmp::Ordering {
-    let da = distance(a.2, a.1, target[0], target[1]);
-    let db = distance(b.2, b.1, target[0], target[1]);
-    da.total_cmp(&db)
-        .then_with(|| a.0.total_cmp(&b.0))
-        .then_with(|| a.1.cmp(&b.1))
-        .then_with(|| a.2.cmp(&b.2))
-}
-
-fn select_donor(
-    candidates: &[(f64, usize, usize)],
-    target: [usize; 2],
-) -> Option<(f64, usize, usize)> {
-    let best = candidates.iter().map(|c| c.0).fold(f64::INFINITY, f64::min);
-    candidates
-        .iter()
-        .filter(|c| c.0 <= competitive_score(best))
-        .min_by(|a, b| donor_order(a, b, target))
-        .copied()
-}
-
-fn can_beat_zero_winner(
-    winner: (f64, usize, usize),
-    source: [usize; 2],
-    target: [usize; 2],
-) -> bool {
-    // Zero fixes the global best and epsilon margin. Even a perfect new score must beat
-    // the incumbent's complete distance/score/y/x rank; nearer nonzero epsilon ties survive.
-    donor_order(&(0., source[1], source[0]), &winner, target).is_lt()
-}
-
-#[derive(Clone, Copy)]
-struct MatchContext<'a> {
-    image: &'a [Ap1],
-    mask: &'a [bool],
-    gradients: &'a [[f32; 6]],
-    gradient_known: &'a [bool],
-    width: usize,
-    target: [usize; 2],
-    source: [usize; 2],
+struct NearSupport {
+    origin: [i32; 2],
     size: [usize; 2],
-    known: &'a [bool],
-    valid_target: &'a [bool],
-    weights: &'a [f64],
-    center: [f64; 3],
-    contrast: f64,
-    gradient_scale: f64,
+    bits: Vec<bool>,
 }
 
-#[derive(Clone, Copy)]
-struct MatchWeights {
-    color: f64,
-    gradient: f64,
-}
-
-impl MatchWeights {
-    fn new(weights: &[f64], valid_target: &[bool]) -> Self {
-        Self {
-            color: weights.iter().sum(),
-            gradient: weights
-                .iter()
-                .zip(valid_target)
-                .filter_map(|(weight, valid)| valid.then_some(*weight))
-                .sum(),
+impl NearSupport {
+    fn new(support: &SupportMask) -> Self {
+        let width = support.size[0] as usize + 8;
+        let height = support.size[1] as usize + 8;
+        let mut bits = vec![false; width * height];
+        for [x, y] in support.selected_points() {
+            let local_x = (x - support.origin[0]) as usize + 4;
+            let local_y = (y - support.origin[1]) as usize + 4;
+            bits[local_y * width + local_x] = true;
         }
+        let bits = dilate(&bits, width, height, 4);
+        Self {
+            origin: [support.origin[0] as i32 - 4, support.origin[1] as i32 - 4],
+            size: [width, height],
+            bits,
+        }
+    }
+
+    fn contains(&self, point: [i32; 2]) -> bool {
+        let x = point[0] - self.origin[0];
+        let y = point[1] - self.origin[1];
+        x >= 0
+            && y >= 0
+            && (x as usize) < self.size[0]
+            && (y as usize) < self.size[1]
+            && self.bits[y as usize * self.size[0] + x as usize]
     }
 }
 
-fn matching_score(context: MatchContext<'_>) -> Result<f64, Error> {
-    matching_score_bounded(
-        context,
-        MatchWeights::new(context.weights, context.valid_target),
-        None,
-    )
-    .map(|score| score.expect("unbounded matching never prunes"))
-}
-
-fn matching_score_bounded(
-    context: MatchContext<'_>,
-    totals: MatchWeights,
-    ceiling: Option<f64>,
-) -> Result<Option<f64>, Error> {
-    let [local_width, local_height] = context.size;
+#[allow(clippy::needless_range_loop)]
+fn crop_errors(
+    target: &SearchTarget,
+    support: &SupportMask,
+    near: &NearSupport,
+    offset: [i32; 2],
+    donor: &[Ap1],
+    donor_gradients: &[[f32; 6]],
+) -> (f64, f64, f64, f64) {
+    let [width, _height] = target.size;
     let mut color_weight = 0.;
     let mut color_error = 0.;
     let mut gradient_weight = 0.;
     let mut gradient_error = 0.;
-    for y in 0..local_height {
-        for x in 0..local_width {
-            let local = y * local_width + x;
-            let target = (context.target[1] + y) * context.width + context.target[0] + x;
-            let source = (context.source[1] + y) * context.width + context.source[0] + x;
-            let weight = context.weights[local];
-            if context.known[local] && !context.mask[source] {
-                color_weight += weight;
-                for channel in 0..3 {
-                    let a = (f64::from(context.image[target][channel]) - context.center[channel])
-                        / context.contrast;
-                    let b = (f64::from(context.image[source][channel]) - context.center[channel])
-                        / context.contrast;
-                    color_error += (a - b).powi(2) * weight;
-                }
-            }
-            if context.valid_target[local] && context.gradient_known[source] {
-                gradient_weight += weight;
-                for channel in 0..6 {
-                    let delta = (f64::from(context.gradients[target][channel])
-                        - f64::from(context.gradients[source][channel]))
-                        / context.gradient_scale;
-                    gradient_error += delta.powi(2) * weight;
-                }
+    for index in 0..target.weights.len() {
+        let local_x = index % width;
+        let local_y = index / width;
+        let donor_point = [
+            target.origin[0] as i32 + local_x as i32 + offset[0],
+            target.origin[1] as i32 + local_y as i32 + offset[1],
+        ];
+        let weight = target.weights[index];
+        let donor_is_support = donor_point[0] >= 0
+            && donor_point[1] >= 0
+            && support.contains([donor_point[0] as u32, donor_point[1] as u32]);
+        if target.known[index] && !donor_is_support {
+            color_weight += weight;
+            for channel in 0..3 {
+                let a = (f64::from(target.image[index][channel]) - target.center[channel])
+                    / target.contrast;
+                let b =
+                    (f64::from(donor[index][channel]) - target.center[channel]) / target.contrast;
+                color_error += (a - b).powi(2) * weight;
             }
         }
-        // Errors only increase and paired weights cannot exceed these target totals.
-        // A strict lower bound outside the competitive margin can never become a winner.
-        if ceiling.is_some_and(|limit| {
-            0.75 * color_error / (totals.color * 3.)
-                + 0.25 * gradient_error / (totals.gradient * 6.)
-                > limit
-        }) {
-            return Ok(None);
+        if target.valid_target[index] && !near.contains(donor_point) {
+            gradient_weight += weight;
+            for channel in 0..6 {
+                let delta = (f64::from(target.gradients[index][channel])
+                    - f64::from(donor_gradients[index][channel]))
+                    / target.gradient_scale;
+                gradient_error += delta.powi(2) * weight;
+            }
         }
     }
-    let required_color = totals.color * 0.5;
-    let required_gradient = totals.gradient * 0.5;
-    if color_weight < required_color.max(1e-12) || gradient_weight < required_gradient.max(1e-12) {
-        return Err(Error::InvalidParameter("insufficient paired donor context"));
-    }
-    Ok(Some(
-        0.75 * color_error / (color_weight * 3.) + 0.25 * gradient_error / (gradient_weight * 6.),
-    ))
+    (color_error, color_weight, gradient_error, gradient_weight)
 }
 
-fn dimensions(size: [u32; 2], count: usize) -> Result<[usize; 2], Error> {
-    let width = usize::try_from(size[0]).unwrap();
-    let height = usize::try_from(size[1]).unwrap();
-    if width.checked_mul(height) != Some(count) || count == 0 {
-        return Err(Error::InvalidParameter("image dimensions disagree"));
-    }
-    Ok([width, height])
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SearchOutcome {
+    Candidate([i32; 2]),
+    Impossible,
+    Cancelled,
 }
 
-fn offset(value: usize, delta: i32) -> Option<usize> {
-    if delta < 0 {
-        value.checked_sub(delta.unsigned_abs() as usize)
-    } else {
-        value.checked_add(delta as usize)
+/// Geometry establishes the search's own last-resort candidate. Coarse samples
+/// cover a useful neighbourhood before refining promising positions. The time
+/// ceiling includes pixel acquisition and scoring, not just candidate admission.
+#[allow(dead_code)]
+pub(crate) fn search_donor(
+    support: &SupportMask,
+    preferred: Option<[i32; 2]>,
+    active: SourceRegion,
+    base: &mut impl FnMut([u32; 2]) -> Result<Ap1, Error>,
+    deadline: Instant,
+    threshold: f64,
+    execution: &mut Execution<'_>,
+) -> Result<SearchOutcome, Error> {
+    if (execution.cancelled)() {
+        return Ok(SearchOutcome::Cancelled);
     }
+    active.validate()?;
+    support.validate()?;
+    let [x, y] = support.origin();
+    let [width, height] = support.size();
+    if !active.contains_region(SourceRegion {
+        x,
+        y,
+        width,
+        height,
+    }) {
+        return Err(Error::InvalidParameter(
+            "repair support is outside the source",
+        ));
+    }
+    let fallback = preferred
+        .filter(|offset| validate_offset(*offset, support, active).is_ok())
+        .or_else(|| initial_offset(support, active));
+    if (execution.cancelled)() {
+        return Ok(SearchOutcome::Cancelled);
+    }
+    let Some(fallback) = fallback else {
+        return Ok(SearchOutcome::Impossible);
+    };
+    if Instant::now() >= deadline {
+        return Ok(SearchOutcome::Candidate(fallback));
+    }
+    let stopped = || (execution.cancelled)() || Instant::now() >= deadline;
+    let mut bounded = Execution {
+        cancelled: &stopped,
+    };
+    let broad_deadline =
+        Instant::now() + deadline.saturating_duration_since(Instant::now()) * 2 / 3;
+    let mut targets = Vec::new();
+    for group in support.grouped_supports() {
+        if let Some(target) = build_search_target(support, &group, active, base, &mut bounded)? {
+            targets.push(target);
+        }
+        if stopped() {
+            break;
+        }
+    }
+    if stopped() || targets.is_empty() {
+        return Ok(if (execution.cancelled)() {
+            SearchOutcome::Cancelled
+        } else {
+            SearchOutcome::Candidate(fallback)
+        });
+    }
+    let Some(matcher) = matching::Matcher::new(&targets, &stopped) else {
+        return Ok(if (execution.cancelled)() {
+            SearchOutcome::Cancelled
+        } else {
+            SearchOutcome::Candidate(fallback)
+        });
+    };
+    let near = NearSupport::new(support);
+    let footprint = support::RequiredFootprint::new(support);
+    let target = donor_target(support, active)?;
+    let minimum = [
+        active.x as i32 - target.x as i32,
+        active.y as i32 - target.y as i32,
+    ];
+    let maximum = [
+        (active.x + active.width - target.x - target.width) as i32,
+        (active.y + active.height - target.y - target.height) as i32,
+    ];
+    let mut seen = std::collections::HashSet::new();
+    let mut consider =
+        |offset: [i32; 2], candidates: &mut Vec<(f64, [i32; 2])>| -> Result<bool, Error> {
+            if stopped() {
+                return Ok(false);
+            }
+            if !(0..2).all(|axis| offset[axis] >= minimum[axis] && offset[axis] <= maximum[axis])
+                || !seen.insert(offset)
+                || !footprint.clear(support, offset)
+            {
+                return Ok(true);
+            }
+            let Some(score) = matcher.score(support, &near, offset, base, &mut bounded)? else {
+                return Ok(false);
+            };
+            candidates.push((score, offset));
+            Ok(score > threshold)
+        };
+    let mut candidates = Vec::new();
+    if !consider(fallback, &mut candidates)? {
+        return Ok(if (execution.cancelled)() {
+            SearchOutcome::Cancelled
+        } else {
+            SearchOutcome::Candidate(fallback)
+        });
+    }
+    let span = support.size.iter().copied().max().unwrap() as i32 + 2;
+    let mut local = Vec::new();
+    let local_deadline = Instant::now() + Duration::from_millis(30);
+    let local_stopped = || stopped() || Instant::now() >= local_deadline;
+    let mut valid = 0usize;
+    support::visit_offsets(support, active, &local_stopped, |offset| {
+        valid += 1;
+        if valid <= 64 || valid.is_multiple_of(8) {
+            local.push(offset);
+        }
+        local.len() < 256
+    });
+    let mut schedule = vec![fallback];
+    schedule.extend(matcher.proposals(support, &stopped));
+    // Probe both close donors and separated directions before spending the rest
+    // on a spatial grid. A long stroke can need a translation larger than 128.
+    for radius in [span, 8, 16, 32, 64, 96, 128] {
+        for (dx, dy) in [
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (-1, -1),
+            (1, -1),
+            (-1, 1),
+        ] {
+            schedule.push([dx * radius, dy * radius]);
+        }
+    }
+    // A coarse grid reaches beyond the nearest rings. Bit-reversed coordinates
+    // avoid spending successive samples on adjacent cells.
+    let extent = span.max(128);
+    for index in 0..256u32 {
+        if let Some(offset) = local.get(index as usize) {
+            schedule.push(*offset);
+        }
+        let x = (index.reverse_bits() >> 28) as i32;
+        let y = ((index >> 4).reverse_bits() >> 28) as i32;
+        schedule.push([(2 * x - 15) * extent / 15, (2 * y - 15) * extent / 15]);
+    }
+    let mut finished = false;
+    for offset in schedule {
+        if Instant::now() >= broad_deadline && !candidates.is_empty() {
+            break;
+        }
+        if !consider(offset, &mut candidates)? {
+            finished = true;
+            break;
+        }
+    }
+    if !finished {
+        let mut ranked = candidates.clone();
+        ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for &(_, seed) in ranked.iter().take(3) {
+            let mut center = seed;
+            for step in [16, 8, 4, 2, 1] {
+                for (dx, dy) in [
+                    (-1, -1),
+                    (0, -1),
+                    (1, -1),
+                    (-1, 0),
+                    (1, 0),
+                    (-1, 1),
+                    (0, 1),
+                    (1, 1),
+                ] {
+                    if !consider(
+                        [center[0] + dx * step, center[1] + dy * step],
+                        &mut candidates,
+                    )? {
+                        finished = true;
+                        break;
+                    }
+                }
+                if finished {
+                    break;
+                }
+                if let Some(&(_, best)) = candidates.iter().min_by(|a, b| a.0.total_cmp(&b.0)) {
+                    center = best;
+                }
+            }
+            if finished {
+                break;
+            }
+        }
+    }
+    if (execution.cancelled)() {
+        return Ok(SearchOutcome::Cancelled);
+    }
+    let best = candidates
+        .iter()
+        .map(|(score, _)| *score)
+        .fold(f64::INFINITY, f64::min);
+    if !best.is_finite() {
+        return Ok(SearchOutcome::Candidate(fallback));
+    }
+    let margin = competitive_score(best);
+    let selected = candidates
+        .iter()
+        .filter(|(score, _)| *score <= margin)
+        .min_by(|a, b| {
+            offset_distance(a.1)
+                .cmp(&offset_distance(b.1))
+                .then_with(|| a.0.total_cmp(&b.0))
+        })
+        .map(|(_, offset)| *offset);
+    Ok(SearchOutcome::Candidate(selected.unwrap_or(fallback)))
+}
+
+fn offset_distance(offset: [i32; 2]) -> u64 {
+    let x = u64::from(offset[0].unsigned_abs());
+    let y = u64::from(offset[1].unsigned_abs());
+    x * x + y * y
+}
+
+fn competitive_score(best: f64) -> f64 {
+    best * (1. + SEARCH_COMPETITIVE_FRACTION) + 1e-12
 }
 
 fn distance(x: usize, y: usize, tx: usize, ty: usize) -> f64 {
     ((x as f64 - tx as f64).powi(2) + (y as f64 - ty as f64).powi(2)).sqrt()
 }
 
+#[allow(dead_code)]
 fn selected_bounds(mask: &[bool], width: usize) -> Option<[usize; 4]> {
     let mut bounds = [usize::MAX, usize::MAX, 0, 0];
     let mut any = false;
@@ -1056,70 +1012,6 @@ fn selected_bounds(mask: &[bool], width: usize) -> Option<[usize; 4]> {
         }
     }
     any.then_some(bounds)
-}
-
-struct DonorEligibility<'a> {
-    mask: &'a [bool],
-    width: usize,
-    masked: Option<[usize; 4]>,
-    needed: Option<[usize; 4]>,
-    offsets: Vec<usize>,
-    #[cfg(test)]
-    required: &'a [bool],
-    #[cfg(test)]
-    local_width: usize,
-}
-
-impl<'a> DonorEligibility<'a> {
-    fn new(
-        mask: &'a [bool],
-        width: usize,
-        masked: Option<[usize; 4]>,
-        local_width: usize,
-        required: &'a [bool],
-    ) -> Self {
-        Self {
-            mask,
-            width,
-            masked,
-            needed: selected_bounds(required, local_width),
-            offsets: required
-                .iter()
-                .enumerate()
-                .filter_map(|(i, needed)| {
-                    needed.then_some(i / local_width * width + i % local_width)
-                })
-                .collect(),
-            #[cfg(test)]
-            required,
-            #[cfg(test)]
-            local_width,
-        }
-    }
-
-    fn clean(&self, x: usize, y: usize, _search: DonorSearch) -> bool {
-        #[cfg(test)]
-        if matches!(_search, DonorSearch::Exhaustive) {
-            return self.required.iter().enumerate().all(|(i, needed)| {
-                !needed
-                    || !self.mask
-                        [(y + i / self.local_width) * self.width + x + i % self.local_width]
-            });
-        }
-        let (Some(masked), Some(needed)) = (self.masked, self.needed) else {
-            return true;
-        };
-        // Disjoint bounding boxes prove cleanliness; intersecting boxes still test exact support.
-        if x + needed[2] <= masked[0]
-            || y + needed[3] <= masked[1]
-            || x + needed[0] >= masked[2]
-            || y + needed[1] >= masked[3]
-        {
-            return true;
-        }
-        let base = y * self.width + x;
-        self.offsets.iter().all(|offset| !self.mask[base + offset])
-    }
 }
 
 fn grouped_components(mask: &[bool], width: usize, height: usize) -> Vec<Vec<usize>> {
@@ -1324,7 +1216,12 @@ fn distance_to_unknown_scalar(
         .collect()
 }
 
-fn gaussian_blur(image: &[Ap1], width: usize, height: usize) -> Vec<Ap1> {
+fn gaussian_blur(
+    image: &[Ap1],
+    width: usize,
+    height: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<Vec<Ap1>> {
     let mut kernel = [0.; 7];
     for (index, value) in kernel.iter_mut().enumerate() {
         *value = (-0.5 * (index as f64 - 3.).powi(2)).exp();
@@ -1335,6 +1232,9 @@ fn gaussian_blur(image: &[Ap1], width: usize, height: usize) -> Vec<Ap1> {
     }
     let mut horizontal = vec![[0.; 3]; image.len()];
     for y in 0..height {
+        if cancelled() {
+            return None;
+        }
         for x in 0..width {
             for (tap, weight) in kernel.iter().enumerate() {
                 let sx = reflected(x as isize + tap as isize - 3, width);
@@ -1347,6 +1247,9 @@ fn gaussian_blur(image: &[Ap1], width: usize, height: usize) -> Vec<Ap1> {
     }
     let mut output = vec![[0.; 3]; image.len()];
     for y in 0..height {
+        if cancelled() {
+            return None;
+        }
         for x in 0..width {
             for (tap, weight) in kernel.iter().enumerate() {
                 let sy = reflected(y as isize + tap as isize - 3, height);
@@ -1357,14 +1260,22 @@ fn gaussian_blur(image: &[Ap1], width: usize, height: usize) -> Vec<Ap1> {
             }
         }
     }
-    output
+    Some(output)
 }
 
-fn sobel(image: &[Ap1], width: usize, height: usize) -> Vec<[f32; 6]> {
+fn sobel(
+    image: &[Ap1],
+    width: usize,
+    height: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<Vec<[f32; 6]>> {
     let mut output = vec![[0.; 6]; image.len()];
     let smooth = [1., 2., 1.];
     let derivative = [-1., 0., 1.];
     for y in 0..height {
+        if cancelled() {
+            return None;
+        }
         for x in 0..width {
             for ky in 0..3 {
                 for kx in 0..3 {
@@ -1380,7 +1291,7 @@ fn sobel(image: &[Ap1], width: usize, height: usize) -> Vec<[f32; 6]> {
             }
         }
     }
-    output
+    Some(output)
 }
 
 fn reflected(mut value: isize, size: usize) -> usize {
@@ -1570,5 +1481,7 @@ fn limited_biharmonic(
     Ok(output)
 }
 
+#[cfg(test)]
+mod matching_tests;
 #[cfg(test)]
 mod tests;

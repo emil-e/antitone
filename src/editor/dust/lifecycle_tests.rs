@@ -3,6 +3,8 @@ use crate::{geometry::QuarterTurns, processing::InputPipeline};
 
 mod persistence;
 
+mod acceptance;
+
 fn frame(
     editor: &mut Editor,
     context: &egui::Context,
@@ -39,7 +41,7 @@ fn editor() -> Editor {
         .insert(
             SupportMask::new([50, 50], [3, 3], vec![true; 9]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Offset([30, 0]),
+            [30, 0],
         )
         .unwrap();
     editor.select_dust_repair(RepairId(1));
@@ -67,6 +69,24 @@ fn response(request: &Request, active: SourceRegion) -> Response {
         signature: request.signature,
         repair: request.repair.clone(),
         evaluated,
+    }
+}
+
+// Geometry/controller fixtures have synthetic display geometry. Resolve their
+// queued searches geometrically; real source acquisition has separate workflow cases.
+fn finish_searches(e: &mut Editor) {
+    for request in e.dust_search_requests() {
+        let result = crate::dust_repair::search_donor(
+            &request.support,
+            request.previous.as_ref().map(|r| r.offset),
+            request.development.active_area.into(),
+            &mut |_| panic!("expired geometry fixture must not read pixels"),
+            std::time::Instant::now(),
+            0.,
+            &mut crate::dust_repair::Execution::default(),
+        )
+        .unwrap();
+        e.receive_dust_search(request.id, Ok(result));
     }
 }
 
@@ -175,6 +195,9 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
                 cx,
             );
             assert!(e.document.dust.mask_draft.is_none());
+            assert!(e.dust_repairs(source).is_none());
+            assert!(e.dust_search_pending());
+            finish_searches(e);
             let repairs = e.dust_repairs(source).unwrap().repairs();
             assert_eq!(repairs.len(), 1);
             assert!(repairs[0].support.contains([750, 200]));
@@ -403,7 +426,7 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
         .insert(
             SupportMask::new([80, 50], [3, 3], vec![true; 9]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Automatic,
+            [64, 0],
         )
         .unwrap();
     e.select_dust_repair(RepairId(1));
@@ -665,65 +688,29 @@ fn photo_widget_rejects_an_unsafe_repaired_value_before_accepting_the_grade() {
 }
 
 #[test]
-fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin() {
+fn disconnected_supports_share_the_stored_translation_before_evaluation_and_after_drag() {
     let mut e = editor();
     let source = e.current_source.unwrap();
     let support = SupportMask::new(
         [50, 50],
-        [11, 3],
-        (0..33).map(|i| i % 11 < 3 || i % 11 >= 8).collect(),
+        [31, 3],
+        (0..93).map(|i| i % 31 < 3 || i % 31 >= 28).collect(),
     )
     .unwrap();
     e.dust_repairs_mut(source)
         .set_support(RepairId(1), support.clone())
         .unwrap();
     e.dust_repairs_mut(source)
-        .set_donor(RepairId(1), DonorChoice::Automatic)
+        .set_offset(RepairId(1), [64, 0])
         .unwrap();
     e.begin_dust_cleanup();
-    let repair = e.dust_repairs(source).unwrap().repairs()[0].clone();
-    let request = Request {
-        request: 1,
-        loaded: e.id,
-        source,
-        signature: e.dust_signature().unwrap(),
-        repair: repair.clone(),
-        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        input: e.calibration().unwrap().into(),
-    };
-    // Constant input permits distinct, equally valid donors; author their resolved geometry.
-    let mut evaluated = crate::dust_repair::evaluate(
-        &Repair {
-            donor: DonorChoice::Offset([30, 0]),
-            ..repair
-        },
-        e.document.visit.ready.as_ref().unwrap().area,
-        |_| Ok([0.1, 0.2, 2.]),
-    )
-    .unwrap();
-    assert_eq!(evaluated.donors.len(), 2);
-    for (matched, offset) in evaluated.donors.iter_mut().zip([[40, 30], [-20, 40]]) {
-        matched.source[0] = (matched.target[0] as i32 + offset[0]) as u32;
-        matched.source[1] = (matched.target[1] as i32 + offset[1]) as u32;
-    }
-    e.document.dust.start(&request);
-    e.receive_dust(
-        request.request,
-        Ok(Some(Response {
-            request: request.request,
-            loaded: request.loaded,
-            source,
-            signature: request.signature,
-            repair: request.repair,
-            evaluated: Arc::new(evaluated),
-        })),
-    );
+    assert!(e.document.dust.cached.is_empty());
     let regions = e.dust_donor_regions();
-    assert_eq!(regions.len(), 2);
-    assert_eq!(regions[0].support.selected_points().count(), 9);
-    assert_eq!(regions[1].support.selected_points().count(), 9);
-    assert!(regions[0].support.contains([50, 50]) && !regions[0].support.contains([58, 50]));
-    assert!(regions[1].support.contains([58, 50]) && !regions[1].support.contains([50, 50]));
+    let presented = regions
+        .iter()
+        .flat_map(|region| region.support.selected_points())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(presented, support.selected_points().collect());
     let composition = Composition::new(
         e.document.visit.ready.as_ref().unwrap().area,
         Default::default(),
@@ -735,17 +722,18 @@ fn disconnected_automatic_donors_use_their_own_supports_offsets_and_drag_origin(
         composition,
         1.,
     );
-    let point = screen_source_point(geometry, [38.5, 90.5]);
+    for region in &regions {
+        assert_eq!(region.donor.x as i32 - region.target.x as i32, 64);
+        assert_eq!(region.donor.y, region.target.y);
+    }
+    let point = screen_source_point(geometry, [143., 51.]);
     let hit = e.dust_donor_hit(geometry, point).unwrap();
-    assert!(hit.support.contains([58, 50]));
+    assert!(hit.support.contains([78, 50]));
     e.begin_dust_donor_drag(geometry, point);
-    assert_eq!(e.document.dust.donor_draft.unwrap().offset, [-20, 40]);
-    e.drag_dust_donor(geometry, screen_source_point(geometry, [40.5, 91.5]));
+    assert_eq!(e.document.dust.donor_draft.unwrap().offset, [64, 0]);
+    e.drag_dust_donor(geometry, screen_source_point(geometry, [145., 52.]));
     e.end_dust_donor_drag();
-    assert_eq!(
-        e.dust_repairs(source).unwrap().repairs()[0].donor,
-        DonorChoice::Offset([-18, 41])
-    );
+    assert_eq!(e.dust_repairs(source).unwrap().repairs()[0].offset, [66, 1]);
 }
 
 #[test]
@@ -791,7 +779,7 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
                 .collect(),
         )
         .unwrap(),
-        donor: DonorChoice::Offset([-45, 25]),
+        offset: [-45, 25],
     };
     let request = Request {
         request: 1,
@@ -884,7 +872,7 @@ fn obsolete_heal_cancels_without_releasing_admission_or_memoizing_failure() {
                 } else {
                     let source = e.current_source.unwrap();
                     e.dust_repairs_mut(source)
-                        .set_donor(RepairId(1), DonorChoice::Offset([31, 0]))
+                        .set_offset(RepairId(1), [31, 0])
                         .unwrap();
                 }
                 let next_signature = e.dust_signature().unwrap();

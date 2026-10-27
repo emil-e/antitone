@@ -84,7 +84,8 @@ impl Editor {
     }
 
     fn file_context_available(&self) -> bool {
-        !self.application_modal()
+        !self.dust_search_pending()
+            && !self.application_modal()
             && self.pick.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.visit.crop_edit.is_none()

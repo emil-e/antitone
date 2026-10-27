@@ -2,7 +2,7 @@ use super::*;
 use crate::processing::Calibration;
 use crate::{
     adjustment_layers::AdjustmentLayerSettings,
-    dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
+    dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
 };
 use glam::DMat3;
 
@@ -23,7 +23,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
             vec![true, false, true, false, true, false, true, false, true],
         )
         .unwrap(),
-        donor: DonorChoice::Offset([-64, 0]),
+        offset: [-64, 0],
     };
     let evaluated =
         Arc::new(crate::dust_repair::evaluate(&repair, area, |_| Ok([-0.125, 2., 0.25])).unwrap());

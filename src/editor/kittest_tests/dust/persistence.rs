@@ -8,6 +8,144 @@ fn exact_values(repair: &crate::dust_repair::EvaluatedRepair) -> Vec<([u32; 2], 
 }
 
 #[test]
+fn pending_stroke_shows_no_donor_and_accepts_one_result_after_real_search() {
+    tools::calibrated_harness_with_thumbnails(true, |mut h| {
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        wait_for(&mut h, |e| e.working.idle());
+        let before = h.read(|e| e.document.project.clone());
+        let dirty = h.read(|e| e.document.dirty());
+        let admission = crate::background::testing::pause();
+        h.update(|e| e.document.dust.brush_size = 12);
+        click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
+        h.step();
+        h.read(|e| {
+            assert!(e.dust_search_pending());
+            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.dirty(), dirty);
+            assert!(e.dust_donor_regions().is_empty());
+            assert!(!e.file_available());
+        });
+        let (canvas, marked) = h.read(|e| {
+            let geometry = e.last_layout.unwrap().0;
+            let request = &e.dust_search_requests()[0];
+            let [x, y] = request.support.origin();
+            let [width, height] = request.support.size();
+            (
+                geometry.canvas,
+                geometry.screen_region(crate::geometry::SourceRegion {
+                    x,
+                    y,
+                    width,
+                    height,
+                }),
+            )
+        });
+        // Move away so the brush cursor cannot stand in for pending-mask feedback.
+        h.hover_at(canvas.min - egui::vec2(1., 1.));
+        h.step();
+        let marked = marked.expand(marked.size().max_elem() * 0.5);
+        assert!(
+            h.output().shapes.iter().any(|shape| {
+                let bounds = shape.shape.visual_bounding_rect();
+                !matches!(&shape.shape, egui::Shape::Callback(_))
+                    && bounds.is_positive()
+                    && marked.contains_rect(bounds)
+            }),
+            "the pending support must be visible before a donor exists"
+        );
+        assert!(h.output().shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Callback(callback) if canvas.contains(callback.rect.center()))));
+        save_capture(&h.render().unwrap(), "dust-search-pending-offscreen");
+        drop(admission);
+        ready(&mut h, 1);
+        h.read(|e| {
+            assert!(!e.dust_search_pending());
+            let source = e.current_source.unwrap();
+            assert_eq!(e.dust_repairs(source).unwrap().repairs().len(), 1);
+            assert!(!e.dust_donor_regions().is_empty());
+            assert_eq!(
+                e.history_label(crate::editor::history::Direction::Undo),
+                Some("Dust mask")
+            );
+        });
+    });
+}
+
+#[test]
+fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() {
+    tools::calibrated_harness_with_thumbnails(true, |mut h| {
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        h.update(|e| e.document.dust.brush_size = 12);
+        click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
+        ready(&mut h, 1);
+        wait_for(&mut h, |e| e.working.idle());
+        // Recreate the source-ready / detailed-acquisition-pending boundary,
+        // keeping current evaluated repairs. Hold physical admission so the
+        // placeholder must paint rather than winning a worker timing race.
+        let admission = crate::background::testing::pause();
+        let timing = h.update(|e| {
+            e.seed_thumbnail();
+            let source = e.current_source.unwrap();
+            let composition = e.last_layout.unwrap().0.composition;
+            e.pending_preview = Some(
+                e.thumbnails
+                    .selected_preview(
+                        e.id,
+                        &e.document,
+                        source,
+                        composition,
+                        e.correction.as_ref(),
+                    )
+                    .unwrap()
+                    .expect("selected camera preview is cached"),
+            );
+            e.working.clear();
+            e.preview_rendered = None;
+            let timing = Arc::new(SelectionTiming::new(e.id, Instant::now()));
+            e.selection_timing = Some(timing.clone());
+            timing
+        });
+        h.step();
+        h.read(|e| {
+            assert!(e.pending_preview.is_some());
+            assert!(e.working.displayed.is_none());
+            let preview = &e.preview_rendered.as_ref().expect("usable placeholder").4;
+            assert!(
+                preview.spec.repairs.0.is_empty(),
+                "reduced proxy cannot acquire sparse repairs"
+            );
+            assert_eq!(e.dust_evaluations(e.dust_signature().unwrap()).len(), 1);
+        });
+        h.render().unwrap();
+        assert!(timing.pending_was_painted());
+        assert!(!timing.ready_was_painted());
+        drop(admission);
+        wait_for(&mut h, |e| {
+            e.working
+                .displayed
+                .as_ref()
+                .is_some_and(|view| view.spec.repairs.0.len() == 1)
+        });
+        h.step();
+        h.render().unwrap();
+        assert!(timing.ready_was_painted());
+        h.read(|e| {
+            assert!(e.pending_preview.is_none());
+            assert_eq!(
+                e.working.displayed.as_ref().unwrap().spec.repairs.0.len(),
+                1
+            );
+        });
+    });
+}
+
+#[test]
 fn repair_evaluation_failures_preserve_usable_navigation_previews() {
     tools::calibrated_harness_with_thumbnails(true, |mut h| {
         wait_for(&mut h, |editor| {
@@ -18,7 +156,8 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
         });
         let source = h.read(|editor| editor.current_source.unwrap());
         let area = h.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
-        // Valid exterior support, but no source-sized donor: exercise healing failure, not mask rejection.
+        // A support touching the source edge cannot satisfy the biharmonic
+        // exterior, so this is an evaluation failure rather than mask rejection.
         let repair = h.update(|editor| {
             editor
                 .document
@@ -29,25 +168,12 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
                 .insert(
                     crate::dust_repair::SupportMask::new(
                         [area.x, area.y],
-                        [area.width, area.height],
-                        (0..area.width * area.height)
-                            .map(|index| {
-                                let x = index % area.width;
-                                let y = index / area.width;
-                                x >= 8
-                                    && y >= 8
-                                    && x + 8 < area.width
-                                    && y + 8 < area.height
-                                    && (x == 8
-                                        || y == 8
-                                        || x + 9 == area.width
-                                        || y + 9 == area.height)
-                            })
-                            .collect(),
+                        [16, 16],
+                        vec![true; 16 * 16],
                     )
                     .unwrap(),
                     crate::dust_repair::RepairOrigin::Manual,
-                    DonorChoice::Automatic,
+                    [64, 0],
                 )
                 .unwrap()
         });
@@ -153,6 +279,9 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         click(&mut h, egui::pos2(32., 96.), egui::Modifiers::NONE);
         ready(&mut h, 2);
 
+        let source = h.read(|editor| editor.current_source.unwrap());
+        let first_offset =
+            h.read(|editor| editor.dust_repairs(source).unwrap().repairs()[0].offset);
         let region = h.read(|editor| editor.dust_donor_regions().remove(0));
         let point = region.support.selected_points().next().unwrap();
         let offset = [
@@ -171,18 +300,17 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 .screen_point(start + egui::vec2((50 - offset[0]) as f32, (50 - offset[1]) as f32)),
         );
         ready(&mut h, 2);
-        let source = h.read(|editor| editor.current_source.unwrap());
         h.read(|editor| assert!(editor.document.dirty()));
         h.read(|editor| {
             assert_eq!(
-                editor.dust_repairs(source).unwrap().repairs()[0].donor,
-                DonorChoice::Automatic
+                editor.dust_repairs(source).unwrap().repairs()[0].offset,
+                first_offset
             )
         });
         h.read(|editor| {
             assert_eq!(
-                editor.dust_repairs(source).unwrap().repairs()[1].donor,
-                DonorChoice::Offset([50, 50])
+                editor.dust_repairs(source).unwrap().repairs()[1].offset,
+                [50, 50]
             )
         });
 

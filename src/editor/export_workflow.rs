@@ -43,6 +43,11 @@ impl Editor {
         format: OutputFormat,
         overwrite: Overwrite,
     ) -> Result<Option<Request>, Error> {
+        if self.dust_search_pending() {
+            return Err(Error::InvalidParameter(
+                "wait for donor selection before exporting",
+            ));
+        }
         let Some(ready) = &self.document.visit.ready else {
             return Ok(None);
         };

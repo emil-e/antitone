@@ -7,6 +7,7 @@ use crate::{
     dust_repair::{self, EvaluatedRepair, Execution, Repair},
     scan::{ImageSource, Scan},
 };
+use std::time::Instant;
 
 /// Every repair reads the same unrepaired working positive, evaluated in f64 then stored as f32.
 pub fn evaluate(source: &ImageSource<'_>, repair: &Repair) -> Result<EvaluatedRepair, Error> {
@@ -33,6 +34,33 @@ pub(crate) fn evaluate_with(
                 Err(Error::NumericalOverflow)
             }
         },
+        execution,
+    )
+}
+
+pub(crate) fn search(
+    source: &ImageSource<'_>,
+    support: &dust_repair::SupportMask,
+    preferred: Option<[i32; 2]>,
+    execution: &mut Execution<'_>,
+) -> Result<dust_repair::SearchOutcome, Error> {
+    if (execution.cancelled)() {
+        return Ok(dust_repair::SearchOutcome::Cancelled);
+    }
+    dust_repair::search_donor(
+        support,
+        preferred,
+        source.area(),
+        &mut |point| {
+            let value = source.sample(point)?.as_vec3().to_array();
+            if value.iter().all(|channel| channel.is_finite()) {
+                Ok(value)
+            } else {
+                Err(Error::NumericalOverflow)
+            }
+        },
+        Instant::now() + dust_repair::SEARCH_BUDGET,
+        dust_repair::SEARCH_ACCEPTABLE_SCORE,
         execution,
     )
 }

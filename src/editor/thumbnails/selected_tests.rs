@@ -472,7 +472,7 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
 }
 
 #[test]
-fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_pressure() {
+fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
@@ -506,9 +506,9 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
                 };
                 editor.source_result(editor.id, Ok(Box::new(ready)));
                 assert!(editor.document.visit.ready.is_some());
-                assert!(editor.pending_preview.is_none());
+                assert!(editor.pending_preview.is_some());
                 assert!(!editor.busy);
-                assert!(!editor.selected_view().unwrap().2);
+                assert!(editor.selected_view().unwrap().2);
                 editor.source = false;
                 editor
                     .view_processing(

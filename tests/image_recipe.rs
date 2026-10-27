@@ -1,7 +1,7 @@
 #![cfg(feature = "project")]
 use antitone::{
     color::Balance,
-    dust_repair::{DonorChoice, RepairOrigin, SupportMask},
+    dust_repair::{RepairOrigin, SupportMask},
     flat_field::FlatField,
     processing::{CAMERA_INPUT_FLOOR, DEFAULT_GAMMA, InputSettings, Response},
     project::{Development, FlatFieldSettings, Project, Source, SourceDevelopment, SourceId},
@@ -58,7 +58,7 @@ fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair
         .insert(
             SupportMask::new([120, 100], [1, 1], vec![true]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Automatic,
+            [64, 0],
         )
         .unwrap();
     let repaired = project.image_recipe(id).unwrap();
@@ -205,7 +205,7 @@ fn accepted_look_identity_is_numeric_immutable_and_downstream_of_neutral_repairs
         .insert(
             SupportMask::new([120, 100], [1, 1], vec![true]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Automatic,
+            [64, 0],
         )
         .unwrap();
     let none = project.image_recipe(id).unwrap();

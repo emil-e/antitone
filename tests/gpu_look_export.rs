@@ -92,13 +92,13 @@ fn repairs(
     scan: &Scan,
     calibration: Calibration,
 ) -> Vec<Arc<antitone::dust_repair::EvaluatedRepair>> {
-    use antitone::dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask};
+    use antitone::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
     let repair = Repair {
         id: RepairId(1),
         enabled: true,
         origin: RepairOrigin::Manual,
         support: SupportMask::new([126, 62], [5, 5], vec![true; 25]).unwrap(),
-        donor: DonorChoice::Offset([-64, 0]),
+        offset: [-64, 0],
     };
     let input = InputSettings::negative(scan.processing_calibration(calibration).unwrap());
     vec![Arc::new(

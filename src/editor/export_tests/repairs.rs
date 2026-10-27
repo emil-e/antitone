@@ -1,5 +1,5 @@
 use super::*;
-use crate::dust_repair::{DonorChoice, RepairOrigin, SupportMask};
+use crate::dust_repair::{RepairOrigin, SupportMask};
 use crate::working_precision;
 
 fn exr_pixels(path: &std::path::Path, precision: ExrPrecision) -> Vec<[f64; 3]> {
@@ -33,20 +33,11 @@ fn exr_pixels(path: &std::path::Path, precision: ExrPrecision) -> Vec<[f64; 3]> 
     pixels
 }
 
-fn donorless_border(area: Rect) -> SupportMask {
-    // The inset admits the biharmonic exterior, while donor padding still spans the source.
-    let bits = (0..area.width * area.height)
-        .map(|index| {
-            let x = index % area.width;
-            let y = index / area.width;
-            x >= 8
-                && y >= 8
-                && x + 8 < area.width
-                && y + 8 < area.height
-                && (x == 8 || y == 8 || x + 9 == area.width || y + 9 == area.height)
-        })
-        .collect();
-    SupportMask::new([area.x, area.y], [area.width, area.height], bits).unwrap()
+fn edge_border(area: Rect) -> SupportMask {
+    // A source-edge block cannot satisfy the biharmonic exterior. It is inside
+    // the active area, so the repair instruction validates, but a crop inside
+    // the source has no coverage of it.
+    SupportMask::new([area.x, area.y], [16, 16], vec![true; 256]).unwrap()
 }
 
 #[test]
@@ -74,11 +65,7 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         .source_mut(id)
         .unwrap()
         .repairs
-        .insert(
-            donorless_border(area),
-            RepairOrigin::Manual,
-            DonorChoice::Automatic,
-        )
+        .insert(edge_border(area), RepairOrigin::Manual, [30, 0])
         .unwrap();
     editor.crop = Some(crate::crop::Crop {
         center: [area.x as f64 + 25., area.y as f64 + 32.],
@@ -175,7 +162,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             .insert(
                 SupportMask::new([126, 62], [5, 5], vec![true; 25]).unwrap(),
                 RepairOrigin::Manual,
-                DonorChoice::Offset([-64, 0]),
+                [-64, 0],
             )
             .unwrap();
         let directory = tempfile::tempdir().unwrap();
@@ -297,11 +284,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             .source_mut(id)
             .unwrap()
             .repairs
-            .insert(
-                donorless_border(area),
-                RepairOrigin::Manual,
-                DonorChoice::Automatic,
-            )
+            .insert(edge_border(area), RepairOrigin::Manual, [64, 0])
             .unwrap();
         editor.crop = Some(crate::crop::Crop {
             center: [48., 48.],
@@ -317,7 +300,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         .unwrap();
         assert!(
             crate::repair_source::resolve(&scan, &recipe).is_err(),
-            "the source-wide border has no complete donor"
+            "the source-edge border cannot satisfy the biharmonic exterior"
         );
         assert!(
             crate::repair_source::resolve_output(
@@ -327,7 +310,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             )
             .unwrap()
             .is_empty(),
-            "zero exact output coverage, including a hole inside a support rectangle, excludes irrelevant repairs"
+            "the source-edge support has zero output coverage and is excluded"
         );
         let cropped = directory.path().join("outside-failed-repair.tif");
         editor = wait(editor, |editor, cx| {
@@ -402,11 +385,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         let repairs = &mut editor.document.project.source_mut(id).unwrap().repairs;
         repairs.clear();
         repairs
-            .insert(
-                donorless_border(area),
-                RepairOrigin::Manual,
-                DonorChoice::Automatic,
-            )
+            .insert(edge_border(area), RepairOrigin::Manual, [64, 0])
             .unwrap();
         editor = wait(editor, |editor, cx| {
             editor.export(
@@ -418,7 +397,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         });
         assert!(editor.failure.is_some());
         assert!(
-            editor.status.contains("repair") && editor.status.contains("donor"),
+            editor.status.contains("repair") && editor.status.contains("two-pixel exterior"),
             "{}",
             editor.status
         );

@@ -201,7 +201,9 @@ impl Editor {
         let view = self.document.visit.view;
         self.document.visit.source = State::default();
         self.tasks.finish(TaskRequest::Photo(view));
-        self.pending_preview = None;
+        if result.is_err() {
+            self.pending_preview = None;
+        }
         if let Some(timing) = &self.selection_timing {
             log::debug!(
                 request = view,

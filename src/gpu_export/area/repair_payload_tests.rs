@@ -39,7 +39,7 @@ fn dense_repaired_unit_accounts_host_and_gpu_uploads_separately_from_retained_re
             vec![true; 256],
         )
         .unwrap(),
-        donor: crate::dust_repair::DonorChoice::Offset([64, 0]),
+        offset: [64, 0],
     };
     let evaluated =
         Arc::new(crate::dust_repair::evaluate(&repair, a, |_| Ok([0.25, 0.5, 0.75])).unwrap());

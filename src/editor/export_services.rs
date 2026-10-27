@@ -48,7 +48,6 @@ pub(super) struct Services {
     device: wgpu::Device,
     queue: wgpu::Queue,
     submissions: crate::platform::SubmissionGate,
-    screening: Arc<crate::gpu::dust_screening::Cache>,
     sources: source::Services,
 }
 
@@ -58,7 +57,6 @@ impl Services {
         device: wgpu::Device,
         queue: wgpu::Queue,
         submissions: crate::platform::SubmissionGate,
-        screening: Arc<crate::gpu::dust_screening::Cache>,
         sources: source::Services,
     ) -> Self {
         Self {
@@ -66,7 +64,6 @@ impl Services {
             device,
             queue,
             submissions,
-            screening,
             sources,
         }
     }
@@ -280,33 +277,25 @@ impl Services {
                 .get(&self.device, &self.queue)
                 .map_err(WriteFailure::Infrastructure)?;
             let stopped = || cancelled.load(Ordering::Relaxed);
-            self.screening
-                .with(&self.device, &self.queue, &self.submissions, |screener| {
-                    crate::gpu_export::job::write(
-                        &renderer,
-                        &self.device,
-                        (&self.queue, &self.submissions),
-                        crate::gpu_export::job::Job {
-                            scan: &scan,
-                            field: request.input.correction.as_ref().map(|c| c.gpu.clone()),
-                            recipe: &request.recipe,
-                            format: match request.format {
-                                OutputFormat::Tiff(target) => {
-                                    crate::gpu_export::Format::Tiff(target)
-                                }
-                                OutputFormat::Exr(precision) => {
-                                    crate::gpu_export::Format::Exr(precision)
-                                }
-                            },
-                        },
-                        (&request.path, request.overwrite),
-                        &mut crate::dust_repair::Execution {
-                            screener: Some(screener),
-                            cancelled: &stopped,
-                        },
-                        || Ok(()),
-                    )
-                })?;
+            crate::gpu_export::job::write(
+                &renderer,
+                &self.device,
+                (&self.queue, &self.submissions),
+                crate::gpu_export::job::Job {
+                    scan: &scan,
+                    field: request.input.correction.as_ref().map(|c| c.gpu.clone()),
+                    recipe: &request.recipe,
+                    format: match request.format {
+                        OutputFormat::Tiff(target) => crate::gpu_export::Format::Tiff(target),
+                        OutputFormat::Exr(precision) => crate::gpu_export::Format::Exr(precision),
+                    },
+                },
+                (&request.path, request.overwrite),
+                &mut crate::dust_repair::Execution {
+                    cancelled: &stopped,
+                },
+                || Ok(()),
+            )?;
             Ok::<_, WriteFailure>(request.path)
         })
         .await
