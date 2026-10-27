@@ -2,7 +2,7 @@ use super::tests::{LIMIT, fixture};
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::development,
+    source as source_loading,
 };
 use std::{cell::Cell, rc::Rc, sync::mpsc};
 
@@ -56,7 +56,11 @@ fn start_cpu(
         let id = pending.id;
         let stopped = pending.cancelled.clone();
         let retire = stopped.cancel_on_drop();
-        let services = Services::from(editor.source_services.as_ref().unwrap());
+        let services = Services::new(
+            editor.source_services.as_ref().unwrap(),
+            editor.document.cache.clone(),
+            editor.document.exposures.clone(),
+        );
         let task = access
             .spawn(move |cx| async move {
                 let _retire = retire;
@@ -89,9 +93,8 @@ fn start_cpu(
 #[test]
 fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting() {
     for fitting in [false, true] {
-        let scheduler = development::Scheduler::new();
+        let scheduler = source_loading::SourceLoader::new();
         let editor = fixture(scheduler.clone());
-        let jobs = editor.workflow_jobs.clone();
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
         let (returned, returns) = mpsc::channel();
@@ -112,7 +115,7 @@ fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting(
                         || e.document.analysis_pending.is_some()
                 );
             });
-            assert!(!continued.get() && !jobs.idle());
+            assert!(!continued.get());
             assert!(matches!(returns.try_recv(), Err(mpsc::TryRecvError::Empty)));
             release.send(()).unwrap();
             app.run_until(LIMIT, |e| !e.busy);
@@ -132,10 +135,9 @@ fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting(
 }
 
 #[test]
-fn application_retirement_drops_cpu_continuation_without_releasing_running_admission() {
-    let scheduler = development::Scheduler::new();
+fn application_retirement_drops_cpu_continuation_while_the_worker_finishes() {
+    let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let (returned, returns) = mpsc::channel();
@@ -153,18 +155,18 @@ fn application_retirement_drops_cpu_continuation_without_releasing_running_admis
                 .clone()
         });
         app.close_execution();
-        assert!(stopped.is_cancelled() && !continued.get() && !jobs.idle());
+        assert!(stopped.is_cancelled() && !continued.get());
         release.send(()).unwrap();
         returns.recv_timeout(LIMIT).unwrap();
     });
-    futures_lite::future::block_on(jobs.run(|| {})).unwrap();
-    assert!(jobs.idle() && !continued.get());
+    futures_lite::future::block_on(crate::background::run(|| {})).unwrap();
+    assert!(!continued.get());
     scheduler.close_and_wait().unwrap();
 }
 
 #[test]
 fn cancellation_before_first_poll_acknowledges_without_starting_a_cpu_stage() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
     let (entered, starts) = mpsc::channel();
     let (_release, resume) = mpsc::channel();

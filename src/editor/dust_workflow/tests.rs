@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
     dust_repair::{DonorChoice, RepairId, RepairOrigin, SupportMask},
-    editor::{development, document::Document},
+    editor::{document::Document, source_loading},
     geometry::SourceRegion,
 };
 use std::{
@@ -16,7 +16,7 @@ const LIMIT: Duration = Duration::from_secs(30);
 fn fixture(
     gate: crate::platform::SubmissionGate,
     screening: Arc<crate::gpu::dust_screening::Cache>,
-) -> (Editor, development::Scheduler) {
+) -> (Editor, source_loading::SourceLoader) {
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         instance
@@ -32,10 +32,9 @@ fn fixture(
     let mut document = Document::default();
     document.import(std::slice::from_ref(&path)).unwrap();
     let source_id = document.project.order[0];
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     let mut e = crate::editor::tests::fixture();
     let services = source::Services {
-        jobs: e.workflow_jobs.clone(),
         developments: scheduler.clone(),
         device: device.clone(),
         queue: queue.clone(),
@@ -43,18 +42,16 @@ fn fixture(
     };
     let ready = futures_lite::future::block_on(services.clone().prepare(
         source::Request {
+            reference: Arc::default(),
             input: document.project.input,
             path: path.clone(),
             wb: Some(document.project.development().as_ref().unwrap().fixed_wb),
             expected: Some(document.project.source(source_id).unwrap().clone()),
-            cache: Some(source::Cache::new(
-                &path,
-                Some(document.project.source(source_id).unwrap()),
-                &document,
-            )),
+            cache: Some(e.document.cache.clone()),
+            file: document.file_key(&path),
             correction: None,
         },
-        Arc::new(AtomicBool::new(false)),
+        crate::cancellation::Cancellation::default(),
     ))
     .unwrap();
     e.document.install(document);
@@ -64,13 +61,7 @@ fn fixture(
     e.current_source = Some(source_id);
     e.document.visit.ready = Some(ready);
     e.source_services = Some(services);
-    e.dust_services = Some(Services::new(
-        e.workflow_jobs.clone(),
-        device,
-        queue,
-        gate,
-        screening,
-    ));
+    e.dust_services = Some(Services::new(device, queue, gate, screening));
     e.set_dmin(Some(glam::DVec3::splat(0.8)));
     e.set_dmax(Some(glam::DVec3::splat(0.02)));
     e.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
@@ -227,7 +218,7 @@ fn downstream_grading_and_viewport_navigation_keep_running_healing_and_its_captu
 }
 
 #[test]
-fn deleted_running_repair_cannot_publish_or_release_admission_to_its_replacement_early() {
+fn deleted_running_repair_cannot_publish_and_does_not_block_unrelated_cpu_work() {
     let (gate, armed, starts, release) = gated();
     let (mut e, scheduler) = fixture(gate, Arc::default());
     let old = automatic(&mut e);
@@ -248,26 +239,21 @@ fn deleted_running_repair_cannot_publish_or_release_admission_to_its_replacement
         app.read(|e| {
             assert!(!e.document.dust.has_evaluation(source, replacement));
             assert!(e.document.dust.pending_request().is_some());
-            assert!(!e.workflow_jobs.idle());
         });
-        let jobs = app.read(|e| e.workflow_jobs.clone());
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(matches!(
-            observed.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
+        app.run_until(LIMIT, |_| observed.try_recv().is_ok());
         release.send(()).unwrap();
         app.run_until(LIMIT, |e| {
             e.document.dust.has_evaluation(source, replacement)
         });
-        app.run_until(LIMIT, |_| observed.try_recv().is_ok());
         drop(probe);
         app.read(|e| {
             assert!(!e.document.dust.has_evaluation(source, old));
@@ -285,7 +271,6 @@ fn document_or_application_retirement_keeps_running_gpu_resources_until_physical
         let weak = Arc::downgrade(&cache);
         let (mut e, scheduler) = fixture(gate, cache);
         automatic(&mut e);
-        let jobs = e.workflow_jobs.clone();
         with_application(e, |app| {
             armed.store(true, Ordering::Release);
             start(app);
@@ -302,13 +287,17 @@ fn document_or_application_retirement_keeps_running_gpu_resources_until_physical
                 app.pump();
             }
             assert!(weak.upgrade().is_some());
-            assert!(!jobs.idle());
             app.read(|e| assert!(e.document.dust.pending_request().is_none()));
             release.send(()).unwrap();
         });
-        // A probe waits on the same physical admission, not the retired UI future.
-        futures_lite::future::block_on(jobs.run(|| ())).unwrap();
-        assert!(weak.upgrade().is_none());
+        let deadline = std::time::Instant::now() + LIMIT;
+        while weak.upgrade().is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "retired repair kept GPU resources"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         scheduler.close_and_wait().unwrap();
     }
 }

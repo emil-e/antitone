@@ -2,10 +2,8 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{
-        FailureKind, Preparation, TaskRequest, development,
-        document::Document,
-        source,
-        tests::{fixture, hold_blocking_work},
+        FailureKind, Preparation, TaskRequest, document::Document, source, source_loading,
+        tests::fixture,
     },
     looks::{LookOrigin, Lut3D, builtin::Builtin},
 };
@@ -28,7 +26,7 @@ fn asset(value: f32) -> Arc<LookAsset> {
     )
 }
 
-fn editor() -> (Editor, development::Scheduler) {
+fn editor() -> (Editor, source_loading::SourceLoader) {
     let mut e = fixture();
     e.document = Document::default().into();
     e.set_dmin(None);
@@ -45,17 +43,15 @@ fn editor() -> (Editor, development::Scheduler) {
             .await
             .unwrap()
     });
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     let renderers = Arc::new(crate::renderer::RendererCache::new(e.submissions.clone()));
     e.source_services = Some(source::Services {
         developments: scheduler.clone(),
-        jobs: e.workflow_jobs.clone(),
         renderers: renderers.clone(),
         device: device.clone(),
         queue: queue.clone(),
     });
     e.look_services = Some(Services::new(
-        e.workflow_jobs.clone(),
         renderers,
         device,
         queue,
@@ -153,7 +149,7 @@ fn user_cancel_waits_for_acknowledgement_and_never_replaces_the_accepted_look() 
     let (mut e, scheduler) = editor();
     e.document.project.output.look = Some(asset(0.2));
     let before = e.document.project.clone();
-    let hold = hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(e, |app| {
         let id = app.enter(|e, access| {
             e.begin_look(Source::Loaded(asset(0.7)), access);
@@ -188,7 +184,7 @@ fn user_cancel_waits_for_acknowledgement_and_never_replaces_the_accepted_look() 
 #[test]
 fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_retirement() {
     let (e, scheduler) = editor();
-    let hold = hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     let old = asset(0.3);
     let weak = Arc::downgrade(&old);
     let chosen = asset(0.7);
@@ -226,7 +222,7 @@ fn document_transition_retires_look_but_keeps_session_comparison_assets() {
     let previous = asset(0.2);
     e.document.project.output.look = Some(previous.clone());
     e.remember_current_look();
-    let hold = hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(e, |app| {
         let old = app.enter(|e, access| {
             e.begin_look(Source::Loaded(asset(0.9)), access);
@@ -258,7 +254,7 @@ fn document_transition_retires_look_but_keeps_session_comparison_assets() {
 fn owner_and_application_retirement_cancel_queued_work_even_if_editor_data_is_still_alive() {
     for application in [false, true] {
         let (e, scheduler) = editor();
-        let hold = hold_blocking_work(&e.workflow_jobs);
+        let hold = crate::background::testing::pause();
         with_application(e, |app| {
             let (id, cancel) = app.enter(|e, access| {
                 e.begin_look(Source::Loaded(asset(0.8)), access);
@@ -285,7 +281,7 @@ fn owner_and_application_retirement_cancel_queued_work_even_if_editor_data_is_st
 }
 
 #[test]
-fn retired_running_bake_retains_its_cache_and_physical_admission_through_the_submitted_unit() {
+fn retired_running_bake_keeps_inputs_without_blocking_an_independent_look() {
     let (e, scheduler) = editor();
     let cache = Arc::downgrade(&e.look_services.as_ref().unwrap().cache);
     let directory = e
@@ -323,7 +319,6 @@ fn retired_running_bake_retains_its_cache_and_physical_admission_through_the_sub
             e.look_services = None;
             let source = e.source_services.as_ref().unwrap();
             e.look_services = Some(Services::new(
-                e.workflow_jobs.clone(),
                 source.renderers.clone(),
                 source.device.clone(),
                 source.queue.clone(),
@@ -331,19 +326,21 @@ fn retired_running_bake_retains_its_cache_and_physical_admission_through_the_sub
             ));
             e.begin_look(Source::Loaded(selected.clone()), access);
         });
-        app.pump();
-        assert!(cache.upgrade().is_some() && directory.exists());
-        assert!(!app.read(|e| e.workflow_jobs.idle()));
-        app.read(|e| {
-            assert!(e.document.look.is_some() && e.busy);
-            assert!(e.document.project.output.look.is_none());
-        });
-        release.send(()).unwrap();
         app.run_until(Duration::from_secs(20), |e| e.document.look.is_none());
-        assert!(cache.upgrade().is_none() && !directory.exists());
+        assert!(cache.upgrade().is_some() && directory.exists());
+        app.read(|e| assert_eq!(e.document.project.output.look, Some(selected.clone())));
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while cache.upgrade().is_some() || directory.exists() {
+            app.pump();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "retired bake kept its inputs"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         app.read(|e| {
             assert_eq!(e.document.project.output.look, Some(selected));
-            assert!(e.workflow_jobs.idle());
             assert!(e.failure.is_none());
         });
     });

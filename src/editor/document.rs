@@ -1,45 +1,35 @@
 use crate::{
     Error,
-    project::{Project, Save, Source, SourceDevelopment, SourceId},
-    raw::{Metadata, RawFile},
-    scan::Scan,
-    source_store::{SourceKey, SourceStore},
+    project::{Project, Save, Source, SourceId},
+    raw::Metadata,
 };
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 
+pub(super) use crate::source::{
+    metadata_development, open_source, source_metadata, verify_scan, verify_source,
+};
 type Result<T> = std::result::Result<T, Error>;
 
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::Project(error.to_string())
 }
 
-struct CacheScope(Arc<SourceStore>);
-
-impl Drop for CacheScope {
-    fn drop(&mut self) {
-        self.0.close();
-    }
-}
-
-// Captured freshness lets parameter preflight address completed metering without filesystem IO.
 #[derive(Clone)]
-struct HeaderPreview {
-    view: crate::raw::SourcePreview,
-    file: crate::source_revision::FileKey,
-}
 
-#[derive(Clone)]
 pub(super) struct Document {
     pub project: Project,
     pub path: Option<PathBuf>,
     pub spatial_metadata: Arc<crate::spatial_metadata::Metadata>,
+    pub exposure_metadata: Arc<crate::exposure_metadata::Metadata>,
     saved: Project,
-    cache: Arc<CacheScope>,
-    parent_cache: Option<Arc<SourceStore>>,
-    source_previews: std::collections::HashMap<SourceId, HeaderPreview>,
+
+    source_previews: std::collections::HashMap<SourceId, crate::raw::SourcePreview>,
+
+    // Keep identities for undo; each record locator follows project-path rebasing on Save As.
+    source_files: std::collections::HashMap<SourceId, (PathBuf, crate::source::FileKey)>,
     #[cfg(test)]
     pub(super) fixture_directory: Option<Arc<tempfile::TempDir>>,
 }
@@ -52,9 +42,9 @@ impl Default for Document {
             project,
             path: None,
             spatial_metadata: Arc::default(),
+            exposure_metadata: Arc::default(),
             source_previews: Default::default(),
-            cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
-            parent_cache: None,
+            source_files: Default::default(),
             #[cfg(test)]
             fixture_directory: None,
         }
@@ -84,34 +74,50 @@ impl Document {
 }
 
 impl Document {
-    pub fn cache(&self) -> &Arc<SourceStore> {
-        &self.cache.0
+    pub fn file_key(&self, path: &Path) -> crate::source::FileKey {
+        self.project
+            .sources
+            .iter()
+            .find(|source| {
+                self.source_path(source.id)
+                    .is_ok_and(|resolved| resolved == path)
+            })
+            .and_then(|source| {
+                self.source_files
+                    .get(&source.id)
+                    .filter(|(locator, _)| *locator == source.path)
+            })
+            .map(|(_, file)| file.clone())
+            .unwrap_or_else(|| crate::source::FileKey::unversioned(path))
     }
 
-    pub fn parent_cache(&self) -> Option<&Arc<SourceStore>> {
-        self.parent_cache.as_ref()
+    pub(super) fn capture_source_files(&mut self) -> Result<()> {
+        self.source_files = self
+            .project
+            .sources
+            .iter()
+            .map(|source| {
+                let path = self.source_path(source.id)?;
+                Ok((
+                    source.id,
+                    (source.path.clone(), crate::source::FileKey::new(&path)),
+                ))
+            })
+            .collect::<Result<_>>()?;
+        Ok(())
     }
 
-    pub fn fork_cache(&mut self) {
-        let fork = self.cache.0.fork(0);
-        self.parent_cache = Some(self.cache.0.clone());
-        self.cache = Arc::new(CacheScope(Arc::new(fork)));
-    }
-
-    pub fn accept_cache(&mut self, previous: &Arc<SourceStore>) {
-        if let Some(parent) = self.parent_cache.take()
-            && Arc::ptr_eq(&parent, previous)
-        {
-            let allowed = self
-                .project
-                .sources
-                .iter()
-                .filter_map(|source| {
-                    SourceKey::capture(&self.source_path(source.id).ok()?, &source.development)
-                })
-                .collect::<Vec<_>>();
-
-            parent.transfer_to(&self.cache.0, &allowed);
+    fn rebase_source_files(&mut self, old: Option<&Path>, new: Option<&Path>) {
+        if old == new {
+            return;
+        }
+        let old_parent = old.and_then(Path::parent).unwrap_or(Path::new("."));
+        let new_parent = new.and_then(Path::parent).unwrap_or(Path::new("."));
+        for (locator, _) in self.source_files.values_mut() {
+            if locator.is_relative() {
+                *locator = rebase_relative(locator, old_parent, new_parent)
+                    .unwrap_or_else(|_| old_parent.join(&*locator));
+            }
         }
     }
 
@@ -120,49 +126,88 @@ impl Document {
         id: SourceId,
         metadata: &Metadata,
         fixed_wb: [f64; 4],
-        file: crate::source_revision::FileKey,
     ) {
-        self.source_previews.insert(
-            id,
-            HeaderPreview {
-                view: metadata.source_preview(fixed_wb),
-                file,
-            },
-        );
+        self.source_previews
+            .insert(id, metadata.source_preview(fixed_wb));
     }
 
     pub(super) fn source_preview(&self, source: &Source) -> crate::raw::SourcePreview {
         self.source_previews
             .get(&source.id)
-            .map(|header| header.view)
+            .copied()
             .unwrap_or_default()
     }
 
-    fn read_source_preview(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, HeaderPreview)> {
+    fn read_source_preview(
+        path: &Path,
+        wb: Option<[f64; 4]>,
+    ) -> Result<(Source, crate::raw::SourcePreview)> {
         let (source, raw) = open_source(path, wb)?;
         let preview = raw
             .metadata
             .source_preview(source.development.decode.fixed_wb);
-        Ok((
-            source,
-            HeaderPreview {
-                view: preview,
-                file: raw.file.clone(),
-            },
-        ))
+        Ok((source, preview))
+    }
+
+    pub(super) fn image_recipe(&self, id: SourceId) -> Result<crate::image_recipe::ImageRecipe> {
+        let mut recipe = self.project.image_recipe(id)?;
+        recipe.neutral.reference = self.reference_exposure(self.project.source(id)?).cloned();
+        Ok(recipe)
+    }
+
+    pub(super) fn thumbnail_recipe(
+        &self,
+        id: SourceId,
+    ) -> Result<crate::image_recipe::ImageRecipe> {
+        let mut recipe = self.project.thumbnail_recipe(id)?;
+        recipe.neutral.reference = self.reference_exposure(self.project.source(id)?).cloned();
+        Ok(recipe)
+    }
+
+    pub(super) fn exposure_origin(&self, id: SourceId) -> Option<PathBuf> {
+        self.source_path(id)
+            .ok()
+            .map(|path| self.file_key(&path).path)
+    }
+
+    pub(super) fn exposure_slot(
+        &self,
+        exposures: &crate::exposure_metadata::Store,
+        id: SourceId,
+    ) -> Arc<std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>> {
+        exposures.memo(
+            id,
+            &self.exposure_origin(id).expect("registered photo locator"),
+        )
+    }
+
+    pub(super) fn capture_exposure(&mut self, exposures: &crate::exposure_metadata::Store) {
+        let mut metadata = self.exposure_metadata.as_ref().clone();
+        for entry in exposures
+            .snapshot(&self.project, |id| self.exposure_origin(id))
+            .entries
+        {
+            metadata
+                .entries
+                .retain(|existing| existing.source != entry.source);
+            metadata.entries.push(entry);
+        }
+        self.exposure_metadata = Arc::new(metadata.for_project(&self.project));
+    }
+
+    pub(super) fn reference_exposure(
+        &self,
+        source: &Source,
+    ) -> Option<&crate::exposure_reference::ReferenceExposure> {
+        self.exposure_metadata
+            .entries
+            .iter()
+            .find(|entry| entry.source == source.id)
+            .map(|entry| &entry.reference)
     }
 
     fn has_normalization(&self, source: &Source) -> Result<bool> {
-        let Some(header) = self.source_previews.get(&source.id) else {
-            return Ok(false);
-        };
-        Ok(SourceKey::from_revision(
-            &self.source_path(source.id)?,
-            header.file.clone(),
-            &source.development,
-        )
-        .and_then(|key| self.cache().completed_reference(&key))
-        .is_some())
+        Ok(self.reference_exposure(source).is_some())
     }
 
     pub(super) fn positive_matrix(
@@ -170,17 +215,11 @@ impl Document {
         source: &Source,
         input: crate::processing::InputSettings,
     ) -> Result<glam::DMat3> {
-        let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
-        if let Some(header) = self.source_previews.get(&source.id)
-            && let Some(key) = SourceKey::from_revision(
-                &self.source_path(source.id)?,
-                header.file.clone(),
-                &source.development,
-            )
-        {
-            return self.cache().positive_matrix(&key, &input);
-        }
-        Ok(matrix)
+        crate::scan::positive_matrix(
+            &input,
+            glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
+            self.reference_exposure(source),
+        )
     }
 
     pub(super) fn refresh_source(&mut self, id: SourceId) -> Result<()> {
@@ -208,8 +247,7 @@ impl Document {
             })
     }
 
-    /// Cheap freshness queries belong to preparation/publication, not drawing. Measurement omits
-    /// the roll flat-field; embedded camera correction remains part of source interpretation.
+    /// Measurement omits the roll flat-field; embedded camera correction remains source interpretation.
     pub fn spatial_inputs(&self) -> Vec<crate::spatial_metadata::Input> {
         let code_scale = self.spatial_code_scale();
         self.project
@@ -219,10 +257,7 @@ impl Document {
             .filter_map(|source| {
                 Some(crate::spatial_metadata::Input {
                     source: source.id,
-                    revision: crate::source_revision::FileRevision::read(
-                        &self.source_path(source.id).ok()?,
-                    )
-                    .ok()?,
+                    revision: self.file_key(&self.source_path(source.id).ok()?).revision?,
                     development: source.development.clone(),
                     correction: None,
                     code_scale,
@@ -238,6 +273,7 @@ impl Document {
 
     /// Accept the written snapshot as a baseline, without replacing edits made since dispatch.
     pub fn accept_save(&mut self, saved: Self) {
+        let old_path = self.path.clone();
         rebase_project(
             &mut self.project,
             self.path.as_deref(),
@@ -246,6 +282,8 @@ impl Document {
 
         self.path = saved.path;
         self.saved = saved.saved;
+        let new_path = self.path.clone();
+        self.rebase_source_files(old_path.as_deref(), new_path.as_deref());
     }
 
     pub fn source_path(&self, id: SourceId) -> Result<PathBuf> {
@@ -341,19 +379,24 @@ impl Document {
     ) -> Result<Self> {
         let path = absolute(path)?;
         let (mut project, spatial_metadata) = Project::load_with_spatial_metadata(&path)?;
-        let exposure_metadata = project.exposure_metadata.take().unwrap_or_default();
+        let exposure_metadata = project
+            .exposure_metadata
+            .take()
+            .unwrap_or_default()
+            .for_project(&project);
         let mut document = Self {
             saved: project.clone(),
             project,
             path: Some(path),
             spatial_metadata: Arc::new(spatial_metadata),
+            exposure_metadata: Arc::new(exposure_metadata),
             source_previews: Default::default(),
-            cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
-            parent_cache: None,
+            source_files: Default::default(),
             #[cfg(test)]
             fixture_directory: None,
         };
         document.validate_with_device(device)?;
+        document.capture_source_files()?;
         let total = document.project.order.len();
         progress(0, total);
         for (index, id) in document.project.order.clone().into_iter().enumerate() {
@@ -361,11 +404,7 @@ impl Document {
             progress(index + 1, total);
         }
         document.spatial_metadata = Arc::new(document.ready_spatial_metadata());
-        document
-            .cache()
-            .restore_exposure_metadata(&exposure_metadata, &document.project, |id| {
-                document.source_path(id)
-            });
+
         document.validate_with_device(device)?;
         Ok(document)
     }
@@ -435,6 +474,14 @@ impl Document {
                     self.source_previews.insert(id, preview);
                 }
                 self.project.source_mut(id)?.reference_only = false;
+                let resolved = self.source_path(id)?;
+                self.source_files.insert(
+                    id,
+                    (
+                        self.project.source(id)?.path.clone(),
+                        crate::source::FileKey::new(&resolved),
+                    ),
+                );
             } else {
                 let wb = self.project.acquisition_wb(None);
                 let (mut source, mut preview) = Self::read_source_preview(path, wb)?;
@@ -492,7 +539,16 @@ impl Document {
         {
             *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
         }
-        self.project.add_source(source)
+        let id = self.project.add_source(source)?;
+        let path = self.source_path(id)?;
+        self.source_files.insert(
+            id,
+            (
+                self.project.source(id)?.path.clone(),
+                crate::source::FileKey::new(&path),
+            ),
+        );
+        Ok(id)
     }
 
     pub fn register_reference(&mut self, mut source: Source) -> Result<SourceId> {
@@ -526,6 +582,7 @@ impl Document {
                 "project destination must use an .antitone extension",
             ));
         }
+        self.validate_with_device(device)?;
         let mut candidate = self.clone();
         for source in &mut candidate.project.sources {
             let resolved = self.source_path(source.id)?;
@@ -545,15 +602,14 @@ impl Document {
                 )?;
             }
         }
-        candidate.validate_with_device(device)?;
+
         let metadata = self.ready_spatial_metadata();
         let mut snapshot = candidate.project.clone();
-        let exposure = self
-            .cache()
-            .exposure_metadata(&self.project, |id| self.source_path(id));
+        let exposure = self.exposure_metadata.for_project(&self.project);
         snapshot.exposure_metadata = (!exposure.entries.is_empty()).then_some(exposure);
         snapshot.save_with_spatial_metadata(&path, policy, &metadata)?;
         candidate.spatial_metadata = Arc::new(metadata);
+        candidate.rebase_source_files(self.path.as_deref(), Some(&path));
         candidate.path = Some(path);
         candidate.saved = candidate.project.clone();
         Ok(candidate)
@@ -624,79 +680,9 @@ fn rebase_relative(path: &Path, old_parent: &Path, new_parent: &Path) -> Result<
     Ok(relative)
 }
 
-pub(super) fn metadata_development(
-    metadata: &Metadata,
-    fixed_wb: [f64; 4],
-) -> Result<SourceDevelopment> {
-    SourceDevelopment::from_metadata(metadata, fixed_wb)
-}
-
 #[cfg(test)]
 pub(super) fn read_source(path: &Path, wb: Option<[f64; 4]>) -> Result<Source> {
     open_source(path, wb).map(|(source, _)| source)
-}
-
-pub(super) fn open_source(path: &Path, wb: Option<[f64; 4]>) -> Result<(Source, RawFile)> {
-    let path = absolute(path)?;
-    let started = std::time::Instant::now();
-    let raw = RawFile::open_with_wb(&path, wb)
-        .map_err(|error| failure(format!("{}: {error}", path.display())))?;
-    log::debug!(header_seconds = started.elapsed().as_secs_f64(); "source_registration");
-    let fixed_wb = raw.fixed_wb(wb.unwrap_or_else(|| raw.metadata.as_shot_wb()));
-    Ok((source_metadata(&path, &raw.metadata, fixed_wb)?, raw))
-}
-
-pub(super) fn source_metadata(
-    path: &Path,
-    metadata: &Metadata,
-    fixed_wb: [f64; 4],
-) -> Result<Source> {
-    Ok(Source {
-        id: SourceId(0),
-        path: absolute(path)?,
-        development: metadata_development(metadata, fixed_wb)?,
-        reference_only: false,
-        adjustment_layers: Some(crate::project::AdjustmentLayers::with_global(
-            Default::default(),
-        )),
-        repairs: Default::default(),
-        orientation: metadata.photo_orientation()?,
-        crop: None,
-    })
-}
-
-pub(super) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
-    if expected.development != actual.development {
-        return Err(failure(format!(
-            "{}: RAW development identity differs",
-            actual.path.display()
-        )));
-    }
-    Ok(())
-}
-
-pub(super) fn verify_scan(source: &Source, scan: &Scan) -> Result<()> {
-    let (width, height) = scan.dimensions()?;
-    let area = scan.area;
-    let actual = SourceDevelopment {
-        decode: scan
-            .source()
-            .metadata()
-            .development(scan.source().fixed_wb()),
-        lens_correction: scan.source().metadata().lens_identity()?,
-        dng_development: scan.source().metadata().dng_identity(),
-        dimensions: [width, height],
-        active_area: [area.x, area.y, area.width, area.height],
-        camera_model: scan.camera_model.clone(),
-        camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
-        input_floor: scan.source().input_floor(),
-    };
-    if source.development != actual {
-        return Err(failure(
-            "developed RAW differs from its recorded header identity",
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

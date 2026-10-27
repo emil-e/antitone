@@ -14,6 +14,8 @@ mod spatial_tests;
 /// Captured documents are data snapshots, not histories or continuation owners.
 pub(super) struct DocumentScope {
     pub state: Document,
+    pub cache: Arc<crate::source::SourceCache>,
+    pub exposures: Arc<crate::exposure_metadata::Store>,
     pub spatial: crate::spatial_metadata::Store,
     pub spatial_preparing: Option<super::spatial::Pending>,
     pub spatial_consumer: Option<super::spatial::Consumer>,
@@ -37,6 +39,7 @@ impl DocumentScope {
     pub fn capture(&self) -> Document {
         let mut document = self.state.clone();
         document.spatial_metadata = self.spatial.ready();
+        document.capture_exposure(&self.exposures);
         document
     }
 
@@ -47,11 +50,59 @@ impl DocumentScope {
     }
 
     pub fn install(&mut self, document: Document) {
-        let previous = self.state.cache().clone();
-        if !Arc::ptr_eq(&previous, document.cache()) {
-            previous.close();
-        }
+        self.exposures.restore(&document.exposure_metadata, |id| {
+            document.exposure_origin(id)
+        });
         self.state = document;
+    }
+
+    pub(super) fn exposure_value(
+        &self,
+        source: &crate::project::Source,
+    ) -> Option<crate::exposure_reference::ReferenceExposure> {
+        self.state
+            .exposure_origin(source.id)
+            .and_then(|origin| self.exposures.get(source.id, &origin))
+            .or_else(|| self.state.reference_exposure(source).cloned())
+    }
+
+    pub(super) fn positive_matrix(
+        &self,
+        source: &crate::project::Source,
+        input: crate::processing::InputSettings,
+    ) -> Result<glam::DMat3, crate::Error> {
+        crate::scan::positive_matrix(
+            &input,
+            glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
+            self.exposure_value(source).as_ref(),
+        )
+    }
+
+    pub fn cache_ready(&mut self, ready: &Ready) {
+        if let (Some(id), Some(reference)) = (self.state.find_source(&ready.path), &ready.reference)
+        {
+            let _ = self
+                .state
+                .exposure_slot(&self.exposures, id)
+                .set(reference.clone());
+        }
+        self.state.capture_exposure(&self.exposures);
+        let key = crate::source::SourceKey::for_load(
+            &ready.path,
+            ready.file.clone(),
+            &ready.record.development,
+        );
+        if let Err(error) = self
+            .cache
+            .publish_source(key.clone(), ready.developed.clone())
+        {
+            log::warn!(error = error.to_string().as_str(); "source_cache_publication_failed");
+        }
+        if let Some((_, proxy)) = &ready.thumbnail
+            && let Err(error) = self.cache.publish_proxy(key, proxy.clone())
+        {
+            log::warn!(error = error.to_string().as_str(); "source_proxy_publication_failed");
+        }
     }
 
     pub fn same_visit(&self, ready: Option<&Ready>, reuse_ready: bool) -> bool {
@@ -73,11 +124,18 @@ impl DocumentScope {
 
 impl From<Document> for DocumentScope {
     fn from(state: Document) -> Self {
+        let cache = Arc::new(crate::source::SourceCache::new(0));
+        let exposures = Arc::new(crate::exposure_metadata::Store::restored(
+            &state.exposure_metadata,
+            |id| state.exposure_origin(id),
+        ));
         Self {
             spatial: crate::spatial_metadata::Store::restored((*state.spatial_metadata).clone()),
             spatial_preparing: None,
             spatial_consumer: None,
             state,
+            cache,
+            exposures,
             history: History::default(),
             visit: PhotoScope::default(),
             embedded_preview: None,
@@ -123,6 +181,6 @@ impl Drop for DocumentScope {
         drop(self.analysis_review.take());
         drop(std::mem::take(&mut self.visit));
         drop(std::mem::take(&mut self.write));
-        self.state.cache().close();
+        self.cache.close();
     }
 }

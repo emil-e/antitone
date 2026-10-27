@@ -114,7 +114,8 @@ fn a_captured_save_excludes_later_regions_and_completion_preserves_the_live_resu
 }
 
 #[test]
-fn stale_or_missing_source_revisions_discard_only_derived_data_during_save() {
+fn reopening_discards_derived_data_when_the_captured_file_identity_differs() {
+    use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
     let original =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
@@ -124,17 +125,20 @@ fn stale_or_missing_source_revisions_discard_only_derived_data_during_save() {
     document.import(std::slice::from_ref(&raw)).unwrap();
     let mut scope: DocumentScope = document.into();
     let regions = metadata(&scope.capture(), 8.);
-    publish(&mut scope, regions);
+    publish(&mut scope, regions.clone());
     let project = scope.project.clone();
-    std::fs::rename(&raw, dir.path().join("moved.dng")).unwrap();
-    let destination = dir.path().join("stale.antitone");
+    let destination = dir.path().join("saved.antitone");
     let written = scope.capture().save(&destination, Save::New).unwrap();
-    assert_eq!(written.project, project);
-    assert!(written.spatial_metadata.groups.is_empty());
-    let (accepted, cached) =
-        crate::project::Project::load_with_spatial_metadata(&destination).unwrap();
-    assert_eq!(accepted, project);
-    assert!(cached.groups.is_empty());
+    assert_eq!(*written.spatial_metadata, regions);
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&raw)
+        .unwrap()
+        .write_all(b"new capture identity before reopening")
+        .unwrap();
+    let reopened = Document::open(&destination).unwrap();
+    assert_eq!(reopened.project, project);
+    assert!(reopened.spatial_metadata.groups.is_empty());
 }
 
 #[test]
@@ -156,6 +160,7 @@ fn save_as_rebases_paths_without_rebinding_region_identity_or_replacing_publicat
         .save(&old.join("original.antitone"), Save::New)
         .unwrap();
     document.project.sources[0].path = "input.dng".into();
+    document.capture_source_files().unwrap();
     let mut scope: DocumentScope = document.into();
     let regions = metadata(&scope.capture(), 8.);
     publish(&mut scope, regions.clone());

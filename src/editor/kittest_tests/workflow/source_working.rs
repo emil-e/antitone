@@ -445,8 +445,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
         // A remembered positive comparison must neither replace source working detail on idle nor
         // force an optional reference past the zero budget while its control is hidden.
         harness.update(|editor| editor.working.compare = true);
-        let jobs = harness.read(|editor| editor.workflow_jobs.clone());
-        let hold = crate::editor::tests::hold_blocking_work(&jobs);
+        let hold = crate::background::testing::pause();
         for (index, delta) in [egui::vec2(400., 0.), egui::vec2(-800., 100.)]
             .into_iter()
             .enumerate()

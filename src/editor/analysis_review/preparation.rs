@@ -44,7 +44,7 @@ impl Preparation {
                 request
                     .document
                     .source_path(*id)
-                    .map(|p| thumbnails::FileKey::new(&p))
+                    .map(|p| request.document.file_key(&p))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let entries: Vec<_> = project
@@ -79,16 +79,6 @@ impl Preparation {
             models: vec![],
             fine: None,
         })
-    }
-
-    fn verify_file(&self, index: usize) -> Result<(), Error> {
-        let id = self.request.document.project.order[index];
-        if thumbnails::FileKey::new(&self.request.document.source_path(id)?) != self.files[index] {
-            return Err(Error::UnusableSample(
-                "source changed while preparing analysis areas",
-            ));
-        }
-        Ok(())
     }
 
     fn verify_scan(&self, index: usize, scan: &Scan) -> Result<Source, Error> {
@@ -141,7 +131,6 @@ impl Preparation {
                 }
             }
         }
-        self.verify_file(index)?;
         Ok(true)
     }
 
@@ -187,7 +176,6 @@ impl Preparation {
         if !self.needs_fine(index) {
             return Ok(false);
         }
-        self.verify_file(index)?;
         self.fine = self.saved[index]
             .take()
             .and_then(|key| timed!("measurement_read", self.measurements.load(key)));
@@ -250,7 +238,7 @@ impl Preparation {
                 );
             }
         }
-        self.verify_file(index)
+        Ok(())
     }
 
     fn apply_shared_picture_support(&mut self) -> Result<(), Error> {
@@ -428,10 +416,11 @@ async fn prepare_staged(
 pub(super) fn prepare_with_measurements(
     request: &analysis::Request,
     generation: &AtomicU64,
-    developments: &development::Scheduler,
+    developments: &source_loading::SourceLoader,
     device: &wgpu::Device,
     mut progress: impl FnMut(usize, usize),
     measurements: measurements::Measurements,
+    cache: &Arc<crate::source::SourceCache>,
 ) -> Result<Option<Approved>, Error> {
     let cancelled = || generation.load(Ordering::Relaxed) != request.revision;
     if cancelled() {
@@ -462,6 +451,7 @@ pub(super) fn prepare_with_measurements(
                 analysis::develop_scan(
                     developments,
                     &request.document,
+                    cache,
                     project.source(*id)?,
                     &request.document.source_path(*id)?,
                     wb,
@@ -495,6 +485,7 @@ pub(super) fn prepare_with_measurements(
                 analysis::develop_scan(
                     developments,
                     &request.document,
+                    cache,
                     project.source(*id)?,
                     &request.document.source_path(*id)?,
                     wb,

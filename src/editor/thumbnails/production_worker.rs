@@ -4,7 +4,11 @@ use crate::scan::DevelopedSource;
 enum Input {
     Proxy(Arc<Proxy>),
     Source(Arc<DevelopedSource>),
-    Native(development::Ticket),
+    Loading(
+        std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Arc<DevelopedSource>, Error>> + Send>,
+        >,
+    ),
     Positive,
     Retired,
 }
@@ -24,14 +28,14 @@ struct Worker {
     generation: Arc<std::sync::atomic::AtomicU64>,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
-    developments: development::Scheduler,
+    developments: source_loading::SourceLoader,
     kernels: std::sync::OnceLock<Result<Arc<crate::gpu::view::ViewKernels>, Error>>,
 }
 
 impl Worker {
     fn active(&self, job: &Job) -> bool {
         self.generation.load(std::sync::atomic::Ordering::Relaxed) == job.ticket
-            && !job.store.is_closed()
+            && !job.cancelled.is_cancelled()
     }
 
     fn begin(&self, job: Job) -> Work {
@@ -41,7 +45,7 @@ impl Worker {
         let cache_hit = cached.is_some();
         let mut metrics = ThumbnailMetrics::default();
         let input = (|| {
-            if !self.active(&job) || FileKey::new(&job.path) != job.key.source.file {
+            if !self.active(&job) {
                 return Ok(Input::Retired);
             }
             let positive = job.render && matches!(&job.key.recipe, Ok(Some(_)));
@@ -84,25 +88,17 @@ impl Worker {
             if !self.active(&job) {
                 return Ok(Input::Retired);
             }
-            if let Some(source) = native_key.as_ref().and_then(|key| job.store.get(key)) {
-                metrics.native_hit = true;
-                return Ok(Input::Source(source));
-            }
-            self.developments
-                .submit(
-                    development::Request {
-                        path: job.path.clone(),
-                        wb: Some(job.key.source.source.decode.fixed_wb),
-                        expected: Some(job.source.clone()),
-                        file: job.key.source.file.clone(),
-                        key: native_key,
-                        store: Some(job.store.clone()),
-                        parent: None,
-                        retain: true,
-                    },
-                    job.priority,
-                )
-                .map(Input::Native)
+            let key = crate::source::SourceKey::for_load(
+                &job.path,
+                job.key.source.file.clone(),
+                &job.source.development,
+            );
+            let loader = self.developments.clone();
+            let cache = job.store.clone();
+            let priority = job.priority;
+            Ok(Input::Loading(Box::pin(async move {
+                cache.load_source(&loader, key, priority).await
+            })))
         })();
         Work {
             job,
@@ -116,7 +112,7 @@ impl Worker {
     fn positive(
         &self,
         job: &Job,
-        proxy: Option<&Proxy>,
+        proxy: Option<&crate::scan::CameraProxy>,
         metrics: &mut ThumbnailMetrics,
     ) -> Result<Option<Arc<Product>>, Error> {
         use crate::gpu::view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec};
@@ -275,7 +271,7 @@ impl Worker {
                     let tick = std::time::Instant::now();
                     document::verify_scan(&job.source, &scan)?;
                     work.metrics.verification_seconds = tick.elapsed().as_secs_f64();
-                    if job.store.is_closed() || FileKey::new(&job.path) != job.key.source.file {
+                    if job.cancelled.is_cancelled() {
                         return Ok(None);
                     }
                     if let Some(key) = job.key.source.store_key_at(&job.path)
@@ -297,25 +293,11 @@ impl Worker {
                     work.metrics.proxy_seconds = tick.elapsed().as_secs_f64();
                     proxy
                 }
-                Input::Native(_) => unreachable!("native completion precedes proxy work"),
+                Input::Loading(_) => unreachable!("source acquisition precedes proxy work"),
             };
-            let previous_reference = proxy.reference_exposure.get().cloned();
-            if job.render
-                && let Ok(Some(recipe)) = &job.key.recipe
-            {
-                let key = job
-                    .key
-                    .source
-                    .store_key_at(&job.path)
-                    .ok_or(Error::UnusableSample(
-                        "thumbnail source freshness unavailable",
-                    ))?;
-                proxy = job
-                    .store
-                    .prepare_proxy(&key, recipe.neutral.input, &proxy)?;
-            }
+
             // Proper CPU/disk completion is document demand, not the disposable GPU ticket.
-            if job.store.is_closed() || FileKey::new(&job.path) != job.key.source.file {
+            if job.cancelled.is_cancelled() {
                 return Ok(None);
             }
             if let Some(key) = job.key.source.store_key_at(&job.path)
@@ -324,12 +306,7 @@ impl Worker {
                 proxy = canonical;
             }
             if let Some(disk) = &self.disk
-                && let Err(error) = if previous_reference.as_ref() != proxy.reference_exposure.get()
-                {
-                    disk.store(&job.key.source, &proxy)
-                } else {
-                    disk.store_if_missing(&job.key.source, &proxy)
-                }
+                && let Err(error) = disk.store_if_missing(&job.key.source, &proxy)
             {
                 log::warn!(
                     source_id = job.source.id.0,
@@ -342,7 +319,17 @@ impl Worker {
                 return Ok(None);
             }
             if matches!(&job.key.recipe, Ok(Some(_))) {
-                return self.positive(job, Some(&proxy), &mut work.metrics);
+                let recipe = job.key.recipe.as_ref().unwrap().as_ref().unwrap();
+                let prepared = crate::photo_preparation::proxy(
+                    Some(&job.store),
+                    &job.reference,
+                    &job.path,
+                    &job.key.source.file,
+                    &job.source.development,
+                    recipe.neutral.input,
+                    &proxy,
+                );
+                return self.positive(job, Some(&prepared), &mut work.metrics);
             }
             make_image(
                 &self.device,
@@ -368,9 +355,13 @@ impl Worker {
             phases:? = work.metrics;
             "thumbnail"
         );
+        let mut key = job.key.clone();
+        if let Ok(Some(recipe)) = &mut key.recipe {
+            Arc::make_mut(recipe).neutral.reference = job.reference.get().cloned();
+        }
         Outcome {
             ticket: job.ticket,
-            key: job.key.clone(),
+            key,
             image,
             proper,
         }
@@ -386,7 +377,7 @@ pub(super) fn worker(
     generation: Arc<std::sync::atomic::AtomicU64>,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
-    developments: development::Scheduler,
+    developments: source_loading::SourceLoader,
 ) {
     let worker = Worker {
         device,
@@ -407,21 +398,23 @@ pub(super) fn worker(
             pending.push((worker.begin(submission.job), submission.reply));
         }
         for (work, _) in &mut pending {
-            if let Ok(Input::Native(ticket)) = &work.input {
-                match ticket.result() {
-                    Ok(None) => {}
-                    result => {
-                        work.metrics.development_seconds =
-                            work.started.elapsed().as_secs_f64() - work.metrics.disk_seconds;
-                        work.input = result.map(|source| Input::Source(source.unwrap()));
-                    }
+            if work.job.cancelled.is_cancelled() {
+                work.input = Ok(Input::Retired);
+                continue;
+            }
+            if let Ok(Input::Loading(load)) = &mut work.input {
+                let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+                if let std::task::Poll::Ready(result) = load.as_mut().poll(&mut cx) {
+                    work.metrics.development_seconds =
+                        work.started.elapsed().as_secs_f64() - work.metrics.disk_seconds;
+                    work.input = result.map(Input::Source);
                 }
             }
         }
         if let Some(index) = pending
             .iter()
             .enumerate()
-            .filter(|(_, (work, _))| !matches!(work.input, Ok(Input::Native(_))))
+            .filter(|(_, (work, _))| !matches!(work.input, Ok(Input::Loading(_))))
             .min_by_key(|(_, (work, _))| work.job.priority)
             .map(|(index, _)| index)
         {

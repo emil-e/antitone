@@ -263,8 +263,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
 
     show_confirmation(harness);
     // Keep fitting queued at physical admission until the Cancel control is exercised.
-    let jobs = harness.read(|editor| editor.workflow_jobs.clone());
-    let admission = jobs.hold();
+    let admission = crate::background::testing::pause();
     confirm(harness);
     harness.read(|editor| assert_eq!(editor.document.project, before));
     harness.update(|editor| editor.tasks.elapse(Duration::from_secs(1)));

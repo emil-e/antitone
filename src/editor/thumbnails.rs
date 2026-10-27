@@ -1,10 +1,10 @@
 use super::presentation::ContactSheetLayout;
 use super::*;
 use crate::project::SourceDevelopment;
-pub(super) use crate::source_revision::FileKey;
+pub(super) use crate::source::FileKey;
 #[cfg(test)]
-use crate::source_revision::FileRevision;
-use crate::source_store::{SourceKey as NativeKey, SourceStore};
+use crate::source::FileRevision;
+use crate::source::{SourceCache, SourceKey as NativeKey};
 mod disk;
 mod lru;
 use lru::Cache;
@@ -208,7 +208,6 @@ impl ImageKey {
         match &self.recipe {
             Ok(None) => true,
             Ok(Some(recipe)) => document
-                .project
                 .thumbnail_recipe(self.source.id)
                 .is_ok_and(|current| current == **recipe),
             Err(reason) => document
@@ -219,7 +218,7 @@ impl ImageKey {
     }
 }
 
-pub(super) use crate::scan::CameraProxy as Proxy;
+pub(super) use crate::scan::CameraPixels as Proxy;
 
 impl Proxy {
     pub(super) async fn image(
@@ -281,20 +280,22 @@ impl SelectedPreview {
                 .zip(document.source_path(self.key.id).ok())
                 .is_some_and(|(source, path)| {
                     !source.reference_only
-                        && SourceKey::new(source, FileKey::new(&path)) == self.key
+                        && SourceKey::new(source, document.file_key(&path)) == self.key
                 })
     }
 }
 
 struct Job {
+    cancelled: crate::cancellation::Cancellation,
+    reference: Arc<std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>>,
     ticket: u64,
     key: ImageKey,
     path: PathBuf,
     source: Source,
     correction: Option<Arc<Correction>>,
-    store: Arc<SourceStore>,
+    store: Arc<SourceCache>,
     render: bool,
-    priority: development::Priority,
+    priority: source_loading::Priority,
     previous: Option<Arc<Product>>,
 }
 
@@ -328,7 +329,7 @@ fn shared_look_bytes(entries: &std::collections::VecDeque<(ImageKey, CachedProdu
 
 pub(super) struct Thumbnails {
     cache: Cache<ImageKey, CachedProduct>,
-    pub(super) sources: Arc<SourceStore>,
+    pub(super) sources: Arc<SourceCache>,
     selected_key: Option<NativeKey>,
     visible_keys: Vec<NativeKey>,
     // CPU/disk completion history; an admissible GPU miss still needs rendering.
@@ -375,7 +376,7 @@ impl Default for Thumbnails {
                     }
             })
             .with_shared_weight(shared_look_bytes),
-            sources: Arc::new(SourceStore::new(budgets.sources as u64)),
+            sources: Arc::new(SourceCache::new(budgets.sources as u64)),
             selected_key: None,
             visible_keys: Vec::new(),
             attempted_sources: Vec::new(),
@@ -408,7 +409,7 @@ impl Thumbnails {
     ) -> Result<Option<SelectedPreview>, Error> {
         let started = std::time::Instant::now();
         let source = document.project.source(id)?;
-        let key = SourceKey::new(source, FileKey::new(&document.source_path(id)?));
+        let key = SourceKey::new(source, document.file_key(&document.source_path(id)?));
         if source.reference_only || key.file.revision.is_none() {
             return Ok(None);
         }
@@ -418,7 +419,7 @@ impl Thumbnails {
         let Some(proxy) = self.sources.get_proxy(&native_key) else {
             return Ok(None);
         };
-        if !document.project.input.is_negative() && proxy.reference_exposure.get().is_none() {
+        if !document.project.input.is_negative() && document.reference_exposure(source).is_none() {
             return Ok(None);
         }
         let Some((device, queue, renderers)) = &self.gpu else {
@@ -513,7 +514,7 @@ impl Thumbnails {
         self.sources.protect_proxies(keys);
     }
 
-    pub(super) fn bind_sources(&mut self, sources: Arc<SourceStore>) {
+    pub(super) fn bind_sources(&mut self, sources: Arc<SourceCache>, document: &Document) {
         if !Arc::ptr_eq(&self.sources, &sources) {
             self.cancel();
             self.embedded.reset_demand();
@@ -521,37 +522,20 @@ impl Thumbnails {
             self.selected_key = None;
             self.visible_keys.clear();
             self.attempted_sources.clear();
-            // CPU source identity is not sufficient for a positive: another project may
-            // restore a different canonical normalization for the same captured pixels.
-            self.cache.retain(|key, product| {
+            // A retained positive must agree with the new document's recorded baseline.
+            self.cache.retain(|key, _| {
                 let Ok(Some(recipe)) = &key.recipe else {
                     return true;
                 };
-                if recipe.neutral.input.is_negative() {
-                    return true;
-                }
-                let Some(native) = key.source.store_key() else {
-                    return false;
-                };
-                let Some(reference) = sources.completed_reference(&native) else {
-                    return false;
-                };
-                let expected = crate::scan::positive_matrix(
-                    &recipe.neutral.input,
-                    glam::DMat3::from_cols_array_2d(&key.source.source.camera_to_ap1),
-                    Some(&reference),
-                );
-                product
-                    .as_ref()
-                    .ok()
-                    .and_then(|product| product.positive.as_ref())
-                    .is_some_and(|(source, _)| {
-                        expected
-                            .and_then(|matrix| {
-                                crate::gpu::GpuInputProgram::new(recipe.neutral.input, matrix)
-                            })
-                            .is_ok_and(|program| source.input_program() == Some(&program))
-                    })
+                recipe.neutral.input.is_negative()
+                    || document
+                        .project
+                        .source(key.source.id)
+                        .ok()
+                        .and_then(|source| document.reference_exposure(source))
+                        .is_some_and(|reference| {
+                            recipe.neutral.reference.as_ref() == Some(reference)
+                        })
             });
             self.sources = sources;
         }
@@ -670,7 +654,7 @@ impl Thumbnails {
         device: wgpu::Device,
         queue: wgpu::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
-        developments: development::Scheduler,
+        developments: source_loading::SourceLoader,
     ) -> Self {
         Self::with_developments(
             device,
@@ -682,7 +666,7 @@ impl Thumbnails {
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
-    pub(super) fn without_disk(&self, developments: development::Scheduler) -> Self {
+    pub(super) fn without_disk(&self, developments: source_loading::SourceLoader) -> Self {
         let (device, queue, renderers) = self.gpu.as_ref().expect("thumbnail GPU resources");
         Self::with_developments(
             device.clone(),
@@ -705,7 +689,7 @@ impl Thumbnails {
             queue,
             renderers,
             disk,
-            development::Scheduler::new(),
+            source_loading::SourceLoader::new(),
         )
     }
 
@@ -714,7 +698,7 @@ impl Thumbnails {
         queue: wgpu::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
         disk: Option<disk::DiskCache>,
-        developments: development::Scheduler,
+        developments: source_loading::SourceLoader,
     ) -> Self {
         let (commands, receiver) = mpsc::channel();
         let mut state = Self {
@@ -783,7 +767,7 @@ impl Thumbnails {
                         .is_some_and(|source| {
                             SourceKey::new(
                                 source,
-                                FileKey::new(
+                                document.file_key(
                                     &document.source_path(source.id).expect("thumbnail locator"),
                                 ),
                             ) == key.source
@@ -809,17 +793,16 @@ impl Thumbnails {
             self.pending = None;
             self.pending_render = false;
         }
-        let source_current = !document.cache().is_closed()
-            && document
-                .project
-                .source(outcome.key.source.id)
-                .ok()
-                .is_some_and(|source| {
-                    SourceKey::new(
-                        source,
-                        FileKey::new(&document.source_path(source.id).expect("thumbnail locator")),
-                    ) == outcome.key.source
-                });
+        let source_current = document
+            .project
+            .source(outcome.key.source.id)
+            .ok()
+            .is_some_and(|source| {
+                SourceKey::new(
+                    source,
+                    document.file_key(&document.source_path(source.id).expect("thumbnail locator")),
+                ) == outcome.key.source
+            });
         // CPU/disk completion belongs to the document even when its GPU ticket retired.
         if source_current
             && (outcome.proper || (matching && outcome.image.is_err()))
@@ -866,7 +849,6 @@ use production_worker::worker;
 #[derive(Default, Debug)]
 struct ThumbnailMetrics {
     disk_hit: bool,
-    native_hit: bool,
     neutral_hit: bool,
     neutral_seconds: f64,
     disk_seconds: f64,
@@ -923,7 +905,7 @@ impl Editor {
             None
         };
         Some(ImageKey {
-            source: SourceKey::new(source, FileKey::new(path)),
+            source: SourceKey::new(source, self.document.file_key(path)),
             recipe,
             projection,
             target: self.target,
@@ -974,7 +956,6 @@ impl Editor {
             Ok(None)
         } else {
             self.document
-                .project
                 .thumbnail_recipe(id)
                 .map(|recipe| Some(Arc::new(recipe)))
                 .map_err(|error| error.to_string())
@@ -1021,7 +1002,8 @@ impl Editor {
     }
 
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        self.thumbnails.bind_sources(self.document.cache().clone());
+        self.thumbnails
+            .bind_sources(self.document.cache.clone(), &self.document);
         if self.thumbnails.memory_watch.is_none() {
             self.thumbnails.repaint.get_or_init(|| ui.ctx().clone());
             self.thumbnails.memory_watch = Some(memory::PressureWatch::new(ui.ctx().clone()));
@@ -1049,12 +1031,6 @@ impl Editor {
         self.thumbnails.cache.retain(|key, _| key.field == field);
         self.thumbnails.apply_budgets(budgets);
         let visible_allowed = self.thumbnail_work_allowed();
-        let physical_idle = self.workflow_jobs.idle();
-        if !physical_idle {
-            // A retired foreground waiter no longer supplies UI wakes. Revisit
-            // background eligibility until its physical work releases admission.
-            ui.ctx().request_repaint_after(Duration::from_millis(50));
-        }
         let max_height = (ui.ctx().content_rect().height() * 0.35).clamp(52., 240.);
         let mut protected = Vec::new();
         let mut camera_wanted = Vec::new();

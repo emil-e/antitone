@@ -22,7 +22,7 @@ struct Entry {
 }
 
 pub(super) struct Draft {
-    document: std::sync::Weak<crate::source_store::SourceStore>,
+    document: std::sync::Weak<crate::source::SourceCache>,
     order: Vec<SourceId>,
     target: Target,
     attempted: usize,
@@ -41,7 +41,7 @@ impl Draft {
     fn belongs_to(&self, editor: &Editor) -> bool {
         self.document
             .upgrade()
-            .is_some_and(|s| !s.is_closed() && Arc::ptr_eq(&s, editor.document.cache()))
+            .is_some_and(|s| !s.is_closed() && Arc::ptr_eq(&s, &editor.document.cache))
             && self.order == editor.document.project.order
             && self
                 .entries
@@ -70,7 +70,11 @@ impl Entry {
         let Ok(source) = editor.document.project.source(self.source) else {
             return false;
         };
-        source.crop == self.before
+        editor
+            .document
+            .source_path(self.source)
+            .is_ok_and(|path| editor.document.file_key(&path) == self.file)
+            && source.crop == self.before
             && (editor.current_source != Some(self.source) || editor.crop == self.before)
             && source.development == self.development
             && if let Some(metadata) = &self.spatial {
@@ -271,10 +275,7 @@ impl Editor {
     fn crop_proposal(&self, id: SourceId) -> Result<Entry, Error> {
         let source = self.document.project.source(id)?;
         let path = self.document.source_path(id)?;
-        let file = thumbnails::FileKey::new(&path);
-        if file.revision.is_none() {
-            return Err(Error::UnusableSample("source file is unavailable"));
-        }
+        let file = self.document.file_key(&path);
         if !self.loaded_crop_source_current(id, &file) {
             return Err(Error::UnusableSample(
                 "loaded source changed; reopen the photo",
@@ -289,8 +290,7 @@ impl Editor {
             .find(|row| row.input.source == id);
         let (proposal, geometry, constraints, spatial) = if let Some(regions) = regions {
             if regions.input.development != source.development
-                || crate::source_revision::FileRevision::read(&path).ok()
-                    != Some(regions.input.revision.clone())
+                || file.revision.clone() != Some(regions.input.revision.clone())
             {
                 return Err(Error::UnusableSample(
                     "shared picture regions are out of date",
@@ -321,9 +321,6 @@ impl Editor {
             )
         };
         let crop = framing::inward_margin(proposal, active, self.auto_crop_margin)?;
-        if !file.current_at(&path) {
-            return Err(Error::UnusableSample("source changed during auto-crop"));
-        }
         Ok(Entry {
             source: id,
             proposal,
@@ -431,7 +428,7 @@ impl Editor {
         if attempted > 0 {
             self.finish_adjustment_layer_interaction();
             self.document.auto_crop_edit = Some(Draft {
-                document: Arc::downgrade(self.document.cache()),
+                document: Arc::downgrade(&self.document.cache),
                 order: self.document.project.order.clone(),
                 target,
                 attempted,
@@ -483,9 +480,7 @@ impl Editor {
             .iter()
             .map(|e| {
                 failed_source = Some(e.source);
-                let path = self.document.source_path(e.source)?;
-                if !e.file.current_at(&path) || !self.loaded_crop_source_current(e.source, &e.file)
-                {
+                if !self.loaded_crop_source_current(e.source, &e.file) {
                     return Err(Error::UnusableSample(
                         "source changed; Cancel and start Auto-crop again",
                     ));
@@ -556,10 +551,7 @@ impl Editor {
                 let mut candidate = self.document.project.clone();
                 for entry in &edit.entries {
                     failed_source = Some(entry.source);
-                    let path = self.document.source_path(entry.source)?;
-                    if !entry.file.current_at(&path)
-                        || !self.loaded_crop_source_current(entry.source, &entry.file)
-                    {
+                    if !self.loaded_crop_source_current(entry.source, &entry.file) {
                         return Err(Error::UnusableSample("a source changed since the proposal"));
                     }
                     if let Some(crop) = entry.draft {

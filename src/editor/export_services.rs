@@ -44,7 +44,6 @@ impl From<crate::Error> for WriteFailure {
 
 #[derive(Clone)]
 pub(super) struct Services {
-    jobs: crate::blocking_jobs::BlockingJobs,
     renderers: Arc<crate::renderer::RendererCache>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -55,7 +54,6 @@ pub(super) struct Services {
 
 impl Services {
     pub fn new(
-        jobs: crate::blocking_jobs::BlockingJobs,
         renderers: Arc<crate::renderer::RendererCache>,
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -64,7 +62,6 @@ impl Services {
         sources: source::Services,
     ) -> Self {
         Self {
-            jobs,
             renderers,
             device,
             queue,
@@ -103,23 +100,17 @@ impl Services {
                 })
                 .collect::<Vec<_>>();
             let planned_published = published.clone();
-            let resolve = self
-                .jobs
-                .run(move || {
-                    let mut photo = photo;
-                    let Some(path) = export_batch::destination(
-                        &photo.path,
-                        policy,
-                        &protected,
-                        &planned_published,
-                    )?
-                    else {
-                        return Ok(None);
-                    };
-                    photo.path = path;
-                    Ok::<_, crate::Error>(Some(photo))
-                })
-                .await;
+            let resolve = crate::background::run(move || {
+                let mut photo = photo;
+                let Some(path) =
+                    export_batch::destination(&photo.path, policy, &protected, &planned_published)?
+                else {
+                    return Ok(None);
+                };
+                photo.path = path;
+                Ok::<_, crate::Error>(Some(photo))
+            })
+            .await;
             let photo = match resolve {
                 Ok(Ok(Some(photo))) => photo,
                 Ok(Ok(None)) => {
@@ -178,12 +169,10 @@ impl Services {
                 let candidate = base.clone();
                 let protected = request.protected.clone();
                 let published = published.clone();
-                let resolved = self
-                    .jobs
-                    .run(move || {
-                        export_batch::destination(&candidate, policy, &protected, &published)
-                    })
-                    .await;
+                let resolved = crate::background::run(move || {
+                    export_batch::destination(&candidate, policy, &protected, &published)
+                })
+                .await;
                 let path = match resolved {
                     Ok(Ok(Some(path))) => path,
                     Ok(Ok(None)) => {
@@ -281,8 +270,7 @@ impl Services {
         request: Request,
         cancelled: Arc<AtomicBool>,
     ) -> Result<PathBuf, WriteFailure> {
-        let jobs = self.jobs.clone();
-        jobs.run(move || {
+        crate::background::run(move || {
             if cancelled.load(Ordering::Relaxed) {
                 return Err(WriteFailure::Photo(crate::Error::Cancelled));
             }

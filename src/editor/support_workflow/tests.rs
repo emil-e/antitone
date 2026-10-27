@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{Pick, Preparation, Thumbnails, tests::hold_blocking_work},
+    editor::{Pick, Preparation, Thumbnails},
 };
 use std::{path::PathBuf, time::Duration};
 
@@ -96,7 +96,7 @@ fn queued_support_respects_drawn_geometry_and_reopened_picker_identity() {
         let scheduler = e.developments.as_ref().unwrap().clone();
         with_application(e, |app| {
             imported(app);
-            let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
+            let hold = crate::background::testing::pause();
             let old = app.enter(|e, access| {
                 e.begin_pick(Pick::Analysis, access);
 
@@ -150,7 +150,7 @@ fn document_replacement_retires_support_without_waiting_for_a_paint_or_accepting
     let scheduler = e.developments.as_ref().unwrap().clone();
     with_application(e, |app| {
         imported(app);
-        let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
+        let hold = crate::background::testing::pause();
         let (old, loaded) = app.enter(|e, access| {
             e.begin_pick(Pick::Analysis, access);
             let pending = e.document.visit.support.pending.as_ref().unwrap();

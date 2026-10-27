@@ -3,7 +3,7 @@ use crate::{
     application::test_support::with_application,
     editor::{
         Coverage, Pick, Scan,
-        tests::{add_ready_fixture, fixture, hold_blocking_work},
+        tests::{add_ready_fixture, fixture},
     },
 };
 use std::{
@@ -87,7 +87,7 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
 fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    let hold = hold_blocking_work(&editor.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, access| {
             editor.begin_pick(Pick::Dmin, access);
@@ -122,7 +122,7 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
 fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
     let mut editor = crate::editor::tests::with_document_services(fixture());
     add_ready_fixture(&mut editor);
-    let hold = hold_blocking_work(&editor.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, access| {
             editor.begin_pick(Pick::Dmin, access);
@@ -184,21 +184,19 @@ fn leaving_a_visit_cancels_its_continuation_but_not_running_source_computation()
                 .measurement_input(Pick::Dmin, Coverage::rectangle(area))
                 .unwrap()
         });
-        let jobs = app.read(|editor| editor.workflow_jobs.clone());
         let continuation = continued.clone();
         let view = app.read(|editor| editor.document.visit.view);
         let task = tasks
             .spawn(move |state| async move {
-                let result = jobs
-                    .run(move || {
-                        entered.send(()).unwrap();
-                        let _ = resume.recv();
-                        let result = input.measure().map_err(|error| error.to_string());
-                        finished.send(()).unwrap();
-                        result
-                    })
-                    .await
-                    .unwrap();
+                let result = crate::background::run(move || {
+                    entered.send(()).unwrap();
+                    let _ = resume.recv();
+                    let result = input.measure().map_err(|error| error.to_string());
+                    finished.send(()).unwrap();
+                    result
+                })
+                .await
+                .unwrap();
                 continuation.set(true);
                 state.update(|editor| editor.measurement_result(view, Pick::Dmin, result, &state));
             })
@@ -219,10 +217,6 @@ fn leaving_a_visit_cancels_its_continuation_but_not_running_source_computation()
         assert!(
             source.upgrade().is_some(),
             "running work retains its source after visit teardown"
-        );
-        assert!(
-            !app.read(|editor| editor.workflow_jobs.idle()),
-            "running work retains foreground admission after task retirement"
         );
         release.send(()).unwrap();
         finishes.recv_timeout(Duration::from_secs(5)).unwrap();

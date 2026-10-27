@@ -160,7 +160,7 @@ fn wanted(document: &Document, index: usize) -> (usize, ImageKey, PathBuf, Sourc
 fn complete(
     previews: &mut EmbeddedPreviews,
     request: Request,
-    document: &Document,
+    document: &crate::editor::document_scope::DocumentScope,
     context: &egui::Context,
     available: bool,
 ) {
@@ -177,7 +177,7 @@ fn complete(
 
 #[test]
 fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
-    let document = fixture();
+    let document: crate::editor::document_scope::DocumentScope = fixture().into();
     let context = egui::Context::default();
     let mut previews = state();
     let wanted = vec![wanted(&document, 0), wanted(&document, 1)];
@@ -207,7 +207,7 @@ fn visible_jpeg_pass_keeps_recent_navigation_feedback_until_budget_pressure() {
 
 #[test]
 fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_budget() {
-    let document = fixture();
+    let document: crate::editor::document_scope::DocumentScope = fixture().into();
     let context = egui::Context::default();
     let mut thumbnails = Thumbnails {
         embedded: state(),
@@ -267,7 +267,7 @@ fn camera_feedback_for_a_36_shot_roll_survives_scrolling_and_shares_the_image_bu
 
 #[test]
 fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_demand() {
-    let document = fixture();
+    let document: crate::editor::document_scope::DocumentScope = fixture().into();
     let context = egui::Context::default();
     let wanted = vec![wanted(&document, 0)];
     let mut previews = state();
@@ -308,7 +308,7 @@ fn missing_cancelled_and_stopped_preview_proposals_do_not_retry_or_add_pending_d
 
 #[test]
 fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() {
-    let document = fixture();
+    let document: crate::editor::document_scope::DocumentScope = fixture().into();
     let context = egui::Context::default();
     let wanted = vec![wanted(&document, 0), wanted(&document, 1)];
     let previews = state();
@@ -339,33 +339,26 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
 }
 
 #[test]
-fn stale_document_source_stats_and_development_reject_previews() {
+fn retired_document_source_and_development_reject_previews() {
     let context = egui::Context::default();
-    for stale in [
-        "document",
-        "source",
-        "revision",
-        "development",
-        "cancel",
-        "closed",
-    ] {
-        let mut document = fixture();
+    for stale in ["document", "source", "development", "cancel", "closed"] {
+        let mut document: crate::editor::document_scope::DocumentScope = fixture().into();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("photo.ARW");
         std::fs::write(&path, b"initial").unwrap();
         let id = document.project.order[0];
         document.project.source_mut(id).unwrap().path = path.clone();
+        document.capture_source_files().unwrap();
         let wanted = vec![wanted(&document, 0)];
         let mut previews = state();
         previews.request_visible(&wanted, true);
         let request = previews.begin(&document).unwrap().0;
         match stale {
-            "document" => document = Document::default(),
+            "document" => document = Document::default().into(),
             "source" => document.project.source_mut(id).unwrap().reference_only = true,
-            "revision" => std::fs::write(&path, b"changed-bytes").unwrap(),
             "development" => document.project.development_mut().unwrap().fixed_wb[0] += 0.5,
             "cancel" => previews.cancel(),
-            "closed" => document.cache().close(),
+            "closed" => document.cache.close(),
             _ => unreachable!(),
         }
         complete(&mut previews, request, &document, &context, true);
@@ -581,7 +574,7 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
             editor.busy = true;
             editor
                 .thumbnails
-                .bind_sources(editor.document.cache().clone());
+                .bind_sources(editor.document.cache.clone(), &editor.document);
             let key = key(&editor.document, editor.document.project.order[0]);
             let context = egui::Context::default();
             context.set_pixels_per_point(scale);
@@ -658,7 +651,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
     editor.current_source = Some(editor.document.project.order[0]);
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     let original = editor.document.project.clone();
     let context = egui::Context::default();
     context.enable_accesskit();
@@ -792,7 +785,6 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         .publish_proxy(
             image_key.source.store_key().unwrap(),
             Arc::new(Proxy {
-                reference_exposure: Default::default(),
                 width: 8,
                 height: 4,
                 pixels: vec![[1000., 2000., 3000., 0.]; 32].into(),

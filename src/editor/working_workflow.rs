@@ -27,8 +27,7 @@ impl Acquisition {
         epoch: Arc<std::sync::atomic::AtomicU64>,
         retired: Arc<AtomicBool>,
     ) -> Result<Option<Completion>, String> {
-        let jobs = services.jobs.clone();
-        jobs.run(move || {
+        crate::background::run(move || {
             if retired.load(Ordering::Relaxed) {
                 return None;
             }

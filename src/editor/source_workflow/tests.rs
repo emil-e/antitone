@@ -1,7 +1,32 @@
 use super::*;
+
+#[test]
+fn unregistered_source_requests_defer_file_identity_until_preparation() {
+    let editor = Editor::state();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    for request in [
+        editor.source_input(path.clone()),
+        editor.reference_preview_input(path.clone()),
+    ] {
+        assert!(request.expected.is_none());
+        assert!(
+            request.file.revision.is_none(),
+            "UI capture must leave first-time filesystem identity to preparation"
+        );
+        let key =
+            futures_lite::future::block_on(crate::background::run(move || request.load_key()))
+                .unwrap()
+                .unwrap();
+        assert!(
+            key.file().revision.is_some(),
+            "preparation must capture persisted-cache identity"
+        );
+    }
+}
+
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, Prepared, development, document::Document},
+    editor::{Preparation, Prepared, document::Document, source_loading},
 };
 use std::{
     path::PathBuf,
@@ -13,7 +38,7 @@ fn path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")
 }
 
-fn editor(scheduler: development::Scheduler) -> Editor {
+fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     let mut editor = super::super::tests::fixture();
     let mut document = Document::default();
     document.import(&[path()]).unwrap();
@@ -36,7 +61,6 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     });
     editor.source_services = Some(source::Services {
         developments: scheduler,
-        jobs: editor.workflow_jobs.clone(),
         renderers: Arc::default(),
         device,
         queue,
@@ -44,41 +68,50 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     editor
 }
 
-fn normal_pressure() -> crate::sys::MemoryPressure {
-    crate::sys::MemoryPressure::Normal
-}
-
-fn paused_with_pressure(
-    pressure: fn() -> crate::sys::MemoryPressure,
-) -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
+fn paused() -> (
+    source_loading::SourceLoader,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let scheduler = development::Scheduler::new_observed_with_pressure(
-        move |_, phase, _| {
-            if matches!(phase, development::NativePhase::UnpackBegin) {
-                entered.send(()).unwrap();
-                resume
-                    .lock()
-                    .unwrap()
-                    .recv_timeout(Duration::from_secs(15))
-                    .unwrap();
-            }
-            Ok(())
-        },
-        pressure,
-    );
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
+            entered.send(()).unwrap();
+            resume
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+        }
+        Ok(())
+    });
     (scheduler, starts, release)
-}
-
-fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
-    paused_with_pressure(crate::sys::memory_pressure)
 }
 
 fn start(app: &crate::application::test_support::TestApplication<'_, Editor>) {
     app.enter(|editor, access| {
         editor.load(path(), access);
     });
+}
+
+fn await_native(
+    app: &mut crate::application::test_support::TestApplication<'_, Editor>,
+    entered: &mpsc::Receiver<()>,
+) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        app.pump();
+        if entered.try_recv().is_ok() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native source did not reach its barrier"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 #[test]
@@ -101,7 +134,7 @@ fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
 
 #[test]
 fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = editor(scheduler.clone());
     with_application(editor, |app| {
         start(app);
@@ -111,7 +144,7 @@ fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels
             assert_eq!(ready.path, path());
             assert!(!e.document.visit.source.pending());
             assert!(e.tasks.view().is_none());
-            assert_eq!(e.document.cache().charges().retained, 0);
+            assert_eq!(e.document.cache.charges().retained, 0);
             let mut scan = crate::scan::Scan::from_source(ready.developed.clone());
             let value = scan
                 .reference(crate::raw::Rect {
@@ -133,14 +166,12 @@ fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels
 }
 
 #[test]
-fn retired_visit_cannot_publish_and_running_native_work_keeps_foreground_admission() {
+fn retired_visit_cannot_publish_or_block_unrelated_cpu_work() {
     let (scheduler, starts, release) = paused();
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(10)).unwrap();
+        await_native(app, &starts);
         app.update(|e| {
             let view = e.request_id();
             e.id = view;
@@ -153,16 +184,13 @@ fn retired_visit_cannot_publish_and_running_native_work_keeps_foreground_admissi
         let access = app.access();
         let probe = access
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(matches!(
-            observed.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        release.send(()).unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
+        release.send(()).unwrap();
         drop(probe);
         app.read(|e| {
             assert!(e.document.visit.ready.is_none());
@@ -173,37 +201,29 @@ fn retired_visit_cannot_publish_and_running_native_work_keeps_foreground_admissi
 }
 
 #[test]
-fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_an_unrelated_call()
-{
-    // Both owners must stay inside their unrelated calls for the demand below to
-    // stay unstarted, so this scenario fixes the pressure reading it needs.
-    let (scheduler, starts, release) = paused_with_pressure(normal_pressure);
+fn cancelling_an_unstarted_native_demand_does_not_wait_for_unrelated_calls() {
+    let (scheduler, starts, release) = paused();
     let mut backgrounds = Vec::new();
     for _ in 0..2 {
         backgrounds.push(
             scheduler
                 .submit(
-                    development::Request {
+                    source_loading::Request {
                         path: path(),
                         wb: None,
                         expected: None,
-                        file: super::super::thumbnails::FileKey::new(&path()),
                         key: None,
-                        store: None,
-                        parent: None,
-                        retain: false,
                     },
-                    development::Priority::Eager,
+                    source_loading::Priority::Eager,
                 )
                 .unwrap(),
         );
     }
     // Both native owners are inside unrelated calls, so the demand below
-    // stays unstarted; cancelling it must release admission without waiting.
+    // stays unstarted; cancelling its waiter must not wait for those calls.
     starts.recv_timeout(Duration::from_secs(10)).unwrap();
     starts.recv_timeout(Duration::from_secs(10)).unwrap();
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
         app.run_until(Duration::from_secs(10), |_| scheduler.waiter_count() == 3);
@@ -217,7 +237,9 @@ fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
@@ -230,46 +252,38 @@ fn cancelling_an_unstarted_native_demand_releases_admission_without_waiting_for_
 }
 
 #[test]
-fn closed_worker_retains_parked_native_backing_until_another_call_returns_and_cleanup_finishes() {
+fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work() {
     let (parked, at_park) = mpsc::channel();
     let (continue_a, resume_a) = mpsc::channel();
     let resume_a = Mutex::new(resume_a);
     let (entered_b, at_b) = mpsc::channel();
     let (continue_b, resume_b) = mpsc::channel();
     let resume_b = Mutex::new(resume_b);
-    // Both owners must run concurrently here, so this scenario fixes the
-    // pressure reading it needs rather than trusting the live system level.
-    let scheduler = development::Scheduler::new_observed_with_pressure(
-        move |file, phase, _| {
-            if file.ends_with("patches.dng") && matches!(phase, development::NativePhase::UnpackEnd)
-            {
-                parked.send(()).unwrap();
-                resume_a
-                    .lock()
-                    .unwrap()
-                    .recv_timeout(Duration::from_secs(15))
-                    .unwrap();
-            }
-            if file.ends_with("roll-0.dng")
-                && matches!(phase, development::NativePhase::UnpackBegin)
-            {
-                entered_b.send(()).unwrap();
-                resume_b
-                    .lock()
-                    .unwrap()
-                    .recv_timeout(Duration::from_secs(15))
-                    .unwrap();
-            }
-            Ok(())
-        },
-        normal_pressure,
-    );
+    let scheduler = source_loading::SourceLoader::new_observed(move |file, phase, _| {
+        if file.ends_with("patches.dng") && matches!(phase, source_loading::NativePhase::UnpackEnd)
+        {
+            parked.send(()).unwrap();
+            resume_a
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+        }
+        if file.ends_with("roll-0.dng") && matches!(phase, source_loading::NativePhase::UnpackBegin)
+        {
+            entered_b.send(()).unwrap();
+            resume_b
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+        }
+        Ok(())
+    });
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
-        app.pump();
-        at_park.recv_timeout(Duration::from_secs(10)).unwrap();
+        await_native(app, &at_park);
         app.update(|e| {
             let view = e.request_id();
             e.replace_photo_scope(view);
@@ -283,17 +297,13 @@ fn closed_worker_retains_parked_native_backing_until_another_call_returns_and_cl
             tickets.push(
                 scheduler
                     .submit(
-                        development::Request {
-                            file: super::super::thumbnails::FileKey::new(&other),
+                        source_loading::Request {
                             path: other.clone(),
                             wb: None,
                             expected: None,
                             key: None,
-                            store: None,
-                            parent: None,
-                            retain: false,
                         },
-                        development::Priority::Visible,
+                        source_loading::Priority::Visible,
                     )
                     .unwrap(),
             );
@@ -307,34 +317,26 @@ fn closed_worker_retains_parked_native_backing_until_another_call_returns_and_cl
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(
-            matches!(
-                observed.recv_timeout(Duration::from_millis(50)),
-                Err(mpsc::RecvTimeoutError::Timeout)
-            ),
-            "parked unpacked source still owns mandatory native backing"
-        );
-        continue_b.send(()).unwrap();
-        continue_b.send(()).unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
+        continue_b.send(()).unwrap();
+        continue_b.send(()).unwrap();
         drop((probe, tickets));
     });
     scheduler.close_and_wait().unwrap();
 }
 
 #[test]
-fn worker_closure_finishes_the_waiter_but_holds_admission_until_the_native_call_returns() {
+fn worker_closure_finishes_the_waiter_while_native_cleanup_continues() {
     let (scheduler, starts, release) = paused();
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(10)).unwrap();
+        await_native(app, &starts);
         scheduler.close();
         app.run_until(Duration::from_secs(10), |e| !e.busy);
         assert!(app.read(|e| e.document.visit.ready.is_none()));
@@ -342,16 +344,13 @@ fn worker_closure_finishes_the_waiter_but_holds_admission_until_the_native_call_
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(matches!(
-            observed.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        release.send(()).unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
+        release.send(()).unwrap();
         drop(probe);
     });
     scheduler.close_and_wait().unwrap();
@@ -364,8 +363,7 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
     let directory = tempfile::tempdir().unwrap();
     with_application(editor, |app| {
         start(app);
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(10)).unwrap();
+        await_native(app, &starts);
         let (view, accepted) = app.read(|e| (e.document.visit.view, e.document.project.clone()));
         app.enter(|e, cx| {
             e.start_document(
@@ -424,7 +422,7 @@ fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
 
 #[test]
 fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
-    // Typed-outcome ordering is a controller test. Worker/admission cases above
+    // Typed-outcome ordering is a controller test. Worker-lifetime cases above
     // exercise physical source execution; this case does not simulate that timing.
     for complete_first in [false, true] {
         let editor = super::super::tests::authored_fixture(&["patches.dng"]);
@@ -472,8 +470,7 @@ fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product()
     let editor = editor(scheduler.clone());
     with_application(editor, |app| {
         start(app);
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(10)).unwrap();
+        await_native(app, &starts);
         let view = app.read(|e| e.document.visit.view);
         assert!(app.read(|e| e.document.visit.source.pending()));
         app.enter(|e, cx| {
@@ -502,7 +499,7 @@ fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product()
             // development is unchanged and the visit continues into the installed document.
             // A correction that changes the gains changes the key and replaces the scope.
             assert_eq!(e.document.visit.view, view);
-            assert!(!e.document.cache().is_closed());
+            assert!(!e.document.cache.is_closed());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -512,12 +509,10 @@ fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product()
 fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
     let (scheduler, starts, release) = paused();
     let editor = editor(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(10)).unwrap();
-        let store = app.read(|e| e.document.cache().clone());
+        await_native(app, &starts);
+        let store = app.read(|e| e.document.cache.clone());
         app.enter(|e, cx| e.start_document(Preparation::New, cx));
         let operation = app.read(|e| e.document_pending.unwrap());
         assert!(app.read(|e| e.busy && e.document_pending.is_some()));
@@ -541,16 +536,13 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(matches!(
-            observed.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        release.send(()).unwrap();
         app.run_until(Duration::from_secs(10), |_| observed.try_recv().is_ok());
+        release.send(()).unwrap();
         drop(probe);
         app.read(|e| {
             assert!(e.document.project.sources.is_empty());

@@ -70,32 +70,16 @@ pub struct AnalysisSamples {
 #[derive(Clone)]
 pub struct DevelopedSource {
     raw: Arc<FrozenRaw>,
-    pub(crate) file: crate::source_revision::FileKey,
+    pub(crate) file: crate::source::FileKey,
     camera_to_ap1: DMat3,
     camera_model: String,
     area: Rect,
     fixed_wb: [f64; 4],
     source_scale: f64,
     input_floor: f64,
-    pub(crate) reference_exposure:
-        std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>,
 }
 
 impl DevelopedSource {
-    #[cfg(feature = "project")]
-    pub(crate) fn interpreted(
-        self: &Arc<Self>,
-        value: &crate::exposure_reference::ReferenceExposure,
-    ) -> Arc<Self> {
-        let _ = self.reference_exposure.set(value.clone());
-        if self.reference_exposure.get() == Some(value) {
-            return self.clone();
-        }
-        let mut view = self.as_ref().clone();
-        view.reference_exposure = std::sync::OnceLock::from(value.clone());
-        Arc::new(view)
-    }
-
     fn from_raw(mut raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
         let wb = fixed_wb.unwrap_or_else(|| raw.metadata.as_shot_wb());
         raw.prepare_basis(wb)?;
@@ -115,7 +99,6 @@ impl DevelopedSource {
             fixed_wb: wb,
             source_scale,
             input_floor,
-            reference_exposure: std::sync::OnceLock::new(),
         })
     }
 
@@ -140,11 +123,6 @@ impl DevelopedSource {
     /// Recorded colour basis; positive image production uses `positive_matrix`.
     pub fn camera_to_ap1(&self) -> DMat3 {
         self.camera_to_ap1
-    }
-
-    /// Camera-to-AP1 production includes fixed Digital normalization, never manual grading.
-    pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
-        positive_matrix(input, self.camera_to_ap1, self.reference_exposure.get())
     }
 
     pub fn camera_model(&self) -> &str {
@@ -188,31 +166,15 @@ impl DevelopedSource {
 /// Developed camera-RGB thumbnail data before measured illumination correction or rendering.
 /// The production proxy has a 256-pixel maximum edge, without upscaling.
 #[derive(Clone)]
-pub struct CameraProxy {
+pub struct CameraPixels {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) pixels: Arc<Vec<[f32; 4]>>,
     // Physical colour basis retained for estimator sampling and source inspection.
     pub(crate) matrix: DMat3,
-    pub(crate) reference_exposure:
-        std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>,
 }
 
-impl CameraProxy {
-    #[cfg(feature = "project")]
-    pub(crate) fn interpreted(
-        self: &Arc<Self>,
-        value: &crate::exposure_reference::ReferenceExposure,
-    ) -> Arc<Self> {
-        let _ = self.reference_exposure.set(value.clone());
-        if self.reference_exposure.get() == Some(value) {
-            return self.clone();
-        }
-        let mut view = self.as_ref().clone();
-        view.reference_exposure = std::sync::OnceLock::from(value.clone());
-        Arc::new(view)
-    }
-
+impl CameraPixels {
     pub const MAX_EDGE: u32 = 256;
     #[cfg(feature = "editor")]
     pub(crate) const SAMPLING_VERSION: u32 = 1;
@@ -259,12 +221,7 @@ impl CameraProxy {
             height,
             pixels: Arc::new(pixels),
             matrix: scan.camera_to_ap1,
-            reference_exposure: scan.source.reference_exposure.clone(),
         })
-    }
-
-    pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
-        positive_matrix(input, self.matrix, self.reference_exposure.get())
     }
 
     pub fn dimensions(&self) -> [u32; 2] {
@@ -275,6 +232,45 @@ impl CameraProxy {
         (self.pixels.capacity() * size_of::<[f32; 4]>()
             + size_of::<Self>()
             + size_of::<Vec<[f32; 4]>>()) as u64
+    }
+}
+
+/// A consumer's fixed interpretation of shared camera-proxy pixels.
+pub struct CameraProxy {
+    pub data: Arc<CameraPixels>,
+    pub reference: Option<crate::exposure_reference::ReferenceExposure>,
+}
+
+impl std::ops::Deref for CameraProxy {
+    type Target = CameraPixels;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl CameraProxy {
+    pub const MAX_EDGE: u32 = CameraPixels::MAX_EDGE;
+    pub fn new(
+        data: Arc<CameraPixels>,
+        reference: Option<crate::exposure_reference::ReferenceExposure>,
+    ) -> Self {
+        Self { data, reference }
+    }
+    pub fn from_scan(scan: &Scan) -> Result<Self> {
+        Ok(Self::new(
+            Arc::new(CameraPixels::from_scan(scan)?),
+            scan.reference_exposure.clone(),
+        ))
+    }
+    #[cfg(test)]
+    fn sample(scan: &Scan, maximum: u32) -> Result<Self> {
+        Ok(Self::new(
+            Arc::new(CameraPixels::sample(scan, maximum)?),
+            scan.reference_exposure.clone(),
+        ))
+    }
+    pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
+        positive_matrix(input, self.matrix, self.reference.as_ref())
     }
 }
 
@@ -298,6 +294,7 @@ pub(crate) fn positive_matrix(
 
 pub struct Scan {
     source: Arc<DevelopedSource>,
+    pub reference_exposure: Option<crate::exposure_reference::ReferenceExposure>,
     pub camera_to_ap1: DMat3,
     pub camera_model: String,
     pub area: Rect,
@@ -331,7 +328,16 @@ impl Scan {
 
     /// Starts an independent consumer without a measured flat field or another RGB development.
     pub fn from_source(source: Arc<DevelopedSource>) -> Self {
+        Self::with_reference(source, None)
+    }
+
+    /// Captures a consumer's fixed baseline without changing shared native pixels.
+    pub fn with_reference(
+        source: Arc<DevelopedSource>,
+        reference_exposure: Option<crate::exposure_reference::ReferenceExposure>,
+    ) -> Self {
         Self {
+            reference_exposure,
             camera_to_ap1: source.camera_to_ap1,
             camera_model: source.camera_model.clone(),
             area: source.area,
@@ -479,7 +485,11 @@ impl Scan {
     }
 
     pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
-        self.source.positive_matrix(input)
+        positive_matrix(
+            input,
+            self.source.camera_to_ap1,
+            self.reference_exposure.as_ref(),
+        )
     }
 
     pub fn flat_field(&self) -> Option<&Arc<FlatField>> {

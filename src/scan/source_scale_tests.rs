@@ -11,26 +11,30 @@ fn differing_preview_defaults_share_native_storage_and_preserve_existing_interpr
         Some([1.; 4]),
     )
     .unwrap();
-    let first = scan
-        .source()
-        .interpreted(&ReferenceExposure::Matched(StartingExposure {
+    let first = Scan::with_reference(
+        scan.source().clone(),
+        Some(ReferenceExposure::Matched(StartingExposure {
             ev: 1.,
             samples: 1024,
             spread: 0.,
-        }));
-    let second = first.interpreted(&ReferenceExposure::Matched(StartingExposure {
-        ev: 2.,
-        samples: 1024,
-        spread: 0.,
-    }));
-    assert!(Arc::ptr_eq(&first.raw, &second.raw));
+        })),
+    );
+    let second = Scan::with_reference(
+        scan.source().clone(),
+        Some(ReferenceExposure::Matched(StartingExposure {
+            ev: 2.,
+            samples: 1024,
+            spread: 0.,
+        })),
+    );
+    assert!(Arc::ptr_eq(first.source(), second.source()));
     assert_eq!(
         first.positive_matrix(&InputSettings::Digital).unwrap(),
-        first.camera_to_ap1() * 2.
+        first.camera_to_ap1 * 2.
     );
     assert_eq!(
         second.positive_matrix(&InputSettings::Digital).unwrap(),
-        second.camera_to_ap1() * 4.
+        second.camera_to_ap1 * 4.
     );
 }
 

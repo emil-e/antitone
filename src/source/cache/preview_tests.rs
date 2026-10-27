@@ -13,11 +13,11 @@ fn file() -> crate::fixture_path::FixturePath {
 }
 
 #[test]
-fn overlapping_preview_consumers_share_extraction_across_forks_without_optional_retention() {
+fn overlapping_preview_consumers_share_extraction_without_optional_retention() {
     for budget in [0, 1 << 20] {
         let path = file();
         let key = FileKey::new(path.path());
-        let store = Arc::new(SourceStore::new(budget));
+        let store = Arc::new(SourceCache::new(budget));
         let loads = Arc::new(AtomicUsize::new(0));
         let (started, ready) = std::sync::mpsc::channel();
         let (release, proceed) = std::sync::mpsc::channel();
@@ -41,7 +41,7 @@ fn overlapping_preview_consumers_share_extraction_across_forks_without_optional_
             .recv_timeout(std::time::Duration::from_secs(3))
             .unwrap();
         let consumer = {
-            let store = Arc::new(store.fork(budget));
+            let store = store.clone();
             let key = key.clone();
             std::thread::spawn(move || {
                 store
@@ -86,39 +86,39 @@ fn overlapping_preview_consumers_share_extraction_across_forks_without_optional_
 }
 
 #[test]
-fn fork_reuses_completed_preview_without_retaining_it_outside_the_byte_lru() {
+fn completed_preview_reuse_does_not_retain_pixels_outside_the_byte_lru() {
     let file = file();
     let key = FileKey::new(file.path());
-    let parent = SourceStore::new(1 << 20);
-    let preview = parent.preview(&key, || Ok(Some(image()))).unwrap().unwrap();
+    let cache = SourceCache::new(1 << 20);
+    let preview = cache.preview(&key, || Ok(Some(image()))).unwrap().unwrap();
     let weak = Arc::downgrade(&preview);
     drop(preview);
-    let fork = parent.fork(0);
-    let reused = fork
-        .preview(&key, || panic!("parent already decoded the preview"))
+    let reused = cache
+        .preview(&key, || panic!("preview already decoded"))
         .unwrap()
         .unwrap();
     assert!(Arc::ptr_eq(&weak.upgrade().unwrap(), &reused));
-    parent.close();
-    assert_eq!(fork.charges().retained, 0);
+    cache.set_budget(0);
+    assert_eq!(cache.charges().retained, 0);
     drop(reused);
     assert!(
         weak.upgrade().is_none(),
-        "the shared registry must own no preview pixels"
+        "discovery must not retain preview pixels"
     );
     let mut reloaded = false;
-    fork.preview(&key, || {
-        reloaded = true;
-        Ok(Some(image()))
-    })
-    .unwrap();
-    assert!(reloaded, "unleased, evicted pixels must be loaded afresh");
+    cache
+        .preview(&key, || {
+            reloaded = true;
+            Ok(Some(image()))
+        })
+        .unwrap();
+    assert!(reloaded);
 }
 
 #[test]
 fn decoded_previews_obey_byte_lru_and_survive_cache_closure_only_as_leases() {
     let bytes = image().retained_bytes();
-    let store = SourceStore::new(bytes * 2);
+    let store = SourceCache::new(bytes * 2);
     let files = [file(), file(), file()];
     let keys = files
         .iter()
@@ -152,27 +152,4 @@ fn decoded_previews_obey_byte_lru_and_survive_cache_closure_only_as_leases() {
     assert_eq!(first.rgb.get_pixel(0, 0).0, [80, 100, 120]);
     drop((first, third));
     assert_eq!(store.charges().leased_only, 0);
-}
-
-#[test]
-fn preview_freshness_rejects_changed_files_before_work_and_after_loading() {
-    let file = file();
-    let key = FileKey::new(file.path());
-    let store = SourceStore::new(1 << 20);
-    std::fs::write(file.path(), [1, 2]).unwrap();
-    assert!(
-        store
-            .preview(&key, || panic!("stale requests must not perform IO"))
-            .is_err()
-    );
-    let current = FileKey::new(file.path());
-    assert!(
-        store
-            .preview(&current, || {
-                std::fs::write(file.path(), [1, 2, 3]).unwrap();
-                Ok(Some(image()))
-            })
-            .is_err()
-    );
-    assert_eq!(store.charges(), Charges::default());
 }

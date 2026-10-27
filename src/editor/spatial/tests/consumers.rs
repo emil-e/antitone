@@ -140,7 +140,7 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
 }
 
 #[test]
-fn a_non_target_dimension_supporter_changing_prevents_any_selected_crop_from_being_applied() {
+fn changed_supporting_geometry_prevents_any_selected_crop_from_being_applied() {
     let (scheduler, _) = observed();
     let mut editor = fixture(scheduler.clone());
     let dir = tempfile::tempdir().unwrap();
@@ -148,21 +148,26 @@ fn a_non_target_dimension_supporter_changing_prevents_any_selected_crop_from_bei
     let copy = dir.path().join("supporter.dng");
     std::fs::copy(editor.document.source_path(peer).unwrap(), &copy).unwrap();
     editor.document.project.source_mut(peer).unwrap().path = copy.clone();
+    editor.document.capture_source_files().unwrap();
     supplied(&mut editor);
     editor.roll_selection = Default::default();
     editor
         .roll_selection
         .reconcile(&editor.document.project.order, editor.current_source);
-    let accepted = editor.document.project.clone();
     let undo = editor.history_label(history::Direction::Undo);
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Selected, cx));
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.update(|editor| {
             assert!(editor.auto_crop_valid());
-            let mut bytes = std::fs::read(&copy).unwrap();
-            bytes.extend_from_slice(b"changed revision");
-            std::fs::write(&copy, bytes).unwrap();
+            editor
+                .document
+                .project
+                .source_mut(peer)
+                .unwrap()
+                .development
+                .active_area[2] -= 1;
+            let accepted = editor.document.project.clone();
             editor.finish_auto_crop(true);
             assert!(editor.document.auto_crop_edit.is_some());
             assert_eq!(editor.document.project, accepted);
@@ -183,8 +188,7 @@ fn selected_targets_are_captured_at_request_time_and_cancel_does_not_accept_marg
     editor
         .roll_selection
         .reconcile(&editor.document.project.order, Some(first));
-    let jobs = editor.workflow_jobs.clone();
-    let admission = jobs.hold();
+    let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Selected, cx));
         app.update(|editor| {

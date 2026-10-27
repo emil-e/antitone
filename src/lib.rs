@@ -4,7 +4,7 @@ pub mod application;
 #[cfg(feature = "project")]
 pub mod auto_crop;
 #[cfg(feature = "editor")]
-mod blocking_jobs;
+mod background;
 #[cfg(feature = "editor")]
 mod cancellation;
 pub mod color;
@@ -74,10 +74,10 @@ pub mod sampling;
 pub mod scan;
 #[cfg(feature = "project")]
 pub mod scan_regions;
+
 #[cfg(any(feature = "project", feature = "raw"))]
-mod source_revision;
-#[cfg(all(feature = "raw", feature = "project"))]
-pub mod source_store;
+pub mod source;
+
 #[cfg(feature = "project")]
 pub mod spatial_metadata;
 #[cfg(any(

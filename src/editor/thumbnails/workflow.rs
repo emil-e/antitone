@@ -36,6 +36,7 @@ struct Pending {
     ticket: u64,
     generation: Arc<std::sync::atomic::AtomicU64>,
     _task: async_executor::Task<()>,
+    _retire: crate::cancellation::CancelOnDrop,
 }
 
 impl State {
@@ -61,7 +62,7 @@ impl Editor {
         path: PathBuf,
         source: Source,
         render: bool,
-        priority: development::Priority,
+        priority: source_loading::Priority,
         cx: &UiContext<'_, Self>,
     ) {
         if self.thumbnails.pending.is_some() || self.thumbnails.cache.get(&key).is_some() {
@@ -84,7 +85,13 @@ impl Editor {
                     .map(|(_, product)| product.clone())
             })
             .flatten();
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
         let job = Job {
+            cancelled,
+            reference: self
+                .document
+                .exposure_slot(&self.document.exposures, source.id),
             ticket,
             key: key.clone(),
             path,
@@ -115,9 +122,13 @@ impl Editor {
                     return;
                 };
                 let pending = editor.document.thumbnail_work.tasks.swap_remove(index);
-                if Arc::ptr_eq(&store, editor.document.cache())
+                if Arc::ptr_eq(&store, &editor.document.cache)
                     && Arc::ptr_eq(&identity, &editor.thumbnails.generation)
                 {
+                    editor
+                        .document
+                        .state
+                        .capture_exposure(&editor.document.exposures);
                     match result {
                         Ok(outcome) => editor.thumbnails.complete(outcome, &editor.document),
                         Err(_) => editor.thumbnails.stopped(ticket, key),
@@ -135,6 +146,7 @@ impl Editor {
             ticket,
             generation,
             _task: task,
+            _retire: retire,
         });
     }
 
@@ -144,16 +156,10 @@ impl Editor {
             Demand::Visible(visible) if self.fullscreen.is_none() => (visible.clone(), false),
             Demand::Visible(_) | Demand::Hidden => (Vec::new(), true),
         };
-        if self.document.cache().is_closed() {
-            if self.thumbnails.pending.is_some() {
-                self.thumbnails.cancel();
-            }
-            return;
-        }
+
         let allowed = self.thumbnail_work_allowed();
         let eager = allowed && self.thumbnails.budgets.pressure == memory::Pressure::Normal;
         let idle = allowed
-            && self.workflow_jobs.idle()
             && self.original.refining.is_none()
             && if self.working.revision().is_some() {
                 self.working.idle()
@@ -263,9 +269,9 @@ impl Editor {
                 source,
                 render,
                 if visible {
-                    development::Priority::Visible
+                    source_loading::Priority::Visible
                 } else {
-                    development::Priority::Eager
+                    source_loading::Priority::Eager
                 },
                 cx,
             );

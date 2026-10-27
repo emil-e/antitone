@@ -20,6 +20,8 @@ pub(super) struct Request {
     pub work: Preparation,
     pub source: Option<(u64, Ready)>,
     pub correction: Option<Arc<Correction>>,
+    pub cache: Option<Arc<crate::source::SourceCache>>,
+    pub exposures: Option<Arc<crate::exposure_metadata::Store>>,
 }
 
 pub(super) struct Prepared {
@@ -60,6 +62,8 @@ pub(super) fn candidate(
         work,
         source: previous,
         correction: previous_correction,
+        cache,
+        exposures,
     } = request;
     let preserve_view = matches!(
         work,
@@ -71,9 +75,8 @@ pub(super) fn candidate(
         | Preparation::History(_, selected, _) => Some(*selected),
         _ => None,
     };
-    let (document, reuse) = match work {
+    let (mut document, reuse) = match work {
         Preparation::Import(mut document, paths, reuse) => {
-            document.fork_cache();
             document.import_with_progress(&paths, Some(device), &mut progress)?;
             (document, reuse)
         }
@@ -82,18 +85,16 @@ pub(super) fn candidate(
             None,
         ),
         Preparation::New => (Document::default(), None),
-        Preparation::Correction(mut document, _) => {
-            document.fork_cache();
-            (document, None)
-        }
+        Preparation::Correction(document, _) => (document, None),
         Preparation::Input(mut document, _) => {
             let target = document.project.input;
             document.redevelop_for_input(target)?;
-            document.fork_cache();
             (document, None)
         }
         Preparation::History(mut document, _, _) => {
-            document.fork_cache();
+            if let Some(exposures) = &exposures {
+                document.capture_exposure(exposures);
+            }
             document.validate_for_device(device)?;
             for id in document.project.order.clone() {
                 document.refresh_source(id)?;
@@ -101,6 +102,9 @@ pub(super) fn candidate(
             (document, None)
         }
     };
+    if let Some(exposures) = &exposures {
+        document.capture_exposure(exposures);
+    }
     let correction = Correction::prepare(device, &document, previous_correction.as_ref())?;
     for record in &document.project.sources {
         crate::gpu::ProcessingSource::new(
@@ -115,8 +119,7 @@ pub(super) fn candidate(
             .project
             .source(selected)
             .is_ok_and(|source| source.development == ready.record.development)
-        && (document.project.input.is_negative()
-            || ready.developed.reference_exposure.get().is_some())
+        && (document.project.input.is_negative() || ready.reference.is_some())
     {
         return Ok(Candidate {
             prepared: Prepared {
@@ -136,7 +139,15 @@ pub(super) fn candidate(
             .or_else(|| document.project.order.first().copied())
     });
     let source = selected
-        .map(|id| source_request(&document, id, correction.clone()))
+        .map(|id| {
+            source_request(
+                &document,
+                id,
+                correction.clone(),
+                cache.clone(),
+                exposures.as_deref(),
+            )
+        })
         .transpose()?;
     Ok(Candidate {
         prepared: Prepared {
@@ -155,17 +166,31 @@ fn source_request(
     document: &Document,
     id: SourceId,
     correction: Option<Arc<Correction>>,
+    cache: Option<Arc<crate::source::SourceCache>>,
+    exposures: Option<&crate::exposure_metadata::Store>,
 ) -> Result<source::Request, Error> {
     let path = document.source_path(id)?;
     let expected = document.project.source(id)?.clone();
     let wb = Some(expected.development.decode.fixed_wb);
-    let cache = source::Cache::new(&path, Some(&expected), document);
+    let file = document.file_key(&path);
     Ok(source::Request {
+        reference: exposures.map_or_else(
+            || {
+                Arc::new(
+                    document
+                        .reference_exposure(&expected)
+                        .cloned()
+                        .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
+                )
+            },
+            |store| document.exposure_slot(store, id),
+        ),
         input: document.project.input,
         path,
         expected: Some(expected),
         wb,
-        cache: Some(cache),
+        cache,
+        file,
         correction,
     })
 }
@@ -177,55 +202,64 @@ impl PreparationServices {
     pub async fn prepare(
         self,
         request: Request,
-        cancelled: Arc<std::sync::atomic::AtomicBool>,
+        cancelled: crate::cancellation::Cancellation,
         progress: impl FnMut(usize, usize) + Send + 'static,
     ) -> Result<Prepared, String> {
+        let exposures = request.exposures.clone();
         let device = self.0.device.clone();
         let retired = cancelled.clone();
         let Candidate {
             mut prepared,
             source,
-        } = self
-            .0
-            .jobs
-            .run(move || {
-                if retired.load(std::sync::atomic::Ordering::Relaxed) {
-                    return Err(Error::UnusableSample("document preparation retired"));
-                }
-                candidate(request, &device, progress)
-            })
-            .await
-            .map_err(|_| "Document preparation worker panicked".to_owned())?
-            .map_err(|error| error.to_string())?;
-        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+        } = crate::background::run(move || {
+            if retired.is_cancelled() {
+                return Err(Error::UnusableSample("document preparation retired"));
+            }
+            candidate(request, &device, progress)
+        })
+        .await
+        .map_err(|_| "Document preparation worker panicked".to_owned())?
+        .map_err(|error| error.to_string())?;
+        if cancelled.is_cancelled() {
             return Err("Document preparation retired".into());
         }
         if let Some(source) = source {
             prepared.ready = Some(self.0.clone().prepare(source, cancelled).await?);
         }
+        if let Some(id) = prepared.selected
+            && let Some(ready) = &prepared.ready
+            && let Some(reference) = &ready.reference
+        {
+            let metadata = Arc::make_mut(&mut prepared.document.exposure_metadata);
+            metadata.entries.retain(|entry| entry.source != id);
+            metadata.entries.push(crate::exposure_metadata::Entry {
+                source: id,
+
+                reference: reference.clone(),
+            });
+        }
         let device = self.0.device.clone();
-        self.0
-            .jobs
-            .run(move || {
-                prepared.document.validate_with_device(Some(&device))?;
-                Ok(prepared)
-            })
-            .await
-            .map_err(|_| "Document admission worker panicked".to_owned())?
-            .map_err(|error: Error| error.to_string())
+        crate::background::run(move || {
+            if let Some(exposures) = &exposures {
+                prepared.document.capture_exposure(exposures);
+            }
+            prepared.document.validate_with_device(Some(&device))?;
+            Ok(prepared)
+        })
+        .await
+        .map_err(|_| "Document admission worker panicked".to_owned())?
+        .map_err(|error: Error| error.to_string())
     }
 }
 
 #[derive(Clone)]
 pub(super) struct Services {
-    pub jobs: crate::blocking_jobs::BlockingJobs,
     pub device: wgpu::Device,
 }
 
 impl Services {
     pub async fn write(self, write: Write) -> Result<Document, String> {
-        self.jobs
-            .run(move || write.save(&self.device))
+        crate::background::run(move || write.save(&self.device))
             .await
             .map_err(|_| "Document write worker panicked".to_owned())?
             .map_err(|error| error.to_string())

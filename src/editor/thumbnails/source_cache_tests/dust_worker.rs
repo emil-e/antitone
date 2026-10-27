@@ -11,7 +11,7 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
         let (device, queue) = gpu().await;
         let gate = crate::gpu::SubmissionGate::default();
         let renderers = Arc::new(crate::renderer::RendererCache::new(gate.clone()));
-        let (ready, reference) = prepare(&document, &device, &queue, &renderers);
+        let (ready, reference) = prepare(&document, &document.cache, &device, &queue, &renderers);
         let source_id = document.project.order[0];
         let epoch = Arc::new(AtomicU64::new(1));
         let armed = Arc::new(AtomicBool::new(false));
@@ -38,7 +38,7 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
         }));
 
         let mut editor = crate::editor::tests::fixture();
-        editor.document.install(document);
+        editor.document = document;
         editor.current_source = Some(source_id);
         editor.id = 1;
         editor.source_epoch = epoch.clone();
@@ -47,7 +47,6 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
         editor.set_dmax(Some(DVec3::splat(0.02)));
         editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
         editor.dust_services = Some(dust_workflow::Services::new(
-            editor.workflow_jobs.clone(),
             device.clone(),
             queue.clone(),
             gate.clone(),
@@ -85,7 +84,6 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
             cancelled: Arc::new(AtomicBool::new(false)),
         };
         let before = editor.document.project.clone();
-        let jobs = editor.workflow_jobs.clone();
         with_application(editor, |app| {
             armed.store(true, Ordering::Release);
             app.enter(|e, access| {
@@ -144,7 +142,6 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
                     timeout: None,
                 })
                 .unwrap();
-            assert!(!jobs.idle());
             epoch.store(2, Ordering::Relaxed);
             resume.send(()).unwrap();
             app.run_until(Duration::from_secs(30), |e| {

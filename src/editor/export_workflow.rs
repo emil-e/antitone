@@ -53,7 +53,7 @@ impl Editor {
         let id = self
             .current_source
             .ok_or_else(|| Error::Project("no accepted source for export".into()))?;
-        let recipe = self.document.project.image_recipe(id)?;
+        let recipe = self.document.image_recipe(id)?;
         debug_assert_eq!(recipe.composition.area(), ready.area);
         Ok(Some(Request {
             input: self.source_context().expect("ready export source"),

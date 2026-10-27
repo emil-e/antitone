@@ -2,7 +2,7 @@
 mod tests;
 
 use super::{Coverage, Editor, UiContext, source};
-use crate::{blocking_jobs::BlockingJobs, raw::Rect};
+use crate::raw::Rect;
 
 #[derive(Default)]
 pub(super) struct State {
@@ -15,11 +15,8 @@ pub(super) struct Pending {
     pub loaded: u64,
 }
 
-pub(super) async fn prepare(
-    jobs: BlockingJobs,
-    input: source::Context,
-) -> Result<Option<Rect>, String> {
-    jobs.run(move || input.scan()?.propose_flat_field_area())
+pub(super) async fn prepare(input: source::Context) -> Result<Option<Rect>, String> {
+    crate::background::run(move || input.scan()?.propose_flat_field_area())
         .await
         .map_err(|_| "Support preparation worker panicked".to_owned())?
         .map_err(|error| error.to_string())
@@ -45,9 +42,8 @@ impl Editor {
             id: request,
             loaded,
         });
-        let jobs = self.workflow_jobs.clone();
         let Some(task) = cx.spawn(move |cx| async move {
-            let result = prepare(jobs, input).await;
+            let result = prepare(input).await;
             cx.update(|editor| editor.analysis_support_result(request, loaded, result));
         }) else {
             self.analysis_support_result(request, loaded, Err("Application stopped".into()));

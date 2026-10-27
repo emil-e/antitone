@@ -168,7 +168,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 harness.update(|editor| editor.busy = false);
                 harness.step();
             }
-            let admission = harness.read(|editor| editor.workflow_jobs.hold());
+            let admission = crate::background::testing::pause();
             harness.enter(|editor, cx| editor.request_analysis(cx));
             harness.update(|editor| editor.tasks.elapse(Duration::from_secs(1)));
             render_case(&mut harness, &format!("regions-modal-{layout}"));

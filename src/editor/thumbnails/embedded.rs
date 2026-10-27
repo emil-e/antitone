@@ -11,7 +11,7 @@ struct Request {
     key: SourceKey,
     path: PathBuf,
     source: Source,
-    store: Arc<crate::source_store::SourceStore>,
+    store: Arc<crate::source::SourceCache>,
 }
 
 enum Completion {
@@ -23,14 +23,11 @@ struct Work {
     request: Request,
     cancelled: Arc<AtomicBool>,
     reply: futures_channel::oneshot::Sender<Result<Option<egui::ColorImage>, String>>,
-    // Last to drop: producer admission includes native/decode and captured-payload cleanup.
-    _admission: async_lock::SemaphoreGuardArc,
 }
 
 #[derive(Clone)]
 struct Services {
     commands: mpsc::Sender<Work>,
-    admission: Arc<async_lock::Semaphore>,
 }
 
 impl Services {
@@ -53,14 +50,10 @@ impl Services {
                 let _ = work.reply.send(image);
             }
         });
-        Self {
-            commands,
-            admission: Arc::new(async_lock::Semaphore::new(1)),
-        }
+        Self { commands }
     }
 
     async fn load(self, request: Request, cancelled: Arc<AtomicBool>) -> Completion {
-        let admission = self.admission.acquire_arc().await;
         let (reply, result) = futures_channel::oneshot::channel();
         if self
             .commands
@@ -68,7 +61,6 @@ impl Services {
                 request,
                 cancelled,
                 reply,
-                _admission: admission,
             })
             .is_err()
         {
@@ -199,7 +191,10 @@ impl EmbeddedPreviews {
         }
     }
 
-    fn begin(&mut self, document: &Document) -> Option<(Request, Arc<AtomicBool>)> {
+    fn begin(
+        &mut self,
+        document: &super::document_scope::DocumentScope,
+    ) -> Option<(Request, Arc<AtomicBool>)> {
         if !self.allowed || self.pending.is_some() || self.services.is_none() {
             return None;
         }
@@ -221,7 +216,7 @@ impl EmbeddedPreviews {
                 key: key.clone(),
                 path: path.clone(),
                 source,
-                store: document.cache().clone(),
+                store: document.cache.clone(),
             },
             cancelled,
         ))
@@ -232,7 +227,7 @@ impl EmbeddedPreviews {
         ticket: u64,
         key: SourceKey,
         image: Completion,
-        document: &Document,
+        document: &super::document_scope::DocumentScope,
         context: &egui::Context,
     ) {
         if !self
@@ -386,28 +381,31 @@ impl Editor {
     }
 }
 
-fn current(key: &SourceKey, document: &Document) -> bool {
-    !document.cache().is_closed()
+fn current(key: &SourceKey, document: &super::document_scope::DocumentScope) -> bool {
+    !document.cache.is_closed()
         && document
             .project
             .source(key.id)
             .ok()
             .zip(document.source_path(key.id).ok())
             .is_some_and(|(source, path)| {
-                !source.reference_only && SourceKey::new(source, FileKey::new(&path)) == *key
+                !source.reference_only && SourceKey::new(source, document.file_key(&path)) == *key
             })
 }
 
 fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::ColorImage>, String> {
-    if !active() || FileKey::new(&request.path) != request.key.file {
+    if !active() {
         return Ok(None);
     }
+
     let preview = request.store.preview(&request.key.file, || {
         crate::embedded_preview::read(&request.path, &request.source.development)
     })?;
-    if !active() || FileKey::new(&request.path) != request.key.file {
+
+    if !active() {
         return Ok(None);
     }
+
     Ok(preview.map(|preview| colour_image(&preview)))
 }
 

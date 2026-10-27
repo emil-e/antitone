@@ -9,24 +9,13 @@ use super::{
     source,
 };
 use crate::application::UiContext;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-
-struct Retire(Arc<AtomicBool>);
-impl Drop for Retire {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-}
 
 impl Editor {
     pub(super) fn preview_reference(&mut self, request: source::Request, cx: &UiContext<'_, Self>) {
         let id = self.id;
         let services = self.source_services.clone().map(Services);
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let retire = Retire(cancelled.clone());
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
             let result = match services {
@@ -47,8 +36,8 @@ impl Editor {
     pub(super) fn accept_reference(&mut self, input: Acceptance, cx: &UiContext<'_, Self>) {
         let id = self.id;
         let services = self.source_services.clone().map(Services);
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let retire = Retire(cancelled.clone());
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
             let result = async {

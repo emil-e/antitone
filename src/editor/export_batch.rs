@@ -286,12 +286,13 @@ impl Editor {
                 let expected = expected.clone();
                 let wb = Some(expected.development.decode.fixed_wb);
                 Input::Acquire(Box::new(source::Request {
+                    reference: self.document.exposure_slot(&self.document.exposures, id),
+
                     input: self.input(),
-                    cache: Some(source::Cache::new(
-                        &source_path,
-                        Some(&expected),
-                        &self.document,
-                    )),
+
+                    file: self.document.file_key(&source_path),
+                    cache: Some(self.document.cache.clone()),
+
                     path: source_path,
                     wb,
                     expected: Some(expected),
@@ -301,7 +302,7 @@ impl Editor {
             photos.push(Photo {
                 input,
                 path,
-                recipe: self.document.project.image_recipe(id)?,
+                recipe: self.document.image_recipe(id)?,
             });
         }
         Ok(Request {

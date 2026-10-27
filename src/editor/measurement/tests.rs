@@ -1,8 +1,8 @@
 use super::*;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot};
 use crate::application::Application;
-use crate::editor::{development, thumbnails};
-use crate::{blocking_jobs::BlockingJobs, raw::Rect, source_store::SourceStore};
+use crate::source as source_loading;
+use crate::{raw::Rect, source::SourceCache};
 use std::{
     sync::{Mutex, mpsc},
     time::{Duration, Instant},
@@ -81,10 +81,9 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
             .unwrap();
         let lease = Arc::downgrade(scan.source());
         let mut editor = Editor::state();
-        let scheduler = development::Scheduler::new();
+        let scheduler = source_loading::SourceLoader::new();
         editor.source_services = Some(crate::editor::source::Services {
             developments: scheduler.clone(),
-            jobs: editor.workflow_jobs.clone(),
             renderers,
             device: device.clone(),
             queue: queue.clone(),
@@ -100,9 +99,9 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
         editor.set_dmax(Some(dark));
         editor.document.visit.ready = Some(ready);
         editor.sync_document();
-        editor.document.cache().set_budget(0);
+        editor.document.cache.set_budget(0);
         drop(scan);
-        let hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
+        let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
             let tasks = app.access();
             app.enter(|editor, cx| {
@@ -117,7 +116,7 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
             app.pump();
             assert!(app.read(|editor| editor.document.visit.measurement.is_some()));
             assert_eq!(
-                app.read(|editor| editor.document.cache().charges().retained),
+                app.read(|editor| editor.document.cache.charges().retained),
                 0
             );
             drop(hold);
@@ -162,7 +161,6 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
         app.pump();
         app.read(|editor| {
             assert!(editor.document.visit.measurement.is_none() && !editor.busy);
-            assert!(editor.workflow_jobs.idle());
             assert_eq!(editor.document.project, before);
         });
         assert!(source.upgrade().is_none());
@@ -231,7 +229,20 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
             crate::editor::tests::with_document_services(crate::editor::tests::fixture());
         crate::editor::tests::add_ready_fixture(&mut editor);
         let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
-        let hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
+        let (release_next, resume_next) = mpsc::channel();
+        let resume_next = Mutex::new(resume_next);
+        let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+            if matches!(phase, source_loading::NativePhase::UnpackBegin) {
+                resume_next
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+            }
+            Ok(())
+        });
+        editor.source_services.as_mut().unwrap().developments = scheduler.clone();
+        let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, access| {
                 editor.begin_pick(Pick::Dmin, access);
@@ -247,7 +258,7 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
             app.pump();
             let (status, activity) = app.enter(|editor, cx| {
                 if replace {
-                    editor.load("next.dng".into(), cx);
+                    editor.load(fixture("patches.dng"), cx);
                     assert!(editor.document.visit.source.pending());
                 } else {
                     editor.finish_pick(cx);
@@ -260,14 +271,27 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
                     editor.tasks.view().map(|view| view.title),
                 )
             });
-            app.run_until(Duration::from_secs(5), |_| source.upgrade().is_none());
             drop(hold);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while source.upgrade().is_some() {
+                app.pump();
+                assert!(
+                    Instant::now() < deadline,
+                    "retired measurement kept its input"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
             app.read(|editor| {
                 assert_eq!(editor.busy, replace);
                 assert_eq!(editor.status, status);
                 assert_eq!(editor.tasks.view().map(|view| view.title), activity);
             });
+            if replace {
+                release_next.send(()).unwrap();
+                app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+            }
         });
+        scheduler.close_and_wait().unwrap();
     }
 }
 
@@ -277,6 +301,7 @@ fn cancelling_a_running_measurement_retains_its_source_until_the_computation_ret
     let source = scan.source().clone();
     let lease = Arc::downgrade(&source);
     let input = Input {
+        reference: None,
         source,
         correction: None,
         kind: Pick::Dmin,
@@ -290,13 +315,12 @@ fn cancelling_a_running_measurement_retains_its_source_until_the_computation_ret
     let state = std::cell::RefCell::new(Some(()));
     let (mut application, wakes) = application();
     let access = application.access(&state);
-    let jobs = BlockingJobs::new(1);
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let (finished, finishes) = mpsc::channel();
     let task = access
         .spawn(move |_| async move {
-            jobs.run(move || {
+            crate::background::run(move || {
                 entered.send(()).unwrap();
                 resume.recv().unwrap();
                 let result = input.measure();
@@ -322,8 +346,8 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let sources = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin) {
+    let sources = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             entered.send(()).unwrap();
             resume
                 .lock()
@@ -333,26 +357,20 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
         }
         Ok(())
     });
-    let store = Arc::new(SourceStore::new(0));
+    let store = Arc::new(SourceCache::new(0));
     let ticket = sources
         .submit(
-            development::Request {
+            source_loading::Request {
                 path: file.path().to_owned(),
                 wb: Some([1.; 4]),
                 expected: None,
-                file: thumbnails::FileKey::new(file.path()),
                 key: None,
-                store: Some(store.clone()),
-                parent: None,
-                retain: false,
             },
-            development::Priority::Foreground,
+            source_loading::Priority::Foreground,
         )
         .unwrap();
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
     let executor = async_executor::LocalExecutor::new();
-    let jobs = BlockingJobs::new(1);
-    let measurement_jobs = jobs.clone();
     let measurement = executor.spawn(async move {
         let source = ticket.await.map_err(|error| error.to_string())?;
         let scan = Scan::from_source(source.clone());
@@ -366,6 +384,7 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
             height: area.height - 16,
         };
         let input = Input {
+            reference: None,
             source,
             correction: None,
             kind: Pick::Dmin,
@@ -375,12 +394,11 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
             upstream: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             layer: None,
         };
-        measurement_jobs
-            .run(move || input.measure().map_err(|error| error.to_string()))
+        crate::background::run(move || input.measure().map_err(|error| error.to_string()))
             .await
             .map_err(|_| "worker panicked".to_owned())?
     });
-    let unrelated = executor.spawn(async move { jobs.run(|| 42).await });
+    let unrelated = executor.spawn(async move { crate::background::run(|| 42).await });
     let value = futures_lite::future::block_on(executor.run(async {
         assert_eq!(unrelated.await.unwrap(), 42);
         release.send(()).unwrap();
@@ -428,6 +446,7 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
     };
     for kind in [Pick::Dmin, Pick::Dmax] {
         let input = Input {
+            reference: None,
             source: source.clone(),
             correction: Some(correction.clone()),
             kind,
@@ -462,6 +481,7 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
             ..AdjustmentLayerSettings::default()
         };
         let input = Input {
+            reference: None,
             source: source.clone(),
             correction: None,
             kind,
@@ -766,4 +786,111 @@ fn a_completed_wb_pick_cannot_write_to_a_different_selected_layer() {
             assert!(editor.pick.is_none());
         });
     });
+}
+
+#[test]
+fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
+    use crate::exposure_reference::{ReferenceExposure, StartingExposure};
+    let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
+    let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
+    editor.input = InputSettings::Digital;
+    editor.document.project.input = InputSettings::Digital;
+    editor.roll = RollSettings::default();
+    let id = editor.current_source.unwrap();
+    let baseline = ReferenceExposure::Matched(StartingExposure {
+        ev: 2.75,
+        samples: 1024,
+        spread: 0.,
+    });
+    editor.document.visit.ready.as_mut().unwrap().reference = Some(baseline.clone());
+    let ready = editor.document.visit.ready.as_ref().unwrap();
+    let scan = Scan::with_reference(ready.developed.clone(), Some(baseline));
+    let patch = Rect {
+        x: scan.area.x + 8,
+        y: scan.area.y + 8,
+        width: 32,
+        height: 32,
+    };
+    let mut layers = crate::project::AdjustmentLayers::with_global(AdjustmentLayerSettings {
+        contrast: 0.6,
+        ..Default::default()
+    });
+    let upstream = layers.layers[0].adjustment;
+    let selected = layers
+        .add(
+            "WB target".into(),
+            AdjustmentLayer::global(Default::default()),
+        )
+        .unwrap();
+    editor
+        .document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .adjustment_layers = Some(layers);
+    editor.refresh_adjustment_layer_selection();
+    editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(selected));
+
+    let expected_signature = crate::scan::ImageSource::new(&scan, InputSettings::Digital)
+        .unwrap()
+        .gpu_program()
+        .unwrap()
+        .signature()
+        .unwrap();
+    assert_eq!(
+        editor
+            .neutral_source_signature(&InputSettings::Digital)
+            .unwrap(),
+        expected_signature
+    );
+    let captured = editor
+        .measurement_input(Pick::Wb, Coverage::rectangle(patch))
+        .unwrap();
+    let mut zero_start = editor
+        .measurement_input(Pick::Wb, Coverage::rectangle(patch))
+        .unwrap();
+    zero_start.reference = None;
+    let Measurement::Balance(control) = zero_start.measure().unwrap() else {
+        panic!("expected WB");
+    };
+    editor.document.visit.ready.as_mut().unwrap().reference = None;
+    let Measurement::Balance(balance) = captured.measure().unwrap() else {
+        panic!("expected WB");
+    };
+
+    let rendered = |balance| {
+        let target = AdjustmentLayer::global(AdjustmentLayerSettings {
+            wb: balance,
+            ..Default::default()
+        });
+        let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
+            InputSettings::Digital,
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![upstream, target]).unwrap(),
+            scan.positive_matrix(&InputSettings::Digital).unwrap(),
+        )
+        .unwrap();
+        let mut mean = DVec3::ZERO;
+        for y in patch.y..patch.y + patch.height {
+            for x in patch.x..patch.x + patch.width {
+                mean += pipeline
+                    .apply(scan.pixel(x, y).unwrap(), [x, y])
+                    .unwrap()
+                    .rgb;
+            }
+        }
+        mean / f64::from(patch.width * patch.height)
+    };
+    let correct = rendered(balance);
+    let wrong = rendered(control);
+    let chroma =
+        |rgb: DVec3| (rgb - DVec3::splat(rgb.y)).abs().max_element() / rgb.abs().max_element();
+    assert!(
+        chroma(wrong) > 1e-3,
+        "control must distinguish the lost baseline: {wrong:?}"
+    );
+    assert!(
+        chroma(correct) < 1e-7,
+        "captured pick must neutralize the displayed patch: {correct:?}"
+    );
 }

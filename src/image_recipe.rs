@@ -11,12 +11,26 @@ use crate::{
 use std::sync::Arc;
 
 /// Source identity and upstream interpretation. File freshness is supplied by each source owner.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct NeutralRecipe {
     pub source: SourceId,
     pub source_development: SourceDevelopment,
     pub input: InputSettings,
+    pub reference: Option<crate::exposure_reference::ReferenceExposure>,
     pub correction: Option<Arc<FlatField>>,
+}
+
+impl PartialEq for NeutralRecipe {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+            && self.source_development == other.source_development
+            && self.input == other.input
+            && self.correction == other.correction
+            // Estimator diagnostics are persisted, but only the gain affects pixels.
+            && (self.input.is_negative()
+                || self.reference.as_ref().map(|value| value.ev())
+                    == other.reference.as_ref().map(|value| value.ev()))
+    }
 }
 
 /// Accepted state only: drafts, cache readiness and consumer format do not belong here.
@@ -178,6 +192,17 @@ impl Project {
                 source: source.id,
                 source_development: source.development.clone(),
                 input: *input,
+                reference: self
+                    .exposure_metadata
+                    .as_ref()
+                    .filter(|metadata| metadata.valid())
+                    .and_then(|metadata| {
+                        metadata
+                            .entries
+                            .iter()
+                            .find(|entry| entry.source == source.id)
+                    })
+                    .map(|entry| entry.reference.clone()),
                 correction: self.active_flat_field().map(|field| field.map.clone()),
             },
             roll,

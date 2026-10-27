@@ -47,13 +47,16 @@ impl FileKey {
     pub(crate) fn new(path: &Path) -> Self {
         Self {
             path: path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
-            // Unavailable stats disable reuse; authoritative loading reports source errors.
+            // Missing metadata leaves persisted cache identity unavailable.
             revision: FileRevision::read(path).ok(),
         }
     }
 
-    #[cfg(all(feature = "raw", feature = "project"))]
-    pub(crate) fn current_at(&self, locator: &Path) -> bool {
-        self.revision.is_some() && Self::new(locator) == *self
+    #[cfg(feature = "editor")]
+    pub(crate) fn unversioned(path: &Path) -> Self {
+        Self {
+            path: path.to_owned(),
+            revision: None,
+        }
     }
 }

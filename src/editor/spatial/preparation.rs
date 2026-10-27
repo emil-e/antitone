@@ -64,13 +64,6 @@ pub(super) async fn prepare(
                 document::verify_source(captured.project.source(input.source)?, &actual)?;
                 document::verify_scan(&actual, &scan)?;
                 captured.project.require_scan_source(&actual.development)?;
-                if crate::source_revision::FileRevision::read(&path).ok()
-                    != Some(input.revision.clone())
-                {
-                    return Err(Error::UnusableSample(
-                        "source changed during spatial preparation",
-                    ));
-                }
                 let (w, h, pixels) = scan.measurement_preview(768, input.code_scale)?;
                 let rgb: Vec<_> = pixels.into_iter().map(|p| [p[0], p[1], p[2]]).collect();
                 let evidence = Evidence::observe([w, h], &rgb)?;

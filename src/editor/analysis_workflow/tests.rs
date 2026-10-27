@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{Document, Preparation, Thumbnails, development, source},
+    editor::{Document, Preparation, Thumbnails, source, source_loading},
 };
 use std::{
     cell::RefCell,
@@ -12,7 +12,7 @@ use std::{
 
 pub(super) const LIMIT: Duration = Duration::from_secs(20);
 
-pub(super) fn fixture(scheduler: development::Scheduler) -> Editor {
+pub(super) fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
     let mut editor = crate::editor::tests::fixture();
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
@@ -24,10 +24,9 @@ pub(super) fn fixture(scheduler: development::Scheduler) -> Editor {
             .await
             .unwrap()
     });
-    let initial = development::Scheduler::new();
+    let initial = source_loading::SourceLoader::new();
     editor.source_services = Some(source::Services {
         developments: initial.clone(),
-        jobs: editor.workflow_jobs.clone(),
         renderers: Arc::default(),
         device,
         queue,
@@ -37,7 +36,7 @@ pub(super) fn fixture(scheduler: development::Scheduler) -> Editor {
     let paths = [root.join("roll-0.dng"), root.join("roll-1.dng")];
     let mut document = Document::default();
     document.import(&paths).unwrap();
-    document.cache().set_budget(0);
+    editor.document.cache.set_budget(0);
     editor.document.install(document);
     let owner = RefCell::new(Some(editor));
     {
@@ -51,7 +50,7 @@ pub(super) fn fixture(scheduler: development::Scheduler) -> Editor {
     editor.source_services.as_mut().unwrap().developments = scheduler;
     // Source promotion applies the configured cache budget. Disable optional
     // retention afterward; the live selected source may still be reused.
-    editor.document.cache().set_budget(0);
+    editor.document.cache.set_budget(0);
     initial.close_and_wait().unwrap();
     editor
 }
@@ -66,12 +65,16 @@ pub(super) fn start(app: &TestApplication<'_, Editor>) {
     });
 }
 
-fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
+fn paused() -> (
+    source_loading::SourceLoader,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             entered.send(()).unwrap();
             resume.lock().unwrap().recv_timeout(LIMIT).unwrap();
         }
@@ -102,7 +105,7 @@ pub(super) fn await_native(app: &mut TestApplication<'_, Editor>, starts: &mpsc:
 
 #[test]
 fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
     with_application(editor, |app| {
@@ -120,7 +123,7 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
             assert_eq!(e.pick, Some(crate::editor::Pick::Analysis));
             assert!(!e.busy);
             assert!(e.tasks.view().is_none());
-            assert_eq!(e.document.cache().charges().retained, 0);
+            assert_eq!(e.document.cache.charges().retained, 0);
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -128,15 +131,15 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
 
 #[test]
 fn queued_user_cancel_acknowledges_without_starting_native_work() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
-    let jobs = editor.workflow_jobs.clone();
-    let admission = jobs.hold();
+    let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         start(app);
         app.pump();
         app.update(Editor::cancel_analysis);
+        drop(admission);
         app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
         app.read(|e| {
             assert!(!e.busy && e.document.analysis_review.is_none());
@@ -144,17 +147,15 @@ fn queued_user_cancel_acknowledges_without_starting_native_work() {
             assert!(e.tasks.view().is_none());
         });
         assert_eq!(scheduler.waiter_count(), 0);
-        drop(admission);
     });
     scheduler.close_and_wait().unwrap();
 }
 
 #[test]
-fn native_demand_cancellation_acknowledges_without_releasing_producer_cleanup_admission() {
+fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work() {
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -169,16 +170,13 @@ fn native_demand_cancellation_acknowledges_without_releasing_producer_cleanup_ad
         let probe = app
             .access()
             .spawn(move |_| async move {
-                jobs.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(matches!(
-            observed.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        release.send(()).unwrap();
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());
+        release.send(()).unwrap();
         drop(probe);
         app.read(|e| assert_eq!(e.document.project, before));
     });
@@ -190,7 +188,6 @@ fn document_drop_and_application_close_retire_preparation_before_native_completi
     for close_application in [false, true] {
         let (scheduler, starts, release) = paused();
         let editor = fixture(scheduler.clone());
-        let jobs = editor.workflow_jobs.clone();
         with_application(editor, |app| {
             start(app);
             await_native(app, &starts);
@@ -210,12 +207,10 @@ fn document_drop_and_application_close_retire_preparation_before_native_completi
             }
             assert!(cancelled.is_cancelled());
             assert_eq!(scheduler.waiter_count(), 0);
-            assert!(!jobs.idle());
             app.read(|e| assert!(e.document.analysis_review.is_none()));
             release.send(()).unwrap();
         });
         scheduler.close_and_wait().unwrap();
-        assert!(jobs.idle());
     }
 }
 
@@ -276,7 +271,7 @@ fn live_edits_while_native_preparation_runs_discard_the_draft() {
 
 #[test]
 fn unavailable_services_finish_the_activity_without_opening_review() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     let mut editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
     editor.source_services = None;

@@ -27,11 +27,23 @@ pub(crate) fn write(
         Ok(())
     };
     check()?;
-    job.recipe.neutral.require_scan(job.scan)?;
-    let prepared = crate::source_store::SourceStore::new(0)
-        .prepare_source(job.recipe.neutral.input, job.scan.source())?;
-    let mut scan = Scan::from_source(prepared.source);
+
+    let reference = job
+        .recipe
+        .neutral
+        .reference
+        .clone()
+        .or_else(|| job.scan.reference_exposure.clone())
+        .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from);
+    let prepared = crate::photo_preparation::native(
+        None,
+        &reference,
+        job.recipe.neutral.input,
+        job.scan.source(),
+    )?;
+    let mut scan = prepared.scan();
     scan.set_flat_field(job.scan.flat_field().cloned())?;
+    job.recipe.neutral.require_scan(&scan)?;
     let input = job.recipe.neutral.input;
     let repairs = timed!(
         SourcePrepare,

@@ -37,7 +37,6 @@ async fn gpu() -> (wgpu::Device, wgpu::Queue) {
 
 fn proxy() -> Arc<Proxy> {
     Arc::new(Proxy {
-        reference_exposure: Default::default(),
         width: 3,
         height: 2,
         pixels: vec![[8000., 6000., 4000., 0.]; 6].into(),
@@ -77,7 +76,7 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
         .unwrap();
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     editor.thumbnails.seed(
         editor.document.project.source(id).unwrap(),
         FileKey::new(&path),
@@ -377,7 +376,7 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
 }
 
 #[test]
-fn unavailable_changed_or_incompatible_cached_sources_keep_the_loading_placeholder() {
+fn incompatible_cached_sources_keep_the_loading_placeholder() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
@@ -389,24 +388,26 @@ fn unavailable_changed_or_incompatible_cached_sources_keep_the_loading_placehold
                 let id = add_source(editor, path.clone());
                 editor.load(path.clone(), cx);
                 assert!(editor.pending_preview.is_some());
-                std::fs::write(&path, b"intentionally changed file stats").unwrap();
-                editor.validate_pending_preview();
-                assert!(editor.pending_preview.is_none());
-                editor.load(path.clone(), cx);
-                assert!(editor.pending_preview.is_none());
                 assert!(editor.document.visit.ready.is_none());
                 assert!(editor.busy);
                 editor.thumbnails.seed(
                     editor.document.project.source(id).unwrap(),
-                    FileKey::new(&path),
+                    editor.document.file_key(&path),
                     proxy(),
                 );
-                editor.document.project.development_mut().unwrap().fixed_wb[0] *= 1.01;
+                editor
+                    .document
+                    .project
+                    .source_mut(id)
+                    .unwrap()
+                    .development
+                    .dimensions[0] += 1;
+                editor
+                    .validate_document_candidate(&editor.document)
+                    .unwrap();
                 editor.load(path.clone(), cx);
                 assert!(editor.pending_preview.is_none());
-                std::fs::remove_file(&path).unwrap();
-                editor.load(path, cx);
-                assert!(editor.pending_preview.is_none());
+
                 assert_eq!(
                     editor
                         .source_input(editor.document.source_path(id).unwrap())
@@ -493,6 +494,7 @@ fn authoritative_ready_replaces_pending_and_active_proxy_survives_optional_press
                 editor.validate_pending_preview();
                 assert!(editor.pending_preview.is_some());
                 let ready = Ready {
+                    reference: None,
                     developed: crate::editor::tests::developed_fixture(),
                     file: thumbnails::FileKey::new(&path),
                     thumbnail: None,

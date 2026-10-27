@@ -134,7 +134,7 @@ fn captured_export_completes_without_paint_and_survives_document_retirement() {
 }
 
 #[test]
-fn superseded_export_keeps_physical_admission_until_its_submitted_gpu_work_retires() {
+fn superseded_export_discards_old_output_and_publishes_the_captured_replacement() {
     let editor = fixture();
     let (starts, release) = hold_first_submission(&editor);
     let directory = tempfile::tempdir().unwrap();
@@ -168,10 +168,9 @@ fn superseded_export_keeps_physical_admission_until_its_submitted_gpu_work_retir
         assert!(cancelled.is_cancelled());
         app.read(|editor| {
             assert_ne!(editor.export_operation.pending, Some(id));
-            assert!(!editor.workflow_jobs.idle());
             assert!(editor.busy);
         });
-        assert!(!old.exists() && !new.exists());
+        assert!(!old.exists());
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(30), |editor| {
             editor.export_operation.pending.is_none()
@@ -189,10 +188,9 @@ fn superseded_export_keeps_physical_admission_until_its_submitted_gpu_work_retir
 }
 
 #[test]
-fn application_retirement_signals_stop_but_retains_the_admitted_export_source_until_cleanup() {
+fn application_retirement_signals_stop_but_keeps_the_export_source_until_cleanup() {
     let editor = fixture();
     let (starts, release) = hold_first_submission(&editor);
-    let jobs = editor.workflow_jobs.clone();
     let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("retired.tif");
@@ -211,13 +209,11 @@ fn application_retirement_signals_stop_but_retains_the_admitted_export_source_un
         assert!(cancelled.is_cancelled());
         app.update(|editor| editor.document = Document::default().into());
         assert!(source.upgrade().is_some());
-        assert!(!jobs.idle());
     });
     assert!(source.upgrade().is_some());
-    assert!(!jobs.idle());
     release.send(()).unwrap();
     let start = Instant::now();
-    while !jobs.idle() || source.upgrade().is_some() {
+    while source.upgrade().is_some() {
         assert!(
             start.elapsed() < Duration::from_secs(30),
             "retired export did not release its physical inputs"

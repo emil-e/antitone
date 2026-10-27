@@ -31,6 +31,8 @@ pub(super) fn service_job(
         })
         .flatten();
     Job {
+        cancelled: crate::cancellation::Cancellation::default(),
+        reference: Arc::default(),
         ticket: thumbnails
             .generation
             .load(std::sync::atomic::Ordering::Relaxed),
@@ -41,9 +43,9 @@ pub(super) fn service_job(
         store: thumbnails.sources.clone(),
         render,
         priority: if render {
-            development::Priority::Visible
+            source_loading::Priority::Visible
         } else {
-            development::Priority::Eager
+            source_loading::Priority::Eager
         },
         previous,
     }
@@ -147,7 +149,7 @@ pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
         },
         source: SourceKey::new(
             document.project.source(id).unwrap(),
-            FileKey::new(&document.source_path(id).unwrap()),
+            document.file_key(&document.source_path(id).unwrap()),
         ),
         target: OutputTarget::DisplayP3,
         field: document
@@ -166,7 +168,6 @@ fn transient_reference_with_the_same_development_cannot_seed_the_working_photo()
     ready.thumbnail = Some((
         FileKey::new(&ready.record.path),
         Arc::new(Proxy {
-            reference_exposure: Default::default(),
             width: 1,
             height: 1,
             pixels: vec![[0.; 4]].into(),
@@ -228,16 +229,18 @@ fn file_stats_and_resolved_locators_keep_cache_revisions_separate() {
 }
 
 #[test]
-fn queued_thumbnail_results_do_not_install_after_file_stats_change() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("photo.ARW");
-    std::fs::write(&path, b"before").unwrap();
+fn queued_thumbnail_results_do_not_install_after_source_development_changes() {
     let mut document = fixture();
     let id = document.project.order[0];
-    document.project.source_mut(id).unwrap().path = path.clone();
     let (mut thumbnails, _requests) = controlled();
     let (ticket, key) = typed_ticket(&mut thumbnails, key(&document, id));
-    std::fs::write(&path, b"after a deliberate edit").unwrap();
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .development
+        .decode
+        .fixed_wb[0] *= 2.;
     thumbnails.complete(
         Outcome {
             ticket,
@@ -874,7 +877,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
         let visible = take_submission(app, &requests);
         assert_eq!(visible.job.key.source.id, first);
-        assert_eq!(visible.job.priority, development::Priority::Visible);
+        assert_eq!(visible.job.priority, source_loading::Priority::Visible);
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
         app.pump();
         assert!(matches!(
@@ -888,7 +891,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
             !eager.job.render,
             "original refinement keeps optional GPU priority"
         );
-        assert_eq!(eager.job.priority, development::Priority::Eager);
+        assert_eq!(eager.job.priority, source_loading::Priority::Eager);
     });
 }
 
@@ -951,21 +954,6 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
                 Err(mpsc::TryRecvError::Empty)
             ));
         }
-        let last = app.read(|e| *e.document.project.order.last().unwrap());
-        std::fs::write(
-            app.read(|e| e.document.source_path(last).unwrap()),
-            b"changed revision",
-        )
-        .unwrap();
-        app.enter(|e, cx| {
-            filmstrip_frame(
-                e,
-                &context,
-                memory::CacheBudgets::new(e.thumbnails.limits, memory::Pressure::Normal),
-                cx,
-            )
-        });
-        assert_eq!(take_submission(app, &requests).job.key.source.id, last);
     });
 }
 
@@ -1056,7 +1044,7 @@ fn filmstrip_frame(
 ) {
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1216,7 +1204,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         let visible = take_submission(app, &requests);
         assert_ne!(retry.job.ticket, visible.job.ticket);
         assert_eq!(visible.job.key.source.id, first);
-        assert_eq!(visible.job.priority, development::Priority::Visible);
+        assert_eq!(visible.job.priority, source_loading::Priority::Visible);
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
         app.pump();
         assert!(matches!(
@@ -1261,9 +1249,9 @@ fn memory_pressure_suspends_idle_prefetch_without_blocking_allowed_visible_work(
             assert_eq!(
                 submitted.job.priority,
                 if pressure == memory::Pressure::Normal {
-                    development::Priority::Eager
+                    source_loading::Priority::Eager
                 } else {
-                    development::Priority::Visible
+                    source_loading::Priority::Visible
                 }
             );
             app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
@@ -1282,7 +1270,7 @@ fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
     editor.thumbnails.cache.retain(|_, _| false);
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     let ids = editor.document.project.order.clone();
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
@@ -1294,7 +1282,7 @@ fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
             let submitted = take_submission(app, &requests);
             assert_eq!(submitted.job.key.source.id, id);
             assert!(!submitted.job.render);
-            assert_eq!(submitted.job.priority, development::Priority::Eager);
+            assert_eq!(submitted.job.priority, source_loading::Priority::Eager);
             finish_submission(submitted, Ok(None), true);
         }
         app.pump();
@@ -1328,7 +1316,7 @@ fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
             e.thumbnails.demand = Demand::Visible(vec![id]);
@@ -1365,7 +1353,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
     editor.thumbnails.services = Some(Services { commands });
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
@@ -1374,7 +1362,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
                 e.document.source_path(last).unwrap(),
                 e.document.project.source(last).unwrap().clone(),
                 true,
-                development::Priority::Eager,
+                source_loading::Priority::Eager,
                 cx,
             )
         });
@@ -1535,7 +1523,6 @@ fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
         source,
         FileKey::new(&document.source_path(source.id).unwrap()),
         Arc::new(Proxy {
-            reference_exposure: Default::default(),
             width: 1,
             height: 1,
             pixels: vec![[0.; 4]].into(),
@@ -1558,12 +1545,11 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     editor.thumbnails.seed(
         editor.document.project.source(id).unwrap(),
         FileKey::new(&editor.document.source_path(id).unwrap()),
         Arc::new(Proxy {
-            reference_exposure: Default::default(),
             width: 1,
             height: 1,
             pixels: vec![[1.; 4]].into(),
@@ -1600,7 +1586,7 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
 }
 
 #[test]
-fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_stale_revisions() {
+fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -1630,7 +1616,6 @@ fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_st
         disk.store(
             &SourceKey::new(&source, FileKey::new(&path)),
             &Proxy {
-                reference_exposure: Default::default(),
                 width: 2,
                 height: 1,
                 pixels: vec![[1., 2., 3., 0.]; 2].into(),
@@ -1686,6 +1671,7 @@ fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_st
             "a fresh session must grade its disk camera proxy without reopening the RAW"
         );
         std::fs::write(&path, b"changed").unwrap();
+        document.capture_source_files().unwrap();
         let mut restarted = Thumbnails::with_disk(
             device,
             queue,

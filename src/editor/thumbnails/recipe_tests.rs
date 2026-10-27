@@ -12,7 +12,7 @@ fn gpu() -> (wgpu::Device, wgpu::Queue) {
     })
 }
 
-fn document() -> Document {
+fn document() -> crate::editor::document_scope::DocumentScope {
     let mut document = Document::default();
     document
         .import(&[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")])
@@ -22,7 +22,7 @@ fn document() -> Document {
     document
         .project
         .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
-    document
+    document.into()
 }
 
 fn complete(
@@ -58,7 +58,7 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     )
     .unwrap();
     let proxy = Arc::new(Proxy::from_scan(&scan).unwrap());
-    thumbnails.bind_sources(document.cache().clone());
+    thumbnails.bind_sources(document.cache.clone(), &document);
     thumbnails.seed(
         &source,
         FileKey::new(&document.source_path(id).unwrap()),
@@ -186,19 +186,18 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
     );
     // This document has locator-only files, not decodable RAWs: the published
     // camera proxy is the only available image source.
-    let mut document = tests::fixture();
+    let mut document: crate::editor::document_scope::DocumentScope = tests::fixture().into();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
     document
         .project
         .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let id = document.project.order[0];
-    thumbnails.bind_sources(document.cache().clone());
+    thumbnails.bind_sources(document.cache.clone(), &document);
     thumbnails.seed(
         document.project.source(id).unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
         Arc::new(Proxy {
-            reference_exposure: Default::default(),
             width: 8,
             height: 6,
             pixels: vec![[5000., 7000., 9000., 0.]; 48].into(),
@@ -341,7 +340,7 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
     let initial_key = tests::key(&document, id);
     complete(&mut thumbnails, &document, initial_key.clone()).unwrap();
     let mut editor = Editor::state();
-    editor.document = document.into();
+    editor.document = document;
     editor.thumbnails = thumbnails;
     editor.load_input(editor.document.project.input);
     editor.current_source = Some(id);
@@ -567,7 +566,7 @@ fn previous_card_presentation_requires_matching_source_framing_and_target() {
 #[test]
 fn cpu_look_charges_follow_node_allocations_not_equal_contents_or_wrapper_identity() {
     use crate::looks::{LookAsset, LookOrigin, Lut3D};
-    let mut document = tests::fixture();
+    let mut document: crate::editor::document_scope::DocumentScope = tests::fixture().into();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
     document
@@ -638,7 +637,7 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     editor.thumbnails.set_limits(cache_limits::CacheLimits {
         cpu_bytes: 0,
         gpu_bytes: 64 << 20,
@@ -749,7 +748,8 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
         )
         .unwrap(),
     ));
-    thumbnails.bind_sources(document.cache().clone());
+    let document: crate::editor::document_scope::DocumentScope = document.into();
+    thumbnails.bind_sources(document.cache.clone(), &document);
     for &id in &document.project.order {
         let product = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
         assert!(product.positive.is_some());

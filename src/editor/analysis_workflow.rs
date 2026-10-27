@@ -101,7 +101,13 @@ impl Editor {
         self.document.analysis_preparing = Some(pending);
         self.busy = true;
         self.status = "Preparing per-photo analysis areas…".into();
-        let services = self.source_services.as_ref().map(Services::from);
+        let services = self.source_services.as_ref().map(|source| {
+            Services::new(
+                source,
+                self.document.cache.clone(),
+                self.document.exposures.clone(),
+            )
+        });
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
         let retire = cancelled.cancel_on_drop();
@@ -160,7 +166,13 @@ impl Editor {
         self.document.analysis_pending = Some(pending);
         self.busy = true;
         self.status = "Analyzing roll…".into();
-        let services = self.source_services.as_ref().map(Services::from);
+        let services = self.source_services.as_ref().map(|source| {
+            Services::new(
+                source,
+                self.document.cache.clone(),
+                self.document.exposures.clone(),
+            )
+        });
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
         let retire = cancelled.cancel_on_drop();

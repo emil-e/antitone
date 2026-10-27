@@ -11,22 +11,20 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
             ([2949, 11796, 5898], -14.),
         ] {
             let file = crate::raw::fixture::bayer_dng_with_rgb(rgb);
-            let scan = Scan::from_raw(
+            let mut scan = Scan::from_raw(
                 crate::raw::RawFile::open_uncorrected(file.path()).unwrap(),
                 Some([4., 1., 2., 1.]),
             )
             .unwrap();
             if ev != 0. {
-                scan.source()
-                    .reference_exposure
-                    .set(crate::exposure_reference::ReferenceExposure::Matched(
+                scan.reference_exposure =
+                    Some(crate::exposure_reference::ReferenceExposure::Matched(
                         crate::exposure_reference::StartingExposure {
                             ev,
                             samples: 1024,
                             spread: 0.,
                         },
-                    ))
-                    .unwrap();
+                    ));
             }
             let gain = ev.exp2();
             let expected = scan.camera_to_ap1

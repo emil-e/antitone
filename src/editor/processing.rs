@@ -138,7 +138,7 @@ impl Editor {
             .ready
             .as_ref()
             .ok_or(Error::InvalidParameter("positive source unavailable"))?;
-        let mut scan = Scan::from_source(ready.developed.clone());
+        let mut scan = Scan::with_reference(ready.developed.clone(), ready.reference.clone());
         scan.set_flat_field(
             self.correction
                 .as_ref()
@@ -172,14 +172,20 @@ impl Editor {
             input,
             roll,
             snapshot,
-            ready.developed.positive_matrix(&input)?,
+            crate::scan::positive_matrix(
+                &input,
+                ready.developed.camera_to_ap1(),
+                ready.reference.as_ref(),
+            )?,
             ready.area,
             bound,
         )
     }
 
     pub(super) fn validate_document_candidate(&self, document: &Document) -> Result<(), Error> {
-        document.validate_with_device(self.grades.device.as_ref())
+        let mut candidate = document.clone();
+        candidate.capture_exposure(&self.document.exposures);
+        candidate.validate_with_device(self.grades.device.as_ref())
     }
 
     pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {
@@ -217,6 +223,7 @@ impl Editor {
             .document
             .project
             .image_recipe_for_source(&candidate, &input, roll)?;
+        recipe.neutral.reference = self.document.exposure_value(source);
         recipe.film_emulation = self.film_emulation;
         recipe.neutral.correction = self
             .correction

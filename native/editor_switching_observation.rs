@@ -164,12 +164,12 @@ fn workload(
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
     let native_monitor = monitor.clone();
-    let scheduler = development::Scheduler::new_observed(move |path, phase, metadata| {
+    let scheduler = source_loading::SourceLoader::new_observed(move |path, phase, metadata| {
         native_monitor.check()?;
         if let Some(metadata) = metadata {
             calibration::source_bound(metadata)?;
         }
-        if matches!(phase, development::NativePhase::UnpackBegin) {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             observed.fetch_add(1, Ordering::Relaxed);
         }
         println!(
@@ -202,29 +202,25 @@ fn workload(
     });
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone(), &editor.document);
     editor.set_dmin(Some(DVec3::new(0.28, 0.20, 0.14)));
     editor.set_dmax(Some(DVec3::new(0.028, 0.020, 0.014)));
     editor.sync_document();
     editor.initialize_viewer(device, queue);
-    let jobs = editor.workflow_jobs.clone();
     editor.source_services = Some(source::Services {
         developments: scheduler.clone(),
-        jobs: jobs.clone(),
         renderers: renderers.clone(),
         device: device.clone(),
         queue: queue.clone(),
     });
     let screening = Arc::new(crate::gpu::dust_screening::Cache::default());
     editor.dust_services = Some(dust_workflow::Services::new(
-        jobs.clone(),
         device.clone(),
         queue.clone(),
         editor.submissions.clone(),
         screening.clone(),
     ));
     editor.export_services = Some(export_services::Services::new(
-        jobs,
         renderers.clone(),
         device.clone(),
         queue.clone(),
@@ -355,7 +351,7 @@ fn workload(
                     count.load(Ordering::Relaxed),
                     per_ui.iter().copied().fold(0., f64::max) * 1000.,
                     per_frame.iter().copied().fold(0., f64::max) * 1000.,
-                    app.read(|e| e.document.cache().charges().retained),
+                    app.read(|e| e.document.cache.charges().retained),
                     app.read(|e| e.thumbnails.ready_count(&e.document, e.target))
                 );
             }
@@ -380,7 +376,7 @@ fn workload(
             editor.original.invalidate();
             editor.working.clear();
             editor.source_epoch.fetch_add(1, Ordering::Relaxed);
-            editor.document.cache().close();
+            editor.document.cache.close();
             editor.thumbnails.cancel();
             editor.thumbnails.services.take();
         });

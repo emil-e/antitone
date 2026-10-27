@@ -28,9 +28,11 @@ use std::{
 
 mod cache_limits;
 mod controls;
-mod development;
+
+use crate::source as source_loading;
+
 mod source;
-use source::Cache as LoadCache;
+
 mod document;
 mod document_scope;
 use document_scope::DocumentScope;
@@ -148,6 +150,7 @@ struct PickView {
 #[derive(Clone)]
 struct Ready {
     developed: Arc<crate::scan::DevelopedSource>,
+    reference: Option<crate::exposure_reference::ReferenceExposure>,
     file: thumbnails::FileKey,
     thumbnail: Option<(thumbnails::FileKey, Arc<thumbnails::Proxy>)>,
     path: PathBuf,
@@ -197,7 +200,7 @@ fn prepare_source_cached(
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
-    cache: Option<&LoadCache>,
+    cache: Option<(&Arc<crate::source::SourceCache>, thumbnails::FileKey)>,
 ) -> Result<(Ready, Scan), Error> {
     prepare_source_scheduled(
         renderers,
@@ -208,7 +211,7 @@ fn prepare_source_cached(
         expected,
         correction,
         cache,
-        &development::Scheduler::new(),
+        &source_loading::SourceLoader::new(),
         &|| false,
     )
 }
@@ -223,17 +226,21 @@ fn prepare_source_scheduled(
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
-    cache: Option<&LoadCache>,
-    developments: &development::Scheduler,
+    cache: Option<(&Arc<crate::source::SourceCache>, thumbnails::FileKey)>,
+    developments: &source_loading::SourceLoader,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Ready, Scan), Error> {
     let developed = source::Request {
+        reference: Arc::default(),
         input: Default::default(),
-        path,
+        path: path.clone(),
         wb,
         expected: expected.cloned(),
         correction: correction.cloned(),
-        cache: cache.cloned(),
+        file: cache
+            .as_ref()
+            .map_or_else(|| thumbnails::FileKey::new(&path), |(_, file)| file.clone()),
+        cache: cache.map(|(cache, _)| cache.clone()),
     }
     .load(developments, cancelled)?;
     let scan = developed.context.scan()?;
@@ -255,7 +262,6 @@ pub struct Editor {
     viewport: Viewport,
     fullscreen: Option<FullscreenView>,
     // Running physical work outlives logical cancellation.
-    workflow_jobs: crate::blocking_jobs::BlockingJobs,
     id: u64,
     pending_preview: Option<thumbnails::SelectedPreview>,
     preview_rendered: Option<(
@@ -322,7 +328,7 @@ pub struct Editor {
     export_summary: Option<export_batch::Summary>,
     correction: Option<Arc<Correction>>,
     flat_edit: Option<FlatEdit>,
-    developments: Option<development::Scheduler>,
+    developments: Option<source_loading::SourceLoader>,
     source_services: Option<source::Services>,
     source_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
@@ -332,7 +338,7 @@ impl Editor {
         let submissions = crate::platform::SubmissionGate::default();
         let renderers = Arc::new(crate::renderer::RendererCache::new(submissions.clone()));
         renderers.prewarm(device.clone(), queue.clone());
-        let developments = development::Scheduler::new();
+        let developments = source_loading::SourceLoader::new();
         let thumbnails = Thumbnails::new(
             device.clone(),
             queue.clone(),
@@ -347,9 +353,7 @@ impl Editor {
         editor.input = editor.document.project.input;
         editor.submissions = submissions.clone();
         editor.initialize_viewer(&device, &queue);
-        let jobs = editor.workflow_jobs.clone();
         editor.look_services = Some(look_workflow::Services::new(
-            jobs.clone(),
             renderers.clone(),
             device.clone(),
             queue.clone(),
@@ -357,21 +361,18 @@ impl Editor {
         ));
         editor.source_services = Some(source::Services {
             developments: developments.clone(),
-            jobs: jobs.clone(),
             renderers: renderers.clone(),
             device: device.clone(),
             queue: queue.clone(),
         });
         let screening = Arc::new(crate::gpu::dust_screening::Cache::default());
         editor.dust_services = Some(dust_workflow::Services::new(
-            jobs.clone(),
             device.clone(),
             queue.clone(),
             submissions.clone(),
             screening.clone(),
         ));
         editor.export_services = Some(export_services::Services::new(
-            jobs,
             renderers,
             device,
             queue,
@@ -387,7 +388,7 @@ impl Editor {
         editor.thumbnails = thumbnails;
         editor
             .thumbnails
-            .bind_sources(editor.document.cache().clone());
+            .bind_sources(editor.document.cache.clone(), &editor.document);
         editor.preferences.cache_limits = Some(editor.thumbnails.limits);
         editor.scopes = scopes;
         editor
@@ -413,7 +414,7 @@ impl Editor {
     }
 
     fn state() -> Self {
-        let mut document = Document::default();
+        let document = Document::default();
         let input = InputSettings::Negative {
             dmin: None,
             dmax: None,
@@ -422,9 +423,9 @@ impl Editor {
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: Balance::default(),
         };
-        let _ = &mut document;
+        let document: document_scope::DocumentScope = document.into();
         let mut thumbnails = Thumbnails::default();
-        thumbnails.bind_sources(document.cache().clone());
+        thumbnails.bind_sources(document.cache.clone(), &document);
         Self {
             submissions: crate::platform::SubmissionGate::default(),
             developments: None,
@@ -441,7 +442,6 @@ impl Editor {
             fullscreen: None,
             started: false,
             menus: menu::Menus::default(),
-            workflow_jobs: crate::blocking_jobs::BlockingJobs::new(1),
             id: 0,
             pending_preview: None,
             preview_rendered: None,
@@ -484,7 +484,7 @@ impl Editor {
             #[cfg(test)]
             history_snapshot_clones: 0,
             control_commands: Vec::new(),
-            document: document.into(),
+            document,
             candidate_operation: document_workflow::State::default(),
             current_source: None,
             next_request: 0,
@@ -760,7 +760,8 @@ impl Editor {
     }
 
     fn seed_thumbnail(&mut self) {
-        self.thumbnails.bind_sources(self.document.cache().clone());
+        self.thumbnails
+            .bind_sources(self.document.cache.clone(), &self.document);
         let Some(ready) = &mut self.document.visit.ready else {
             return;
         };
@@ -1559,7 +1560,7 @@ impl host::App for Editor {
         if let Some(developments) = &self.developments {
             developments.close();
         }
-        self.document.cache().close();
+        self.document.cache.close();
         self.thumbnails.cancel();
         if let Some(store) = &mut self.preference_store
             && let Err(error) = store.save(&self.preferences)

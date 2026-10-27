@@ -1,26 +1,11 @@
 use super::*;
 use crate::editor::analysis_review;
 
-fn copied_supporter(editor: &mut Editor, dir: &std::path::Path) -> std::path::PathBuf {
-    let id = editor.document.project.order[1];
-    let path = dir.join("supporter.dng");
-    std::fs::copy(editor.document.source_path(id).unwrap(), &path).unwrap();
-    editor.document.project.source_mut(id).unwrap().path = path.clone();
-    path
-}
-
-fn revise(path: &std::path::Path) {
-    let mut bytes = std::fs::read(path).unwrap();
-    bytes.extend_from_slice(b"a fresh revision without changing declared sensor data");
-    std::fs::write(path, bytes).unwrap();
-}
-
 #[test]
-fn a_completed_reply_waiting_for_the_ui_cannot_publish_after_a_supporting_peer_changes() {
+fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
     let (scheduler, _) = observed();
     let mut editor = fixture(scheduler.clone());
-    let dir = tempfile::tempdir().unwrap();
-    let peer = copied_supporter(&mut editor, dir.path());
+    let peer = editor.document.project.order[1];
     let metadata = supplied(&mut editor);
     editor.roll_selection = Default::default();
     editor
@@ -31,16 +16,28 @@ fn a_completed_reply_waiting_for_the_ui_cannot_publish_after_a_supporting_peer_c
         app.enter(|editor, cx| {
             editor.request_auto_crop(auto_crop::Target::Selected, cx);
             let request = editor.document.spatial_preparing.as_ref().unwrap().id;
-            // Supply the completed old capture before the deferred task starts. Only the
-            // non-target peer changes, so target-only proposal freshness cannot catch this.
-            revise(&peer);
+            editor
+                .document
+                .project
+                .source_mut(peer)
+                .unwrap()
+                .development
+                .active_area[2] -= 1;
             editor.spatial_result(request, Ok(Some(metadata)), cx);
             assert!(editor.document.spatial_preparing.is_none());
             assert!(
                 editor.document.auto_crop_edit.is_none(),
                 "stale peer dimensions must not reach a consumer"
             );
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(
+                editor
+                    .document
+                    .project
+                    .source(accepted.order[0])
+                    .unwrap()
+                    .crop,
+                accepted.sources[0].crop
+            );
             assert!(
                 editor
                     .document
@@ -59,13 +56,18 @@ fn a_completed_reply_waiting_for_the_ui_cannot_publish_after_a_supporting_peer_c
 fn analysis_verification_checks_hidden_dimension_supporters_not_only_visible_sampling_files() {
     let (scheduler, _) = observed();
     let mut editor = fixture(scheduler.clone());
-    let dir = tempfile::tempdir().unwrap();
-    let peer = copied_supporter(&mut editor, dir.path());
+    let peer = editor.document.project.order[1];
     supplied(&mut editor);
     editor.document.project.order.truncate(1);
-    let request = editor.analysis_request().unwrap();
+    let mut request = editor.analysis_request().unwrap();
     assert!(analysis_review::verify(&request).is_ok());
-    revise(&peer);
+    request
+        .document
+        .project
+        .source_mut(peer)
+        .unwrap()
+        .development
+        .active_area[2] -= 1;
     assert!(
         analysis_review::verify(&request).is_err(),
         "a hidden supporting observation is still a real dependency"
@@ -91,6 +93,7 @@ fn save_as_rebased_relative_locators_do_not_retire_a_completed_shared_result() {
     for source in &mut editor.document.project.sources {
         source.path = source.path.file_name().unwrap().into();
     }
+    editor.document.capture_source_files().unwrap();
     let metadata = supplied(&mut editor);
     editor.document.spatial = crate::spatial_metadata::Store::default();
     // Keep the saved project on the sources' volume: a relative locator cannot span volumes,

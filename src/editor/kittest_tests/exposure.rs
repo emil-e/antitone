@@ -65,9 +65,8 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 .ready
                 .as_ref()
                 .unwrap()
-                .developed
-                .reference_exposure
-                .get()
+                .reference
+                .as_ref()
                 .unwrap();
             assert!(matches!(
                 reference,
@@ -166,7 +165,7 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
         let (selected, native, development) = h.read(|editor| {
             assert!(editor.input.is_negative());
             let ready = editor.document.visit.ready.as_ref().unwrap();
-            assert!(ready.developed.reference_exposure.get().is_none());
+            assert!(ready.reference.as_ref().is_none());
             (
                 editor.current_source,
                 ready.developed.clone(),
@@ -191,9 +190,8 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
                 "the selected pixels must not be redeveloped"
             );
             let reference = ready
-                .developed
-                .reference_exposure
-                .get()
+                .reference
+                .as_ref()
                 .expect("Digital readiness must include preparation");
             assert!((reference.ev() - 1.3).abs() < 0.03, "{reference:?}");
             assert!(!editor.source);
@@ -230,11 +228,15 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
         ),
     )
     .unwrap();
-    document
-        .cache()
-        .prepare_source(document.project.input, native.source())
-        .unwrap();
-    document.save(&first, Save::New).unwrap();
+    let document: crate::editor::document_scope::DocumentScope = document.into();
+    crate::photo_preparation::native(
+        Some(&document.cache),
+        &document.exposure_slot(&document.exposures, id),
+        document.project.input,
+        native.source(),
+    )
+    .unwrap();
+    document.capture().save(&first, Save::New).unwrap();
     let mut saved = Project::load(&first).unwrap();
     let entry = &mut saved.exposure_metadata.as_mut().unwrap().entries[0];
     assert!((entry.reference.ev() - 1.3).abs() < 0.03);
@@ -283,9 +285,8 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
                             .ready
                             .as_ref()
                             .unwrap()
-                            .developed
-                            .reference_exposure
-                            .get(),
+                            .reference
+                            .as_ref(),
                         Some(&ReferenceExposure::Unavailable(
                             Unavailable::NoUsablePreview
                         ))

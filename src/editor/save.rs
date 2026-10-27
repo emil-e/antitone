@@ -22,7 +22,6 @@ impl Editor {
         self.document_failure = Some(FailureKind::Save);
         self.new_project_pending = false;
         let services = self.source_services.as_ref().map(|source| Services {
-            jobs: self.workflow_jobs.clone(),
             device: source.device.clone(),
         });
         let Some(task) = cx.spawn(move |cx| async move {

@@ -193,7 +193,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 gpu_bytes: 0,
             })
         });
-        harness.read(|editor| assert!(editor.document.cache().protected_bytes() > 0));
+        harness.read(|editor| assert!(editor.document.cache.protected_bytes() > 0));
         request_removal(&mut harness, "photo-1.dng");
         harness.get_by_label("Remove photos").click();
         harness.step();
@@ -207,10 +207,10 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         });
         harness.read(|editor| assert!(editor.correction.is_some()));
         wait_for(&mut harness, |e| {
-            let charges = e.document.cache().charges();
+            let charges = e.document.cache.charges();
             charges.retained == 0 && charges.leased_only == 0
         });
-        harness.read(|editor| assert_eq!(editor.document.cache().protected_bytes(), 0));
+        harness.read(|editor| assert_eq!(editor.document.cache.protected_bytes(), 0));
         save_capture(&harness.render().unwrap(), "roll-empty-offscreen");
         save_existing_project(&mut harness);
         native_file_action(&mut harness, crate::platform::menu::Action::New);

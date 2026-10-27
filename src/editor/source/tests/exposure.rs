@@ -16,31 +16,35 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
     document
         .import(&[first.path().to_owned(), second.path().to_owned()])
         .unwrap();
-    document.cache().set_budget(64 << 20);
+    let mut document: DocumentScope = document.into();
+    document.cache.set_budget(64 << 20);
     let before = document.project.clone();
     let first_id = document.project.order[0];
     let first_record = document.project.source(first_id).unwrap().clone();
     let requests = Arc::new(AtomicUsize::new(0));
     let observed = requests.clone();
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             observed.fetch_add(1, Ordering::SeqCst);
         }
         Ok(())
     });
-    let request = |document: &Document| Request {
+    let request = |document: &DocumentScope| Request {
+        reference: document.exposure_slot(&document.exposures, first_id),
+        file: document.file_key(first.path()),
         input: document.project.input,
         path: first.path().to_owned(),
         wb: Some(first_record.development.decode.fixed_wb),
         expected: Some(document.project.source(first_id).unwrap().clone()),
-        cache: Some(Cache::new(first.path(), Some(&first_record), document)),
+        cache: Some(document.cache.clone()),
         correction: None,
     };
     let developed = request(&document).load(&scheduler, &|| false).unwrap();
     let source = developed.context.source;
-    let reference = source
-        .reference_exposure
-        .get()
+    let reference = developed
+        .context
+        .reference
+        .as_ref()
         .expect("acquisition must resolve before publication")
         .clone();
     assert!(
@@ -52,7 +56,7 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
     assert_eq!(document.project, before);
     let second_record = document.project.source(document.project.order[1]).unwrap();
     let key = SourceKey::capture(second.path(), &second_record.development).unwrap();
-    assert!(document.cache().get(&key).is_none());
+    assert!(document.cache.get(&key).is_none());
     let again = request(&document).load(&scheduler, &|| false).unwrap();
     assert!(Arc::ptr_eq(&source, &again.context.source));
     assert_eq!(requests.load(Ordering::SeqCst), 1);
@@ -68,10 +72,7 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
         },
     ));
     let edited = request(&document).load(&scheduler, &|| false).unwrap();
-    assert_eq!(
-        edited.context.source.reference_exposure.get(),
-        Some(&reference)
-    );
+    assert_eq!(edited.context.reference.as_ref(), Some(&reference));
     assert_eq!(document.project.roll.exposure, 1.);
     assert_eq!(
         document
@@ -88,7 +89,10 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
     assert_eq!(requests.load(Ordering::SeqCst), 1);
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("grade.antitone");
-    let saved = document.save(&path, crate::project::Save::New).unwrap();
+    let saved = document
+        .capture()
+        .save(&path, crate::project::Save::New)
+        .unwrap();
     assert!(!saved.dirty());
     assert!(saved.project.exposure_metadata.is_none());
     let file_project = crate::project::Project::load(&path).unwrap();
@@ -99,14 +103,11 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
         "saving must not meter the unvisited photo"
     );
     assert_eq!(cached.entries[0].reference, reference);
-    let reopened = Document::open(&path).unwrap();
+    let reopened: DocumentScope = Document::open(&path).unwrap().into();
     assert!(!reopened.dirty());
     assert!(reopened.project.exposure_metadata.is_none());
     let reacquired = request(&reopened).load(&scheduler, &|| false).unwrap();
-    assert_eq!(
-        reacquired.context.source.reference_exposure.get(),
-        Some(&reference)
-    );
+    assert_eq!(reacquired.context.reference.as_ref(), Some(&reference));
     assert!(
         reacquired.camera_proxy.is_none(),
         "saved exposure should not re-sample the RAW"
@@ -128,17 +129,21 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
     let id = editor.document.project.order[1];
     let expected = editor.document.project.source(id).unwrap().clone();
     Request {
+        reference: editor
+            .document
+            .exposure_slot(&editor.document.exposures, id),
+        file: editor.document.file_key(second.path()),
         input: InputSettings::Digital,
         path: second.path().to_owned(),
         wb: Some(expected.development.decode.fixed_wb),
-        cache: Some(Cache::new(second.path(), Some(&expected), &editor.document)),
+        cache: Some(editor.document.cache.clone()),
         expected: Some(expected),
         correction: None,
     }
-    .load(&development::Scheduler::new(), &|| false)
+    .load(&source_loading::SourceLoader::new(), &|| false)
     .unwrap();
     // Completed derived metadata must suffice even with no offscreen pixels or readable file.
-    editor.document.cache().set_budget(0);
+    editor.document.cache.set_budget(0);
     std::fs::rename(second.path(), second.path().with_extension("unavailable")).unwrap();
     let (device, queue) = pollster::block_on(async {
         let adapter = crate::gpu::instance()
@@ -232,12 +237,11 @@ fn save_open_admission_uses_restored_positive_and_negative_source_normalization(
         let mut document = Document::default();
         document.project.input = InputSettings::Digital;
         document.import(&[raw.path().to_owned()]).unwrap();
+        let mut document: DocumentScope = document.into();
         let id = document.project.order[0];
-        let source = document.project.source(id).unwrap().clone();
-        let key = SourceKey::capture(raw.path(), &source.development).unwrap();
+
         document
-            .cache()
-            .exposure_memo(&key)
+            .exposure_slot(&document.exposures, id)
             .set(ReferenceExposure::Matched(StartingExposure {
                 ev: reference_ev,
                 samples: 1024,
@@ -274,7 +278,7 @@ fn save_open_admission_uses_restored_positive_and_negative_source_normalization(
             zero_start.unwrap();
         }
         let path = directory.path().join(format!("{name}.antitone"));
-        document.save(&path, Save::New).unwrap();
+        document.capture().save(&path, Save::New).unwrap();
         if reference_ev < 0. {
             let opened = Document::open(&path)
                 .expect("normalization must be restored before range admission");

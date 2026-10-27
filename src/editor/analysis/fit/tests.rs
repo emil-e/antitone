@@ -1,6 +1,5 @@
 use super::*;
 use crate::{
-    blocking_jobs::BlockingJobs,
     editor::analysis_review::preparation_tests::{observed, request},
     scan_regions::Areas,
 };
@@ -47,6 +46,7 @@ fn input(services: &Services, request: &Request) -> source::Context {
     .unwrap()
     .unwrap();
     source::Context {
+        reference: None,
         source: scan.source().clone(),
         correction: None,
     }
@@ -60,7 +60,8 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
-        jobs: BlockingJobs::new(1),
+        exposures: Arc::default(),
+        cache: Arc::new(crate::source::SourceCache::new(0)),
         developments: scheduler.clone(),
         device,
     };
@@ -133,7 +134,7 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
                 .exposure
     );
     assert_eq!(request.document.project, before);
-    assert_eq!(request.document.cache().charges().retained, 0);
+
     scheduler.close_and_wait().unwrap();
 }
 
@@ -144,7 +145,8 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
-        jobs: BlockingJobs::new(1),
+        exposures: Arc::default(),
+        cache: Arc::new(crate::source::SourceCache::new(0)),
         developments: scheduler.clone(),
         device,
     };
@@ -164,41 +166,6 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
     ))
     .unwrap();
     assert!(result.is_none());
-    assert_eq!(request.document.project, before);
-    scheduler.close_and_wait().unwrap();
-}
-
-#[test]
-fn changed_source_after_sampling_rejects_the_complete_candidate_before_publication() {
-    use std::io::Write;
-    let (mut request, _directory, device) = request();
-    approved(&mut request);
-    let before = request.document.project.clone();
-    let path = request.document.source_path(request.selected).unwrap();
-    let (scheduler, _) = observed();
-    let services = Services {
-        jobs: BlockingJobs::new(1),
-        developments: scheduler.clone(),
-        device,
-    };
-    let captured = input(&services, &request);
-    let result = futures_lite::future::block_on(run(
-        request.clone(),
-        captured,
-        services,
-        Cancellation::default(),
-        move |done, total| {
-            if done == total {
-                std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(&path)
-                    .unwrap()
-                    .write_all(&[0])
-                    .unwrap();
-            }
-        },
-    ));
-    assert!(result.err().unwrap().to_string().contains("source changed"));
     assert_eq!(request.document.project, before);
     scheduler.close_and_wait().unwrap();
 }

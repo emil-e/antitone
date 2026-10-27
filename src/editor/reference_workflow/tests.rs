@@ -1,13 +1,9 @@
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{
-        development,
-        document::Document,
-        source,
-        tests::{fixture, hold_blocking_work},
-    },
+    editor::{document::Document, source, source_loading, tests::fixture},
 };
+use std::sync::{Arc, atomic::Ordering};
 use std::{
     path::PathBuf,
     sync::{Mutex, atomic::AtomicUsize},
@@ -20,7 +16,7 @@ fn path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn editor(scheduler: development::Scheduler) -> Editor {
+fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     let mut e = fixture();
     e.document = Document::default().into();
     e.set_dmin(None);
@@ -39,7 +35,6 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     });
     e.source_services = Some(source::Services {
         developments: scheduler,
-        jobs: e.workflow_jobs.clone(),
         renderers: Arc::default(),
         device,
         queue,
@@ -72,8 +67,9 @@ fn import(app: &mut TestApplication<'_, Editor>) {
 fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_working_context() {
     let reference_reads = Arc::new(AtomicUsize::new(0));
     let observed = reference_reads.clone();
-    let scheduler = development::Scheduler::new_observed(move |file, phase, _| {
-        if file == path("bare-light.dng") && matches!(phase, development::NativePhase::UnpackBegin)
+    let scheduler = source_loading::SourceLoader::new_observed(move |file, phase, _| {
+        if file == path("bare-light.dng")
+            && matches!(phase, source_loading::NativePhase::UnpackBegin)
         {
             observed.fetch_add(1, Ordering::Relaxed);
         }
@@ -140,14 +136,14 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
 #[test]
 fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_operation() {
     for accept in [false, true] {
-        let scheduler = development::Scheduler::new();
+        let scheduler = source_loading::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
             let before = app.read(|e| e.document.project.clone());
             if accept {
                 begin(app, "bare-light.dng");
                 wait(app);
             }
-            let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
+            let hold = crate::background::testing::pause();
             if accept {
                 apply(app);
             } else {
@@ -184,7 +180,7 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
 
 #[test]
 fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_return_context() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         import(app);
         let (before, pixels, visit) = app.update(|e| {
@@ -196,7 +192,7 @@ fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_r
         });
         begin(app, "bare-light.dng");
         wait(app);
-        let hold = app.read(|e| hold_blocking_work(&e.workflow_jobs));
+        let hold = crate::background::testing::pause();
         apply(app);
         let old = app.read(|e| e.id);
         app.pump();
@@ -233,14 +229,14 @@ fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_r
 }
 
 #[test]
-fn departed_reference_waiter_keeps_native_admission_until_running_unpack_and_cleanup_finish() {
+fn departed_reference_waiter_can_join_running_unpack_without_stale_publication() {
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     let resume = Mutex::new(resume);
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin)
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin)
             && observed.fetch_add(1, Ordering::Relaxed) == 0
         {
             started.send(()).unwrap();
@@ -254,13 +250,22 @@ fn departed_reference_waiter_keeps_native_admission_until_running_unpack_and_cle
     });
     with_application(editor(scheduler.clone()), |app| {
         begin(app, "bare-light.dng");
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(15)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            app.pump();
+            if starts.try_recv().is_ok() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "reference source did not reach unpack"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         app.update(Editor::finish_flat_edit);
         begin(app, "bare-light.dng");
         app.pump();
         assert_eq!(count.load(Ordering::Relaxed), 1);
-        assert!(!app.read(|e| e.workflow_jobs.idle()));
         release.send(()).unwrap();
         wait(app);
         app.read(|e| {
@@ -273,7 +278,7 @@ fn departed_reference_waiter_keeps_native_admission_until_running_unpack_and_cle
 
 #[test]
 fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         begin(app, "bare-light.dng");
         wait(app);
@@ -298,7 +303,7 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
 
 #[test]
 fn invalid_measured_support_fails_without_accepting_reference_records_or_history() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         let before = app.read(|e| e.document.project.clone());
         begin(app, "bare-light.dng");
@@ -427,7 +432,7 @@ fn click(app: &TestApplication<'_, Editor>, context: &egui::Context, label: &str
 #[test]
 fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_another_paint() {
     for enter in [false, true] {
-        let scheduler = development::Scheduler::new();
+        let scheduler = source_loading::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
             import(app);
             let context = egui::Context::default();
@@ -535,7 +540,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
 #[test]
 fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
     for accept in [false, true] {
-        let scheduler = development::Scheduler::new();
+        let scheduler = source_loading::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
             let before = app.read(|e| e.document.project.clone());
             if accept {
@@ -553,7 +558,6 @@ fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
             app.read(|e| {
                 assert!(e.flat_edit.is_none() && !e.busy && e.document_pending.is_none());
                 assert_eq!(e.document.project, before);
-                assert!(e.workflow_jobs.idle());
             });
             if accept {
                 begin(app, "bare-light.dng");

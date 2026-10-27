@@ -5,10 +5,7 @@ use super::{
     Editor,
     look_ui::{self, Source},
 };
-use crate::{
-    blocking_jobs::BlockingJobs,
-    looks::{LookAsset, cache::Cache},
-};
+use crate::looks::{LookAsset, cache::Cache};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -30,7 +27,6 @@ struct CacheOwner {
 
 #[derive(Clone)]
 pub(super) struct Services {
-    jobs: BlockingJobs,
     renderers: Arc<crate::renderer::RendererCache>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -40,7 +36,6 @@ pub(super) struct Services {
 
 impl Services {
     pub fn new(
-        jobs: BlockingJobs,
         renderers: Arc<crate::renderer::RendererCache>,
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -59,7 +54,6 @@ impl Services {
             value: Cache::default_location(),
         };
         Self {
-            jobs,
             renderers,
             device,
             queue,
@@ -73,8 +67,7 @@ impl Services {
         source: Source,
         cancel: Arc<AtomicBool>,
     ) -> Result<Option<Arc<LookAsset>>, String> {
-        let jobs = self.jobs.clone();
-        jobs.run(move || {
+        crate::background::run(move || {
             look_ui::resolve(
                 source,
                 &cancel,

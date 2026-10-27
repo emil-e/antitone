@@ -19,7 +19,7 @@ fn photographic_reference_initialization() {
         let file = raw.file.clone();
         let development = SourceDevelopment::from_metadata(&raw.metadata, wb).unwrap();
         let header_ms = start.elapsed().as_secs_f64() * 1000.;
-        let store = SourceStore::new(128 << 20);
+        let store = SourceCache::new(128 << 20);
         let tick = Instant::now();
         let preview = store
             .preview(&file, || embedded_preview::read(&path, &development))
@@ -29,17 +29,15 @@ fn photographic_reference_initialization() {
         let scan = Scan::from_raw(raw, Some(wb)).unwrap();
         let develop_ms = tick.elapsed().as_secs_f64() * 1000.;
         let tick = Instant::now();
-        let prepared = store
-            .prepare_source(InputSettings::Digital, scan.source())
-            .unwrap();
+        let memo = OnceLock::new();
+        let prepared = native(Some(&store), &memo, InputSettings::Digital, scan.source()).unwrap();
         let proxy = prepared.proxy;
         let prepare_ms = tick.elapsed().as_secs_f64() * 1000.;
-        let reference = scan.source().reference_exposure.get().unwrap();
+        let reference = memo.get().unwrap();
         let tick = Instant::now();
         for _ in 0..10 {
             assert!(
-                store
-                    .prepare_source(InputSettings::Digital, scan.source())
+                native(Some(&store), &memo, InputSettings::Digital, scan.source())
                     .unwrap()
                     .proxy
                     .is_none()
@@ -82,7 +80,10 @@ fn photographic_reference_initialization() {
             }
         };
         let zero = render(proxy.matrix);
-        let initialized = render(proxy.positive_matrix(&InputSettings::Digital).unwrap());
+        let initialized = render(
+            crate::scan::positive_matrix(&InputSettings::Digital, proxy.matrix, Some(reference))
+                .unwrap(),
+        );
         let Some(frame) = reference_frame(
             &preview.rgb,
             f64::from(zero.width()) / f64::from(zero.height()),

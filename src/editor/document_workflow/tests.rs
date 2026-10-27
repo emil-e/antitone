@@ -1,12 +1,10 @@
 use super::*;
+use std::sync::atomic::Ordering;
+#[cfg(feature = "ocio-reference")]
+mod rebase_exposure;
 use crate::{
     application::test_support::with_application,
-    editor::{
-        Preparation, development,
-        document::Document,
-        source,
-        tests::{fixture, hold_blocking_work},
-    },
+    editor::{Preparation, document::Document, source, source_loading, tests::fixture},
 };
 use std::{
     path::{Path, PathBuf},
@@ -20,7 +18,7 @@ fn path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn editor(scheduler: development::Scheduler) -> Editor {
+fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     let mut editor = fixture();
     editor.document.install(Document::default());
     editor.set_dmin(None);
@@ -39,7 +37,6 @@ fn editor(scheduler: development::Scheduler) -> Editor {
     });
     editor.source_services = Some(source::Services {
         developments: scheduler,
-        jobs: editor.workflow_jobs.clone(),
         renderers: Arc::default(),
         device,
         queue,
@@ -48,8 +45,48 @@ fn editor(scheduler: development::Scheduler) -> Editor {
 }
 
 #[test]
+fn accepted_open_seeds_a_fresh_scope_cache_from_the_prepared_source() {
+    let scheduler = source_loading::SourceLoader::new();
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("opened.antitone");
+    with_application(editor(scheduler.clone()), |app| {
+        app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        let (snapshot, previous) = app.read(|e| (e.document.capture(), e.document.cache.clone()));
+        snapshot.save(&project, crate::project::Save::New).unwrap();
+        app.enter(|e, cx| e.start_document(Preparation::Open(project), cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert!(previous.is_closed());
+            assert!(!Arc::ptr_eq(&previous, &e.document.cache));
+            let ready = e
+                .document
+                .visit
+                .ready
+                .as_ref()
+                .expect("opened source ready");
+            let key = crate::source::SourceKey::for_load(
+                &ready.path,
+                ready.file.clone(),
+                &ready.record.development,
+            );
+            assert!(Arc::ptr_eq(
+                &e.document.cache.get(&key).unwrap(),
+                &ready.developed
+            ));
+            assert!(Arc::ptr_eq(
+                &e.document.cache.get_proxy(&key).unwrap(),
+                &ready.thumbnail.as_ref().unwrap().1,
+            ));
+        });
+        drop(snapshot);
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn import_history_correction_and_new_run_without_backend_or_painting() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, access| {
             e.add_raws(vec![path("patches.dng")], access);
@@ -97,7 +134,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
             assert_eq!(e.document.project, accepted);
             assert!(e.document.visit.ready.is_some());
         });
-        let cache = app.read(|e| e.document.cache().clone());
+        let cache = app.read(|e| e.document.cache.clone());
         app.enter(|e, access| {
             e.start_document(Preparation::New, access);
         });
@@ -155,7 +192,7 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
         }
     };
 
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng"), red.clone()], cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
@@ -201,7 +238,9 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
 #[test]
 fn input_switch_clears_live_correction_atomically_and_history_restores_activation() {
     use crate::{flat_field::FlatField, processing::InputSettings, project::FlatFieldSettings};
-    let scheduler = development::Scheduler::new();
+
+    let scheduler = source_loading::SourceLoader::new();
+
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
@@ -358,7 +397,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
 #[test]
 fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_history_and_pixels()
 {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("candidate.antitone");
     let mut candidate = Document::default();
@@ -379,7 +418,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
                 e.document.project.clone(),
                 e.document.visit.view,
                 e.document.visit.ready.as_ref().unwrap().developed.clone(),
-                e.document.cache().clone(),
+                e.document.cache.clone(),
             )
         });
         app.enter(|e, access| {
@@ -408,9 +447,9 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
 
 #[test]
 fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_new_work() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loading::SourceLoader::new();
     let e = editor(scheduler.clone());
-    let hold = hold_blocking_work(&e.workflow_jobs);
+    let hold = crate::background::testing::pause();
     with_application(e, |app| {
         app.enter(|e, access| {
             e.add_raws(vec![path("patches.dng")], access);
@@ -449,8 +488,8 @@ fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_ret
     let resume = Mutex::new(resume);
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             observed.fetch_add(1, Ordering::Relaxed);
             entered.send(()).unwrap();
             resume

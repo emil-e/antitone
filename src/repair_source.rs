@@ -132,6 +132,14 @@ impl crate::image_recipe::NeutralRecipe {
                 "repair recipe differs from developed source".into(),
             ));
         }
+        if !self.input.is_negative()
+            && let Some(reference) = &self.reference
+            && scan.reference_exposure.as_ref().map(|value| value.ev()) != Some(reference.ev())
+        {
+            return Err(Error::Raw(
+                "repair recipe differs from recorded exposure baseline".into(),
+            ));
+        }
         Ok(())
     }
 }

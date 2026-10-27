@@ -1,14 +1,10 @@
 use super::{
-    AdjustmentLayerEditor, Editor, LoadCache, Ready, SelectionTiming, Task, TaskRequest, UiContext,
-    source,
+    AdjustmentLayerEditor, Editor, Ready, SelectionTiming, Task, TaskRequest, UiContext, source,
 };
 use crate::processing::InputSettings;
-use crate::source_store::SourceKey;
+use crate::source::SourceKey;
 use std::path::PathBuf;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 #[cfg(test)]
 mod tests;
@@ -40,13 +36,6 @@ impl State {
     }
 }
 
-struct Retire(Arc<AtomicBool>);
-impl Drop for Retire {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-}
-
 impl Editor {
     pub(super) fn source_input(&self, path: PathBuf) -> source::Request {
         let expected = self
@@ -55,14 +44,19 @@ impl Editor {
             .and_then(|id| self.document.project.source(id).ok())
             .cloned();
         let wb = self.document.project.acquisition_wb(expected.as_ref());
-        let cache = LoadCache::new(&path, expected.as_ref(), &self.document);
+        let file = self.document.file_key(&path);
         source::Request {
+            reference: expected.as_ref().map_or_else(Arc::default, |source| {
+                self.document
+                    .exposure_slot(&self.document.exposures, source.id)
+            }),
             input: self.input(),
             path,
             wb,
             expected,
             correction: self.correction.clone(),
-            cache: Some(cache),
+            file,
+            cache: Some(self.document.cache.clone()),
         }
     }
 
@@ -140,11 +134,13 @@ impl Editor {
         self.status = "Developing full-resolution RAW…".into();
         self.tasks.begin(Task::Photo(self.id));
         let request = self.source_input(path);
-        self.document.visit.source.key = request.cache.as_ref().and_then(|cache| cache.key.clone());
+        self.document.visit.source.key = request.expected.as_ref().and_then(|source| {
+            SourceKey::from_revision(&request.path, request.file.clone(), &source.development)
+        });
         let view = self.document.visit.view;
         let services = self.source_services.clone();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let retire = Retire(cancelled.clone());
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
             let result = match services {
@@ -260,9 +256,9 @@ impl Editor {
                         id,
                         &ready.developed.metadata(),
                         ready.developed.fixed_wb(),
-                        ready.developed.file.clone(),
                     );
                 }
+                self.document.cache_ready(&ready);
                 self.document.visit.ready = Some(*ready);
             }
             Err(error) => {

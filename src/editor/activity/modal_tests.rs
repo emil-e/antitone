@@ -14,7 +14,7 @@ fn running_regions_sampling_and_fitting_are_modal_cancellable_and_restore_the_wo
         add_ready_fixture(&mut editor);
         editor.sync_document();
         let before = editor.document.project.clone();
-        let admission = editor.workflow_jobs.hold();
+        let admission = crate::background::testing::pause();
         with_application(editor, |app| {
             app.enter(|editor, cx| {
                 match phase {
@@ -67,6 +67,7 @@ fn running_regions_sampling_and_fitting_are_modal_cancellable_and_restore_the_wo
             for pressed in [true, false] {
                 app_frame(app, &context, pointer(cancel, pressed));
             }
+            drop(admission);
             app.run_until(Duration::from_secs(5), |editor| !editor.busy);
             app.read(|editor| {
                 assert!(editor.tasks.view().is_none());
@@ -91,7 +92,6 @@ fn running_regions_sampling_and_fitting_are_modal_cancellable_and_restore_the_wo
                 1,
                 "completion must release modal input capture"
             );
-            drop(admission);
         });
     }
 }

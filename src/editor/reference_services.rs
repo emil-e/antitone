@@ -1,12 +1,10 @@
 use super::{Document, Source, SourceId, document_services, flat::FlatPreview, source};
 use crate::{Error, raw::Rect};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 pub(super) struct Acceptance {
     pub region: Rect,
+    pub cache: Arc<crate::source::SourceCache>,
     pub document: Document,
     pub selected: Option<SourceId>,
     pub source: source::Context,
@@ -33,9 +31,15 @@ impl Acceptance {
             crate::project::FlatFieldSettings::new(self.document.project.source(reference)?, map);
         settings.enabled = enabled;
         self.document.project.set_flat_field(Some(settings));
+        let exposures = Arc::new(crate::exposure_metadata::Store::restored(
+            &self.document.exposure_metadata,
+            |id| self.document.exposure_origin(id),
+        ));
         Ok(document_services::Request {
             work: document_services::Preparation::Correction(self.document, self.selected),
             source: None,
+            cache: Some(self.cache),
+            exposures: Some(exposures),
             correction: self.correction,
         })
     }
@@ -48,46 +52,43 @@ impl Services {
     pub async fn preview(
         self,
         request: source::Request,
-        cancelled: Arc<AtomicBool>,
+        cancelled: crate::cancellation::Cancellation,
     ) -> Result<FlatPreview, String> {
         if request.correction.is_some() {
             return Err("Flat-field reference must be uncorrected".into());
         }
         let ready = self.0.clone().prepare(request, cancelled.clone()).await?;
-        self.0
-            .jobs
-            .run(move || {
-                if cancelled.load(Ordering::Relaxed) {
-                    return Err(Error::UnusableSample("reference retired"));
-                }
-                let scan = source::Context {
-                    source: ready.developed.clone(),
-                    correction: None,
-                }
-                .scan()?;
-                let region = scan.propose_flat_field_area()?;
-                Ok(FlatPreview { ready, region })
-            })
-            .await
-            .map_err(|_| "Reference support worker panicked".to_owned())?
-            .map_err(|error: Error| error.to_string())
+        crate::background::run(move || {
+            if cancelled.is_cancelled() {
+                return Err(Error::UnusableSample("reference retired"));
+            }
+            let scan = source::Context {
+                source: ready.developed.clone(),
+                reference: ready.reference.clone(),
+                correction: None,
+            }
+            .scan()?;
+            let region = scan.propose_flat_field_area()?;
+            Ok(FlatPreview { ready, region })
+        })
+        .await
+        .map_err(|_| "Reference support worker panicked".to_owned())?
+        .map_err(|error: Error| error.to_string())
     }
 
     pub async fn estimate(
         &self,
         request: Acceptance,
-        cancelled: Arc<AtomicBool>,
+        cancelled: crate::cancellation::Cancellation,
     ) -> Result<document_services::Request, String> {
-        self.0
-            .jobs
-            .run(move || {
-                if cancelled.load(Ordering::Relaxed) {
-                    return Err(Error::UnusableSample("reference retired"));
-                }
-                request.estimate()
-            })
-            .await
-            .map_err(|_| "Reference estimation worker panicked".to_owned())?
-            .map_err(|error| error.to_string())
+        crate::background::run(move || {
+            if cancelled.is_cancelled() {
+                return Err(Error::UnusableSample("reference retired"));
+            }
+            request.estimate()
+        })
+        .await
+        .map_err(|_| "Reference estimation worker panicked".to_owned())?
+        .map_err(|error| error.to_string())
     }
 }

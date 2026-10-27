@@ -149,17 +149,20 @@ Selection is temporary workspace state, separate from each source's accepted Pho
 
 ## Responsiveness and optional caches
 
-Demanded immutable full-resolution developments, uncorrected proxies and decoded camera references share fixed optional CPU byte limits; [retention settings](#retention-settings-and-pressure) control those limits in whole MiB, including zero. A compatible native hit avoids LibRaw development, while correction, grade and crop remain independent consumer state. File revisions are cache freshness checks, [not photographic identity](projects.md#compatibility-is-about-the-processing-basis).
+Optional reuse of immutable full-resolution developments, uncorrected proxies and decoded camera references shares a byte-bounded CPU store; [retention settings](#retention-settings-and-pressure) control its limit in whole MiB, including zero. [Async acquisition](architecture.md#source-acquisition-and-retention) separates consumer leases from cache ownership. A compatible source hit avoids development, while correction, grade and crop remain independent consumer state. File identity is captured at Import/Open for persisted-cache validity, [not photographic identity](projects.md#compatibility-is-about-the-processing-basis).
 
 ### Scheduling and readiness
 
-Two [native owners](../src/editor/development.rs) at most serve selected/reference/Analyze and thumbnail development: each keeps worker-local mutable RAW handles and runs one synchronous unpack/development call at a time. Foreground work precedes visible misses, then eager work for unvisited sources; a pending foreground demand can start on a free owner, while background work starts only while no foreground demand exists. Cancelling a GPU ticket releases visible admission without discarding already-owned CPU/disk work. CPU/disk preloads and GPU-ready cards have separate completion states, allowing idle work to render an offscreen card later. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff.
+
+Two [native owners](../src/source/loader.rs) at most serve selected/reference/Analyze and thumbnail development: each keeps worker-local mutable RAW handles and runs one synchronous unpack/development call at a time. Foreground work precedes visible misses, then eager work for unvisited sources; a pending foreground demand can start on a free owner, while background work starts only while no foreground demand exists. Cancelling a GPU ticket releases visible admission without discarding already-owned CPU/disk work. CPU/disk preloads and GPU-ready cards have separate completion states, allowing idle work to render an offscreen card later. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff. The deferred [source-loading plan](../SOURCE_LOADING_PLAN.md) covers async thumbnail and embedded-preview coordination.
+
+
 
 ### Positive thumbnail reuse
 
 Positive navigation cards interpret a small camera-RGB proxy, then apply ordered layer grading, look and output target. They favor responsive browsing and recognizable photographs over original-sample fidelity. Use the main viewer or exports to inspect Dust repairs rather than inferring their accuracy from a small navigation card.
 
-Camera preview display and Digital preparation share bounded JPEG/RGB8 extraction and decoding, including in-flight work. ICC profiles or explicit colour labels, including the matching DNG preview IFD, establish interpretation. Completed starting EV survives pixel eviction; a Digital proxy without resolved exposure waits for preparation rather than displaying an uninitialized positive.
+Camera preview display and Digital preparation share bounded JPEG/RGB8 extraction and decoding, including in-flight work. ICC profiles or explicit colour labels, including the matching DNG preview IFD, establish interpretation. The document's recorded starting EV survives pixel eviction; a Digital positive waits for that value before consuming shared proxy pixels.
 
 Compatible neutral products survive grade, look and target changes. Across project replacement, Digital positives also require a known matching normalization, even when captured pixels and photographic controls match. While an update prepares, the previous card stays visible with an updating indicator if source, correction, framing and target match. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
 

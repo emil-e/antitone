@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{development, history, tests::authored_fixture},
+    editor::{history, source_loading, tests::authored_fixture},
 };
 use std::{
     sync::{
@@ -15,23 +15,23 @@ mod consumers;
 
 const LIMIT: Duration = Duration::from_secs(30);
 
-fn fixture(scheduler: development::Scheduler) -> Editor {
+fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
     let mut editor = authored_fixture(&["roll-0.dng", "roll-1.dng"]);
     let original = std::mem::replace(
         &mut editor.source_services.as_mut().unwrap().developments,
         scheduler,
     );
-    editor.document.cache().set_budget(0);
+    editor.document.cache.set_budget(0);
     original.close_and_wait().unwrap();
     editor.sync_document();
     editor
 }
 
-fn observed() -> (development::Scheduler, Arc<AtomicUsize>) {
+fn observed() -> (source_loading::SourceLoader, Arc<AtomicUsize>) {
     let count = Arc::new(AtomicUsize::new(0));
     let starts = count.clone();
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             starts.fetch_add(1, Ordering::SeqCst);
         }
         Ok(())
@@ -180,8 +180,7 @@ fn queued_shared_preparation_cancels_without_native_work_or_accepted_changes() {
     let (scheduler, starts) = observed();
     let editor = fixture(scheduler.clone());
     let accepted = editor.document.project.clone();
-    let jobs = editor.workflow_jobs.clone();
-    let admission = jobs.hold();
+    let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_analysis(cx));
         app.pump();
@@ -201,13 +200,17 @@ fn queued_shared_preparation_cancels_without_native_work_or_accepted_changes() {
     scheduler.close_and_wait().unwrap();
 }
 
-fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
+fn paused() -> (
+    source_loading::SourceLoader,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
     let once = AtomicUsize::new(0);
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin)
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin)
             && once.fetch_add(1, Ordering::SeqCst) == 0
         {
             entered.send(()).unwrap();
@@ -271,10 +274,9 @@ fn retiring_a_photo_visit_does_not_retire_document_region_preparation() {
 }
 
 #[test]
-fn document_retirement_cancels_publication_but_native_cleanup_keeps_physical_admission() {
+fn document_retirement_cancels_publication_without_blocking_unrelated_cpu_work() {
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Roll, cx));
         await_native(app, &starts);
@@ -287,34 +289,24 @@ fn document_retirement_cancels_publication_but_native_cleanup_keeps_physical_adm
                     .unwrap()
                     .cancelled
                     .clone(),
-                editor.document.capture(),
+                editor.document.cache.clone(),
             )
         });
         app.update(|editor| editor.document = Document::default().into());
         app.pump();
         assert!(cancelled.is_cancelled());
-        assert!(
-            !jobs.idle(),
-            "logical retirement must not release native producer cleanup admission"
-        );
-        assert!(snapshot.cache().is_closed());
+        assert!(snapshot.is_closed());
         let (entered, observed) = mpsc::channel();
-        let work = jobs.clone();
         let probe = app
             .access()
             .spawn(move |_| async move {
-                work.run(move || entered.send(()).unwrap()).await.unwrap();
+                crate::background::run(move || entered.send(()).unwrap())
+                    .await
+                    .unwrap();
             })
             .unwrap();
-        app.pump();
-        assert!(matches!(
-            observed.recv_timeout(Duration::from_millis(50)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        ));
-        release.send(()).unwrap();
-        // A physical permit release alone need not wake a retired UI continuation. The
-        // queued real CPU job supplies a live executor wake and proves serialization.
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());
+        release.send(()).unwrap();
         drop(probe);
         app.read(|editor| {
             assert!(editor.document.spatial.ready().groups.is_empty());
@@ -328,7 +320,6 @@ fn document_retirement_cancels_publication_but_native_cleanup_keeps_physical_adm
 fn application_retirement_cancels_shared_continuation_before_native_cleanup_returns() {
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
-    let jobs = editor.workflow_jobs.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Roll, cx));
         await_native(app, &starts);
@@ -343,7 +334,6 @@ fn application_retirement_cancels_shared_continuation_before_native_cleanup_retu
         });
         app.close_execution();
         assert!(cancelled.is_cancelled());
-        assert!(!jobs.idle());
         app.read(|editor| {
             assert!(editor.document.spatial.ready().groups.is_empty());
             assert!(editor.document.auto_crop_edit.is_none());
@@ -351,5 +341,4 @@ fn application_retirement_cancels_shared_continuation_before_native_cleanup_retu
         release.send(()).unwrap();
     });
     scheduler.close_and_wait().unwrap();
-    assert!(jobs.idle());
 }

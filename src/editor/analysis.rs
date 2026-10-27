@@ -158,32 +158,31 @@ fn proposed_document(
 
 #[cfg(test)]
 pub(super) fn develop_scan(
-    developments: &development::Scheduler,
+    developments: &source_loading::SourceLoader,
     document: &Document,
+    cache: &Arc<crate::source::SourceCache>,
     expected: &Source,
     path: &std::path::Path,
     wb: [f64; 4],
     cancelled: impl Fn() -> bool,
 ) -> Result<Option<Scan>, Error> {
-    let cache = LoadCache::new(path, Some(expected), document);
-    let result = developments.load(
-        development::Request {
-            path: path.to_owned(),
-            wb: Some(wb),
-            expected: Some(expected.clone()),
-            file: cache.file,
-            key: cache.key,
-            store: Some(cache.store),
-            parent: cache.parent,
-            retain: false,
-        },
-        development::Priority::Foreground,
-        &cancelled,
-    );
+    let request = source::Request {
+        input: document.project.input,
+        reference: Arc::default(),
+        path: path.to_owned(),
+        wb: Some(wb),
+        expected: Some(expected.clone()),
+        cache: Some(cache.clone()),
+        file: document.file_key(path),
+        correction: None,
+    };
+    let result = request.load(developments, &cancelled);
     if cancelled() {
         return Ok(None);
     }
-    result.map(Scan::from_source).map(Some)
+    result
+        .and_then(|developed| developed.context.scan())
+        .map(Some)
 }
 
 impl Editor {

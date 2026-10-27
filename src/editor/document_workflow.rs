@@ -7,10 +7,7 @@ use super::{
     document_services::PreparationServices, dust, history, source_workflow,
 };
 use crate::processing::InputSettings;
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
 pub(super) struct State {
@@ -27,13 +24,6 @@ impl Progress {
     fn report(&self, completed: usize, total: usize) {
         *self.latest.lock().unwrap() = Some((completed, total));
         self.changed.notify(usize::MAX);
-    }
-}
-
-struct Retire(Arc<AtomicBool>);
-impl Drop for Retire {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
     }
 }
 
@@ -92,16 +82,20 @@ impl Editor {
         } else {
             None
         };
+        let cache = (!matches!(work, Preparation::New | Preparation::Open(_)))
+            .then(|| self.document.cache.clone());
         let request = DocumentRequest {
+            exposures: cache.as_ref().map(|_| self.document.exposures.clone()),
             work,
+            cache,
             source,
             correction: self.correction.clone(),
         };
         let source = self.source_services.clone();
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let retire = Retire(cancelled.clone());
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
             let preparation = async {
@@ -159,17 +153,11 @@ impl Editor {
         self.document_pending = None;
         self.busy = false;
         match result {
-            Ok(mut prepared) => {
+            Ok(prepared) => {
                 let input_changed =
                     self.input.is_negative() != prepared.document.project.input.is_negative();
                 let flat_context = self.flat_edit.take();
-                let previous_cache = self.document.cache().clone();
-                self.thumbnails
-                    .bind_sources(prepared.document.cache().clone());
-                prepared.document.accept_cache(&previous_cache);
-                if !Arc::ptr_eq(&previous_cache, prepared.document.cache()) {
-                    previous_cache.close();
-                }
+
                 if self.reset_repairs_pending {
                     self.document.dust = dust::State::default();
                 }
@@ -191,6 +179,11 @@ impl Editor {
                     self.document = prepared.document.into();
                 } else {
                     self.document.install(prepared.document);
+                }
+                self.thumbnails
+                    .bind_sources(self.document.cache.clone(), &self.document);
+                if let Some(ready) = &prepared.ready {
+                    self.document.cache_ready(ready);
                 }
                 self.remember_current_look();
                 self.document.visit.adjustment_layers = layer_selection;

@@ -419,7 +419,7 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
     for operation in 0..4 {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
-        let hold = crate::editor::tests::hold_blocking_work(&editor.workflow_jobs);
+        let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
             let mut source_completion = None;
             let mut save_completion = None;
