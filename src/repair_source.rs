@@ -70,13 +70,14 @@ pub(crate) fn resolve_with(
     resolve_matching(scan, recipe, execution, |_| true)
 }
 
-/// Resolve supports influencing the captured output, including the film image-MTF neighbourhood.
+/// Resolve repairs influencing the captured output's declared processing support.
 #[cfg(feature = "project")]
 pub fn resolve_output(
     scan: &Scan,
     recipe: &crate::image_recipe::ImageRecipe,
+    support: crate::processing_support::Support,
 ) -> Result<Vec<std::sync::Arc<EvaluatedRepair>>, Error> {
-    resolve_output_with(scan, recipe, &mut Execution::default())
+    resolve_output_with(scan, recipe, support, &mut Execution::default())
         .map(|result| result.expect("uncancelled output repair resolution"))
 }
 
@@ -84,6 +85,7 @@ pub fn resolve_output(
 pub(crate) fn resolve_output_with(
     scan: &Scan,
     recipe: &crate::image_recipe::ImageRecipe,
+    support: crate::processing_support::Support,
     execution: &mut Execution<'_>,
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
     use crate::geometry::FramePoint;
@@ -91,32 +93,11 @@ pub(crate) fn resolve_output_with(
     let coverage = recipe
         .composition
         .coverage(FramePoint([0.; 2]), FramePoint(size.map(f64::from)))?;
-    let radius = recipe
-        .film_emulation
-        .parameters(scan.area.height)?
-        .map_or(0, |parameters| parameters.support_radius());
     resolve_matching(scan, recipe, execution, |repair| {
-        repair.support.selected_points().any(|point| {
-            if radius == 0 {
-                return coverage.weight(point) > 0.;
-            }
-            let x = point[0].saturating_sub(radius).max(scan.area.x);
-            let y = point[1].saturating_sub(radius).max(scan.area.y);
-            let right = point[0]
-                .saturating_add(radius)
-                .saturating_add(1)
-                .min(scan.area.x + scan.area.width);
-            let bottom = point[1]
-                .saturating_add(radius)
-                .saturating_add(1)
-                .min(scan.area.y + scan.area.height);
-            coverage.intersection_area(crate::geometry::SourceRegion {
-                x,
-                y,
-                width: right - x,
-                height: bottom - y,
-            }) > 0.
-        })
+        repair
+            .support
+            .selected_points()
+            .any(|point| support.contributes(point, coverage, scan.area))
     })
 }
 

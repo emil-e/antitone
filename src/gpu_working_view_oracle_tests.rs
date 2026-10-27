@@ -260,7 +260,7 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
         .unwrap();
         let mut abandoned = device.create_command_encoder(&Default::default());
         let graded = view.graded.as_ref().unwrap();
-        source.kernels.grade(&device, &mut abandoned, graded, false);
+        source.kernels.grade(&device, &mut abandoned, graded);
         drop(abandoned);
         assert!(!*graded.submitted.lock().unwrap());
         view.ensure_submitted(
@@ -272,7 +272,7 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
         let expected = read(&device, &queue, &graded.pixels);
         assert!(expected.iter().all(|p| *p == [0.5, 1., 2., 8.]));
         let mut deferred = device.create_command_encoder(&Default::default());
-        source.kernels.grade(&device, &mut deferred, graded, false);
+        source.kernels.grade(&device, &mut deferred, graded);
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: graded.pixels.size(),

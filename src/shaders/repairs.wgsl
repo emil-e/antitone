@@ -19,6 +19,7 @@ struct RepairView {
     start: vec4f,
     dx: vec4f,
     dy: vec4f,
+    source: vec4i,
 }
 @group(0) @binding(14)
 var<uniform> repair_view: RepairView;
@@ -108,15 +109,26 @@ fn repair_copy(@builtin(global_invocation_id) id: vec3u) {
         high = max(high, points[i]);
     }
     let origin = vec2i(p.support.xy) - vec2i(p.bounds_output.xy);
-    let lo = max(vec2i(floor(low)), origin);
-    let hi = min(vec2i(ceil(high)), origin + vec2i(p.support.zw));
+    let source_high = p.source.xy + p.source.zw;
+    let lo = max(clamp(vec2i(floor(low)), p.source.xy, source_high - vec2i(1)), origin);
+    let hi = min(
+            clamp(vec2i(ceil(high)), p.source.xy + vec2i(1), source_high),
+            origin + vec2i(p.support.zw),
+        );
     for(var y = lo.y; y < hi.y; y++) {
         for(var x = lo.x; x < hi.x; x++) {
             let relative = vec2u(vec2i(x, y) - origin);
             if repair_at(relative.x + relative.y * p.support.z) == arrayLength(&repair_pixels) {
                 continue;
             }
-            if overlap(start, vec2f(f32(x), f32(y)), p.dx.xy, p.dy.xy) <= 0. {
+            if extended_overlap(
+                    start,
+                    vec2f(f32(x), f32(y)),
+                    p.dx.xy,
+                    p.dy.xy,
+                    vec2f(p.source.xy),
+                    vec2f(source_high),
+                ) <= 0. {
                 continue;
             }
             let local = pixel - p.copy_region.xy;

@@ -42,9 +42,8 @@ impl ViewSource {
                     .filter(|p| !repairs.0.iter().any(|q| Arc::ptr_eq(p, q))),
             );
         let changed = super::super::repairs::Snapshot(changed.cloned().collect());
-        let frame = base.spec.frame;
-        let bounds = frame.bounds()?;
-        let affine = frame.affine()?;
+        let frame = base.spec.input_frame()?;
+        let bounds = frame.processing_bounds()?;
         let mut windows = Vec::new();
         for patch in &changed.0 {
             let support = patch.evaluated.support();
@@ -58,14 +57,9 @@ impl ViewSource {
             if (0..2).any(|c| lo[c] >= hi[c]) {
                 continue;
             }
-            windows.extend(crate::resample::windows::bounded(
-                crate::resample::windows::affine_output(
-                    affine,
-                    frame.output,
-                    [lo[0] - bounds.x, lo[1] - bounds.y],
-                    [hi[0] - lo[0], hi[1] - lo[1]],
-                ),
-            ));
+            windows.extend(crate::resample::windows::bounded(frame.processing_window(
+                [lo[0], lo[1], hi[0] - lo[0], hi[1] - lo[1]].into(),
+            )?));
         }
         windows.sort_unstable();
         windows.dedup();
@@ -90,13 +84,19 @@ impl ViewSource {
                             / f64::from(frame.output[c])
                 }))
             };
-            let region = FrameRaster::new(
-                frame.composition,
-                point(origin),
-                point([origin[0] + size[0], origin[1] + size[1]]),
-                size,
-            )?;
-            let mut spec = base.spec.clone().with_repairs(repairs.clone());
+            let region = FrameRaster {
+                composition: frame.composition,
+                min: point(origin),
+                max: point([origin[0] + size[0], origin[1] + size[1]]),
+                output: size,
+            };
+            region.processing_bounds()?;
+            // This window is already in the padded acquisition grid.
+            let mut spec = base
+                .spec
+                .clone()
+                .with_repairs(repairs.clone())
+                .with_support(crate::processing_support::Support::NONE);
             spec.frame = region;
             let Some(mut rebuilt) = Self::acquire_many(
                 device,

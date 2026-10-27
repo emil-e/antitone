@@ -291,17 +291,6 @@ impl Editor {
         }
     }
 
-    pub(super) fn validate_processing_with_film(
-        &self,
-        input: InputSettings,
-        roll: RollSettings,
-        photo: AdjustmentLayerSettings,
-        film: FilmEmulationSettings,
-    ) -> Result<(), Error> {
-        film.validate()?;
-        self.validate_processing(input, roll, photo)
-    }
-
     /// Roll/input candidates must support every source, without replacing accepted resources.
     pub(super) fn validate_processing(
         &self,

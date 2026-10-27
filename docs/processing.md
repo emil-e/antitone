@@ -106,7 +106,7 @@ Coverage, inversion and strength produce a weight between zero and one: exposure
 
 ### Film Emulation
 
-Rendering owns project-wide Film Emulation after the complete ordered adjustment-layer stack, before the creative look and ACES. The shared GPU stage applies a source-scale Gaussian image MTF, then multiplicative RGB log-light grain. A future halation insertion point lies between the completed MTF and grain.
+Rendering owns project-wide Film Emulation after the complete ordered adjustment-layer stack, before the creative look and ACES. Settings lower into independent source-scale Gaussian image-MTF and multiplicative RGB log-light grain stages. The [executor](architecture.md#pixel-stages-and-spatial-support) owns their ordering, spatial support and resources, with the future halation position between completed MTF and grain.
 
 Size is a percentage of the original source-frame height; crop, orientation and output tiles do not redefine it. The persistent source ID seeds the continuous grain field. Amount is green log-light RMS at a native source-pixel footprint; reduction loses variance, while magnification keeps that native footprint. Colour runs from shared monochrome through the fitted RGB covariance at its midpoint to stronger chroma. Mean compensation preserves expected AP1 light without tone-dependent strength compensation.
 
@@ -124,7 +124,7 @@ Continuous signed contrast and the film-base continuation retain explicit zero-i
 
 The positive editor prototype factors Roll exposure/WB and adjustment layers downstream of baseline AP1 production: original camera samples still receive continuous correction and calibrated inversion before exact affine-footprint filtering into signed/HDR f32 AP1, and fixed-view grading reuses that filtered input rather than processing the whole original again.
 
-View-space film filtering also approximates original-sample processing: grain uses a Gaussian footprint approximation, while authoritative export and original references apply emulation before source-cell reconstruction.
+View-space film filtering also approximates original-sample processing: grain uses a Gaussian footprint approximation, while authoritative export and original references apply emulation before source-cell reconstruction. Physical views acquire the stages' declared neighbourhood beyond the viewport and extract the requested raster after processing; viewport edges are not source edges.
 
 Filtering before nonlinear grading does **not** commute with original-sample grading before reconstruction, and footprint-centre local masks are not the original-sample mask integral. These are preview approximations, not changes to the photographic model or export authority: the appearance requirement is the same photograph in the file, potentially with better-resolved detail. Source inspection similarly acquires filtered linear AP1 from corrected camera light without inversion, applying its [viewing WB and exposure](colour-and-output.md#source-inspection-has-its-own-exposure-convention) before pinned ACES. [Editor ownership](editor.md#a-stable-working-view-while-grading) and [diagnostics](diagnostics.md#stable-float32-view-grading) keep those distinctions explicit.
 

@@ -7,17 +7,31 @@ pub(crate) fn affine_output(
     origin: [u32; 2],
     tile: [u32; 2],
 ) -> Window {
+    affine_output_rect(
+        affine,
+        output,
+        origin.map(f64::from),
+        std::array::from_fn(|i| f64::from(origin[i]) + f64::from(tile[i])),
+    )
+}
+
+pub(crate) fn affine_output_rect(
+    affine: [[f32; 2]; 3],
+    output: [u32; 2],
+    low: [f64; 2],
+    high: [f64; 2],
+) -> Window {
     let [start, dx, dy] = affine.map(|v| v.map(f64::from));
     let det = dx[0] * dy[1] - dx[1] * dy[0];
     debug_assert!(det.is_finite() && det != 0.);
     let points = [
-        [origin[0], origin[1]],
-        [origin[0] + tile[0], origin[1]],
-        [origin[0], origin[1] + tile[1]],
-        [origin[0] + tile[0], origin[1] + tile[1]],
+        [low[0], low[1]],
+        [high[0], low[1]],
+        [low[0], high[1]],
+        [high[0], high[1]],
     ]
     .map(|p| {
-        let p = [f64::from(p[0]) - start[0], f64::from(p[1]) - start[1]];
+        let p = [p[0] - start[0], p[1] - start[1]];
         [
             (p[0] * dy[1] - p[1] * dy[0]) / det,
             (dx[0] * p[1] - dx[1] * p[0]) / det,

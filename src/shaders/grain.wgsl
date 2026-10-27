@@ -1,5 +1,15 @@
+struct Grain {
+    raster: Raster,
+    values: vec4f,
+    variance: vec4f,
+    seed: vec4u,
+}
 @group(0) @binding(1)
 var<storage, read_write> positives: array<vec4f>;
+@group(0) @binding(12)
+var<storage, read_write> grain_pixels: array<vec4f>;
+@group(0) @binding(10)
+var<uniform> parameters: Grain;
 
 fn pcg(value: u32) -> u32 {
     let state = value * 747796405u + 2891336453u;
@@ -90,95 +100,38 @@ fn grain_field(source: vec2f, scale: f32, view_footprint: f32, seed: u32) -> vec
     return value / sqrt(reference);
 }
 
-// Native originals carry camera-floor flags; physical views additionally carry coverage flag 0x8.
-fn film_covered(pixel: vec4f) -> bool {
-    return view.dimensions.w != 0u || (u32(pixel.w) & 8u) != 0u;
-}
-
-// Image MTF remains sigma=L; grain's normalized spectral tails are checked against this
-// fixed point response independently of the PSD basis used to evaluate grain.
-fn source_mtf(index: u32, axis: vec2i, sigma: f32) -> vec4f {
-    let dimensions = vec2i(view.dimensions.xy);
-    let xy = vec2i(i32(index) % dimensions.x, i32(index) / dimensions.x);
-    let radius = i32(ceil(4.0 * sigma));
-    var mean = vec3f(0.0);
-    var weight_sum = 0.0;
-    for(var i = -radius; i <= radius; i++) {
-        let p = clamp(xy + i * axis, vec2i(0), dimensions - vec2i(1));
-        let sample = working_source[p.x + p.y * dimensions.x];
-        if !film_covered(sample) {
-            continue;
-        }
-        let weight = exp(-0.5 * f32(i * i) / max(sigma * sigma, 1e-12));
-        if weight == 0.0 {
-            continue;
-        }
-        let next_weight_sum = weight_sum + weight;
-        let fraction = weight / next_weight_sum;
-        // Convex accumulation keeps finite signed/HDR constants finite even for large kernels.
-        mean = mean * (1.0 - fraction) + sample.rgb * fraction;
-        weight_sum = next_weight_sum;
-    }
-    if weight_sum <= 0.0 {
-        return working_source[index];
-    }
-    return vec4f(mean, working_source[index].w);
-}
-
-@group(0) @binding(12)
-var<storage, read_write> grain_pixels: array<vec4f>;
-
 @compute @workgroup_size(64)
-fn film_field(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
-    let index = film_index(id, groups);
+fn field(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
+    let index = raster_index(id, groups);
     if index >= arrayLength(&grain_pixels) {
         return;
     }
-    let footprint = max(length(view.axis_x.xy), length(view.axis_y.xy));
-    grain_pixels[index] =
-        vec4f(grain_field(view_point(index), view.film.z, footprint, view.dimensions.z), 0.0);
-}
-
-fn film_index(id: vec3u, groups: vec3u) -> u32 {
-    return id.x + id.y * groups.x * 64u;
-}
-
-@compute @workgroup_size(64)
-fn film_horizontal(
-    @builtin(global_invocation_id) id: vec3u,
-    @builtin(num_workgroups) groups: vec3u,
-) {
-    let index = film_index(id, groups);
-    if index >= arrayLength(&working_source) {
-        return;
-    }
-    let sigma = view.film.z / max(length(view.axis_x.xy), 1e-6);
-    positives[index] = source_mtf(index, vec2i(1, 0), sigma);
+    let raster = parameters.raster;
+    let footprint = max(length(raster.axis_x.xy), length(raster.axis_y.xy));
+    grain_pixels[index] = vec4f(
+            grain_field(
+                raster_point(raster, index),
+                parameters.values.x,
+                footprint,
+                parameters.seed.x,
+            ),
+            0.0,
+        );
 }
 
 @compute @workgroup_size(64)
-fn film_vertical(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
-    let index = film_index(id, groups);
-    if index >= arrayLength(&working_source) {
-        return;
-    }
-    let sigma = view.film.z / max(length(view.axis_y.xy), 1e-6);
-    positives[index] = source_mtf(index, vec2i(0, 1), sigma);
-}
-
-@compute @workgroup_size(64)
-fn film_grain(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
-    let index = film_index(id, groups);
+fn apply(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
+    let index = raster_index(id, groups);
     if index >= arrayLength(&positives) {
         return;
     }
     var result = positives[index];
-    if film_covered(result) && view.film.y > 0.0 {
+    if raster_covered(parameters.raster, result) && parameters.values.y > 0.0 {
         let field = grain_pixels[index].rgb;
-        let grain = mix(vec3f(field.y), field, 2.0 * view.film_colour.x);
-        let amount = view.film.y;
+        let grain = mix(vec3f(field.y), field, 2.0 * parameters.values.z);
+        let amount = parameters.values.y;
         result = vec4f(
-                result.rgb * exp(amount * grain - 0.5 * amount * amount * view.film_colour.yzw),
+                result.rgb * exp(amount * grain - 0.5 * amount * amount * parameters.variance.xyz),
                 result.w,
             );
     }

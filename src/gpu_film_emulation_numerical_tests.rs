@@ -6,12 +6,13 @@ fn film_emulation_gpu_gaussian_energy_and_magnification_limits() {
         let (device, queue, _, _) = context().await;
         let shader = format!(
             "{}\n{}",
-            film_shader(),
+            super::super::super::grain::shader(),
             r#"
+@group(0) @binding(9) var<uniform> probe:vec4f;
 @compute @workgroup_size(64)
 fn kernel_probe(@builtin(global_invocation_id) id: vec3u) {
     let phase = vec2f(f32(id.x % 8u), f32(id.x / 8u)) / 8.0;
-    if view.dimensions.w == 2u {
+    if u32(probe.y) == 2u {
         let x = i32(id.x % 256u) - 128;
         let y = i32(id.x / 256u) - 128;
         positives[id.x] = vec4f(
@@ -19,14 +20,14 @@ fn kernel_probe(@builtin(global_invocation_id) id: vec3u) {
             grain_hash(x, y + 1, 17u), grain_hash(x, y, 77u));
         return;
     }
-    if view.dimensions.w == 1u {
+    if u32(probe.y) == 1u {
         let a = grain_field(vec2f(1000.0) + phase, 0.3, 0.25, 17u);
         let b = grain_field(vec2f(1000.0) + phase, 0.3, 1.0, 17u);
         let invisible = grain_field(vec2f(1000.0) + phase, 0.3, 1e5, 17u);
         positives[id.x] = vec4f(a - b, length(invisible));
         return;
     }
-    let v = view.axis_x.x;
+    let v = probe.x;
     let radius = i32(ceil(3.5 * sqrt(v) + 1.0));
     let factored_energy = grain_kernel_energy(phase, v, radius);
     var mass = 0.0; var energy = 0.0; var min_weight = 1.0;
@@ -66,12 +67,7 @@ fn kernel_probe(@builtin(global_invocation_id) id: vec3u) {
             let size = if mode == 2 { [256, 256] } else { [64, 1] };
             let count: u32 = size[0] * size[1];
             let output = float_buffer(&device, size).unwrap();
-            let view = ViewUniform {
-                dimensions: [size[0], size[1], 0, mode],
-                dx: [v, 0., 0., 0.],
-                ..bytemuck::Zeroable::zeroed()
-            };
-            let view = uniform(&device, bytemuck::bytes_of(&view));
+            let view = uniform(&device, bytemuck::bytes_of(&[v, mode as f32, 0., 0.]));
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &pipeline.get_bind_group_layout(0),
@@ -81,7 +77,7 @@ fn kernel_probe(@builtin(global_invocation_id) id: vec3u) {
                         resource: output.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 10,
+                        binding: 9,
                         resource: view.as_entire_binding(),
                     },
                 ],
@@ -154,75 +150,44 @@ fn kernel_probe(@builtin(global_invocation_id) id: vec3u) {
 }
 
 #[test]
-fn film_emulation_dark_input_cannot_admit_an_unrepresentable_gain() {
-    let parameters = crate::film_emulation::FilmEmulationPreset::Medium
-        .settings()
-        .parameters(64)
-        .unwrap()
-        .unwrap();
-    assert!(
-        parameters.max_log_gain(1.) > f64::from(f32::MAX).ln(),
-        "unsafe exponent control"
-    );
-    assert!(
-        (1e-30_f64).ln() + parameters.max_log_gain(1.) < f64::from(f32::MAX).ln(),
-        "product-only guard would admit"
-    );
-    assert!(parameters.require_output_bound(1e-30, 1.).is_err());
-}
-
-#[test]
-fn film_emulation_rejects_an_unsafe_photographic_gain_before_dispatch() {
+fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_range_rejection() {
     pollster::block_on(async {
-        let (device, queue, renderer, kernels) = context().await;
-        let base = probe_view(&device, &queue, &renderer, &kernels, [2., 1.], false, 17);
-        let old = &base.graded.as_ref().unwrap().source;
-        let matrix = DMat3::IDENTITY * 1e28;
-        let source = Arc::new(ViewSource {
-            spec: ViewSourceSpec::new(17, old.spec.frame, InputSettings::Digital, matrix, None)
-                .unwrap(),
-            pixels: old.pixels.clone(),
-            renderer,
-            kernels,
-        });
-        let snapshot = AdjustmentLayerSnapshot::new(vec![]).unwrap();
-        let grade = Arc::new(
-            GpuAdjustmentLayers::new(
-                &device,
-                InputSettings::Digital,
-                RollSettings::default(),
-                snapshot.clone(),
-                matrix,
-                source.spec.area,
-            )
-            .unwrap(),
-        );
-        for amount in [0., 0.2] {
-            let input = ProcessingInput::from(grade.clone())
-                .with_film_emulation(FilmEmulationSettings {
-                    enabled: true,
-                    size: 2. / 6000. * 100.,
-                    amount,
-                    colour: 1.,
-                })
-                .with_film_seed(17);
-            let result = RenderedView::new(
-                &device,
-                source.clone(),
-                InputSettings::Digital,
-                RollSettings::default(),
-                snapshot.clone(),
-                &input,
-                OutputTarget::Srgb,
-                None,
-            );
-            if amount == 0. {
-                assert!(result.is_ok());
-            } else {
-                assert!(
-                    matches!(result, Err(Error::Gpu(message)) if message.contains("film emulation"))
-                );
+        let (device, queue, _, kernels) = context().await;
+        let settings = crate::film_emulation::FilmEmulationPreset::Medium.settings();
+        let parameters = settings.parameters(64).unwrap().unwrap();
+        // Small sources integrate many lattice samples; their actual finite gain is exercised.
+        let raster = crate::gpu::raster::Raster::native([1000, 1000, 16, 16].into());
+        let plan = crate::pixel_pipeline::PixelPipeline {
+            stages: vec![crate::pixel_pipeline::PixelStage::Grain {
+                parameters: parameters.grain(),
+                seed: 17,
+            }],
+        };
+        let prepared =
+            crate::gpu::pixel_pipeline::Prepared::new(&device, &plan, raster, None).unwrap();
+        for value in [1e-30_f32, 0.18, 2_f32.powi(80)] {
+            let values = vec![[value, -value, 0., 0.]; 256];
+            let pixels = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&values),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+            let mut encoder = device.create_command_encoder(&Default::default());
+            kernels
+                .stages
+                .encode(&device, &mut encoder, &prepared, &pixels)
+                .unwrap();
+            queue.submit([encoder.finish()]);
+            let result = read(&device, &queue, &pixels);
+            for p in &result {
+                assert!(p.iter().all(|v| v.is_finite()));
+                assert!(p[0] > 0. && p[1] < 0. && p[2] == 0.);
+                assert!((p[0] / value).is_finite() && (p[0] / value) > 0.);
             }
+            assert!(
+                result.iter().any(|p| (p[0] / value - 1.).abs() > 0.01),
+                "grain must execute"
+            );
         }
     });
 }
@@ -240,16 +205,20 @@ fn film_emulation_gpu_mtf_preserves_large_signed_hdr_constants() {
         });
         let output = float_buffer(&device, [65, 1]).unwrap();
         for footprint in [1. / 16., 2. / 0.075, 64.] {
-            let view = ViewUniform {
-                dimensions: [65, 1, 0, 0],
-                dx: [footprint, 0., 0., 0.],
-                film: [1., 0., 2., 0.],
+            let raster = crate::gpu::raster::Raster {
+                dimensions: [65, 1, 8, 0],
+                axis_x: [footprint, 0., 0., 0.],
+                axis_y: [0., 1., 0., 0.],
                 ..bytemuck::Zeroable::zeroed()
             };
-            let view = uniform(&device, bytemuck::bytes_of(&view));
+            let view = crate::gpu::raster::uniform(
+                &device,
+                &crate::gpu::image_mtf::Parameters::new(raster, 2.),
+                "MTF numerical control",
+            );
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
-                layout: &kernels.film.horizontal.get_bind_group_layout(0),
+                layout: &kernels.stages.mtf.horizontal.get_bind_group_layout(0),
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -268,7 +237,7 @@ fn film_emulation_gpu_mtf_preserves_large_signed_hdr_constants() {
             let mut encoder = device.create_command_encoder(&Default::default());
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&kernels.film.horizontal);
+                pass.set_pipeline(&kernels.stages.mtf.horizontal);
                 pass.set_bind_group(0, &group, &[]);
                 pass.dispatch_workgroups(2, 1, 1);
             }

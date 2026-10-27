@@ -1,8 +1,7 @@
-//! Digital film emulation: source-anchored image MTF and grain.
+//! Film Emulation settings and source-scale parameter resolution.
 //!
-//! This module owns the user settings and the frequency/scale model. It is deliberately
-//! separate from the creative look: film emulation is a rendering effect applied after
-//! per-photo correction and before the look and output transform.
+//! Independent image-MTF and grain stages execute after the complete photographic grade,
+//! before the separate creative look and output transform.
 
 use crate::Error;
 
@@ -21,33 +20,8 @@ pub const DEFAULT_COLOUR: f64 = 0.5;
 pub const MIN_COLOUR: f64 = 0.;
 pub const MAX_COLOUR: f64 = 1.;
 
-/// Gaussian covariance factors fitted to the scan cohort, with source frames held out.
-/// Each factor mixes independent latent fields into RGB; their sum is one continuous spectrum.
-#[derive(Debug, Clone, Copy)]
-pub struct GrainBasis {
-    pub sigma: f64,
-    pub factor: [[f64; 3]; 3],
-}
-
-pub const GRAIN_BASIS: [GrainBasis; 2] = [
-    GrainBasis {
-        sigma: 0.24,
-        factor: [
-            [0.3730124895, 0.5050531591, 0.2495790334],
-            [0.6619305266, 0.4772988068, -0.2357789247],
-            [1.5330216192, -0.3289776090, 0.0410778103],
-        ],
-    },
-    GrainBasis {
-        sigma: 0.68,
-        factor: [
-            [-0.5272974482, 0.4116058302, 0.2041265846],
-            [-0.5838512039, 0.0504305084, -0.3754140180],
-            [0.6499508815, 0.3792326835, -0.1716291221],
-        ],
-    },
-];
-/// Accepted image MTF, kept fixed while changing the grain evaluator.
+pub use crate::grain::{GRAIN_BASIS, GrainBasis};
+/// Image-response sigma relative to source-resolved Size.
 pub const MTF_SIGMA: f64 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -168,116 +142,22 @@ pub struct FilmEmulationParameters {
 }
 
 impl FilmEmulationParameters {
-    /// Source-cell halo for the current truncated image MTF, using its packed shader sigma.
-    pub fn support_radius(self) -> u32 {
-        (4. * self.image_mtf_sigma as f32).ceil() as u32
-    }
-}
-
-#[cfg(any(
-    test,
-    feature = "editor",
-    all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "gpu", feature = "export")
-))]
-impl FilmEmulationParameters {
-    fn reference_power(self) -> f64 {
-        GRAIN_BASIS
-            .iter()
-            .map(|basis| {
-                let variance = (basis.sigma * self.grain_size).powi(2);
-                basis.factor[1].iter().map(|v| v * v).sum::<f64>() * variance
-                    / (variance + 1. / 12.)
-            })
-            .sum()
-    }
-
-    fn colour_row(self, basis: GrainBasis, channel: usize) -> [f64; 3] {
-        // The midpoint reproduces the fitted scan covariance; the upper half increases chroma.
-        let colour = 2. * self.colour;
-        std::array::from_fn(|i| {
-            colour * basis.factor[channel][i] + (1. - colour) * basis.factor[1][i]
-        })
-    }
-
-    pub(crate) fn covariance(self, footprint: f64) -> [[f64; 3]; 3] {
-        let footprint = footprint.max(1.);
-        let reference = self.reference_power();
-        let mut covariance = [[0.; 3]; 3];
-        for basis in GRAIN_BASIS {
-            let variance = (basis.sigma * self.grain_size).powi(2);
-            let power = variance / (variance + footprint * footprint / 12.) / reference;
-            let rows: [[f64; 3]; 3] = std::array::from_fn(|c| self.colour_row(basis, c));
-            for r in 0..3 {
-                for c in 0..3 {
-                    covariance[r][c] +=
-                        power * (0..3).map(|i| rows[r][i] * rows[c][i]).sum::<f64>();
-                }
-            }
+    pub(crate) fn grain(self) -> crate::grain::GrainParameters {
+        crate::grain::GrainParameters {
+            grain_size: self.grain_size,
+            amplitude: self.amplitude,
+            colour: self.colour,
         }
-        covariance
     }
 
+    #[cfg(test)]
     pub(crate) fn channel_variance(self, footprint: f64) -> [f64; 3] {
-        let covariance = self.covariance(footprint);
-        std::array::from_fn(|c| covariance[c][c])
+        self.grain().channel_variance(footprint)
     }
 
-    #[cfg(any(
-        feature = "editor",
-        all(feature = "ui", feature = "render"),
-        all(feature = "raw", feature = "gpu", feature = "export")
-    ))]
-    pub(crate) fn require_output_bound(self, bound: f64, footprint: f64) -> Result<(), Error> {
-        let gain = self.max_log_gain(footprint);
-        let correction = 0.5
-            * self.amplitude.powi(2)
-            * self
-                .channel_variance(footprint)
-                .into_iter()
-                .fold(0., f64::max);
-        // Bound exp itself as well as its product: dark inputs cannot make an overflowing
-        // gain safe, and subnormal gains may flush before multiplication with HDR values.
-        if !bound.is_finite()
-            || bound < 0.
-            || gain + correction > -f64::from(f32::MIN_POSITIVE).ln()
-            || bound.ln() + gain > (f64::from(f32::MAX) / 4.).ln()
-        {
-            return Err(Error::Gpu(
-                "film emulation exceeds the supported photographic range".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Conservative Gaussian-kernel gain bound for the bounded binomial driver.
-    /// Omitting the nonpositive mean correction preserves the signed/HDR safety margin.
-    #[cfg(any(
-        feature = "editor",
-        all(feature = "ui", feature = "render"),
-        all(feature = "raw", feature = "gpu", feature = "export")
-    ))]
-    pub(crate) fn max_log_gain(self, footprint: f64) -> f64 {
-        if self.amplitude == 0. {
-            return 0.;
-        }
-        let p = footprint.max(1.);
-        let reference = self.reference_power();
-        let mut bound = [0.; 3];
-        for basis in GRAIN_BASIS {
-            let sigma = basis.sigma * self.grain_size;
-            let power = sigma * sigma / (sigma * sigma + p * p / 12.) / reference;
-            let v = 1. / 1.1_f64.powi(2) + p * p / (12. * (1.1 * sigma).powi(2));
-            // For v >= 1/1.1², Gaussian sum bounds give ||w||₁/||w||₂ < 4√v in 2D.
-            // The phase correction is <0.06% and omitted energy <8e-7 per axis.
-            // The binomial driver's maximum / standard deviation is √32.
-            let kernel_bound = (32_f64).sqrt() * 4. * v.sqrt();
-            for (c, value) in bound.iter_mut().enumerate() {
-                let row = self.colour_row(basis, c);
-                *value += power.sqrt() * kernel_bound * row.into_iter().map(f64::abs).sum::<f64>();
-            }
-        }
-        self.amplitude * bound.into_iter().fold(0., f64::max) * 1.01
+    #[cfg(test)]
+    pub(crate) fn covariance(self, footprint: f64) -> [[f64; 3]; 3] {
+        self.grain().covariance(footprint)
     }
 }
 

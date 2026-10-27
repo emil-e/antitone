@@ -36,8 +36,6 @@ pub struct GpuAdjustmentLayers {
     pub(super) buffer: wgpu::Buffer,
     pub(super) context: wgpu::Buffer,
     snapshot: AdjustmentLayerSnapshot,
-    input: InputSettings,
-    roll: RollSettings,
     camera_to_ap1: DMat3,
     area: SourceRegion,
     spatial: bool,
@@ -48,7 +46,6 @@ struct Prepared {
     packed: Vec<AdjustmentLayerParameters>,
     area: SourceRegion,
     active: u32,
-    output_bound: f64,
 }
 
 impl GpuAdjustmentLayers {
@@ -89,7 +86,6 @@ impl GpuAdjustmentLayers {
             packed,
             area,
             active,
-            output_bound: _,
         } = Self::prepare(
             &device.limits(),
             &input,
@@ -113,8 +109,6 @@ impl GpuAdjustmentLayers {
             buffer,
             context,
             snapshot,
-            input,
-            roll,
             camera_to_ap1,
             area,
             spatial,
@@ -141,65 +135,6 @@ impl GpuAdjustmentLayers {
             neutral_bound,
         )
         .map(|_| ())
-    }
-
-    /// Conservative post-stack AP1 bound, including injected neutral repair values.
-    pub fn repaired_output_bound(
-        device: &wgpu::Device,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        snapshot: &AdjustmentLayerSnapshot,
-        camera_to_ap1: DMat3,
-        area: SourceRegion,
-        neutral_bound: DVec3,
-    ) -> Result<f64, Error> {
-        Self::repaired_output_bound_limits(
-            &device.limits(),
-            input,
-            roll,
-            snapshot,
-            camera_to_ap1,
-            area,
-            neutral_bound,
-        )
-    }
-
-    pub fn repaired_output_bound_limits(
-        limits: &wgpu::Limits,
-        input: impl Into<InputSettings>,
-        roll: RollSettings,
-        snapshot: &AdjustmentLayerSnapshot,
-        camera_to_ap1: DMat3,
-        area: SourceRegion,
-        neutral_bound: DVec3,
-    ) -> Result<f64, Error> {
-        Self::prepare_with_neutral_bound(
-            limits,
-            &input.into(),
-            roll,
-            snapshot,
-            camera_to_ap1,
-            area,
-            neutral_bound,
-        )
-        .map(|prepared| prepared.output_bound)
-    }
-
-    pub fn output_bound(&self, device: &wgpu::Device, neutral_bound: DVec3) -> Result<f64, Error> {
-        Self::repaired_output_bound(
-            device,
-            self.input,
-            self.roll,
-            &self.snapshot,
-            self.camera_to_ap1,
-            self.area,
-            neutral_bound,
-        )
-    }
-
-    #[cfg(all(feature = "ui", feature = "render"))]
-    pub(crate) fn area(&self) -> SourceRegion {
-        self.area
     }
 
     fn prepare(
@@ -267,13 +202,17 @@ impl GpuAdjustmentLayers {
             packed,
             area,
             active,
-            output_bound: bound,
         })
     }
 
     #[cfg(feature = "editor")]
     pub(crate) fn source_matrix(&self) -> DMat3 {
         self.camera_to_ap1
+    }
+
+    #[cfg(all(feature = "ui", feature = "render"))]
+    pub(crate) fn area(&self) -> SourceRegion {
+        self.area
     }
 
     pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {

@@ -4,7 +4,7 @@ use crate::film_emulation::{FilmEmulationPreset, FilmEmulationSettings};
 fn processed(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    kernels: &crate::gpu::film_emulation::Kernels,
+    kernels: &crate::gpu::pixel_pipeline::Kernels,
     bounds: SourceRegion,
     settings: FilmEmulationSettings,
 ) -> Vec<[f32; 4]> {
@@ -14,7 +14,7 @@ fn processed(
 fn processed_with_flags(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    kernels: &crate::gpu::film_emulation::Kernels,
+    kernels: &crate::gpu::pixel_pipeline::Kernels,
     bounds: SourceRegion,
     settings: FilmEmulationSettings,
     flags: f32,
@@ -36,12 +36,6 @@ fn processed_with_flags(
         contents: bytemuck::cast_slice(&values),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
     });
-    let workspace =
-        crate::gpu::film_emulation::Workspace::new(device, [bounds.width, bounds.height]).unwrap();
-    let uniform =
-        crate::gpu::film_emulation::ViewUniform::native(bounds, 6000, settings, (1 << 60) + 17)
-            .unwrap()
-            .buffer(device);
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: working.size(),
@@ -49,20 +43,17 @@ fn processed_with_flags(
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    if settings.enabled {
-        kernels.encode(
-            device,
-            &mut encoder,
-            crate::gpu::film_emulation::Dispatch {
-                uniform: &uniform,
-                working: &working,
-                scratch: &workspace.scratch,
-                grain: &workspace.grain,
-                generate_grain: settings.amount > 0.,
-                apply_grain: settings.amount > 0.,
-            },
-        );
-    }
+    let plan = crate::pixel_pipeline::PixelPipeline::film(settings, 6000, (1 << 60) + 17).unwrap();
+    let prepared = crate::gpu::pixel_pipeline::Prepared::new(
+        device,
+        &plan,
+        crate::gpu::raster::Raster::native(bounds),
+        None,
+    )
+    .unwrap();
+    kernels
+        .encode(device, &mut encoder, &prepared, &working)
+        .unwrap();
     encoder.copy_buffer_to_buffer(&working, 0, &staging, 0, working.size());
     let submission = queue.submit([encoder.finish()]);
     let (send, recv) = std::sync::mpsc::channel();
@@ -81,7 +72,7 @@ fn processed_with_flags(
 #[test]
 fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf() {
     let (device, queue, _) = super::super::tests::context();
-    let kernels = pollster::block_on(crate::gpu::film_emulation::Kernels::new(&device)).unwrap();
+    let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
     let bounds: SourceRegion = [1048, 980, 64, 64].into();
     let settings = FilmEmulationSettings {
         amount: 0.,
@@ -124,7 +115,7 @@ fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf
 #[test]
 fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_crop_edges() {
     let (device, queue, _) = super::super::tests::context();
-    let kernels = pollster::block_on(crate::gpu::film_emulation::Kernels::new(&device)).unwrap();
+    let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
     let area: SourceRegion = [100, 80, 6000, 6000].into();
     let whole: SourceRegion = [900, 950, 350, 350].into();
     let composition = Composition::with_crop(
@@ -143,15 +134,14 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
     let engine = Reconstructor::new(&device).unwrap();
     for origin in [[0, 0], [128, 0], [0, 128], [128, 128]] {
         let extent = std::array::from_fn(|i| (composition.size()[i] - origin[i]).min(128));
-        let mut unit = Unit::with_margin(
+        let mut unit = Unit::with_support(
             composition,
             origin,
             extent,
-            settings
-                .parameters(area.height)
+            crate::pixel_pipeline::PixelPipeline::film(settings, area.height, 17)
                 .unwrap()
-                .unwrap()
-                .support_radius(),
+                .support([1., 1.])
+                .unwrap(),
         )
         .unwrap();
         unit.mapping.space[0] = 1;

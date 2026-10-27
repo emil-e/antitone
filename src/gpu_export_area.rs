@@ -34,14 +34,19 @@ impl Unit {
         origin: [u32; 2],
         extent: [u32; 2],
     ) -> Result<Self, Error> {
-        Self::with_margin(composition, origin, extent, 0)
+        Self::with_support(
+            composition,
+            origin,
+            extent,
+            crate::processing_support::Support::NONE,
+        )
     }
 
-    fn with_margin(
+    fn with_support(
         composition: Composition,
         origin: [u32; 2],
         extent: [u32; 2],
-        margin: u32,
+        support: crate::processing_support::Support,
     ) -> Result<Self, Error> {
         if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
             return Err(Error::InvalidParameter("invalid export destination unit"));
@@ -58,20 +63,11 @@ impl Unit {
         let exact = raster.bounds()?;
         // One real-cell halo absorbs native mapping roundoff without omitting support/repairs.
         // Composition maps the developed source at unit pitch; lens development is upstream.
-        let halo = margin
-            .checked_add(1)
-            .ok_or(Error::InvalidParameter("film halo overflow"))?;
-        let x = exact.x.saturating_sub(halo).max(area.x);
-        let y = exact.y.saturating_sub(halo).max(area.y);
-        let right = (exact.x + exact.width)
-            .saturating_add(halo)
-            .min(area.x + area.width);
-        let bottom = (exact.y + exact.height)
-            .saturating_add(halo)
-            .min(area.y + area.height);
-        let bounds = SourceRegion::from([x, y, right - x, bottom - y]).validate()?;
-        let max_side = MAX_SOURCE_SIDE.saturating_add(margin.saturating_mul(2));
-        if bounds.width > max_side || bounds.height > max_side {
+        let support = support.then(crate::processing_support::Support([1, 1]))?;
+        let bounds = support.expand(exact, area).validate()?;
+        if bounds.width > MAX_SOURCE_SIDE.saturating_add(support.0[0].saturating_mul(2))
+            || bounds.height > MAX_SOURCE_SIDE.saturating_add(support.0[1].saturating_mul(2))
+        {
             return Err(Error::Gpu(
                 "affine source unit exceeds bounded export scratch".into(),
             ));
@@ -100,8 +96,8 @@ impl Unit {
         let mapping = Mapping {
             sizes: [bounds.width, bounds.height, extent[0], extent[1]],
             origin: [
-                (p[0] - f64::from(x)) as f32,
-                (p[1] - f64::from(y)) as f32,
+                (p[0] - f64::from(bounds.x)) as f32,
+                (p[1] - f64::from(bounds.y)) as f32,
                 0.,
                 0.,
             ],
@@ -327,7 +323,6 @@ struct Originals {
     working: wgpu::Buffer,
     texture: wgpu::Texture,
     binding: Option<crate::renderer::RenderBinding>,
-    film: Option<crate::gpu::film_emulation::Workspace>,
 }
 
 impl Originals {
@@ -381,11 +376,6 @@ impl Originals {
             working,
             texture,
             binding,
-            film: request
-                .film_emulation
-                .enabled
-                .then(|| crate::gpu::film_emulation::Workspace::new(device, size))
-                .transpose()?,
         })
     }
 }
@@ -441,12 +431,14 @@ pub(super) fn write(
         request.scan.positive_matrix(&input)?,
         request.scan.area,
     )?);
-    let film_parameters = request
-        .film_emulation
-        .parameters(request.scan.area.height)?;
-    let margin = film_parameters.map_or(0, |parameters| parameters.support_radius());
-    let film_kernels = film_parameters
-        .map(|_| renderer.film_kernels(device))
+    let pipeline = crate::pixel_pipeline::PixelPipeline::film(
+        request.film_emulation,
+        request.scan.area.height,
+        request.film_seed,
+    )?;
+    let support = pipeline.support([1., 1.])?;
+    let stage_kernels = (!pipeline.is_empty())
+        .then(|| renderer.pixel_kernels(device))
         .transpose()?;
     let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;
     repairs.require_area(request.scan.area)?;
@@ -460,18 +452,6 @@ pub(super) fn write(
             request.scan.area,
             repairs.bound(),
         )?;
-    }
-    if let Some(parameters) = film_parameters {
-        let bound = GpuAdjustmentLayers::repaired_output_bound(
-            device,
-            input,
-            request.roll,
-            &request.grade,
-            request.scan.camera_to_ap1,
-            request.scan.area,
-            repairs.bound(),
-        )?;
-        parameters.require_output_bound(bound, 1.)?;
     }
     let kernel = &renderer.kernel;
     let _look_resource = request
@@ -519,7 +499,7 @@ pub(super) fn write(
             let mut timing = timestamps.borrow_mut();
             let mut unit = timed!(
                 CoveragePlan,
-                Unit::with_margin(request.composition, origin, extent, margin)
+                Unit::with_support(request.composition, origin, extent, support)
             )?;
             unit.mapping.space[0] = u32::from(matches!(request.format, Format::Exr(_)));
             let size = [unit.bounds.width, unit.bounds.height];
@@ -603,28 +583,14 @@ pub(super) fn write(
                         geometry,
                     )?;
                 }
-                if let (Some(kernels), Some(workspace)) =
-                    (film_kernels.as_ref(), source.film.as_ref())
-                {
-                    let parameters = crate::gpu::film_emulation::ViewUniform::native(
-                        unit.bounds,
-                        request.scan.area.height,
-                        request.film_emulation,
-                        request.film_seed,
-                    )?
-                    .buffer(device);
-                    kernels.encode(
+                if let Some(kernels) = stage_kernels.as_ref() {
+                    let prepared = crate::gpu::pixel_pipeline::Prepared::new(
                         device,
-                        &mut encoder,
-                        crate::gpu::film_emulation::Dispatch {
-                            uniform: &parameters,
-                            working: &source.working,
-                            scratch: &workspace.scratch,
-                            grain: &workspace.grain,
-                            generate_grain: request.film_emulation.amount > 0.,
-                            apply_grain: request.film_emulation.amount > 0.,
-                        },
-                    );
+                        &pipeline,
+                        crate::gpu::raster::Raster::native(unit.bounds),
+                        None,
+                    )?;
+                    kernels.encode(device, &mut encoder, &prepared, &source.working)?;
                 }
                 if let (Format::Tiff(target), Some(binding)) =
                     (request.format, source.binding.as_ref())
@@ -700,7 +666,7 @@ pub(super) fn write(
                             + 16
                             + 16
                             + 16
-                            + if source.film.is_some() { 32 } else { 0 }
+                            + if !pipeline.is_empty() { 32 } else { 0 }
                             + if request.look.is_some() && matches!(request.format, Format::Tiff(_))
                             {
                                 16

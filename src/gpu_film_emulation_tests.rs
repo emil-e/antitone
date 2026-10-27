@@ -8,6 +8,8 @@ mod cache;
 mod model;
 #[path = "gpu_film_emulation_numerical_tests.rs"]
 mod numerical;
+#[path = "gpu_film_emulation_order_tests.rs"]
+mod order;
 #[path = "gpu_film_emulation_reference_tests.rs"]
 mod reference;
 

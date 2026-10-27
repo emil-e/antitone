@@ -869,7 +869,12 @@ impl Editor {
                 .as_ref()
                 .map(|correction| correction.gpu.field().clone()),
         )?
-        .with_repairs(input.repairs.clone());
+        .with_repairs(input.repairs.clone())
+        .with_support(
+            input
+                .pixel_pipeline(frame.composition.area().height)?
+                .support([1., 1.])?,
+        );
         self.request_working(spec, source_input, cx);
         self.working
             .render(&settings, self.roll, snapshot, input, self.target, context)?;

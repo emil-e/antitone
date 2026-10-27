@@ -1,13 +1,13 @@
 use super::*;
 
 #[test]
-fn reduced_camera_proxies_reject_native_film_before_callback_construction() {
+fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_representation() {
     use crate::{
         adjustment_layers::AdjustmentLayerSnapshot,
         film_emulation::FilmEmulationPreset,
         frame_raster::FrameRaster,
         geometry::Composition,
-        gpu::{GpuAdjustmentLayers, SubmissionGate},
+        gpu::GpuAdjustmentLayers,
         gpu_scopes::{GpuScopes, ScopePaint},
         processing::InputSettings,
     };
@@ -17,7 +17,7 @@ fn reduced_camera_proxies_reject_native_film_before_callback_construction() {
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let renderer = GpuRenderer::new(&device, &queue).await.unwrap();
         let area = [120, 73, 1200, 1200];
-        let mut image = GpuImage::new_shared(
+        let image = GpuImage::new_shared(
             &renderer,
             &device,
             2,
@@ -28,14 +28,11 @@ fn reduced_camera_proxies_reject_native_film_before_callback_construction() {
         )
         .await
         .unwrap();
-        image
-            .set_geometry(SourceGeometry::new(area, [2, 2]).unwrap())
-            .unwrap();
         let grade = GpuAdjustmentLayers::new(
             &device,
             InputSettings::Digital,
             Default::default(),
-            AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
+            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             DMat3::IDENTITY,
             area.into(),
         )
@@ -46,7 +43,10 @@ fn reduced_camera_proxies_reject_native_film_before_callback_construction() {
             .with_film_emulation(FilmEmulationPreset::Medium.settings())
             .with_film_seed(17);
         image.require_processing(&clean).unwrap();
-        assert!(image.require_processing(&film).is_err());
+        assert!(
+            image.require_processing(&film).is_err(),
+            "coordinate-dependent stages require geometry"
+        );
         let image = Arc::new(image);
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
         let composition =
@@ -55,18 +55,17 @@ fn reduced_camera_proxies_reject_native_film_before_callback_construction() {
             output: [2, 2],
             ..FrameRaster::full(composition).unwrap()
         };
-        let callback = |input| {
+        assert!(
             ScopePaint::with_processing(
-                gpu.clone(),
+                gpu,
                 image.clone(),
-                input,
+                film.clone(),
                 frame,
                 Default::default(),
-                egui::Context::default(),
+                egui::Context::default()
             )
-        };
-        assert!(callback(clean.clone()).is_ok());
-        assert!(callback(film.clone()).is_err());
+            .is_err()
+        );
         let mut encoder = device.create_command_encoder(&Default::default());
         assert!(
             image
@@ -83,20 +82,27 @@ fn reduced_camera_proxies_reject_native_film_before_callback_construction() {
                 .prepare_processing(&device, &mut encoder, &clean)
                 .unwrap()
         );
-        SubmissionGate::default().submit(&queue, [encoder.finish()]);
-
-        let mut image = Arc::try_unwrap(image).ok().unwrap();
-        image
-            .set_geometry(SourceGeometry::new([120, 73, 2, 2], [2, 2]).unwrap())
-            .unwrap();
-        image.require_processing(&film).unwrap();
-        let mut encoder = device.create_command_encoder(&Default::default());
-        assert!(
-            image
-                .prepare_processing(&device, &mut encoder, &film)
-                .unwrap()
-        );
         queue.submit([encoder.finish()]);
-        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let mut image = Arc::try_unwrap(image).ok().unwrap();
+        for region in [[120, 73, 8, 8], [120, 73, 2, 2]] {
+            image
+                .set_geometry(SourceGeometry::new(region, [2, 2]).unwrap())
+                .unwrap();
+            image.require_processing(&film).unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            assert!(
+                image
+                    .prepare_processing(&device, &mut encoder, &film)
+                    .unwrap()
+            );
+            queue.submit([encoder.finish()]);
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            assert!(
+                crate::viewer::readback::image_pixels(&device, &queue, &image)
+                    .iter()
+                    .flatten()
+                    .all(|v| v.is_finite())
+            );
+        }
     });
 }

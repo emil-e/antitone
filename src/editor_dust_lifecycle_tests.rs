@@ -495,52 +495,22 @@ fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
 }
 
 #[test]
-fn film_control_admission_includes_existing_hdr_repairs_and_preserves_accepted_history() {
+fn film_settings_do_not_change_neutral_repair_admission_or_trigger_rehealing() {
     let e = gpu_editor();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
             let response = high_response(e);
+            let evaluated = response.evaluated.clone();
             e.receive_dust(response.request, Ok(Some(response)));
-            assert_eq!(e.dust_gpu_snapshot(None).unwrap().0.len(), 1);
-            e.dust_validate_processing(e.input, e.roll, e.adjustment_layer_settings)
-                .unwrap();
-            let film = FilmEmulationPreset::Medium.settings();
-            let source = e
-                .document
-                .project
-                .source(e.current_source.unwrap())
-                .unwrap();
-            let input = match e.input.calibration() {
-                Some(base) => e
-                    .input
-                    .with_calibration(e.processing_calibration(base).unwrap()),
-                None => e.input,
-            };
-            crate::editor::processing::validate_source(
-                e.working.device(),
-                &input,
-                e.roll,
-                source,
-                film,
-            )
-            .unwrap();
-            let previous = crate::editor::editing::ControlSettings::capture(e);
-            let before = e.history_snapshot();
-            let history = e.history_label(crate::editor::history::Direction::Undo);
-            e.begin_control_history("Rendering settings");
-            e.film_emulation = film;
-            e.validate_frame_edits(previous);
-            let ctx = egui::Context::default();
-            let mut output = ctx.run_ui(Default::default(), |ui| e.record_controls(None, ui));
-            output.textures_delta.clear();
-            assert_eq!(e.film_emulation, previous.film_emulation);
-            assert_eq!(e.document.project, before);
-            assert_eq!(
-                e.history_label(crate::editor::history::Direction::Undo),
-                history
-            );
-            assert!(e.status.contains("film emulation"), "{}", e.status);
-            assert_eq!(e.dust_gpu_snapshot(None).unwrap().0.len(), 1);
+            let previous = e.dust_gpu_snapshot(None).unwrap();
+            assert_eq!(previous.0.len(), 1);
+            let controls = crate::editor::editing::ControlSettings::capture(e);
+            e.film_emulation = FilmEmulationPreset::Medium.settings();
+            e.validate_frame_edits(controls);
+            assert!(e.film_emulation.enabled);
+            let current = e.dust_gpu_snapshot(None).unwrap();
+            assert_eq!(current.0.len(), 1);
+            assert!(Arc::ptr_eq(&current.0[0].evaluated, &evaluated));
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             assert!(e.document.dust.pending_request().is_none());
         });

@@ -100,6 +100,14 @@ impl ImageRecipe {
                 .all(|(a, b)| a.support == b.support && a.donor == b.donor)
     }
 
+    pub fn pixel_pipeline(&self) -> Result<crate::pixel_pipeline::PixelPipeline, Error> {
+        crate::pixel_pipeline::PixelPipeline::film(
+            self.film_emulation,
+            self.neutral.source_development.active_area[3],
+            self.neutral.source.0,
+        )
+    }
+
     pub fn repairs(&self) -> &[Repair] {
         &self.repairs
     }

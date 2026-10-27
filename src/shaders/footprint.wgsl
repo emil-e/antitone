@@ -68,3 +68,48 @@ fn overlap(start: vec2f, cell: vec2f, dx: vec2f, dy: vec2f) -> f32 {
     }
     return min(abs(area) * 0.5, 1.);
 }
+
+// The outermost real cells extend constantly beyond the source, never beyond a tile boundary.
+fn extended_overlap(
+    start: vec2f,
+    cell: vec2f,
+    dx: vec2f,
+    dy: vec2f,
+    source_low: vec2f,
+    source_high: vec2f,
+) -> f32 {
+    let points = array<vec2f, 4>(start, start + dx, start + dx + dy, start + dy);
+    var low = points[0];
+    var high = low;
+    for(var i = 1u; i < 4u; i++) {
+        low = min(low, points[i]);
+        high = max(high, points[i]);
+    }
+    let cell_low = select(cell, min(cell, low), cell == source_low);
+    let cell_high = select(
+            cell + vec2f(1.),
+            max(cell + vec2f(1.), high),
+            cell + vec2f(1.) == source_high,
+        );
+    if all(cell_low == cell) && all(cell_high == cell + vec2f(1.)) {
+        return overlap(start, cell, dx, dy);
+    }
+    var poly: Polygon;
+    poly.count = 4u;
+    for(var i = 0u; i < 4u; i++) {
+        poly.points[i] = points[i] - cell_low;
+    }
+    let extent = cell_high - cell_low;
+    poly = clipped(poly, 0u, 0., true);
+    poly = clipped(poly, 0u, extent.x, false);
+    poly = clipped(poly, 1u, 0., true);
+    poly = clipped(poly, 1u, extent.y, false);
+    if poly.count < 3u {
+        return 0.;
+    }
+    var area = 0.;
+    for(var i = 1u; i + 1u < poly.count; i++) {
+        area += cross(poly.points[i] - poly.points[0], poly.points[i + 1u] - poly.points[0]);
+    }
+    return abs(area) * 0.5;
+}

@@ -1,12 +1,10 @@
 struct WorkingView {
-    dimensions: vec4u, // Width, height, integer grain seed, reserved.
+    dimensions: vec4u, // Width, height, reserved.
     origin: vec4f,
     axis_x: vec4f,
     axis_y: vec4f,
     gain: vec4f,
     source_transform: array<vec4f, 3>,
-    film: vec4f,
-    film_colour: vec4f,
 }
 @group(0) @binding(10)
 var<uniform> view: WorkingView;

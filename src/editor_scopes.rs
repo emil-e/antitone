@@ -243,7 +243,7 @@ impl Editor {
                 ..visible
             };
             Ok(ScopeInput::Rendered(view.clone(), frame))
-        } else if parameters.film_emulation().enabled {
+        } else if parameters.has_pixel_stages() {
             // Camera proxies can lose original-sample detail; wait for the same
             // source-anchored emulation raster as the viewer rather than reprocessing that proxy.
             Err("Waiting for view")

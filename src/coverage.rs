@@ -86,6 +86,47 @@ impl Coverage {
         .validate()
     }
 
+    /// Acquisition bounds including the nearest edge cells for constant source extension.
+    pub fn clipped_bounds(self, active: SourceRegion) -> Result<SourceRegion, Error> {
+        active.validate()?;
+        let lo: [u32; 2] = std::array::from_fn(|axis| {
+            let min = self
+                .corners
+                .iter()
+                .map(|p| p.0[axis])
+                .fold(f64::INFINITY, f64::min);
+            let origin = if axis == 0 { active.x } else { active.y };
+            let size = if axis == 0 {
+                active.width
+            } else {
+                active.height
+            };
+            min.floor().clamp(origin as f64, (origin + size - 1) as f64) as u32
+        });
+        let hi: [u32; 2] = std::array::from_fn(|axis| {
+            let max = self
+                .corners
+                .iter()
+                .map(|p| p.0[axis])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let origin = if axis == 0 { active.x } else { active.y };
+            let size = if axis == 0 {
+                active.width
+            } else {
+                active.height
+            };
+            max.ceil()
+                .clamp((origin + 1) as f64, (origin + size) as f64) as u32
+        });
+        SourceRegion {
+            x: lo[0],
+            y: lo[1],
+            width: hi[0] - lo[0],
+            height: hi[1] - lo[1],
+        }
+        .validate()
+    }
+
     pub fn exact_rectangle(self, active: SourceRegion) -> Option<SourceRegion> {
         let region = self.bounds(active).ok()?;
         if self.area() != f64::from(region.width) * f64::from(region.height) {

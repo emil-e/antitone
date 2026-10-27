@@ -43,8 +43,9 @@ fn composed_working_view_validates() {
         &["view_main", "inspection_main"],
     );
     validate(
-        "film emulation",
-        &gpu::view::film_shader(),
-        &["film_field", "film_horizontal", "film_vertical"],
+        "image response",
+        &gpu::image_mtf::shader(),
+        &["horizontal", "vertical"],
     );
+    validate("grain", &gpu::grain::shader(), &["field", "apply"]);
 }

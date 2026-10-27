@@ -91,6 +91,23 @@ impl ProcessingInput {
         self.film_emulation
     }
 
+    #[cfg(all(feature = "ui", feature = "render"))]
+    pub(crate) fn pixel_pipeline(
+        &self,
+        source_height: u32,
+    ) -> Result<crate::pixel_pipeline::PixelPipeline, crate::Error> {
+        crate::pixel_pipeline::PixelPipeline::film(
+            self.film_emulation,
+            source_height,
+            self.film_seed.unwrap_or(0),
+        )
+    }
+
+    #[cfg(all(feature = "ui", feature = "render"))]
+    pub(crate) fn has_pixel_stages(&self) -> bool {
+        self.film_emulation.enabled
+    }
+
     pub fn signature(&self) -> ProcessingSignature {
         ProcessingSignature {
             parameters: bytemuck::bytes_of(&self.parameters()).try_into().unwrap(),

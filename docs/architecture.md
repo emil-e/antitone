@@ -63,6 +63,12 @@ User Cancel keeps the continuation and cancelling feedback until acknowledgement
 - **Grade routing reuses immutable constants by complete processing content** — roll WB plus ordered adjustment layers — so view state and metadata never recreate grades. [Output](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns reconstruction and lifetime detail.
 - **Image recipes capture accepted intent** ([processing](processing.md#one-accepted-image-recipe)): viewer, reference, scopes and export share accepted repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) prioritize inexpensive proxy rendering.
 
+### Pixel stages and spatial support
+
+[`PixelPipeline`](../src/pixel_pipeline.rs) lowers accepted rendering settings into ordered stages after photographic grading. Each stage consumes pixels, generic raster coordinates/coverage and its own parameters; photographic grading and repair evaluation remain independent of those stages. The [GPU executor](../src/gpu_pixel_pipeline.rs) owns dispatch order, scratch buffers, reusable fields and valid-output extraction. The completed image MTF precedes grain, leaving the future halation position between them.
+
+Each stage declares its input neighbourhood at the raster's pitch. [`Support`](../src/processing_support.rs) composes those margins; view, export and refinement adapters query them and own their acquisition/tiling loops. Native export/refinement expand source regions, physical views acquire padded rasters, and repair selection consumes the same generic support. Acquisition clips to actual source bounds; their outermost cells extend constantly for filtering. Intermediate viewport, composition and tile edges retain the declared neighbours. Extract or reconstruct the requested output after processing. The deferred [processing plan](../PROCESSING_PLAN.md) describes unifying planning and its execution contract across these adapters.
+
 ## UI test boundary
 
 The opt-in `ui-tests` feature keeps egui_kittest cases in the Editor's private [test module](../src/editor_kittest.rs). The harness invokes production `host::App::ui` and drives the live application between frames, independently of painting, on an RGBA16Float renderer that shares the real device/queue and submission gate.

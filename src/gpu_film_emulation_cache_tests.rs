@@ -39,8 +39,8 @@ fn candidate(
     .unwrap()
 }
 
-fn field(view: &RenderedView) -> &Arc<GrainField> {
-    view.graded.as_ref().unwrap().grain.as_ref().unwrap()
+fn field(view: &RenderedView) -> &Arc<crate::gpu::grain::Field> {
+    view.graded.as_ref().unwrap().stages.field().unwrap()
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn film_emulation_gpu_encoded_field_survives_owner_retirement_before_submission(
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let graded = view.graded.as_ref().unwrap();
-            kernels.grade(&device, &mut encoder, graded, false);
+            kernels.grade(&device, &mut encoder, graded);
             encoder.copy_buffer_to_buffer(&graded.pixels, 0, &output, 0, output.size());
         }
         drop(view);
@@ -118,31 +118,26 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         );
         assert!(Arc::ptr_eq(field(&base), field(&zero)));
         assert!(
-            !*field(&zero).submitted.lock().unwrap(),
+            !field(&zero).ready(),
             "zero Amount must not compute or mark an uninitialized field ready"
         );
         let edited = candidate(&device, source.clone(), settings, photo, Some(&zero));
         assert!(Arc::ptr_eq(field(&base), field(&edited)));
-        assert!(!*field(&base).submitted.lock().unwrap());
+        assert!(!field(&base).ready());
 
         // Encoding alone is not initialization, including when a different photographic view
         // shares the field. A deferred/abandoned UI encoder must not poison later publication.
         let mut abandoned = device.create_command_encoder(&Default::default());
-        kernels.grade(
-            &device,
-            &mut abandoned,
-            base.graded.as_ref().unwrap(),
-            false,
-        );
+        kernels.grade(&device, &mut abandoned, base.graded.as_ref().unwrap());
         drop(abandoned);
-        assert!(!*field(&edited).submitted.lock().unwrap());
+        assert!(!field(&edited).ready());
         edited.ensure_submitted(
             &device,
             &queue,
             &SubmissionGate::default(),
             &egui::Context::default(),
         );
-        assert!(*field(&base).submitted.lock().unwrap());
+        assert!(field(&base).ready());
         let cached = read(&device, &queue, &edited.graded.as_ref().unwrap().pixels);
         let generated = read(&device, &queue, &field(&edited).pixels);
         let variance = settings

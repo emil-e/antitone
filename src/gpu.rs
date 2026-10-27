@@ -15,8 +15,29 @@ pub use adjustment_layers::GpuAdjustmentLayers;
     all(feature = "ui", feature = "render"),
     all(feature = "raw", feature = "export")
 ))]
-#[path = "gpu_film_emulation.rs"]
-pub(crate) mod film_emulation;
+#[path = "gpu_grain.rs"]
+pub(crate) mod grain;
+#[cfg(any(
+    feature = "editor",
+    all(feature = "ui", feature = "render"),
+    all(feature = "raw", feature = "export")
+))]
+#[path = "gpu_image_mtf.rs"]
+pub(crate) mod image_mtf;
+#[cfg(any(
+    feature = "editor",
+    all(feature = "ui", feature = "render"),
+    all(feature = "raw", feature = "export")
+))]
+#[path = "gpu_pixel_pipeline.rs"]
+pub(crate) mod pixel_pipeline;
+#[cfg(any(
+    feature = "editor",
+    all(feature = "ui", feature = "render"),
+    all(feature = "raw", feature = "export")
+))]
+#[path = "gpu_raster.rs"]
+pub(crate) mod raster;
 
 #[path = "gpu_processing_input.rs"]
 mod input;

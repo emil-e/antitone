@@ -141,12 +141,7 @@ impl Editor {
         if candidate == previous || !candidate.input.ready() {
             return Ok(());
         }
-        self.validate_processing_with_film(
-            candidate.input,
-            candidate.roll,
-            candidate.photo,
-            candidate.film_emulation,
-        )
+        self.validate_processing(candidate.input, candidate.roll, candidate.photo)
     }
 
     // Numeric widgets must resolve focus loss and pass admission before a separate

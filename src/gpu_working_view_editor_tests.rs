@@ -25,6 +25,10 @@ mod performance;
 mod repairs;
 #[path = "gpu_working_view_source_scale_tests.rs"]
 mod source_scale;
+#[path = "gpu_working_view_stage_acquisition_tests.rs"]
+mod stage_acquisition;
+#[path = "gpu_working_view_stage_support_tests.rs"]
+mod stage_support;
 #[path = "gpu_working_view_underlay_tests.rs"]
 mod underlay;
 

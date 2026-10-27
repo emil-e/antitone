@@ -390,19 +390,10 @@ impl GpuImage {
             crate::gpu::look::Lut::require_limits(&self.device_limits, asset.lut())?;
         }
         input.require_source(&processing.source)?;
-        if input.film_emulation().enabled {
-            input
-                .grade()
-                .ok_or_else(|| Error::Gpu("native film requires a source-owned grade".into()))?;
-            let geometry = processing.source.geometry().ok_or_else(|| {
-                Error::Gpu("native film requires original source geometry".into())
-            })?;
-            let bounds = geometry.region();
-            if geometry.size() != [bounds.width, bounds.height] {
-                return Err(Error::Gpu(
-                    "native film requires original source samples".into(),
-                ));
-            }
+        if input.has_pixel_stages() && processing.source.geometry().is_none() {
+            return Err(Error::Gpu(
+                "pixel processing requires declared raster geometry".into(),
+            ));
         }
         Ok(())
     }
@@ -459,33 +450,20 @@ impl GpuImage {
             .processing
             .as_ref()
             .expect("validated processing source");
-        let film = if input.film_emulation().enabled {
-            let grade = input.grade().expect("validated native film grade");
+        let stages = if input.has_pixel_stages() {
             let geometry = processing
                 .source
                 .geometry()
-                .expect("validated native film geometry");
-            let bounds = geometry.region();
-            let parameters = input
-                .film_emulation()
-                .parameters(grade.area().height)?
-                .expect("enabled film");
-            #[cfg(feature = "editor")]
-            let neutral_bound = input.repairs.bound();
-            #[cfg(not(feature = "editor"))]
-            let neutral_bound = glam::DVec3::ZERO;
-            let bound = grade.output_bound(device, neutral_bound)?;
-            parameters.require_output_bound(bound, 1.)?;
+                .expect("validated raster geometry");
+            let pipeline = input.pixel_pipeline(
+                input
+                    .grade()
+                    .map_or(geometry.region().height, |grade| grade.area().height),
+            )?;
+            let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
             Some((
-                processing.renderer.film_kernels(device)?,
-                crate::gpu::film_emulation::Workspace::new(device, geometry.size())?,
-                crate::gpu::film_emulation::ViewUniform::native(
-                    bounds,
-                    grade.area().height,
-                    input.film_emulation(),
-                    input.film_seed().unwrap_or(0),
-                )?
-                .buffer(device),
+                processing.renderer.pixel_kernels(device)?,
+                crate::gpu::pixel_pipeline::Prepared::new(device, &pipeline, raster, None)?,
             ))
         } else {
             None
@@ -524,19 +502,8 @@ impl GpuImage {
                 )?;
             }
         }
-        if let Some((kernels, workspace, uniform)) = film {
-            kernels.encode(
-                device,
-                encoder,
-                crate::gpu::film_emulation::Dispatch {
-                    uniform: &uniform,
-                    working: &processing.working,
-                    scratch: &workspace.scratch,
-                    grain: &workspace.grain,
-                    generate_grain: input.film_emulation().amount > 0.,
-                    apply_grain: input.film_emulation().amount > 0.,
-                },
-            );
+        if let Some((kernels, prepared)) = stages {
+            kernels.encode(device, encoder, &prepared, &processing.working)?;
         }
         let mut binding = processing.aces_group.lock().unwrap();
         let id = input.look().map(|asset| asset.lut().id());

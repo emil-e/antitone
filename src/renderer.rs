@@ -172,7 +172,7 @@ pub struct GpuRenderer {
     targets: [TargetResources; 2],
     look_kernel: crate::gpu::look::Kernel,
     #[cfg(any(feature = "ui", all(feature = "raw", feature = "export")))]
-    film: std::sync::OnceLock<Result<Arc<crate::gpu::film_emulation::Kernels>, Error>>,
+    stages: std::sync::OnceLock<Result<Arc<crate::gpu::pixel_pipeline::Kernels>, Error>>,
     #[cfg(test)]
     look_uploads: std::sync::atomic::AtomicU64,
     look_cache: std::sync::Mutex<
@@ -222,7 +222,7 @@ impl GpuRenderer {
             targets,
             look_kernel,
             #[cfg(any(feature = "ui", all(feature = "raw", feature = "export")))]
-            film: std::sync::OnceLock::new(),
+            stages: std::sync::OnceLock::new(),
             #[cfg(test)]
             look_uploads: std::sync::atomic::AtomicU64::new(0),
             look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -233,13 +233,13 @@ impl GpuRenderer {
         }))
     }
     #[cfg(any(feature = "ui", all(feature = "raw", feature = "export")))]
-    pub(crate) fn film_kernels(
+    pub(crate) fn pixel_kernels(
         &self,
         device: &wgpu::Device,
-    ) -> Result<Arc<crate::gpu::film_emulation::Kernels>, Error> {
-        self.film
+    ) -> Result<Arc<crate::gpu::pixel_pipeline::Kernels>, Error> {
+        self.stages
             .get_or_init(|| {
-                pollster::block_on(crate::gpu::film_emulation::Kernels::new(device)).map(Arc::new)
+                pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(device)).map(Arc::new)
             })
             .clone()
     }

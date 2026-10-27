@@ -44,9 +44,9 @@ pub fn refine(
     ))?;
     let tile_width = 512;
     let tile_height = 128;
-    let film = input.film_emulation().parameters(scan.area.height)?;
+    let support = input.pixel_pipeline(scan.area.height)?.support([1., 1.])?;
     let mut expanded: Option<GpuImage> = None;
-    let mut tile = if film.is_some() {
+    let mut tile = if support != crate::processing_support::Support::NONE {
         pollster::block_on(GpuImage::new_rendered_shared(
             renderer,
             device,
@@ -106,26 +106,9 @@ pub fn refine(
                 tile_width.min(view.area.width - x),
                 tile_height.min(view.area.height - y),
             ]);
-            let film_bounds = if let Some(parameters) = film {
-                let radius = parameters.support_radius();
-                let left = central.x.saturating_sub(radius).max(scan.area.x);
-                let top = central.y.saturating_sub(radius).max(scan.area.y);
-                let right = (central.x + central.width)
-                    .saturating_add(radius)
-                    .min(scan.area.x + scan.area.width);
-                let bottom = (central.y + central.height)
-                    .saturating_add(radius)
-                    .min(scan.area.y + scan.area.height);
-                Some(crate::geometry::SourceRegion::from([
-                    left,
-                    top,
-                    right - left,
-                    bottom - top,
-                ]))
-            } else {
-                None
-            };
-            if let Some(bounds) = film_bounds {
+            let processing_bounds = (support != crate::processing_support::Support::NONE)
+                .then(|| support.expand(central, scan.area));
+            if let Some(bounds) = processing_bounds {
                 let size = [bounds.width, bounds.height];
                 let bytes = u64::from(size[0]) * u64::from(size[1]) * 16;
                 if size
@@ -133,9 +116,7 @@ pub fn refine(
                     .any(|n| n > device.limits().max_texture_dimension_2d)
                     || bytes > device.limits().max_storage_buffer_binding_size
                 {
-                    return Err(Error::Gpu(
-                        "film refinement support exceeds GPU limits".into(),
-                    ));
+                    return Err(Error::Gpu("processing support exceeds GPU limits".into()));
                 }
                 let pixels = scan.tile_region(
                     scan.area,
@@ -153,7 +134,9 @@ pub fn refine(
                         size[0],
                         size[1],
                         &pixels,
-                        scan.camera_to_ap1,
+                        input
+                            .grade()
+                            .map_or(scan.camera_to_ap1, |grade| grade.source_matrix()),
                         target,
                     ))?);
                 } else {
@@ -189,7 +172,7 @@ pub fn refine(
                 }
                 let mut encoder = device.create_command_encoder(&Default::default());
                 if index == 0 {
-                    if let Some(bounds) = film_bounds {
+                    if let Some(bounds) = processing_bounds {
                         let source = expanded.as_ref().unwrap();
                         source.encode_processing(device, &mut encoder, &input)?;
                         encoder.copy_texture_to_texture(
