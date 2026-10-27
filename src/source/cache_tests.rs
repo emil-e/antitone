@@ -1,5 +1,5 @@
 use super::*;
-use crate::source::{self as source_loading, SourceLoader};
+use crate::source::{self as source_loading, Priority, SourceLoader, SourceProvider};
 use crate::{project::SourceDevelopment, raw::fixture, scan::Scan, source::Charges};
 use std::sync::{
     Weak,
@@ -68,22 +68,23 @@ fn zero_retention_reuses_live_consumer_leases_without_owning_the_pixels() {
     let (_file, key, original) = input();
     let bytes = original.retained_bytes().unwrap();
     let weak = Arc::downgrade(&original);
-    let store = Arc::new(SourceStore::new(0));
-    let cache = SourceCache::new(Existing::new(&original), store.clone());
+    let store = Arc::new(SourceCache::new(0));
+    let cache = store.clone();
+    let provider = Existing::new(&original);
     futures_lite::future::block_on(async {
         let first = cache
-            .load_source(key.clone(), source_loading::Priority::Eager)
+            .load_source(&provider, key.clone(), source_loading::Priority::Eager)
             .await
             .unwrap();
         assert!(Arc::ptr_eq(&first, &original));
         drop(original);
         let second = cache
-            .load_source(key.clone(), source_loading::Priority::Foreground)
+            .load_source(&provider, key.clone(), source_loading::Priority::Foreground)
             .await
             .unwrap();
         assert!(Arc::ptr_eq(&first, &second));
-        assert_eq!(cache.inner.calls.load(Ordering::Relaxed), 1);
-        assert_eq!(*cache.inner.priorities.lock().unwrap(), [Priority::Eager]);
+        assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(*provider.priorities.lock().unwrap(), [Priority::Eager]);
         assert_eq!(
             store.charges(),
             Charges {
@@ -104,11 +105,12 @@ fn cache_budget_owns_a_keepalive_after_consumers_finish() {
     let (_file, key, original) = input();
     let bytes = original.retained_bytes().unwrap();
     let weak = Arc::downgrade(&original);
-    let store = Arc::new(SourceStore::new(bytes));
-    let cache = SourceCache::new(Existing::new(&original), store.clone());
+    let store = Arc::new(SourceCache::new(bytes));
+    let cache = store.clone();
+    let provider = Existing::new(&original);
     futures_lite::future::block_on(async {
         let lease = cache
-            .load_source(key.clone(), source_loading::Priority::Foreground)
+            .load_source(&provider, key.clone(), source_loading::Priority::Foreground)
             .await
             .unwrap();
         drop(original);
@@ -122,10 +124,10 @@ fn cache_budget_owns_a_keepalive_after_consumers_finish() {
             }
         );
         let lease = cache
-            .load_source(key, source_loading::Priority::Foreground)
+            .load_source(&provider, key, source_loading::Priority::Foreground)
             .await
             .unwrap();
-        assert_eq!(cache.inner.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
         store.set_budget(0);
         assert_eq!(
             store.charges(),
@@ -140,57 +142,31 @@ fn cache_budget_owns_a_keepalive_after_consumers_finish() {
 }
 
 #[test]
-fn candidate_reuse_registers_a_lease_without_taking_parent_cache_ownership() {
-    let (_file, key, source) = input();
-    let bytes = source.retained_bytes().unwrap();
-    let parent = Arc::new(SourceStore::new(bytes));
-    parent
-        .publish_source(key.clone(), source.clone())
-        .unwrap()
-        .unwrap();
-    let candidate = Arc::new(SourceStore::new(0));
-    let cache = SourceCache::new(Existing::new(&source), candidate.clone())
-        .with_parent(Some(parent.clone()));
-    let lease = futures_lite::future::block_on(
-        cache.load_source(key, source_loading::Priority::Foreground),
-    )
-    .unwrap();
-    assert!(Arc::ptr_eq(&source, &lease));
-    assert_eq!(cache.inner.calls.load(Ordering::Relaxed), 0);
-    assert_eq!(parent.charges().retained, bytes);
-    assert_eq!(
-        candidate.charges(),
-        Charges {
-            retained: 0,
-            leased_only: bytes
-        }
-    );
-    candidate.close();
-    assert_eq!(parent.charges().retained, bytes);
-    assert!(lease.camera_image().is_ok());
-}
 
-#[test]
 fn closed_cache_is_not_authority_to_cancel_an_independent_load() {
     let (_file, key, source) = input();
-    let store = Arc::new(SourceStore::new(0));
+    let store = Arc::new(SourceCache::new(0));
     store.close();
-    let cache = SourceCache::new(Existing::new(&source), store.clone());
-    let lease = futures_lite::future::block_on(
-        cache.load_source(key, source_loading::Priority::Foreground),
-    )
+    let cache = store.clone();
+    let provider = Existing::new(&source);
+    let lease = futures_lite::future::block_on(cache.load_source(
+        &provider,
+        key,
+        source_loading::Priority::Foreground,
+    ))
     .unwrap();
     assert!(Arc::ptr_eq(&lease, &source));
-    assert_eq!(cache.inner.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
     assert_eq!(store.charges(), Charges::default());
 }
 
 #[test]
 fn unpolled_acquisition_does_not_start_loading() {
     let (_file, key, source) = input();
-    let cache = SourceCache::new(Existing::new(&source), Arc::new(SourceStore::new(0)));
-    drop(cache.load_source(key, source_loading::Priority::Foreground));
-    assert_eq!(cache.inner.calls.load(Ordering::Relaxed), 0);
+    let cache = SourceCache::new(0);
+    let provider = Existing::new(&source);
+    drop(cache.load_source(&provider, key, source_loading::Priority::Foreground));
+    assert_eq!(provider.calls.load(Ordering::Relaxed), 0);
 }
 
 #[test]
@@ -220,20 +196,25 @@ fn concurrent_document_cache_misses_join_native_work_and_one_waiter_can_leave() 
         Ok(())
     });
     let loader = scheduler.clone();
-    let first_cache = SourceCache::new(loader.clone(), Arc::new(SourceStore::new(0)));
-    let second_cache = SourceCache::new(loader, Arc::new(SourceStore::new(0)));
+    let first_cache = SourceCache::new(0);
+    let second_cache = SourceCache::new(0);
+    let first_loader = loader.clone();
     let executor = async_executor::Executor::new();
     futures_lite::future::block_on(executor.run(async {
         let first_key = key.clone();
         let first = executor.spawn(async move {
             first_cache
-                .load_source(first_key, source_loading::Priority::Foreground)
+                .load_source(
+                    &first_loader,
+                    first_key,
+                    source_loading::Priority::Foreground,
+                )
                 .await
         });
         blocking::unblock(move || starts.recv_timeout(Duration::from_secs(5)).unwrap()).await;
         let second = executor.spawn(async move {
             second_cache
-                .load_source(key, source_loading::Priority::Foreground)
+                .load_source(&loader, key, source_loading::Priority::Foreground)
                 .await
         });
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -280,12 +261,14 @@ fn completed_native_result_is_reused_before_any_cache_wrapper_has_published_it()
         std::thread::sleep(Duration::from_millis(1));
     };
     let weak = Arc::downgrade(&produced);
-    let store = Arc::new(SourceStore::new(0));
-    let loader = scheduler;
-    let cache = SourceCache::new(loader, store);
-    let lease = futures_lite::future::block_on(
-        cache.load_source(key, source_loading::Priority::Foreground),
-    )
+    let store = Arc::new(SourceCache::new(0));
+    let provider = scheduler;
+    let cache = store;
+    let lease = futures_lite::future::block_on(cache.load_source(
+        &provider,
+        key,
+        source_loading::Priority::Foreground,
+    ))
     .unwrap();
     assert!(Arc::ptr_eq(&lease, &produced));
     assert_eq!(

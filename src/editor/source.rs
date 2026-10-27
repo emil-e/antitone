@@ -1,16 +1,13 @@
 //! Explicit source acquisition and preparation. Each consumer leases immutable
 //! development and carries its own correction; no selected-source slot is needed.
-use super::{Correction, Document, Editor, Ready, document, source_loading, thumbnails};
+use super::{Correction, Editor, Ready, document, source_loading, thumbnails};
 use crate::{
     Error,
     project::Source,
     scan::{DevelopedSource, Scan},
-    source::{SourceCache, SourceKey, SourceLoader, SourceProvider, SourceStore},
+    source::{SourceCache, SourceKey, SourceProvider},
 };
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 #[cfg(test)]
 mod tests;
@@ -54,38 +51,14 @@ impl Context {
     }
 }
 
-#[derive(Clone)]
-pub(super) struct Cache {
-    pub store: Arc<SourceStore>,
-    pub parent: Option<Arc<SourceStore>>,
-    pub file: thumbnails::FileKey,
-    pub key: Option<SourceKey>,
-}
-
-impl Cache {
-    pub(super) fn provider(&self, loader: SourceLoader) -> SourceCache<SourceLoader> {
-        SourceCache::new(loader, self.store.clone()).with_parent(self.parent.clone())
-    }
-
-    pub fn new(path: &Path, expected: Option<&Source>, document: &Document) -> Self {
-        let file = document.file_key(path);
-        let key = expected
-            .and_then(|source| SourceKey::from_revision(path, file.clone(), &source.development));
-        Self {
-            store: document.cache().clone(),
-            parent: document.parent_cache().cloned(),
-            file,
-            key,
-        }
-    }
-}
-
 pub(super) struct Request {
     pub input: crate::processing::InputSettings,
     pub path: PathBuf,
     pub wb: Option<[f64; 4]>,
     pub expected: Option<Source>,
-    pub cache: Option<Cache>,
+    pub cache: Option<Arc<SourceCache>>,
+    // New sources resolve identity alongside header inspection, off the UI thread.
+    pub file: thumbnails::FileKey,
     pub correction: Option<Arc<Correction>>,
 }
 
@@ -94,7 +67,7 @@ pub(super) struct Developed {
     pub record: Source,
     file: thumbnails::FileKey,
     path: PathBuf,
-    cache: Option<Cache>,
+    cache: Option<Arc<SourceCache>>,
     key: Option<SourceKey>,
     timing: Timing,
     camera_proxy: Option<Arc<crate::scan::CameraProxy>>,
@@ -169,19 +142,14 @@ impl Services {
             capture()
         };
         let (request, key, cache) = captured.map_err(|error| error.to_string())?;
-        let references = cache.as_ref().map_or_else(
-            || Arc::new(SourceStore::new(0)), |cache| cache.store.clone(),
-        );
-        let store = (!independent)
-            .then(|| cache.as_ref().map(|cache| cache.store.clone()))
-            .flatten();
+        let references = cache.clone().unwrap_or_else(|| Arc::new(SourceCache::new(0)));
+        let store = if independent { None } else { cache.clone() };
         let loader = self.developments.clone();
         let load = async {
             match cache {
                 Some(cache) => {
                     cache
-                        .provider(loader)
-                        .load_source(key.clone(), source_loading::Priority::Foreground)
+                        .load_source(&loader, key.clone(), source_loading::Priority::Foreground)
                         .await
                 }
                 None => {
@@ -236,12 +204,7 @@ struct Timing {
 
 impl Request {
     fn require_live(&self, cancelled: &dyn Fn() -> bool) -> Result<(), Error> {
-        if cancelled()
-            || self
-                .cache
-                .as_ref()
-                .is_some_and(|cache| cache.store.is_closed())
-        {
+        if cancelled() || self.cache.as_ref().is_some_and(|cache| cache.is_closed()) {
             return Err(Error::UnusableSample("document source work retired"));
         }
         Ok(())
@@ -267,10 +230,7 @@ impl Request {
         let file = if self.expected.is_none() {
             thumbnails::FileKey::new(&self.path)
         } else {
-            self.cache.as_ref().map_or_else(
-                || thumbnails::FileKey::unversioned(&self.path),
-                |cache| cache.file.clone(),
-            )
+            self.file.clone()
         };
         Ok(SourceKey::for_load(&self.path, file, &record.development))
     }
@@ -291,8 +251,7 @@ impl Request {
             match &self.cache {
                 Some(cache) => {
                     cache
-                        .provider(loader)
-                        .load_source(key, source_loading::Priority::Foreground)
+                        .load_source(&loader, key, source_loading::Priority::Foreground)
                         .await
                 }
                 None => {
@@ -378,12 +337,7 @@ impl Developed {
         queue: &wgpu::Queue,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Ready, Error> {
-        if cancelled()
-            || self
-                .cache
-                .as_ref()
-                .is_some_and(|cache| cache.store.is_closed())
-        {
+        if cancelled() || self.cache.as_ref().is_some_and(|cache| cache.is_closed()) {
             return Err(Error::UnusableSample("document source work retired"));
         }
         let scan = self.context.scan()?;
@@ -394,13 +348,14 @@ impl Developed {
             .or_else(|| {
                 self.cache
                     .as_ref()
-                    .and_then(|cache| self.key.as_ref().and_then(|key| cache.store.get_proxy(key)))
+                    .and_then(|cache| self.key.as_ref().and_then(|key| cache.get_proxy(key)))
             })
+
             .map_or_else(|| thumbnails::Proxy::from_scan(&scan).map(Arc::new), Ok)?;
         if let Some(cache) = &self.cache
             && let Some(key) = &self.key
         {
-            cache.store.publish_proxy(key.clone(), proxy.clone())?;
+            cache.publish_proxy(key.clone(), proxy.clone())?;
         }
         let thumbnail = Some((self.file.clone(), proxy));
         let proxy_seconds = tick.elapsed().as_secs_f64();

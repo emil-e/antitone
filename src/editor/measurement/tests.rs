@@ -2,7 +2,7 @@ use super::*;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot};
 use crate::application::Application;
 use crate::source as source_loading;
-use crate::{raw::Rect, source::SourceStore};
+use crate::{raw::Rect, source::SourceCache};
 use std::{
     sync::{Mutex, mpsc},
     time::{Duration, Instant},
@@ -99,7 +99,7 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
         editor.set_dmax(Some(dark));
         editor.document.visit.ready = Some(ready);
         editor.sync_document();
-        editor.document.cache().set_budget(0);
+        editor.document.cache.set_budget(0);
         drop(scan);
         let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
@@ -116,7 +116,7 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
             app.pump();
             assert!(app.read(|editor| editor.document.visit.measurement.is_some()));
             assert_eq!(
-                app.read(|editor| editor.document.cache().charges().retained),
+                app.read(|editor| editor.document.cache.charges().retained),
                 0
             );
             drop(hold);
@@ -356,7 +356,7 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
         }
         Ok(())
     });
-    let store = Arc::new(SourceStore::new(0));
+    let store = Arc::new(SourceCache::new(0));
     let ticket = sources
         .submit(
             source_loading::Request {

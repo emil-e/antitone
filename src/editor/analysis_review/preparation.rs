@@ -420,6 +420,7 @@ pub(super) fn prepare_with_measurements(
     device: &wgpu::Device,
     mut progress: impl FnMut(usize, usize),
     measurements: measurements::Measurements,
+    cache: &Arc<crate::source::SourceCache>,
 ) -> Result<Option<Approved>, Error> {
     let cancelled = || generation.load(Ordering::Relaxed) != request.revision;
     if cancelled() {
@@ -450,6 +451,7 @@ pub(super) fn prepare_with_measurements(
                 analysis::develop_scan(
                     developments,
                     &request.document,
+                    cache,
                     project.source(*id)?,
                     &request.document.source_path(*id)?,
                     wb,
@@ -483,6 +485,7 @@ pub(super) fn prepare_with_measurements(
                 analysis::develop_scan(
                     developments,
                     &request.document,
+                    cache,
                     project.source(*id)?,
                     &request.document.source_path(*id)?,
                     wb,

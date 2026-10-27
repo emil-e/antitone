@@ -1,7 +1,10 @@
 use super::*;
+use crate::editor::{Document, document_scope::DocumentScope};
+use std::path::Path;
 
 #[cfg(feature = "ocio-reference")]
 mod exposure;
+
 use std::{
     sync::{
         Mutex,
@@ -17,7 +20,7 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn request(name: &str) -> (Document, Request) {
+fn request(name: &str) -> (DocumentScope, Request) {
     let path = fixture(name);
     let mut document = Document::default();
     document.import(std::slice::from_ref(&path)).unwrap();
@@ -30,13 +33,15 @@ fn request(name: &str) -> (Document, Request) {
         .project
         .development()
         .map(|development| development.fixed_wb);
-    let cache = Cache::new(&path, Some(&expected), &document);
+    let document: DocumentScope = document.into();
+    let file = document.file_key(&path);
     let request = Request {
         input: document.project.input,
         path,
         wb,
         expected: Some(expected),
-        cache: Some(cache),
+        file,
+        cache: Some(document.cache.clone()),
         correction: None,
     };
     (document, request)
@@ -48,7 +53,7 @@ fn acquisition_preserves_source_identity_precision_and_pixels_without_editor_or_
     let scheduler = source_loading::SourceLoader::new();
     let developed = request.load(&scheduler, &|| false).unwrap();
     let context = developed.context;
-    assert_eq!(document.cache().charges().retained, 0);
+    assert_eq!(document.cache.charges().retained, 0);
     assert_eq!(
         developed.record.development,
         document.project.sources[0].development
@@ -62,7 +67,7 @@ fn acquisition_preserves_source_identity_precision_and_pixels_without_editor_or_
         Arc::ptr_eq(scan.source(), &context.source),
         "a job context must lease, not copy, the source"
     );
-    document.cache().close();
+    document.cache.close();
     let measured = scan
         .reference(crate::raw::Rect {
             x: 24,
@@ -89,7 +94,7 @@ fn incompatible_requests_reject_without_rewriting_document_authority() {
     let scheduler = source_loading::SourceLoader::new();
     assert!(request.load(&scheduler, &|| false).is_err());
     assert_eq!(document.project, accepted);
-    assert_eq!(document.cache().charges().retained, 0);
+    assert_eq!(document.cache.charges().retained, 0);
     scheduler.close_and_wait().unwrap();
 }
 
@@ -122,7 +127,7 @@ fn native_wait_retires_on_cancellation_or_store_close_before_the_native_call_ret
         });
         starts.recv_timeout(Duration::from_secs(5)).unwrap();
         if close_store {
-            document.cache().close();
+            document.cache.close();
         } else {
             retired.store(true, Ordering::Relaxed);
         }
@@ -130,7 +135,7 @@ fn native_wait_retires_on_cancellation_or_store_close_before_the_native_call_ret
             .recv_timeout(Duration::from_secs(5))
             .expect("source waiter did not retire");
         assert!(matches!(result, Err(Error::UnusableSample(_))));
-        assert_eq!(document.cache().charges().retained, 0);
+        assert_eq!(document.cache.charges().retained, 0);
         release.send(()).unwrap();
         waiter.join().unwrap();
         scheduler.close_and_wait().unwrap();
@@ -148,7 +153,7 @@ fn a_closed_or_cancelled_request_cannot_start_native_work() {
             Ok(())
         });
         if close_store {
-            document.cache().close();
+            document.cache.close();
         }
         assert!(request.load(&scheduler, &|| !close_store).is_err());
         scheduler.close_and_wait().unwrap();

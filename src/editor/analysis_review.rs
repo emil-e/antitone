@@ -116,6 +116,7 @@ pub(super) fn prepare(
         device,
         progress,
         measurements::Measurements::default(),
+        &Arc::new(crate::source::SourceCache::new(0)),
     )
 }
 
@@ -135,6 +136,7 @@ fn prepare_with_measurements(
         device,
         progress,
         std::mem::take(measurements),
+        &Arc::new(crate::source::SourceCache::new(0)),
     )
 }
 

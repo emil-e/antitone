@@ -115,7 +115,7 @@ impl Editor {
                     return;
                 };
                 let pending = editor.document.thumbnail_work.tasks.swap_remove(index);
-                if Arc::ptr_eq(&store, editor.document.cache())
+                if Arc::ptr_eq(&store, &editor.document.cache)
                     && Arc::ptr_eq(&identity, &editor.thumbnails.generation)
                 {
                     match result {
@@ -144,7 +144,7 @@ impl Editor {
             Demand::Visible(visible) if self.fullscreen.is_none() => (visible.clone(), false),
             Demand::Visible(_) | Demand::Hidden => (Vec::new(), true),
         };
-        if self.document.cache().is_closed() {
+        if self.document.cache.is_closed() {
             if self.thumbnails.pending.is_some() {
                 self.thumbnails.cancel();
             }

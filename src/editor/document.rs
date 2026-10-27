@@ -2,7 +2,6 @@ use crate::{
     Error,
     project::{Project, Save, Source, SourceId},
     raw::Metadata,
-    source::{SourceKey, SourceStore},
 };
 use std::{
     path::{Path, PathBuf},
@@ -18,13 +17,6 @@ fn failure(error: impl std::fmt::Display) -> Error {
     Error::Project(error.to_string())
 }
 
-struct CacheScope(Arc<SourceStore>);
-
-impl Drop for CacheScope {
-    fn drop(&mut self) {
-        self.0.close();
-    }
-}
 
 // Captured freshness lets parameter preflight address completed metering without filesystem IO.
 #[derive(Clone)]
@@ -39,9 +31,9 @@ pub(super) struct Document {
     pub path: Option<PathBuf>,
     pub spatial_metadata: Arc<crate::spatial_metadata::Metadata>,
     saved: Project,
-    cache: Arc<CacheScope>,
-    parent_cache: Option<Arc<SourceStore>>,
+
     source_previews: std::collections::HashMap<SourceId, HeaderPreview>,
+
 
     // Keep identities for undo; each record locator follows project-path rebasing on Save As.
     source_files: std::collections::HashMap<SourceId, (PathBuf, crate::source::FileKey)>,
@@ -59,8 +51,6 @@ impl Default for Document {
             spatial_metadata: Arc::default(),
             source_previews: Default::default(),
             source_files: Default::default(),
-            cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
-            parent_cache: None,
             #[cfg(test)]
             fixture_directory: None,
         }
@@ -90,10 +80,6 @@ impl Document {
 }
 
 impl Document {
-    pub fn cache(&self) -> &Arc<SourceStore> {
-        &self.cache.0
-    }
-
     pub fn file_key(&self, path: &Path) -> crate::source::FileKey {
         self.project
             .sources
@@ -141,36 +127,6 @@ impl Document {
         }
     }
 
-    pub fn parent_cache(&self) -> Option<&Arc<SourceStore>> {
-        self.parent_cache.as_ref()
-    }
-
-    pub fn fork_cache(&mut self) {
-        let fork = self.cache.0.fork(0);
-        self.parent_cache = Some(self.cache.0.clone());
-        self.cache = Arc::new(CacheScope(Arc::new(fork)));
-    }
-
-    pub fn accept_cache(&mut self, previous: &Arc<SourceStore>) {
-        if let Some(parent) = self.parent_cache.take()
-            && Arc::ptr_eq(&parent, previous)
-        {
-            let allowed = self
-                .project
-                .sources
-                .iter()
-                .filter_map(|source| {
-                    SourceKey::from_revision(
-                        &self.source_path(source.id).ok()?,
-                        self.file_key(&self.source_path(source.id).ok()?),
-                        &source.development,
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            parent.transfer_to(&self.cache.0, &allowed);
-        }
-    }
 
     pub(super) fn remember_source_preview(
         &mut self,
@@ -405,8 +361,6 @@ impl Document {
             spatial_metadata: Arc::new(spatial_metadata),
             source_previews: Default::default(),
             source_files: Default::default(),
-            cache: Arc::new(CacheScope(Arc::new(SourceStore::new(0)))),
-            parent_cache: None,
             #[cfg(test)]
             fixture_directory: None,
         };

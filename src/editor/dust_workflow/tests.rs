@@ -46,11 +46,8 @@ fn fixture(
             path: path.clone(),
             wb: Some(document.project.development().as_ref().unwrap().fixed_wb),
             expected: Some(document.project.source(source_id).unwrap().clone()),
-            cache: Some(source::Cache::new(
-                &path,
-                Some(document.project.source(source_id).unwrap()),
-                &document,
-            )),
+            cache: Some(e.document.cache.clone()),
+            file: document.file_key(&path),
             correction: None,
         },
         Arc::new(AtomicBool::new(false)),

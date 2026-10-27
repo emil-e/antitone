@@ -77,7 +77,10 @@ impl Editor {
         self.tasks.begin(Task::Regions(id));
         self.busy = true;
         self.status = "Preparing film and picture regions…".into();
-        let services = self.source_services.as_ref().map(Services::from);
+        let services = self
+            .source_services
+            .as_ref()
+            .map(|source| Services::new(source, self.document.cache.clone()));
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
         let retire = cancelled.cancel_on_drop();

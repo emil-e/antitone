@@ -160,17 +160,18 @@ fn proposed_document(
 pub(super) fn develop_scan(
     developments: &source_loading::SourceLoader,
     document: &Document,
+    cache: &Arc<crate::source::SourceCache>,
     expected: &Source,
     path: &std::path::Path,
     wb: [f64; 4],
     cancelled: impl Fn() -> bool,
 ) -> Result<Option<Scan>, Error> {
-    let cache = LoadCache::new(path, Some(expected), document);
     let request = source::Request {
         path: path.to_owned(),
         wb: Some(wb),
         expected: Some(expected.clone()),
-        cache: Some(cache),
+        cache: Some(cache.clone()),
+        file: document.file_key(path),
         correction: None,
     };
     let result = request.load(developments, &cancelled);

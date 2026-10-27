@@ -8,10 +8,11 @@ pub use identity::FileRevision;
 mod key;
 #[cfg(all(feature = "raw", feature = "project"))]
 pub use key::SourceKey;
+
 #[cfg(all(feature = "raw", feature = "project"))]
-mod store;
+mod cache;
 #[cfg(all(feature = "raw", feature = "project"))]
-pub use store::{Charges, SourceStore};
+pub use cache::{Charges, SourceCache, PreparedSource};
 
 #[cfg(feature = "editor")]
 mod loader;
@@ -19,10 +20,6 @@ mod loader;
 pub(crate) use loader::{NativePhase, Request};
 #[cfg(feature = "editor")]
 pub use loader::{Priority, SourceLoader};
-#[cfg(feature = "editor")]
-mod cache;
-#[cfg(feature = "editor")]
-pub use cache::SourceCache;
 #[cfg(feature = "editor")]
 mod metadata;
 #[cfg(feature = "editor")]

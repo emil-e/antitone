@@ -77,7 +77,7 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
         .unwrap();
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone());
     editor.thumbnails.seed(
         editor.document.project.source(id).unwrap(),
         FileKey::new(&path),

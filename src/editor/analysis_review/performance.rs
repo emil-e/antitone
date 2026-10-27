@@ -254,6 +254,7 @@ fn profile_complete_roll_area_preparation() {
     let result = cache_observation::with_monitor(|monitor, device, _| {
         let start = Instant::now();
         let mut document = Document::default();
+        let cache = Arc::new(crate::source::SourceCache::new(0));
         monitor.phase("region_headers", || {
             for path in &paths {
                 within_limit(start, monitor)?;
@@ -291,18 +292,19 @@ fn profile_complete_roll_area_preparation() {
         let work = (|| {
             let mut seed_report = Value::Null;
             if arm == "warm" {
-                document.cache().set_budget(WARM_BUDGET);
+                cache.set_budget(WARM_BUDGET);
                 let id = *document.project.order.last().unwrap();
                 let path = document.source_path(id).map_err(|e| e.to_string())?;
                 let expected = document.project.source(id).unwrap();
                 let wb = expected.development.decode.fixed_wb;
-                let cache = LoadCache::new(&path, Some(expected), &document);
+                let file = document.file_key(&path);
                 let source = monitor.phase("region_seed_one_source", || {
                     source::Request {
                         path,
                         wb: Some(wb),
                         expected: Some(expected.clone()),
-                        cache: Some(cache),
+                        cache: Some(cache.clone()),
+                        file,
                         correction: None,
                     }
                     .load(&scheduler, &|| start.elapsed() >= LIMIT)
@@ -313,7 +315,7 @@ fn profile_complete_roll_area_preparation() {
                     .ok_or("source accounting unavailable")?;
                 assert!(bytes <= WARM_BUDGET);
                 drop(source);
-                assert_eq!(document.cache().charges().retained, bytes);
+                assert_eq!(cache.charges().retained, bytes);
                 seed_report = json!({"source":id,"bytes":bytes,"native":native_report(&events.lock().unwrap(),start)});
                 events.lock().unwrap().clear();
             }
@@ -332,12 +334,20 @@ fn profile_complete_roll_area_preparation() {
             let stop = Mutex::new(None);
             let prepare_start = Instant::now();
             let (prepared, timings) = region_timing::record(|| {
-                prepare(&request, &generation, &scheduler, device, |_, _| {
-                    if let Err(error) = within_limit(start, monitor) {
-                        *stop.lock().unwrap() = Some(error);
-                        generation.store(2, Ordering::Relaxed);
-                    }
-                })
+                preparation::prepare_with_measurements(
+                    &request,
+                    &generation,
+                    &scheduler,
+                    device,
+                    |_, _| {
+                        if let Err(error) = within_limit(start, monitor) {
+                            *stop.lock().unwrap() = Some(error);
+                            generation.store(2, Ordering::Relaxed);
+                        }
+                    },
+                    Default::default(),
+                    &cache,
+                )
             });
             let wall = prepare_start.elapsed();
             let native = native_report(&events.lock().unwrap(), prepare_start);
@@ -374,7 +384,7 @@ fn profile_complete_roll_area_preparation() {
                 "preparation":stage_report(&timings,wall),"native":native,"seed":seed_report,
                 "expected_developments":expected_developments,"expected_by_source":expected_by_source,
                 "optional_budget_bytes":if arm=="warm" {WARM_BUDGET} else {0},
-                "retained_bytes_after":request.document.cache().charges().retained,
+                "retained_bytes_after":cache.charges().retained,
                 "entries":entries,"error":prepared.as_ref().err().map(ToString::to_string),
             });
             write_new(&output.join("report.json"), &report)?;

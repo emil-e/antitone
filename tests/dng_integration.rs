@@ -6,7 +6,7 @@ use antitone::{
     project::{Project, Save, Source, SourceDevelopment, SourceId},
     raw::{RawFile, Rect},
     scan::Scan,
-    source::{SourceKey, SourceStore},
+    source::{SourceCache, SourceKey},
 };
 use glam::DVec3;
 use std::{path::Path, sync::Arc};
@@ -232,7 +232,7 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
         loaded.source(id).unwrap().development
     );
     let key = SourceKey::capture(file.path(), &loaded.source(id).unwrap().development).unwrap();
-    let store = SourceStore::new(u64::MAX);
+    let store = SourceCache::new(u64::MAX);
     store
         .publish_source(key.clone(), scan.source().clone())
         .unwrap()
@@ -386,7 +386,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
             before
         );
         let key = SourceKey::capture(&source.path, &source.development).unwrap();
-        let store = SourceStore::new(u64::MAX);
+        let store = SourceCache::new(u64::MAX);
         store
             .publish_source(key.clone(), reopened.source().clone())
             .unwrap()

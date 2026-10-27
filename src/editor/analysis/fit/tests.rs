@@ -59,6 +59,7 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
+        cache: Arc::new(crate::source::SourceCache::new(0)),
         developments: scheduler.clone(),
         device,
     };
@@ -131,7 +132,7 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
                 .exposure
     );
     assert_eq!(request.document.project, before);
-    assert_eq!(request.document.cache().charges().retained, 0);
+
     scheduler.close_and_wait().unwrap();
 }
 
@@ -142,6 +143,7 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
+        cache: Arc::new(crate::source::SourceCache::new(0)),
         developments: scheduler.clone(),
         device,
     };

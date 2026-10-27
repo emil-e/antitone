@@ -99,11 +99,10 @@ fn complete_stack_preflight_is_read_only_with_adapter_or_default_limits() {
         let directory = tempfile::tempdir().unwrap();
         let document = calibrated(directory.path());
         let before = document.project.clone();
-        let cache = document.cache().clone();
         document.validate_for_device(&device).unwrap();
         document.validate_for_device(&device).unwrap();
         assert_eq!(document.project, before);
-        assert!(Arc::ptr_eq(document.cache(), &cache));
+
         document.validate().unwrap();
         assert_eq!(document.project, before);
         let mut uncalibrated = document.clone();

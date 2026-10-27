@@ -42,6 +42,46 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
 }
 
 #[test]
+fn accepted_open_seeds_a_fresh_scope_cache_from_the_prepared_source() {
+    let scheduler = source_loading::SourceLoader::new();
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("opened.antitone");
+    with_application(editor(scheduler.clone()), |app| {
+        app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        let (snapshot, previous) = app.read(|e| (e.document.capture(), e.document.cache.clone()));
+        snapshot.save(&project, crate::project::Save::New).unwrap();
+        app.enter(|e, cx| e.start_document(Preparation::Open(project), cx));
+        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.read(|e| {
+            assert!(previous.is_closed());
+            assert!(!Arc::ptr_eq(&previous, &e.document.cache));
+            let ready = e
+                .document
+                .visit
+                .ready
+                .as_ref()
+                .expect("opened source ready");
+            let key = crate::source::SourceKey::for_load(
+                &ready.path,
+                ready.file.clone(),
+                &ready.record.development,
+            );
+            assert!(Arc::ptr_eq(
+                &e.document.cache.get(&key).unwrap(),
+                &ready.developed
+            ));
+            assert!(Arc::ptr_eq(
+                &e.document.cache.get_proxy(&key).unwrap(),
+                &ready.thumbnail.as_ref().unwrap().1,
+            ));
+        });
+        drop(snapshot);
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn import_history_correction_and_new_run_without_backend_or_painting() {
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
@@ -91,7 +131,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
             assert_eq!(e.document.project, accepted);
             assert!(e.document.visit.ready.is_some());
         });
-        let cache = app.read(|e| e.document.cache().clone());
+        let cache = app.read(|e| e.document.cache.clone());
         app.enter(|e, access| {
             e.start_document(Preparation::New, access);
         });
@@ -378,7 +418,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
                 e.document.project.clone(),
                 e.document.visit.view,
                 e.document.visit.ready.as_ref().unwrap().developed.clone(),
-                e.document.cache().clone(),
+                e.document.cache.clone(),
             )
         });
         app.enter(|e, access| {

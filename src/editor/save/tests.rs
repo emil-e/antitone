@@ -46,7 +46,7 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
         let (visit, store, locator) = app.read(|e| {
             (
                 e.document.visit.view,
-                e.document.cache().clone(),
+                e.document.cache.clone(),
                 e.document.source_path(e.current_source.unwrap()).unwrap(),
             )
         });
@@ -75,7 +75,7 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
                 Some("Later exposure")
             );
             assert_eq!(e.document.visit.view, visit);
-            assert!(Arc::ptr_eq(e.document.cache(), &store) && !store.is_closed());
+            assert!(Arc::ptr_eq(&e.document.cache, &store) && !store.is_closed());
             assert_eq!(
                 e.document.source_path(e.current_source.unwrap()).unwrap(),
                 locator
@@ -188,7 +188,7 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
     ] {
         let (editor, scheduler) = editor();
         let written = directory.path().join(format!("written-{name}.antitone"));
-        let store = editor.document.cache().clone();
+        let store = editor.document.cache.clone();
         with_application(editor, |app| {
             let captured = app.enter(|e, access| {
                 e.save_project(
@@ -278,11 +278,12 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
     document
         .import(&[PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")])
         .unwrap();
-    let parent = document.cache().clone();
+    let parent = Arc::new(crate::source::SourceCache::new(0));
     let accepted = document.project.clone();
     let source = document.project.order[0];
     let prepared = document_services::candidate(
         crate::editor::DocumentRequest {
+            cache: Some(parent.clone()),
             work: Preparation::Correction(document.clone(), Some(source)),
             source: None,
             correction: None,
@@ -294,13 +295,14 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
     assert_eq!(prepared.prepared.document.project, accepted);
     assert!(prepared.source.is_some());
     assert!(Arc::ptr_eq(
-        prepared.prepared.document.parent_cache().unwrap(),
+        prepared.source.as_ref().unwrap().cache.as_ref().unwrap(),
         &parent
     ));
     drop(prepared);
     assert!(!parent.is_closed());
     let bad = document_services::candidate(
         crate::editor::DocumentRequest {
+            cache: Some(parent.clone()),
             work: Preparation::Import(
                 document.clone(),
                 vec![PathBuf::from("missing-source.dng")],

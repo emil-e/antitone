@@ -7,6 +7,7 @@ use std::sync::{
 
 pub(super) struct Acceptance {
     pub region: Rect,
+    pub cache: Arc<crate::source::SourceCache>,
     pub document: Document,
     pub selected: Option<SourceId>,
     pub source: source::Context,
@@ -36,6 +37,7 @@ impl Acceptance {
         Ok(document_services::Request {
             work: document_services::Preparation::Correction(self.document, self.selected),
             source: None,
+            cache: Some(self.cache),
             correction: self.correction,
         })
     }

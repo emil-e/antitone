@@ -40,12 +40,12 @@ fn removed_reference_preview_does_not_reuse_a_deleted_record() {
     editor.document.project.input = crate::processing::InputSettings::Digital;
     let request = editor.reference_preview_input("light.ARW".into());
     assert_eq!(request.wb, None);
-    assert!(request.expected.is_none() && request.cache.is_none());
+    assert!(request.expected.is_none());
 
     editor.document.project.input = crate::project::Project::default().input;
     let request = editor.reference_preview_input("light.ARW".into());
     assert_eq!(request.wb, Some(crate::project::UNITY_WB));
-    assert!(request.expected.is_none() && request.cache.is_none());
+    assert!(request.expected.is_none());
 }
 
 #[test]

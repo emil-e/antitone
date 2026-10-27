@@ -45,7 +45,7 @@ fn editor(
         });
         editor
             .thumbnails
-            .bind_sources(editor.document.cache().clone());
+            .bind_sources(editor.document.cache.clone());
         editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
         editor.developments = Some(scheduler);
         editor
@@ -109,7 +109,7 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
                 1
             );
             assert!(editor.thumbnails.pending.is_none());
-            assert_eq!(editor.document.cache().charges().retained, 0);
+            assert_eq!(editor.document.cache.charges().retained, 0);
             for id in &editor.document.project.order {
                 let key = tests::key(&editor.document, *id);
                 assert!(
@@ -264,7 +264,7 @@ fn hidden_document_demand_completes_cpu_disk_work_without_gpu_residency_or_paint
         app.read(|editor| {
             assert_eq!(editor.thumbnails.attempted_sources.len(), 3);
             assert!(editor.thumbnails.cache.entries.is_empty());
-            assert_eq!(editor.document.cache().charges().retained, 0);
+            assert_eq!(editor.document.cache.charges().retained, 0);
             for id in &editor.document.project.order {
                 let key = tests::key(&editor.document, *id);
                 assert!(
@@ -310,7 +310,7 @@ fn retiring_visible_gpu_demand_keeps_document_cpu_completion_and_disk_publicatio
                     .unwrap()
                     .is_some()
             );
-            assert_eq!(editor.document.cache().charges().retained, 0);
+            assert_eq!(editor.document.cache.charges().retained, 0);
         });
         assert_eq!(calls.load(Ordering::Relaxed), 1);
     });
@@ -321,11 +321,12 @@ fn retiring_visible_gpu_demand_keeps_document_cpu_completion_and_disk_publicatio
 fn document_replacement_retires_old_publication_without_stopping_the_shared_worker() {
     let (first, _first_sources) = document(1);
     let (second, _second_sources) = document(1);
-    let old_store = first.cache().clone();
+
     let old_key = tests::key(&first, first.project.order[0]);
     let (scheduler, starts, release, calls) = gated(&first);
     let disk = tempfile::tempdir().unwrap();
     let editor = editor(first, disk.path(), scheduler.clone());
+    let old_store = editor.document.cache.clone();
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Hidden));
         app.pump();
@@ -334,7 +335,7 @@ fn document_replacement_retires_old_publication_without_stopping_the_shared_work
             editor.document = second.into();
             editor
                 .thumbnails
-                .bind_sources(editor.document.cache().clone());
+                .bind_sources(editor.document.cache.clone());
             begin(editor, access, Demand::Hidden);
         });
         app.pump();
@@ -403,7 +404,7 @@ fn document_retirement_drops_thumbnail_demand_queued_behind_unrelated_native_wor
             editor.document = Document::default().into();
             editor
                 .thumbnails
-                .bind_sources(editor.document.cache().clone());
+                .bind_sources(editor.document.cache.clone());
         });
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while scheduler.waiter_count() != 1 {
@@ -425,11 +426,12 @@ fn document_retirement_drops_thumbnail_demand_queued_behind_unrelated_native_wor
 #[test]
 fn application_retirement_drops_waiters_but_running_native_work_finishes_before_cleanup() {
     let (document, _sources) = document(1);
-    let store = document.cache().clone();
+
     let key = tests::key(&document, document.project.order[0]);
     let (scheduler, starts, release, calls) = gated(&document);
     let disk = tempfile::tempdir().unwrap();
     let editor = editor(document, disk.path(), scheduler.clone());
+    let store = editor.document.cache.clone();
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Hidden));
         app.pump();

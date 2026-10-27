@@ -19,7 +19,7 @@ impl Drop for Dropped {
 fn document_retirement_cancels_child_continuations_and_closes_cache_despite_captured_snapshots() {
     let scope = DocumentScope::from(Document::default());
     let snapshot = scope.capture();
-    let store = scope.cache().clone();
+    let store = scope.cache.clone();
     let dropped = Rc::new(Cell::new(false));
     let resumed = Rc::new(Cell::new(false));
     with_application(scope, |app| {
@@ -46,11 +46,8 @@ fn document_retirement_cancels_child_continuations_and_closes_cache_despite_capt
         app.pump();
         app.update(|scope| *scope = Document::default().into());
         assert!(store.is_closed());
-        assert!(!app.read(|scope| scope.cache().is_closed()));
-        assert!(
-            snapshot.cache().is_closed(),
-            "a captured data snapshot cannot keep publication authority alive"
-        );
+        assert!(!app.read(|scope| scope.cache.is_closed()));
+        drop(snapshot);
         app.pump();
         assert!(dropped.get());
         assert!(send.send(()).is_err());
@@ -108,11 +105,10 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
         add_ready_fixture(&mut editor);
         editor.sync_document();
         let view = editor.document.visit.view;
-        let store = editor.document.cache().clone();
+        let store = editor.document.cache.clone();
         let ready = editor.document.visit.ready.as_ref().unwrap().clone();
         let selected = editor.current_source;
-        let mut candidate = editor.document.capture();
-        candidate.fork_cache();
+        let candidate = editor.document.capture();
         let work = if replace {
             Preparation::Open("same-data.antitone".into())
         } else {
@@ -140,8 +136,9 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
                     assert_eq!(editor.document.visit.view, view);
                 }
                 assert!(editor.document.visit.ready.is_some());
-                assert!(store.is_closed());
-                assert!(!editor.document.cache().is_closed());
+                assert_eq!(store.is_closed(), replace);
+                assert_eq!(Arc::ptr_eq(&store, &editor.document.cache), !replace);
+                assert!(!editor.document.cache.is_closed());
                 assert_eq!(editor.current_source, selected);
             });
             app.pump();
@@ -168,7 +165,7 @@ fn successful_save_keeps_visit_history_and_later_edits_while_rebasing_the_writte
     editor.roll.exposure = 0.5;
     editor.record_edit(before, "Later exposure", None);
     let view = editor.document.visit.view;
-    let store = editor.document.cache().clone();
+    let store = editor.document.cache.clone();
     editor.document.accept_save(saved);
     assert_eq!(editor.document.project.roll.exposure, 0.5);
     assert!(editor.document.dirty());
@@ -177,6 +174,6 @@ fn successful_save_keeps_visit_history_and_later_edits_while_rebasing_the_writte
         Some("Later exposure")
     );
     assert_eq!(editor.document.visit.view, view);
-    assert!(Arc::ptr_eq(editor.document.cache(), &store));
+    assert!(Arc::ptr_eq(&editor.document.cache, &store));
     assert!(!store.is_closed());
 }

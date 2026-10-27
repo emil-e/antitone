@@ -92,8 +92,11 @@ impl Editor {
         } else {
             None
         };
+        let cache = (!matches!(work, Preparation::New | Preparation::Open(_)))
+            .then(|| self.document.cache.clone());
         let request = DocumentRequest {
             work,
+            cache,
             source,
             correction: self.correction.clone(),
         };
@@ -159,17 +162,11 @@ impl Editor {
         self.document_pending = None;
         self.busy = false;
         match result {
-            Ok(mut prepared) => {
+            Ok(prepared) => {
                 let input_changed =
                     self.input.is_negative() != prepared.document.project.input.is_negative();
                 let flat_context = self.flat_edit.take();
-                let previous_cache = self.document.cache().clone();
-                self.thumbnails
-                    .bind_sources(prepared.document.cache().clone());
-                prepared.document.accept_cache(&previous_cache);
-                if !Arc::ptr_eq(&previous_cache, prepared.document.cache()) {
-                    previous_cache.close();
-                }
+
                 if self.reset_repairs_pending {
                     self.document.dust = dust::State::default();
                 }
@@ -191,6 +188,10 @@ impl Editor {
                     self.document = prepared.document.into();
                 } else {
                     self.document.install(prepared.document);
+                }
+                self.thumbnails.bind_sources(self.document.cache.clone());
+                if let Some(ready) = &prepared.ready {
+                    self.document.cache_ready(ready);
                 }
                 self.remember_current_look();
                 self.document.visit.adjustment_layers = layer_selection;

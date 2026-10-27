@@ -11,7 +11,7 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
         let (device, queue) = gpu().await;
         let gate = crate::gpu::SubmissionGate::default();
         let renderers = Arc::new(crate::renderer::RendererCache::new(gate.clone()));
-        let (ready, reference) = prepare(&document, &device, &queue, &renderers);
+        let (ready, reference) = prepare(&document, &document.cache, &device, &queue, &renderers);
         let source_id = document.project.order[0];
         let epoch = Arc::new(AtomicU64::new(1));
         let armed = Arc::new(AtomicBool::new(false));
@@ -38,7 +38,7 @@ fn authored_dust_workflow_slices_share_presentation_queue_and_retire_without_fai
         }));
 
         let mut editor = crate::editor::tests::fixture();
-        editor.document.install(document);
+        editor.document = document;
         editor.current_source = Some(source_id);
         editor.id = 1;
         editor.source_epoch = epoch.clone();

@@ -1043,7 +1043,7 @@ fn filmstrip_frame(
 ) {
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone());
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1269,7 +1269,7 @@ fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
     editor.thumbnails.cache.retain(|_, _| false);
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone());
     let ids = editor.document.project.order.clone();
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
@@ -1315,7 +1315,7 @@ fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone());
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
             e.thumbnails.demand = Demand::Visible(vec![id]);
@@ -1352,7 +1352,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
     editor.thumbnails.services = Some(Services { commands });
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone());
     let context = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
@@ -1545,7 +1545,7 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
     editor.thumbnails = thumbnails;
     editor
         .thumbnails
-        .bind_sources(editor.document.cache().clone());
+        .bind_sources(editor.document.cache.clone());
     editor.thumbnails.seed(
         editor.document.project.source(id).unwrap(),
         FileKey::new(&editor.document.source_path(id).unwrap()),

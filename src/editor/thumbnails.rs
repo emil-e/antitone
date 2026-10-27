@@ -3,7 +3,7 @@ use super::*;
 use crate::project::SourceDevelopment;
 pub(super) use crate::source::FileKey;
 #[cfg(test)]
-use crate::source::{FileRevision, SourceKey as NativeKey, SourceStore};
+use crate::source::{FileRevision, SourceKey as NativeKey, SourceCache};
 mod disk;
 mod lru;
 use lru::Cache;
@@ -291,7 +291,7 @@ struct Job {
     path: PathBuf,
     source: Source,
     correction: Option<Arc<Correction>>,
-    store: Arc<SourceStore>,
+    store: Arc<SourceCache>,
     render: bool,
     priority: source_loading::Priority,
     previous: Option<Arc<Product>>,
@@ -327,7 +327,7 @@ fn shared_look_bytes(entries: &std::collections::VecDeque<(ImageKey, CachedProdu
 
 pub(super) struct Thumbnails {
     cache: Cache<ImageKey, CachedProduct>,
-    pub(super) sources: Arc<SourceStore>,
+    pub(super) sources: Arc<SourceCache>,
     selected_key: Option<NativeKey>,
     visible_keys: Vec<NativeKey>,
     // CPU/disk completion history; an admissible GPU miss still needs rendering.
@@ -374,7 +374,7 @@ impl Default for Thumbnails {
                     }
             })
             .with_shared_weight(shared_look_bytes),
-            sources: Arc::new(SourceStore::new(budgets.sources as u64)),
+            sources: Arc::new(SourceCache::new(budgets.sources as u64)),
             selected_key: None,
             visible_keys: Vec::new(),
             attempted_sources: Vec::new(),
@@ -512,7 +512,7 @@ impl Thumbnails {
         self.sources.protect_proxies(keys);
     }
 
-    pub(super) fn bind_sources(&mut self, sources: Arc<SourceStore>) {
+    pub(super) fn bind_sources(&mut self, sources: Arc<SourceCache>) {
         if !Arc::ptr_eq(&self.sources, &sources) {
             self.cancel();
             self.embedded.reset_demand();
@@ -808,7 +808,7 @@ impl Thumbnails {
             self.pending = None;
             self.pending_render = false;
         }
-        let source_current = !document.cache().is_closed()
+        let source_current = !self.sources.is_closed()
             && document
                 .project
                 .source(outcome.key.source.id)
@@ -1020,7 +1020,7 @@ impl Editor {
     }
 
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        self.thumbnails.bind_sources(self.document.cache().clone());
+        self.thumbnails.bind_sources(self.document.cache.clone());
         if self.thumbnails.memory_watch.is_none() {
             self.thumbnails.repaint.get_or_init(|| ui.ctx().clone());
             self.thumbnails.memory_watch = Some(memory::PressureWatch::new(ui.ctx().clone()));

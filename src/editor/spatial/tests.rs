@@ -21,7 +21,7 @@ fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
         &mut editor.source_services.as_mut().unwrap().developments,
         scheduler,
     );
-    editor.document.cache().set_budget(0);
+    editor.document.cache.set_budget(0);
     original.close_and_wait().unwrap();
     editor.sync_document();
     editor
@@ -289,13 +289,13 @@ fn document_retirement_cancels_publication_without_blocking_unrelated_cpu_work()
                     .unwrap()
                     .cancelled
                     .clone(),
-                editor.document.capture(),
+                editor.document.cache.clone(),
             )
         });
         app.update(|editor| editor.document = Document::default().into());
         app.pump();
         assert!(cancelled.is_cancelled());
-        assert!(snapshot.cache().is_closed());
+        assert!(snapshot.is_closed());
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()

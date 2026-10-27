@@ -107,7 +107,6 @@ fn scratch_and_unavailable_storage_produce_identical_areas_without_additional_na
     assert_eq!(cached.entries, uncached.entries);
     assert_eq!(cached.files, uncached.files);
     assert_eq!(request.document.project, before);
-    assert_eq!(request.document.cache().charges().retained, 0);
 }
 
 #[test]

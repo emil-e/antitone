@@ -1,6 +1,5 @@
 use super::*;
 use crate::scan::DevelopedSource;
-use crate::source::{SourceCache, SourceProvider};
 
 enum Input {
     Proxy(Arc<Proxy>),
@@ -95,10 +94,10 @@ impl Worker {
                 &job.source.development,
             );
             let loader = self.developments.clone();
-            let provider = SourceCache::new(loader, job.store.clone());
+            let cache = job.store.clone();
             let priority = job.priority;
             Ok(Input::Loading(Box::pin(async move {
-                provider.load_source(key, priority).await
+                cache.load_source(&loader, key, priority).await
             })))
         })();
         Work {

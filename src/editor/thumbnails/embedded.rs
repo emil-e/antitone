@@ -191,7 +191,10 @@ impl EmbeddedPreviews {
         }
     }
 
-    fn begin(&mut self, document: &Document) -> Option<(Request, Arc<AtomicBool>)> {
+    fn begin(
+        &mut self,
+        document: &super::document_scope::DocumentScope,
+    ) -> Option<(Request, Arc<AtomicBool>)> {
         if !self.allowed || self.pending.is_some() || self.services.is_none() {
             return None;
         }
@@ -224,7 +227,7 @@ impl EmbeddedPreviews {
         ticket: u64,
         key: SourceKey,
         image: Completion,
-        document: &Document,
+        document: &super::document_scope::DocumentScope,
         context: &egui::Context,
     ) {
         if !self
@@ -378,8 +381,8 @@ impl Editor {
     }
 }
 
-fn current(key: &SourceKey, document: &Document) -> bool {
-    !document.cache().is_closed()
+fn current(key: &SourceKey, document: &super::document_scope::DocumentScope) -> bool {
+    !document.cache.is_closed()
         && document
             .project
             .source(key.id)

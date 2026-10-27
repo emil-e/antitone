@@ -14,6 +14,7 @@ mod spatial_tests;
 /// Captured documents are data snapshots, not histories or continuation owners.
 pub(super) struct DocumentScope {
     pub state: Document,
+    pub cache: Arc<crate::source::SourceCache>,
     pub spatial: crate::spatial_metadata::Store,
     pub spatial_preparing: Option<super::spatial::Pending>,
     pub spatial_consumer: Option<super::spatial::Consumer>,
@@ -47,11 +48,26 @@ impl DocumentScope {
     }
 
     pub fn install(&mut self, document: Document) {
-        let previous = self.state.cache().clone();
-        if !Arc::ptr_eq(&previous, document.cache()) {
-            previous.close();
-        }
         self.state = document;
+    }
+
+    pub fn cache_ready(&self, ready: &Ready) {
+        let key = crate::source::SourceKey::for_load(
+            &ready.path,
+            ready.file.clone(),
+            &ready.record.development,
+        );
+        if let Err(error) = self
+            .cache
+            .publish_source(key.clone(), ready.developed.clone())
+        {
+            log::warn!(error = error.to_string().as_str(); "source_cache_publication_failed");
+        }
+        if let Some((_, proxy)) = &ready.thumbnail
+            && let Err(error) = self.cache.publish_proxy(key, proxy.clone())
+        {
+            log::warn!(error = error.to_string().as_str(); "source_proxy_publication_failed");
+        }
     }
 
     pub fn same_visit(&self, ready: Option<&Ready>, reuse_ready: bool) -> bool {
@@ -78,6 +94,7 @@ impl From<Document> for DocumentScope {
             spatial_preparing: None,
             spatial_consumer: None,
             state,
+            cache: Arc::new(crate::source::SourceCache::new(0)),
             history: History::default(),
             visit: PhotoScope::default(),
             embedded_preview: None,
@@ -123,6 +140,6 @@ impl Drop for DocumentScope {
         drop(self.analysis_review.take());
         drop(std::mem::take(&mut self.visit));
         drop(std::mem::take(&mut self.write));
-        self.state.cache().close();
+        self.cache.close();
     }
 }

@@ -8,14 +8,15 @@ mod lazy_worker;
 
 const BUDGET: u64 = 8 << 20;
 
-fn document(path: &std::path::Path) -> Document {
+fn document(path: &std::path::Path) -> super::document_scope::DocumentScope {
     let mut document = Document::default();
     let (source, _) = document::open_source(path, Some([1.; 4])).unwrap();
     let development = Development::for_source(&source.development, [1.; 4]);
     document
         .register_with_development(source, development)
         .unwrap();
-    document.cache().set_budget(BUDGET);
+    let document: super::document_scope::DocumentScope = document.into();
+    document.cache.set_budget(BUDGET);
     document
 }
 
@@ -56,6 +57,7 @@ async fn gpu() -> (wgpu::Device, wgpu::Queue) {
 
 fn prepare(
     document: &Document,
+    cache: &Arc<crate::source::SourceCache>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderers: &crate::renderer::RendererCache,
@@ -64,7 +66,7 @@ fn prepare(
     let path = document.source_path(id).unwrap();
     let expected = document.project.source(id).unwrap();
     let wb = wb(document);
-    let cache = LoadCache::new(&path, Some(expected), document);
+    let file = document.file_key(&path);
     let prepared = prepare_source_cached(
         renderers,
         device,
@@ -73,7 +75,7 @@ fn prepare(
         wb,
         Some(expected),
         None,
-        Some(&cache),
+        Some((cache, file)),
     )
     .unwrap();
     assert_eq!(
@@ -84,87 +86,58 @@ fn prepare(
 }
 
 #[test]
-fn failed_candidate_retires_only_its_store_and_keeps_borrowed_native_lease() {
+fn discarding_a_candidate_snapshot_keeps_the_scope_cache_and_live_pixels() {
     let file = raw_fixture::bayer_dng();
     let document = document(file.path());
     let key = key(&document);
     let scan = Scan::open(file.path(), wb(&document)).unwrap();
     document
-        .cache()
+        .cache
         .publish_source(key.clone(), scan.source().clone())
         .unwrap();
-    let before = document.cache().charges();
-    let mut candidate = document.clone();
-    candidate.fork_cache();
-    let borrowed = candidate.parent_cache().unwrap().get(&key).unwrap();
-    assert!(Arc::ptr_eq(&borrowed, scan.source()));
-    candidate
-        .cache()
-        .publish_source(key.clone(), borrowed.clone())
-        .unwrap();
-    assert_eq!(candidate.cache().charges().retained, 0);
-    assert_eq!(document.cache().charges(), before);
-    let retired = candidate.cache().clone();
+    let before = document.cache.charges();
+    let candidate = document.capture();
     drop(candidate);
-    assert!(retired.is_closed() && retired.get(&key).is_none());
-    assert!(!document.cache().is_closed());
-    assert!(Arc::ptr_eq(&document.cache().get(&key).unwrap(), &borrowed));
-    let consumer = Scan::from_source(borrowed);
-    assert_eq!(
-        format!("{:?}", consumer.source().metadata()),
-        format!("{:?}", scan.source().metadata())
-    );
+
+    assert!(!document.cache.is_closed());
+    assert_eq!(document.cache.charges(), before);
+    let consumer = Scan::from_source(document.cache.get(&key).unwrap());
+    assert!(Arc::ptr_eq(consumer.source(), scan.source()));
     assert_eq!(codes(&consumer), codes(&scan));
 }
 
 #[test]
-fn same_document_acceptance_transfers_compatible_protected_proxies_at_zero_optional_budget() {
+fn same_document_install_keeps_protected_proxies_at_zero_optional_budget() {
     let file = raw_fixture::bayer_dng();
-    let document = document(file.path());
+    let mut document = document(file.path());
+    document.cache.set_budget(0);
+    let cache = document.cache.clone();
     let key = key(&document);
     let scan = Scan::open(file.path(), wb(&document)).unwrap();
     let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
-    document
-        .cache()
+    cache
         .publish_source(key.clone(), scan.source().clone())
         .unwrap();
-    document.cache().protect_proxies(vec![key.clone()]);
-    document
-        .cache()
-        .publish_proxy(key.clone(), proxy.clone())
-        .unwrap();
-    let mut candidate = document.clone();
-    candidate.fork_cache();
-    candidate
-        .cache()
-        .publish_source(key.clone(), scan.source().clone())
-        .unwrap();
-    candidate.accept_cache(document.cache());
-    assert!(document.cache().is_closed());
-    assert_eq!(document.cache().charges().retained, 0);
-    assert_eq!(candidate.cache().charges().retained, 0);
-    assert_eq!(candidate.cache().protected_bytes(), proxy.retained_bytes());
-    assert!(Arc::ptr_eq(
-        &candidate.cache().get_proxy(&key).unwrap(),
-        &proxy
-    ));
-    assert!(Arc::ptr_eq(
-        &candidate.cache().get(&key).unwrap(),
-        scan.source()
-    ));
-    assert_eq!(candidate.cache().charges().retained, 0);
-    assert!(candidate.parent_cache().is_none());
+    cache.protect_proxies(vec![key.clone()]);
+    cache.publish_proxy(key.clone(), proxy.clone()).unwrap();
+    document.install(document.capture());
+    assert!(Arc::ptr_eq(&document.cache, &cache));
+    assert!(!cache.is_closed());
+    assert_eq!(cache.charges().retained, 0);
+    assert_eq!(cache.protected_bytes(), proxy.retained_bytes());
+    assert!(Arc::ptr_eq(&cache.get_proxy(&key).unwrap(), &proxy));
+    assert!(Arc::ptr_eq(&cache.get(&key).unwrap(), scan.source()));
 }
 
 #[test]
-fn foreground_hits_reuse_native_owner_and_candidates_borrow_without_transfer() {
+fn foreground_and_candidate_reads_share_the_scope_cache() {
     pollster::block_on(async {
         let file = raw_fixture::bayer_dng();
         let document = document(file.path());
         let (device, queue) = gpu().await;
         let renderers = crate::renderer::RendererCache::default();
-        let (first, scan) = prepare(&document, &device, &queue, &renderers);
-        let (_, warm) = prepare(&document, &device, &queue, &renderers);
+        let (first, scan) = prepare(&document, &document.cache, &device, &queue, &renderers);
+        let (_, warm) = prepare(&document, &document.cache, &device, &queue, &renderers);
         assert!(Arc::ptr_eq(scan.source(), warm.source()));
         assert_eq!(codes(&scan), codes(&warm));
         assert_eq!(
@@ -176,15 +149,14 @@ fn foreground_hits_reuse_native_owner_and_candidates_borrow_without_transfer() {
                 .development
                 .decode
         );
-        let before = document.cache().charges();
-        let mut candidate = document.clone();
-        candidate.fork_cache();
-        let (_, borrowed) = prepare(&candidate, &device, &queue, &renderers);
+        let before = document.cache.charges();
+        let candidate = document.capture();
+        let (_, borrowed) = prepare(&candidate, &document.cache, &device, &queue, &renderers);
         assert!(Arc::ptr_eq(scan.source(), borrowed.source()));
-        assert_eq!(candidate.cache().charges().retained, 0);
-        assert_eq!(document.cache().charges(), before);
+
+        assert_eq!(document.cache.charges(), before);
         drop(candidate);
-        assert!(document.cache().get(&key(&document)).is_some());
+        assert!(document.cache.get(&key(&document)).is_some());
     });
 }
 
@@ -209,7 +181,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache().clone());
+        thumbnails.bind_sources(document.cache.clone());
         let id = document.project.order[0];
         let source = document.project.source(id).unwrap();
         let path = document.source_path(id).unwrap();
@@ -240,12 +212,12 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
         assert!(thumbnails.pending.is_none());
         assert!(thumbnails.attempted_sources.contains(&image_key.source));
         assert!(thumbnails.cache.entries.is_empty());
-        assert_eq!(document.cache().charges().retained, 0);
-        assert_eq!(document.cache().protected_bytes(), 0);
+        assert_eq!(document.cache.charges().retained, 0);
+        assert_eq!(document.cache.protected_bytes(), 0);
         assert!(disk.load(&image_key.source).unwrap().is_some());
         drop(seed);
         thumbnails.cache.protect(vec![image_key.clone()]);
-        document.cache().protect_proxies(vec![key(&document)]);
+        document.cache.protect_proxies(vec![key(&document)]);
         let job = tests::service_job(
             &thumbnails,
             image_key.clone(),
@@ -257,8 +229,8 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
         tests::complete_service_request(&mut thumbnails, &document, job);
         assert!(thumbnails.pending.is_none());
         assert!(thumbnails.cache.get(&image_key).unwrap().is_ok());
-        assert_eq!(document.cache().charges().retained, 0);
-        assert!(document.cache().protected_bytes() > 0);
+        assert_eq!(document.cache.charges().retained, 0);
+        assert!(document.cache.protected_bytes() > 0);
     });
 }
 
@@ -278,7 +250,7 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache().clone());
+        thumbnails.bind_sources(document.cache.clone());
         let id = document.project.order[0];
         let source = document.project.source(id).unwrap();
         let path = document.source_path(id).unwrap();
@@ -293,15 +265,15 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
         let job = tests::service_job(&thumbnails, image_key, path, source.clone(), None, true);
         let outcome = tests::run_service_request(&thumbnails, job).unwrap();
         assert!(outcome.image.unwrap().is_some());
-        let native = document.cache().get(&key(&document)).unwrap();
-        assert!(document.cache().get_proxy(&key(&document)).is_some());
-        assert!(document.cache().charges().retained <= BUDGET);
-        let (_, foreground) = prepare(&document, &device, &queue, &renderers);
+        let native = document.cache.get(&key(&document)).unwrap();
+        assert!(document.cache.get_proxy(&key(&document)).is_some());
+        assert!(document.cache.charges().retained <= BUDGET);
+        let (_, foreground) = prepare(&document, &document.cache, &device, &queue, &renderers);
         assert!(Arc::ptr_eq(&native, foreground.source()));
-        document.cache().set_budget(0);
-        assert_eq!(document.cache().charges().retained, 0);
+        document.cache.set_budget(0);
+        assert_eq!(document.cache.charges().retained, 0);
         assert!(Arc::ptr_eq(
-            &document.cache().get(&key(&document)).unwrap(),
+            &document.cache.get(&key(&document)).unwrap(),
             foreground.source()
         ));
     });
@@ -312,7 +284,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
     pollster::block_on(async {
         let file = raw_fixture::bayer_dng();
         let document = document(file.path());
-        document.cache().set_budget(0);
+        document.cache.set_budget(0);
         let native = Scan::open(file.path(), wb(&document))
             .unwrap()
             .source()
@@ -346,7 +318,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache().clone());
+        thumbnails.bind_sources(document.cache.clone());
         let id = document.project.order[0];
         let path = document.source_path(id).unwrap();
         let expected = document.project.source(id).unwrap();
@@ -370,7 +342,8 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             app.pump();
             starts.recv_timeout(Duration::from_secs(5)).unwrap();
             thumbnails.cancel();
-            let cache = LoadCache::new(&path, Some(expected), &document);
+            let cache = &document.cache;
+            let file = document.file_key(&path);
             std::thread::scope(|scope| {
                 let foreground = scope.spawn(|| {
                     prepare_source_scheduled(
@@ -381,7 +354,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
                         wb(&document),
                         Some(expected),
                         None,
-                        Some(&cache),
+                        Some((cache, file.clone())),
                         &developments,
                         &|| false,
                     )
@@ -400,7 +373,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
                 assert!(completed.image.unwrap().is_none());
                 assert!(disk.load(&key.source).unwrap().is_some());
                 assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
-                assert_eq!(document.cache().charges().retained, 0);
+                assert_eq!(document.cache.charges().retained, 0);
             });
         });
     });
@@ -417,7 +390,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
         document
             .register_with_development(record, development)
             .unwrap();
-        document.cache().set_budget(0);
+        document.cache.set_budget(0);
         let native_a = Scan::open(a.path(), wb(&document))
             .unwrap()
             .source()
@@ -468,7 +441,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache().clone());
+        thumbnails.bind_sources(document.cache.clone());
         let image_key = |index| {
             let source = document
                 .project
@@ -596,11 +569,11 @@ fn registered_flat_reference_carries_its_document_native_reuse_key() {
     let document = document(file.path());
     let mut editor = Editor::state();
     let expected_key = key(&document);
-    *editor.document = document;
+    editor.document = document;
     let request = editor.reference_preview_input(file.path().to_owned());
+    assert_eq!(request.load_key().unwrap(), expected_key);
     let cache = request
         .cache
-        .expect("registered reference needs a scoped native key");
-    assert_eq!(cache.key.unwrap(), expected_key);
-    assert!(Arc::ptr_eq(&cache.store, editor.document.cache()));
+        .expect("registered reference uses the scope cache");
+    assert!(Arc::ptr_eq(&cache, &editor.document.cache));
 }

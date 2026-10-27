@@ -32,7 +32,7 @@ mod controls;
 use crate::source as source_loading;
 
 mod source;
-use source::Cache as LoadCache;
+
 mod document;
 mod document_scope;
 use document_scope::DocumentScope;
@@ -199,7 +199,7 @@ fn prepare_source_cached(
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
-    cache: Option<&LoadCache>,
+    cache: Option<(&Arc<crate::source::SourceCache>, thumbnails::FileKey)>,
 ) -> Result<(Ready, Scan), Error> {
     prepare_source_scheduled(
         renderers,
@@ -225,17 +225,20 @@ fn prepare_source_scheduled(
     wb: Option<[f64; 4]>,
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
-    cache: Option<&LoadCache>,
+    cache: Option<(&Arc<crate::source::SourceCache>, thumbnails::FileKey)>,
     developments: &source_loading::SourceLoader,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Ready, Scan), Error> {
     let developed = source::Request {
         input: Default::default(),
-        path,
+        path: path.clone(),
         wb,
         expected: expected.cloned(),
         correction: correction.cloned(),
-        cache: cache.cloned(),
+        file: cache
+            .as_ref()
+            .map_or_else(|| thumbnails::FileKey::new(&path), |(_, file)| file.clone()),
+        cache: cache.map(|(cache, _)| cache.clone()),
     }
     .load(developments, cancelled)?;
     let scan = developed.context.scan()?;
@@ -383,7 +386,7 @@ impl Editor {
         editor.thumbnails = thumbnails;
         editor
             .thumbnails
-            .bind_sources(editor.document.cache().clone());
+            .bind_sources(editor.document.cache.clone());
         editor.preferences.cache_limits = Some(editor.thumbnails.limits);
         editor.scopes = scopes;
         editor
@@ -409,7 +412,7 @@ impl Editor {
     }
 
     fn state() -> Self {
-        let mut document = Document::default();
+        let document = Document::default();
         let input = InputSettings::Negative {
             dmin: None,
             dmax: None,
@@ -418,9 +421,9 @@ impl Editor {
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: Balance::default(),
         };
-        let _ = &mut document;
+        let document: document_scope::DocumentScope = document.into();
         let mut thumbnails = Thumbnails::default();
-        thumbnails.bind_sources(document.cache().clone());
+        thumbnails.bind_sources(document.cache.clone());
         Self {
             submissions: crate::platform::SubmissionGate::default(),
             developments: None,
@@ -479,7 +482,7 @@ impl Editor {
             #[cfg(test)]
             history_snapshot_clones: 0,
             control_commands: Vec::new(),
-            document: document.into(),
+            document,
             candidate_operation: document_workflow::State::default(),
             current_source: None,
             next_request: 0,
@@ -755,7 +758,7 @@ impl Editor {
     }
 
     fn seed_thumbnail(&mut self) {
-        self.thumbnails.bind_sources(self.document.cache().clone());
+        self.thumbnails.bind_sources(self.document.cache.clone());
         let Some(ready) = &mut self.document.visit.ready else {
             return;
         };
@@ -1554,7 +1557,7 @@ impl host::App for Editor {
         if let Some(developments) = &self.developments {
             developments.close();
         }
-        self.document.cache().close();
+        self.document.cache.close();
         self.thumbnails.cancel();
         if let Some(store) = &mut self.preference_store
             && let Err(error) = store.save(&self.preferences)

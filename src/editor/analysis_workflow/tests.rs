@@ -36,7 +36,7 @@ pub(super) fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
     let paths = [root.join("roll-0.dng"), root.join("roll-1.dng")];
     let mut document = Document::default();
     document.import(&paths).unwrap();
-    document.cache().set_budget(0);
+    editor.document.cache.set_budget(0);
     editor.document.install(document);
     let owner = RefCell::new(Some(editor));
     {
@@ -50,7 +50,7 @@ pub(super) fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
     editor.source_services.as_mut().unwrap().developments = scheduler;
     // Source promotion applies the configured cache budget. Disable optional
     // retention afterward; the live selected source may still be reused.
-    editor.document.cache().set_budget(0);
+    editor.document.cache.set_budget(0);
     initial.close_and_wait().unwrap();
     editor
 }
@@ -123,7 +123,7 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
             assert_eq!(e.pick, Some(crate::editor::Pick::Analysis));
             assert!(!e.busy);
             assert!(e.tasks.view().is_none());
-            assert_eq!(e.document.cache().charges().retained, 0);
+            assert_eq!(e.document.cache.charges().retained, 0);
         });
     });
     scheduler.close_and_wait().unwrap();

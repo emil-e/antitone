@@ -1,6 +1,5 @@
 use super::{
-    AdjustmentLayerEditor, Editor, LoadCache, Ready, SelectionTiming, Task, TaskRequest, UiContext,
-    source,
+    AdjustmentLayerEditor, Editor, Ready, SelectionTiming, Task, TaskRequest, UiContext, source,
 };
 use crate::processing::InputSettings;
 use crate::source::SourceKey;
@@ -55,14 +54,15 @@ impl Editor {
             .and_then(|id| self.document.project.source(id).ok())
             .cloned();
         let wb = self.document.project.acquisition_wb(expected.as_ref());
-        let cache = LoadCache::new(&path, expected.as_ref(), &self.document);
+        let file = self.document.file_key(&path);
         source::Request {
             input: self.input(),
             path,
             wb,
             expected,
             correction: self.correction.clone(),
-            cache: Some(cache),
+            file,
+            cache: Some(self.document.cache.clone()),
         }
     }
 
@@ -140,7 +140,9 @@ impl Editor {
         self.status = "Developing full-resolution RAW…".into();
         self.tasks.begin(Task::Photo(self.id));
         let request = self.source_input(path);
-        self.document.visit.source.key = request.cache.as_ref().and_then(|cache| cache.key.clone());
+        self.document.visit.source.key = request.expected.as_ref().and_then(|source| {
+            SourceKey::from_revision(&request.path, request.file.clone(), &source.development)
+        });
         let view = self.document.visit.view;
         let services = self.source_services.clone();
         let cancelled = Arc::new(AtomicBool::new(false));

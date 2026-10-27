@@ -51,12 +51,11 @@ Presentation follows the same separation: [`editor_activity.rs`](../src/editor/a
 
 ## Source acquisition and retention
 
-The [`source` module](../src/source/mod.rs) contains acquisition, native execution and storage behind `SourceProvider`, which asynchronously returns an `Arc<DevelopedSource>` lease. Selected views, analysis, thumbnails and export use the same acquisition boundary:
+The [`source` module](../src/source/mod.rs) contains cache storage and native execution. `SourceProvider` is the async backend contract returning an `Arc<DevelopedSource>` lease. Selected views, analysis, thumbnails and export acquire the same immutable pixels:
 
 ```mermaid
 flowchart LR
     Consumer[Consumers] -->|await key and priority| Cache[SourceCache]
-    Cache -->|lookup / publish| Store[SourceStore]
     Cache -->|miss| Loader[SourceLoader]
     Loader --> Native[Native owners]
     Cache -->|owning source lease| Consumer
@@ -66,7 +65,9 @@ flowchart LR
 
 RAWs are treated as immutable while open. Import/Open captures file identity for persisted-cache validity; acquisitions reuse it. Cache lookup/publication and request joining are in-memory operations.
 
-`SourceCache` wraps a provider using the existing [CPU store](../src/source/store.rs): weak live lookup plus optional strong ownership under an LRU byte budget. Candidate stores can reuse a parent. Eviction preserves consumer leases; zero retention still permits live reuse. Cache closure disables lookup/publication; document consumers retire their own loading futures. After every strong reference disappears, reacquisition can develop again. Selected/visible protection applies to proxies, not full-resolution sources. [Retention settings](editor.md#retention-settings-and-pressure) govern optional ownership.
+Each `DocumentScope` owns one [`SourceCache`](../src/source/cache.rs), shared across same-document preparation, Save As and Undo. Captured documents contain data, while services capture the cache separately. New/Open prepares independently and publishes its initial pixels into the new scope after acceptance. The cache receives the shared provider on acquisition; native workers outlive document scopes.
+
+`SourceCache` owns weak live lookup and optional strong ownership under an LRU byte budget. Eviction preserves consumer leases; zero retention still permits live reuse. Scope retirement closes lookup/publication and retires document consumers, while export can continue independently. After every strong reference disappears, reacquisition can develop again. Selected/visible protection applies to proxies, not full-resolution sources. [Retention settings](editor.md#retention-settings-and-pressure) govern optional ownership.
 
 Analysis owns measured samples through fitting rather than a full-roll set of source leases.
 

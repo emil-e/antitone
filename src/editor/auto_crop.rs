@@ -22,7 +22,7 @@ struct Entry {
 }
 
 pub(super) struct Draft {
-    document: std::sync::Weak<crate::source::SourceStore>,
+    document: std::sync::Weak<crate::source::SourceCache>,
     order: Vec<SourceId>,
     target: Target,
     attempted: usize,
@@ -41,7 +41,7 @@ impl Draft {
     fn belongs_to(&self, editor: &Editor) -> bool {
         self.document
             .upgrade()
-            .is_some_and(|s| !s.is_closed() && Arc::ptr_eq(&s, editor.document.cache()))
+            .is_some_and(|s| !s.is_closed() && Arc::ptr_eq(&s, &editor.document.cache))
             && self.order == editor.document.project.order
             && self
                 .entries
@@ -428,7 +428,7 @@ impl Editor {
         if attempted > 0 {
             self.finish_adjustment_layer_interaction();
             self.document.auto_crop_edit = Some(Draft {
-                document: Arc::downgrade(self.document.cache()),
+                document: Arc::downgrade(&self.document.cache),
                 order: self.document.project.order.clone(),
                 target,
                 attempted,

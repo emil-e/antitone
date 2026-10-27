@@ -1,4 +1,29 @@
 use super::*;
+
+#[test]
+fn unregistered_source_requests_defer_file_identity_until_preparation() {
+    let editor = Editor::state();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    for request in [
+        editor.source_input(path.clone()),
+        editor.reference_preview_input(path.clone()),
+    ] {
+        assert!(request.expected.is_none());
+        assert!(
+            request.file.revision.is_none(),
+            "UI capture must leave first-time filesystem identity to preparation"
+        );
+        let key =
+            futures_lite::future::block_on(crate::background::run(move || request.load_key()))
+                .unwrap()
+                .unwrap();
+        assert!(
+            key.file().revision.is_some(),
+            "preparation must capture persisted-cache identity"
+        );
+    }
+}
+
 use crate::{
     application::test_support::with_application,
     editor::{Preparation, Prepared, document::Document, source_loading},
@@ -119,7 +144,7 @@ fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels
             assert_eq!(ready.path, path());
             assert!(!e.document.visit.source.pending());
             assert!(e.tasks.view().is_none());
-            assert_eq!(e.document.cache().charges().retained, 0);
+            assert_eq!(e.document.cache.charges().retained, 0);
             let mut scan = crate::scan::Scan::from_source(ready.developed.clone());
             let value = scan
                 .reference(crate::raw::Rect {
@@ -474,7 +499,7 @@ fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product()
             // development is unchanged and the visit continues into the installed document.
             // A correction that changes the gains changes the key and replaces the scope.
             assert_eq!(e.document.visit.view, view);
-            assert!(!e.document.cache().is_closed());
+            assert!(!e.document.cache.is_closed());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -487,7 +512,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
-        let store = app.read(|e| e.document.cache().clone());
+        let store = app.read(|e| e.document.cache.clone());
         app.enter(|e, cx| e.start_document(Preparation::New, cx));
         let operation = app.read(|e| e.document_pending.unwrap());
         assert!(app.read(|e| e.busy && e.document_pending.is_some()));

@@ -20,6 +20,7 @@ pub(super) struct Request {
     pub work: Preparation,
     pub source: Option<(u64, Ready)>,
     pub correction: Option<Arc<Correction>>,
+    pub cache: Option<Arc<crate::source::SourceCache>>,
 }
 
 pub(super) struct Prepared {
@@ -60,6 +61,7 @@ pub(super) fn candidate(
         work,
         source: previous,
         correction: previous_correction,
+        cache,
     } = request;
     let preserve_view = matches!(
         work,
@@ -73,7 +75,6 @@ pub(super) fn candidate(
     };
     let (document, reuse) = match work {
         Preparation::Import(mut document, paths, reuse) => {
-            document.fork_cache();
             document.import_with_progress(&paths, Some(device), &mut progress)?;
             (document, reuse)
         }
@@ -82,18 +83,13 @@ pub(super) fn candidate(
             None,
         ),
         Preparation::New => (Document::default(), None),
-        Preparation::Correction(mut document, _) => {
-            document.fork_cache();
-            (document, None)
-        }
+        Preparation::Correction(document, _) => (document, None),
         Preparation::Input(mut document, _) => {
             let target = document.project.input;
             document.redevelop_for_input(target)?;
-            document.fork_cache();
             (document, None)
         }
         Preparation::History(mut document, _, _) => {
-            document.fork_cache();
             document.validate_for_device(device)?;
             for id in document.project.order.clone() {
                 document.refresh_source(id)?;
@@ -136,7 +132,7 @@ pub(super) fn candidate(
             .or_else(|| document.project.order.first().copied())
     });
     let source = selected
-        .map(|id| source_request(&document, id, correction.clone()))
+        .map(|id| source_request(&document, id, correction.clone(), cache.clone()))
         .transpose()?;
     Ok(Candidate {
         prepared: Prepared {
@@ -155,17 +151,19 @@ fn source_request(
     document: &Document,
     id: SourceId,
     correction: Option<Arc<Correction>>,
+    cache: Option<Arc<crate::source::SourceCache>>,
 ) -> Result<source::Request, Error> {
     let path = document.source_path(id)?;
     let expected = document.project.source(id)?.clone();
     let wb = Some(expected.development.decode.fixed_wb);
-    let cache = source::Cache::new(&path, Some(&expected), document);
+    let file = document.file_key(&path);
     Ok(source::Request {
         input: document.project.input,
         path,
         expected: Some(expected),
         wb,
-        cache: Some(cache),
+        cache,
+        file,
         correction,
     })
 }

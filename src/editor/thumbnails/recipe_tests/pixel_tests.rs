@@ -88,7 +88,7 @@ fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
     let renderers = Arc::new(crate::renderer::RendererCache::default());
     let mut thumbnails =
         Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
-    let mut document = tests::fixture();
+    let mut document: crate::editor::document_scope::DocumentScope = tests::fixture().into();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
     let id = document.project.order[0];
@@ -153,7 +153,7 @@ fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
             })
         })
         .collect::<Vec<_>>();
-    thumbnails.bind_sources(document.cache().clone());
+    thumbnails.bind_sources(document.cache.clone());
     thumbnails.seed(
         document.project.source(id).unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),

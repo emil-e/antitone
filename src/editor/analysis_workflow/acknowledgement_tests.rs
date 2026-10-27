@@ -56,7 +56,10 @@ fn start_cpu(
         let id = pending.id;
         let stopped = pending.cancelled.clone();
         let retire = stopped.cancel_on_drop();
-        let services = Services::from(editor.source_services.as_ref().unwrap());
+        let services = Services::new(
+            editor.source_services.as_ref().unwrap(),
+            editor.document.cache.clone(),
+        );
         let task = access
             .spawn(move |cx| async move {
                 let _retire = retire;

@@ -185,15 +185,14 @@ impl Editor {
         // A retained record is either an ordered photo or the current flat-field reference;
         // both belong to the current stage. Use its saved decode identity when present.
         let wb = self.document.project.acquisition_wb(expected.as_ref());
-        let cache = expected
-            .as_ref()
-            .map(|source| LoadCache::new(&path, Some(source), &self.document));
+        let file = self.document.file_key(&path);
         source::Request {
             input: self.input(),
             path,
             wb,
             expected,
-            cache,
+            file,
+            cache: Some(self.document.cache.clone()),
             correction: None,
         }
     }
@@ -216,6 +215,7 @@ impl Editor {
             .exact_rectangle(ready.area)
             .ok_or("Flat-field support must be an integer source rectangle")?;
         Ok(Some(super::reference_services::Acceptance {
+            cache: self.document.cache.clone(),
             region,
             document: self.document.capture(),
             selected: self.current_source,

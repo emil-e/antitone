@@ -3,7 +3,7 @@ use antitone::{
     project::{Development, Source, SourceDevelopment, SourceId},
     raw::RawFile,
     scan::{CameraProxy, DevelopedSource, Scan},
-    source::{Charges, SourceKey, SourceStore},
+    source::{Charges, SourceCache, SourceKey},
 };
 use std::sync::Arc;
 
@@ -82,7 +82,7 @@ fn allocation_snapshot_is_stable_across_consumers_and_charged_once() {
     let scan = Scan::from_source(source.clone());
     let _ = scan.source().sensor_diagnostics().unwrap();
     assert_eq!(scan.source().retained_bytes(), Some(bytes));
-    let store = SourceStore::new(bytes);
+    let store = SourceCache::new(bytes);
     let accepted = store
         .publish_source(input.key.clone(), source.clone())
         .unwrap()
@@ -121,7 +121,7 @@ fn native_and_proxy_ownership_compete_in_one_oldest_unprotected_byte_lru() {
     let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
     let n = source.retained_bytes().unwrap();
     let p = proxy.retained_bytes();
-    let store = SourceStore::new(n + p - 1);
+    let store = SourceCache::new(n + p - 1);
     store
         .publish_source(input.key.clone(), source.clone())
         .unwrap()
@@ -181,7 +181,7 @@ fn zero_limits_preserve_protected_proxies_but_never_exempt_full_native_ownership
     let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
     let n = source.retained_bytes().unwrap();
     let p = proxy.retained_bytes();
-    let store = SourceStore::new(p);
+    let store = SourceCache::new(p);
     store
         .publish_proxy(input.key.clone(), proxy.clone())
         .unwrap()
@@ -222,7 +222,7 @@ fn closure_drops_protected_proxy_ownership_not_active_leases() {
     let input = Input::new();
     let scan = Scan::open(input.file.path(), Some(WB)).unwrap();
     let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
-    let store = SourceStore::new(proxy.retained_bytes());
+    let store = SourceCache::new(proxy.retained_bytes());
     store.protect_proxies(vec![input.key.clone()]);
     store
         .publish_proxy(input.key.clone(), proxy.clone())
@@ -256,7 +256,7 @@ fn concurrent_mixed_publications_never_exceed_one_optional_limit() {
     let source = scan.source().clone();
     let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
     let budget = source.retained_bytes().unwrap() + proxy.retained_bytes() - 1;
-    let store = Arc::new(SourceStore::new(budget));
+    let store = Arc::new(SourceCache::new(budget));
     let barrier = Arc::new(Barrier::new(5));
     let workers: Vec<_> = (0..4)
         .map(|_| {
@@ -307,7 +307,7 @@ fn proxy_basis_rejection_does_not_replace_a_working_entry() {
     let input = Input::new();
     let scan = Scan::open(input.file.path(), Some(WB)).unwrap();
     let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
-    let store = SourceStore::new(proxy.retained_bytes());
+    let store = SourceCache::new(proxy.retained_bytes());
     store
         .publish_proxy(input.key.clone(), proxy.clone())
         .unwrap()
@@ -356,7 +356,7 @@ fn exact_keys_exclude_grade_identity_and_fail_closed_without_stats() {
 fn mismatched_native_basis_geometry_wb_and_runtime_never_replace_working_entries() {
     let input = Input::new();
     let source = input.source();
-    let store = SourceStore::new(10);
+    let store = SourceCache::new(10);
     store
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
@@ -418,7 +418,7 @@ fn byte_lru_evicts_ownership_not_active_leases_and_zero_limits_keep_live_reuse()
     let first = a.source();
     let second = b.source();
     let third = c.source();
-    let store = SourceStore::new(20);
+    let store = SourceCache::new(20);
     store
         .publish(a.key.clone(), first.clone(), 10)
         .unwrap()
@@ -470,7 +470,7 @@ fn oversized_weak_only_publication_does_not_evict_and_can_be_readmitted_later() 
     let b = Input::new();
     let first = a.source();
     let second = b.source();
-    let store = SourceStore::new(10);
+    let store = SourceCache::new(10);
     store
         .publish(a.key.clone(), first.clone(), 10)
         .unwrap()
@@ -508,7 +508,7 @@ fn oversized_weak_only_publication_does_not_evict_and_can_be_readmitted_later() 
 fn demanded_weak_hits_are_readmitted_only_when_the_explicit_limit_fits() {
     let input = Input::new();
     let source = input.source();
-    let store = SourceStore::new(0);
+    let store = SourceCache::new(0);
     store
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
@@ -541,7 +541,7 @@ fn concurrent_duplicate_publications_and_closed_store_lookup_preserve_one_charge
     use std::sync::Barrier;
     let input = Input::new();
     let source = input.source();
-    let store = Arc::new(SourceStore::new(10));
+    let store = Arc::new(SourceCache::new(10));
     let barrier = Arc::new(Barrier::new(5));
     let workers: Vec<_> = (0..4)
         .map(|_| {
@@ -552,11 +552,11 @@ fn concurrent_duplicate_publications_and_closed_store_lookup_preserve_one_charge
             std::thread::spawn(move || {
                 barrier.wait();
                 for _ in 0..16 {
-                    let accepted = store
+                    let other = store
                         .publish(key.clone(), source.clone(), 10)
                         .unwrap()
                         .unwrap();
-                    assert!(Arc::ptr_eq(&accepted, &source));
+                    assert!(Arc::ptr_eq(&other, &source));
                     assert!(Arc::ptr_eq(&store.get(&key).unwrap(), &source));
                 }
             })
@@ -592,7 +592,7 @@ fn duplicate_completions_share_one_charge_and_reject_alias_or_reweighting() {
     let other = Input::new();
     let first = input.source();
     let duplicate = input.source();
-    let store = SourceStore::new(20);
+    let store = SourceCache::new(20);
     store
         .publish(input.key.clone(), first.clone(), 10)
         .unwrap()
@@ -627,7 +627,7 @@ fn duplicate_completions_share_one_charge_and_reject_alias_or_reweighting() {
 fn cache_uses_captured_keys_without_revalidating_the_filesystem() {
     let input = Input::new();
     let source = input.source();
-    let store = SourceStore::new(10);
+    let store = SourceCache::new(10);
     store
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
@@ -670,7 +670,7 @@ fn alias_identity_is_captured_when_opened_not_reinterpreted_by_the_store() {
     std::os::unix::fs::symlink(b.file.path(), &alias).unwrap();
     let reopened = SourceKey::capture(&alias, &b.record.development).unwrap();
     assert_ne!(captured, reopened);
-    let store = SourceStore::new(10);
+    let store = SourceCache::new(10);
     store
         .publish(captured.clone(), source.clone(), 10)
         .unwrap()
@@ -680,37 +680,37 @@ fn alias_identity_is_captured_when_opened_not_reinterpreted_by_the_store() {
 }
 
 #[test]
-fn candidate_close_rejects_late_jobs_without_touching_accepted_store_or_leases() {
+fn closing_one_document_cache_rejects_late_publication_without_revoking_other_leases() {
     let input = Input::new();
     let source = input.source();
-    let accepted = SourceStore::new(10);
-    let candidate = SourceStore::new(10);
-    accepted
+    let other = SourceCache::new(10);
+    let closed = SourceCache::new(10);
+    other
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
         .unwrap();
-    candidate
+    closed
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
         .unwrap();
-    candidate.close();
-    assert!(candidate.get(&input.key).is_none());
+    closed.close();
+    assert!(closed.get(&input.key).is_none());
     assert!(
-        candidate
+        closed
             .publish(input.key.clone(), source.clone(), 10)
             .unwrap()
             .is_none()
     );
-    assert!(Arc::ptr_eq(&accepted.get(&input.key).unwrap(), &source));
-    accepted.evict(&input.key);
+    assert!(Arc::ptr_eq(&other.get(&input.key).unwrap(), &source));
+    other.evict(&input.key);
     assert_eq!(
-        accepted.charges(),
+        other.charges(),
         Charges {
             retained: 0,
             leased_only: 10
         }
     );
-    assert!(accepted.get(&input.key).is_some());
+    assert!(other.get(&input.key).is_some());
     assert!(source.camera_image().unwrap().pixel_samples(8, 8).is_ok());
 }
 
@@ -720,7 +720,7 @@ fn aggregate_overflow_is_transactional_including_evicted_but_leased_storage() {
     let b = Input::new();
     let first = a.source();
     let second = b.source();
-    let store = SourceStore::new(u64::MAX);
+    let store = SourceCache::new(u64::MAX);
     store
         .publish(a.key.clone(), first.clone(), u64::MAX)
         .unwrap()
