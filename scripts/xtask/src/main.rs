@@ -110,14 +110,7 @@ fn check() -> Result {
     cargo(&["test", "--locked", "--no-default-features"])?;
     // Separate production from reference-feature unification: OCIO must not
     // accidentally become a production link/runtime prerequisite.
-    cargo(&[
-        "test",
-        "--locked",
-        "--features",
-        "editor",
-        "--",
-        "--test-threads=1",
-    ])?;
+    cargo(&["test", "--locked", "--features", "editor"])?;
     cargo(&[
         "clippy",
         "--locked",
@@ -128,13 +121,7 @@ fn check() -> Result {
         "-D",
         "warnings",
     ])?;
-    cargo(&[
-        "test",
-        "--locked",
-        "--all-features",
-        "--",
-        "--test-threads=1",
-    ])?;
+    cargo(&["test", "--locked", "--all-features"])?;
     cargo(&[
         "clippy",
         "--locked",
@@ -152,8 +139,6 @@ fn check() -> Result {
         "ui-tests",
         "--lib",
         "editor::kittest_tests",
-        "--",
-        "--test-threads=1",
     ])
 }
 

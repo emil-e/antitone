@@ -49,7 +49,7 @@ For authored reference/area transitions, corrected picks, both targets/thumbnail
 
 ```sh
 cargo test --locked --offline --features ui-tests --lib \
-  editor::kittest_tests::correction -- --test-threads=1
+  editor::kittest_tests::correction
 cargo test --locked --offline --release --all-features --test flat_field_export \
   -- --ignored --nocapture
 ```
@@ -65,7 +65,7 @@ An optional regression checks opening recovery and holder-tail exclusion on one 
 ```sh
 ANTITONE_SAMPLES=/absolute/samples cargo test --locked --offline --release \
   --features editor --lib real_ambiguous_first_frame_uses_roll_opening_instead_of_holder \
-  -- --ignored --nocapture --test-threads=1
+  -- --ignored --nocapture
 ```
 
 Its named files and area/Dmax assertions apply only to that case; neither route certifies photographic success or a general opening detector.
@@ -75,7 +75,7 @@ A unity-WB project can compare the current Negative analysis against the former 
 ```sh
 ANTITONE_UNITY_WB_PROJECT=/absolute/roll.antitone cargo test --locked --offline --release \
   --features editor --test unity_wb_roll_compare \
-  -- --ignored --nocapture --test-threads=1
+  -- --ignored --nocapture
 ```
 
 It uses the project's accepted analysis areas, redevelops the roll in both bases, and checks that the analyzed frame means and chroma remain within diagnostic general-look bounds. Equal eligible sample populations are required; differing populations make the comparison inconclusive rather than evidence about WB.
@@ -98,7 +98,7 @@ ANTITONE_REGION_OUTPUT="$PWD/.cache/holder-comparison" \
 ANTITONE_REGION_IMAGES=DSC04331,DSC01635 \
   cargo test --locked --offline --release --features editor --lib \
   compare_shared_holder_with_frozen_local_baseline \
-  -- --ignored --nocapture --test-threads=1
+  -- --ignored --nocapture
 ```
 
 The output directory must be new and outside the frozen evidence tree. The comparison checks expected shared-support/abstention counts and spatial population adequacy; optional PNGs (old local opening in red, conservative opening in gold, picture statistics in cyan) are evidence for software behavior, not photographic appearance.
@@ -110,7 +110,7 @@ ANTITONE_REGION_EVIDENCE=/absolute/retained-evidence \
 ANTITONE_RAW_ROOT=/absolute/read-only-samples ANTITONE_REGION_ROLL=roll-name \
   cargo test --locked --offline --features editor --lib \
   complete_private_roll_prepares_reviews_analyzes_and_round_trips \
-  -- --ignored --nocapture --test-threads=1
+  -- --ignored --nocapture
 ```
 
 ### Bounded area-preparation profiling
@@ -127,11 +127,11 @@ export ANTITONE_RAW_ROOT=/absolute/read-only-samples
 export ANTITONE_REGION_ROLL=roll-name
 ANTITONE_REGION_PERF_ARM=cold ANTITONE_REGION_OUTPUT="$PWD/.cache/region-cold" \
   cargo test --locked --offline --release --features editor --lib \
-  profile_complete_roll_area_preparation -- --ignored --nocapture --test-threads=1
+  profile_complete_roll_area_preparation -- --ignored --nocapture
 ANTITONE_REGION_PERF_ARM=warm ANTITONE_REGION_OUTPUT="$PWD/.cache/region-warm" \
   ANTITONE_REGION_PERF_COMPARE="$PWD/.cache/region-cold/report.json" \
   cargo test --locked --offline --release --features editor --lib \
-  profile_complete_roll_area_preparation -- --ignored --nocapture --test-threads=1
+  profile_complete_roll_area_preparation -- --ignored --nocapture
 ```
 
 Reports contain per-stage samples (p50/p95/max), actual per-source native development counts and nested open/unpack/develop timings. **Sum exclusive stage times and inspect residual wall time** — the inclusive totals overlap. Each acquisition carries its source identity, so expected development counts can be checked exactly per source. A successful run measures preparation only, not import, numerical Analyze, UI latency or photographic border accuracy.
@@ -186,7 +186,7 @@ Group scans deliberately; frame counts do not establish physical roll identity. 
 ANTITONE_ROLL_CASES=/absolute/cases.json \
 ANTITONE_ROLL_OUTPUT="$PWD/.cache/roll-check/FRESH_OUTPUT" \
 cargo test --locked --offline --release --features editor --lib diagnose_sample_rolls \
-  -- --ignored --nocapture --test-threads=1
+  -- --ignored --nocapture
 .cache/roll-check/image-contacts sheet .cache/roll-check/positive-contact.png \
   .cache/roll-check/FRESH_OUTPUT/roll-name/*.tif
 ```
@@ -198,10 +198,10 @@ This drives real import/correction with a shared sampling area, bypassing per-ph
 ```sh
 cargo test --locked --offline --features ui-tests --lib \
   scope_plot_scale_and_target_widgets_produce_valid_completed_reductions \
-  -- --test-threads=1
+
 cargo test --locked --offline --features ui-tests --lib \
   compact_scope_header_fits_and_disclosure_preserves_state_at_both_densities \
-  -- --test-threads=1
+
 ```
 
 The compact-header check covers normal/narrow 1×/2× layouts, disclosure and menu keyboard access, collapsed scheduling and unchanged project state; with `ANTITONE_UI_CAPTURE` it writes inspection captures. The authored test exercises [scope modes/amplification](scopes.md), real widgets and completed GPU reductions in both targets. Viewer and scopes must consume the same accepted working result.
@@ -231,19 +231,19 @@ Adjustment layers use complete-stack editor admission. These diagnostics isolate
 
 ```sh
 ANTITONE_ADJUSTMENT_LAYER_PERF_QUICK=1 cargo test --locked --offline --release \
-  --features editor --test adjustment_layer_performance -- --ignored --nocapture --test-threads=1
+  --features editor --test adjustment_layer_performance -- --ignored --nocapture
 cargo test --locked --offline --release --features gpu --lib \
-  paired_kernel_variants -- --ignored --nocapture --test-threads=1
+  paired_kernel_variants -- --ignored --nocapture
 ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
   --features editor --lib real_raw_adjustment_layer_preview_tiles_and_refinement \
-  -- --ignored --nocapture --test-threads=1
+  -- --ignored --nocapture
 ```
 
 For a bounded layer-stack ownership observation on the production working view:
 
 ```sh
 cargo test --locked --offline --release --features editor --lib \
-  physical_view_adjustment_layer_resources -- --ignored --nocapture --test-threads=1
+  physical_view_adjustment_layer_resources -- --ignored --nocapture
 ```
 
 The [diagnostic](../src/gpu/view/tests/adjustment_layer_resources.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay with correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source (headers must pass the existing 600-MiB diagnostic source bound); both variants use the existing pressure/free-memory/swap/growth stops, and timings without a coordinated window are indicative, not isolated interaction latency.
@@ -256,9 +256,9 @@ The [execution comparison](../src/gpu_aces_execution_tests.rs) uses an independe
 
 ```sh
 cargo test --locked --offline --features editor --lib \
-  equivalent_aces_execution -- --nocapture --test-threads=1
+  equivalent_aces_execution -- --nocapture
 ANTITONE_SCREEN_PERF_SIZE=4k cargo test --locked --offline --release \
-  --features editor --lib aces_execution_cost -- --ignored --nocapture --test-threads=1
+  --features editor --lib aces_execution_cost -- --ignored --nocapture
 ```
 
 Require complete-raster bit agreement with the original shader plus the existing CPU gate for dense signed/HDR hue/exposure cases in both targets. Compute shells are independent execution references, not a second production renderer; timings exclude compilation, upload, readback, scopes and presentation.
@@ -269,11 +269,11 @@ Require complete-raster bit agreement with the original shader plus the existing
 
 ```sh
 cargo test --locked --offline --features ui-tests --lib physical_view_ \
-  -- --nocapture --test-threads=1
+  -- --nocapture
 ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples \
   ANTITONE_SCREEN_PERF_SIZE=4k ANTITONE_SCREEN_CORRECTED=1 \
   cargo test --locked --offline --release --features editor --lib \
-  physical_view_underlay_gpu_cost_and_retirement -- --ignored --nocapture --test-threads=1
+  physical_view_underlay_gpu_cost_and_retirement -- --ignored --nocapture
 ```
 
 The production diagnostic covers initial detail/whole-composition acquisition, immutable edits/target changes, navigation composition and retirement. It is not input-to-display timing: compilation, scopes, host/presentation, concurrent UI and readback are excluded. `ANTITONE_SCREEN_PERF_SIZE` selects a workload, not a resolution cap; RAW correction is a synthetic 2×2 field, not measured photographic correction.
@@ -288,7 +288,7 @@ The [working-view tests](../src/gpu/view/tests/colour.rs) exercise the actual `R
 
 ```sh
 cargo test --locked --offline --features editor --lib gpu::view::tests::colour \
-  -- --nocapture --test-threads=1
+  -- --nocapture
 ```
 
 [Model and geometry checks](../src/gpu/view/tests/colour/model.rs) cover Digital coverage, exactly-once exposure, asymmetric crops and rounded proxy dimensions. [Scalar/sampling/lifetime checks](../src/gpu/view/tests/colour/oracles.rs) cover continuous original-coordinate masks, corrected footprints, floor provenance and deferred encoded consumers after owner release. These isolate stage and sampling behavior from the working view's filtering-before-grading approximation.
@@ -314,7 +314,7 @@ Use the [paired-output diagnostic](../tests/photographic_samples.rs) to inspect 
 ANTITONE_RAW_SAMPLES=/absolute/samples \
 ANTITONE_PHOTO_OUTPUT="$PWD/.cache/photographic-FRESH" \
   cargo test --locked --offline --release --features raw,gpu,export,ocio-reference \
-  --test photographic_samples -- --ignored --nocapture --test-threads=1
+  --test photographic_samples -- --ignored --nocapture
 ```
 
 It develops the train calibration references and three photographs (`DSC04520`, `DSC04522`, `DSC04524`) in Negative's unity-WB basis, writes paired 512×384 original-pixel TIFF crops in both targets, and varies correction, ordered adjustment layers and their blend endpoints/interiors. Reports include RGB16 difference distributions, counts above one 8-bit-code equivalent, nonclipped reference coverage and export time. Inspect the paired files before attributing a difference to precision; the outputs also include GPU-versus-OCIO rendering differences. Crop timings include export setup and encoding, and do not predict full-frame throughput. The [full-size exercise](#export) measures that workload separately.
@@ -325,12 +325,12 @@ The [scalar sampling oracles](../src/view_sampling_tests.rs) compare representat
 
 ```sh
 cargo test --locked --offline --features ocio-reference --lib \
-  view_sampling_tests -- --test-threads=1
+  view_sampling_tests
 cargo test --locked --offline --release --features ocio-reference --lib \
-  synthetic_view_sampling_quality -- --ignored --nocapture --test-threads=1
+  synthetic_view_sampling_quality -- --ignored --nocapture
 ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
   --features raw,gpu,ocio-reference --lib raw_view_sampling_quality \
-  -- --ignored --nocapture --test-threads=1
+  -- --ignored --nocapture
 ```
 
 Reported RMS/max errors are approximation diagnostics, not implementation tolerances or photographic thresholds. Averaging before nonlinear grades/ACES does not generally commute; filtered precreative input and footprint-centre masks are explicit preview approximations, and finite sampling candidates deliberately demonstrate aliasing/non-equivalence.
@@ -433,7 +433,7 @@ During an agreed GPU window, the opt-in full-size resource exercise retains prod
 ANTITONE_RAW_SAMPLES=/absolute/samples \
   cargo test --locked --offline --release --features editor --lib \
   full_size_export_resources_with_retained_working_view \
-  -- --ignored --nocapture --test-threads=1
+  -- --ignored --nocapture
 ```
 
 It reads the three train/calibration RAW inputs read-only, checks native geometry before development, and keeps the existing pressure, swap-counter, footprint-growth and telemetry stops. `ANTITONE_EXPORT_RESOURCE_CASE` selects `native`, `rotated`, `corrected-native` or `corrected-rotated`; `ANTITONE_EXPORT_RESOURCE_FORMAT=tiff` narrows a run to TIFF; `ANTITONE_EXPORT_RESOURCE_LOCALS=2` adds ordered linear and inverted radial locals (the post-export regrade preserves them); `ANTITONE_EXPORT_RESOURCE_BACKEND=gpu` selects the production engine (the default), while adding `ocio-reference` to the features enables `reference` or `compare` (reference followed by production GPU) for matched independent scalar/OCIO-reference measurements with identical source, grade, composition and encoders.

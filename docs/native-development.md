@@ -19,7 +19,7 @@ The maintained `composed_native_overlap_throughput_and_foreground_latency` diagn
 ```sh
 ANTITONE_RAW_SAMPLES=/absolute/samples ANTITONE_LOG=debug \
 ANTITONE_LOG_DIR="$PWD/.cache/logs" cargo test --locked --offline --release \
-  --features editor --lib composed_native_overlap -- --ignored --nocapture --test-threads=1
+  --features editor --lib composed_native_overlap -- --ignored --nocapture
 ```
 
 When high-end hardware is unavailable, report conditional projections rather than measured speedups. A simple model separates unaccelerated decode/host/queue time from scalable processing time: `T_projected = T_unaccelerated + T_scalable / r`, where `r` is an explicitly assumed stage-speed ratio, not the ratio of advertised core counts. Matched local thread trials can constrain that assumption but do not validate another chip's memory bandwidth, scheduling, thermals, GPU feeding or mixed-load responsiveness. Keep hardware scaling acceptance open until those observations exist.
@@ -38,7 +38,7 @@ The accepted OpenMP runtime must remain available at `.cache/native-deps/openmp-
 ANTITONE_SWITCH_SAMPLES=/absolute/path/to/samples \
   cargo test --locked --offline --release --features editor --lib \
   editor::thumbnails::switch_observation::retained_source_switching_and_busy_input \
-  -- --ignored --exact --nocapture --test-threads=1
+  -- --ignored --exact --nocapture
 ```
 
 Use only within agreed workload bounds. The [measurement helper](../native/cache_observation.rs) rejects sources over 600 MiB of explicitly estimated source-construction storage; the diagnostic starts only at known Normal pressure with at least 2 GiB reported free memory, and its sampler latches unknown/elevated pressure or stale sampling. Native calls are noninterruptible: stop thresholds are not hard allocation caps, and sampled peaks are not exact maxima. These measurements do not grant cache admission permission; [fixed preferences](editor.md#responsiveness-and-optional-caches) govern optional ownership.

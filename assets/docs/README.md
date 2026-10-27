@@ -19,7 +19,7 @@ would commit 22 MB per refresh, which is why the harness default is used.
    ```sh
    ANTITONE_DOC_SCANS=/absolute/path/to/roll ANTITONE_UI_CAPTURE=assets/docs \
      cargo test --locked --features ui-tests \
-     --lib editor::kittest_tests::guide_shots -- --test-threads=1
+     --lib editor::kittest_tests::guide_shots
    ```
 
    Expect about seven minutes for 36 scans: it analyzes the roll and develops every frame
