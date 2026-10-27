@@ -40,16 +40,16 @@ Re-run after preparation to check that setup/building is repeatable. A separate 
 
 ## Continuous integration
 
-Development is pull-request based: change work happens on task branches, opens a PR into `main`, and two workflows gate it — [ci.yml](../.github/workflows/ci.yml) on `macos-15` (Apple Silicon) and [windows.yml](../.github/workflows/windows.yml) on `windows-latest` x64. Both also run on pushes to `main` and manual dispatch, so merges and the trunk tip stay continuously verified.
+Development is pull-request based: change work happens on task branches, opens a PR into `main`, and two workflows gate it — [macos.yml](../.github/workflows/macos.yml) on `macos-15` (Apple Silicon) and [windows.yml](../.github/workflows/windows.yml) on `windows-latest` x64. Both also run on pushes to `main` and manual dispatch, so merges and the trunk tip stay continuously verified.
 
 CI covers the hardware-independent subset only. The split of responsibility:
 
 | Verification | Where it runs |
 | --- | --- |
-| Authored-source formatting, documentation links, packaging/format-tool unit tests | `checks` job, hosted (`cargo xtask tools` first) |
-| Numerical-core tests | `checks` job, hosted |
-| Native setup, vendored-SDK adapter tests, production and all-features clippy | `editor-checks` job, hosted (Metal-free stages) |
-| Native setup, package build, relocated ZIP verification and ZIP artifact | `package` job, hosted |
+| Authored-source formatting, documentation links, packaging/format-tool unit tests | macOS `checks` job, hosted (`cargo xtask tools` first) |
+| Numerical-core tests | macOS `checks` job, hosted |
+| Native setup, vendored-SDK adapter tests, production and all-features clippy | macOS `editor-checks` job, hosted (Metal-free stages) |
+| Native setup, package build, relocated ZIP verification and ZIP artifact | macOS `package` job, hosted |
 | Windows formatting, clippy, numerical-core and direct-SDK tests | Windows `lint-and-tests` job, hosted |
 | Windows editor build and portable ZIP artifact | Windows `package` job, hosted |
 | Editor library tests, kittest `ui-tests`, GPU suites | Agent/local machine before integration — these need a Metal device on macOS or a Vulkan device on Windows, outside the hardware-independent hosted jobs |
