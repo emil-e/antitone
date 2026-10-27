@@ -132,6 +132,25 @@ fn recipe_capture_uses_the_requested_reference_source_even_when_it_is_not_in_the
 }
 
 #[test]
+fn film_emulation_is_captured_immutably_without_changing_neutral_repair_identity() {
+    let (mut project, id) = project();
+    let clean = project.image_recipe(id).unwrap();
+    let film = antitone::film_emulation::FilmEmulationPreset::Medium.settings();
+    project.output.film_emulation = film;
+    let captured = project.image_recipe(id).unwrap();
+    assert_eq!(captured.film_emulation, film);
+    assert_ne!(clean, captured);
+    assert!(clean.same_neutral_content(&captured));
+    project.output.film_emulation.amount *= 2.;
+    let edited = project.image_recipe(id).unwrap();
+    assert_ne!(captured, edited);
+    assert_eq!(captured.film_emulation, film);
+    assert_eq!(captured.neutral.source, id);
+    project.output.film_emulation.enabled = false;
+    assert!(captured.film_emulation.enabled);
+}
+
+#[test]
 fn accepted_look_identity_is_numeric_immutable_and_downstream_of_neutral_repairs() {
     use antitone::looks::{LookAsset, LookOrigin, Lut3D};
     use std::sync::Arc;

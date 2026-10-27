@@ -131,6 +131,8 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
         let mut without_look: Option<DVec3> = None;
         for look in [None, Some(asset.clone())] {
             let request = Request {
+                film_emulation: Default::default(),
+                film_seed: 17,
                 scan: &scan,
                 field: None,
                 input: calibration.into(),

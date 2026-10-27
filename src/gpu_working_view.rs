@@ -1,5 +1,7 @@
 //! Immutable physical-view acquisition and rendering. Originals remain reference/export authority.
 use super::*;
+#[cfg(test)]
+use crate::film_emulation::FilmEmulationSettings;
 use crate::processing::InputSettings;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
@@ -30,12 +32,14 @@ pub(crate) struct ViewSourceSpec {
     input: InputSettings,
     inspection: bool,
     field: Option<Arc<crate::flat_field::FlatField>>,
+    support: crate::processing_support::Support,
 }
 
 impl PartialEq for ViewSourceSpec {
     fn eq(&self, other: &Self) -> bool {
         self.authority == other.authority
             && self.frame == other.frame
+            && self.support == other.support
             && self.repairs == other.repairs
             && self.area == other.area
             && self.matrix == other.matrix
@@ -51,6 +55,22 @@ impl ViewSourceSpec {
         other.frame = self.frame;
         other.repairs = self.repairs.clone();
         self == &other
+    }
+
+    pub(crate) fn with_support(mut self, support: crate::processing_support::Support) -> Self {
+        self.support = support;
+        self
+    }
+
+    fn raster_support(&self) -> crate::processing_support::Support {
+        let raster = super::raster::Raster::frame(self.frame);
+        crate::processing_support::Support(std::array::from_fn(|i| {
+            (self.support.0[i] as f32 / raster.pitch()[i]).ceil() as u32
+        }))
+    }
+
+    fn input_frame(&self) -> Result<FrameRaster, Error> {
+        self.raster_support().raster(self.frame)
     }
 
     pub(crate) fn with_repairs(mut self, repairs: super::repairs::Snapshot) -> Self {
@@ -136,6 +156,7 @@ impl ViewSourceSpec {
             input: InputSettings::Digital,
             field,
             inspection,
+            support: crate::processing_support::Support::NONE,
         })
     }
 }
@@ -152,6 +173,7 @@ pub(crate) fn view_shader() -> String {
 
 pub(crate) struct ViewKernels {
     grade: wgpu::ComputePipeline,
+    stages: super::pixel_pipeline::Kernels,
     inspection: wgpu::ComputePipeline,
     filter: wgpu::ComputePipeline,
     proxy_coverage: wgpu::ComputePipeline,
@@ -192,6 +214,7 @@ impl ViewKernels {
         };
         let inspection = photographic("physical-view linear source inspection", "inspection_main");
         let grade = photographic("stable physical-view colour", "view_main");
+        let stages = super::pixel_pipeline::Kernels::new(device).await?;
         let filter = compute(
             "original-cell physical-view acquisition",
             [
@@ -217,6 +240,7 @@ impl ViewKernels {
         }
         Ok(Arc::new(Self {
             grade,
+            stages,
             inspection,
             filter,
             proxy_coverage,
@@ -300,7 +324,7 @@ impl ViewKernels {
         origin: [i32; 2],
         (lo, extent): crate::resample::windows::Window,
     ) -> Result<(), Error> {
-        let bounds = frame.bounds()?;
+        let bounds = frame.processing_bounds()?;
         self.filter_raster(
             device,
             encoder,
@@ -308,7 +332,7 @@ impl ViewKernels {
             output,
             [bounds.width, bounds.height],
             frame.output,
-            frame.affine()?,
+            frame.affine_in(bounds)?,
             origin,
             (lo, extent),
         );
@@ -402,6 +426,11 @@ impl ViewKernels {
             pass.dispatch_workgroups(x, groups.div_ceil(x), 1);
             return;
         };
+        let working = graded
+            .stages
+            .input_buffer(device, graded.source.spec.frame.output)
+            .expect("validated processing input");
+        let pixels = working.as_ref().unwrap_or(&graded.pixels);
         let params = uniform(device, bytemuck::bytes_of(&grade.parameters));
         let view = uniform(device, bytemuck::bytes_of(&graded.view));
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -410,7 +439,7 @@ impl ViewKernels {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: graded.pixels.as_entire_binding(),
+                    resource: pixels.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -434,12 +463,29 @@ impl ViewKernels {
                 },
             ],
         });
-        let groups = ((graded.pixels.size() / 16) as u32).div_ceil(64);
+        let groups = ((pixels.size() / 16) as u32).div_ceil(64);
         let x = groups.min(device.limits().max_compute_workgroups_per_dimension);
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&self.grade);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(x, groups.div_ceil(x), 1);
+        drop(pass);
+        self.stages
+            .encode(device, encoder, &graded.stages, pixels)
+            .expect("validated pixel-stage raster");
+        if let Some(working) = &working {
+            self.stages.extract(
+                device,
+                encoder,
+                working,
+                graded.stages.raster.size(),
+                &graded.pixels,
+                super::pixel_pipeline::OutputRegion {
+                    size: graded.source.spec.frame.output,
+                    offset: graded.source.spec.raster_support().0,
+                },
+            );
+        }
     }
 }
 
@@ -542,7 +588,8 @@ impl ViewSource {
         // axis scales account for integer-rounded proxy dimensions without re-rounding a crop
         // or assuming its bounding box starts at the texture origin.
         let raster = crate::geometry::SourceRaster::new(spec.area, geometry.size())?;
-        let point = |p| raster.raster_point(spec.frame.source_point(p)).0;
+        let frame = spec.input_frame()?;
+        let point = |p| raster.raster_point(frame.source_point(p)).0;
         let start = point([0., 0.]);
         let x = point([1., 0.]);
         let y = point([0., 1.]);
@@ -566,7 +613,7 @@ impl ViewSource {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let pixels = float_buffer(device, spec.frame.output)?;
+        let pixels = float_buffer(device, frame.output)?;
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer
             .kernel
@@ -578,10 +625,10 @@ impl ViewSource {
             &texture,
             &pixels,
             geometry.size(),
-            spec.frame.output,
+            frame.output,
             affine,
             [0, 0],
-            ([0, 0], spec.frame.output),
+            ([0, 0], frame.output),
         );
         queue.submit([encoder.finish()]);
         Ok(Arc::new(Self {
@@ -658,7 +705,13 @@ impl ViewSource {
         }
         let outputs = specs
             .iter()
-            .map(|s| Ok((s.frame.bounds()?, float_buffer(device, s.frame.output)?)))
+            .map(|s| {
+                let frame = s.input_frame()?;
+                Ok((
+                    frame.processing_bounds()?,
+                    float_buffer(device, frame.output)?,
+                ))
+            })
             .collect::<Result<Vec<_>, Error>>()?;
         let bounds = outputs
             .iter()
@@ -699,12 +752,9 @@ impl ViewSource {
                         continue;
                     }
                     windows.extend(
-                        crate::resample::windows::bounded(crate::resample::windows::affine_output(
-                            s.frame.affine()?,
-                            s.frame.output,
-                            [lo[0] - b.x, lo[1] - b.y],
-                            [hi[0] - lo[0], hi[1] - lo[1]],
-                        ))
+                        crate::resample::windows::bounded(s.input_frame()?.processing_window(
+                            [lo[0], lo[1], hi[0] - lo[0], hi[1] - lo[1]].into(),
+                        )?)
                         .into_iter()
                         .map(|window| (i, window)),
                     );
@@ -777,7 +827,7 @@ impl ViewSource {
                             &mut encoder,
                             &texture,
                             &outputs[destination].1,
-                            specs[destination].frame,
+                            specs[destination].input_frame()?,
                             [
                                 region.x as i32 - outputs[destination].0.x as i32,
                                 region.y as i32 - outputs[destination].0.y as i32,
@@ -820,6 +870,7 @@ struct GradedView {
     source: Arc<ViewSource>,
     // None is the linear source-inspection bypass, never an identity photographic grade.
     grade: Option<Arc<GpuAdjustmentLayers>>,
+    stages: super::pixel_pipeline::Prepared,
     pixels: wgpu::Buffer,
     view: ViewUniform,
     submitted: Mutex<bool>,
@@ -851,6 +902,7 @@ impl RenderedView {
             + self.graded.as_ref().map_or(0, |graded| {
                 graded.source.pixels.size()
                     + graded.pixels.size()
+                    + graded.stages.byte_len()
                     + graded.source.spec.repairs.byte_len()
                     + (self.spec.repairs.0.capacity() + graded.source.spec.repairs.0.len()) as u64
                         * std::mem::size_of::<Arc<super::repairs::Patch>>() as u64
@@ -891,6 +943,7 @@ impl RenderedView {
             source.spec.field.clone(),
         )?
         .with_repairs(source.spec.repairs.clone())
+        .with_support(source.spec.support)
             != source.spec
         {
             return Err(Error::Gpu("physical-view source is stale".into()));
@@ -916,20 +969,36 @@ impl RenderedView {
             .and_then(|p| p.graded.clone());
         let graded = match graded {
             Some(graded) => graded,
-            None => Arc::new(GradedView {
-                pixels: float_buffer(device, source.spec.frame.output)?,
-                grade: Some(Arc::new(GpuAdjustmentLayers::new(
+            None => {
+                let frame = source.spec.input_frame()?;
+                let view = ViewUniform::new(frame, input.parameters());
+                let pipeline = input.pixel_pipeline(source.spec.area.height)?;
+                let previous = previous
+                    .filter(|p| p.spec.authority == source.spec.authority)
+                    .and_then(|p| p.graded.as_ref())
+                    .map(|g| &g.stages);
+                let stages = super::pixel_pipeline::Prepared::new(
                     device,
-                    settings,
-                    roll,
-                    snapshot.clone(),
-                    source.spec.matrix,
-                    source.spec.area,
-                )?)),
-                view: ViewUniform::new(source.spec.frame, input.parameters()),
-                source: source.clone(),
-                submitted: Mutex::new(false),
-            }),
+                    &pipeline,
+                    super::raster::Raster::frame(frame),
+                    previous,
+                )?;
+                Arc::new(GradedView {
+                    pixels: float_buffer(device, source.spec.frame.output)?,
+                    grade: Some(Arc::new(GpuAdjustmentLayers::new(
+                        device,
+                        settings,
+                        roll,
+                        snapshot.clone(),
+                        source.spec.matrix,
+                        source.spec.area,
+                    )?)),
+                    stages,
+                    view,
+                    source: source.clone(),
+                    submitted: Mutex::new(false),
+                })
+            }
         };
         Self::from_graded(device, source, input, target, graded)
     }
@@ -966,6 +1035,12 @@ impl RenderedView {
                 Ok::<_, Error>(Arc::new(GradedView {
                     pixels: float_buffer(device, source.spec.frame.output)?,
                     grade: None,
+                    stages: super::pixel_pipeline::Prepared::new(
+                        device,
+                        &crate::pixel_pipeline::PixelPipeline::default(),
+                        super::raster::Raster::frame(source.spec.frame),
+                        None,
+                    )?,
                     view: ViewUniform {
                         dimensions: [
                             source.spec.frame.output[0],
@@ -1132,12 +1207,41 @@ impl RenderedView {
         if let Some(initialized) = initialized.as_mut() {
             **initialized = true;
         }
+        if let Some(graded) = &self.graded {
+            graded.stages.submitted();
+        }
         *submitted = true;
     }
 
     /// Map a new visible frame into the retained result while original support is being replaced.
     pub(crate) fn mapping(&self, frame: FrameRaster) -> TextureMapping {
         composite::mapping(self.spec.frame, frame)
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ViewUniform {
+    dimensions: [u32; 4],
+    origin: [f32; 4],
+    dx: [f32; 4],
+    dy: [f32; 4],
+    gain: [f32; 4],
+    source_transform: [Vec4; 3],
+}
+impl ViewUniform {
+    fn new(frame: FrameRaster, parameters: ProcessingParameters) -> Self {
+        let origin = frame.source_point([0.5, 0.5]).0;
+        let x = frame.source_point([1.5, 0.5]).0;
+        let y = frame.source_point([0.5, 1.5]).0;
+        Self {
+            dimensions: [frame.output[0], frame.output[1], 0, 0],
+            origin: [origin[0] as f32, origin[1] as f32, 0., 0.],
+            dx: [(x[0] - origin[0]) as f32, (x[1] - origin[1]) as f32, 0., 0.],
+            dy: [(y[0] - origin[0]) as f32, (y[1] - origin[1]) as f32, 0., 0.],
+            gain: [parameters.anchor.w.exp(), 0., 0., 0.],
+            source_transform: parameters.post,
+        }
     }
 }
 
@@ -1178,39 +1282,6 @@ fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, E
     }))
 }
 
-fn view_pair(pair: [f64; 2]) -> [f32; 4] {
-    [pair[0] as f32, pair[1] as f32, 0., 0.]
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct ViewUniform {
-    dimensions: [u32; 4],
-    origin: [f32; 4],
-    dx: [f32; 4],
-    dy: [f32; 4],
-    gain: [f32; 4],
-    source_transform: [Vec4; 3],
-}
-
-impl ViewUniform {
-    fn new(frame: FrameRaster, parameters: ProcessingParameters) -> Self {
-        let origin = frame.source_point([0.5, 0.5]).0;
-        let x = frame.source_point([1.5, 0.5]).0;
-        let y = frame.source_point([0.5, 1.5]).0;
-        // Neutral acquisition omits the response's folded exposure. Restore that factor here;
-        // any gain already packed into `post` must not be applied a second time.
-        let gain = parameters.anchor.w.exp();
-        Self {
-            dimensions: [frame.output[0], frame.output[1], 0, 0],
-            origin: view_pair(origin),
-            dx: view_pair(std::array::from_fn(|c| x[c] - origin[c])),
-            dy: view_pair(std::array::from_fn(|c| y[c] - origin[c])),
-            gain: [gain, 0., 0., 0.],
-            source_transform: parameters.post,
-        }
-    }
-}
 #[cfg(test)]
 #[path = "gpu_working_view_editor_tests.rs"]
 mod tests;

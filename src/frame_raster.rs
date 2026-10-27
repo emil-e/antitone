@@ -75,9 +75,62 @@ impl FrameRaster {
             .bounds(self.composition.area())
     }
 
+    pub(crate) fn processing_bounds(self) -> Result<SourceRegion, Error> {
+        self.composition
+            .coverage(self.min, self.max)?
+            .clipped_bounds(self.composition.area())
+    }
+
+    /// A source unit also supplies constant extension beyond the actual source edges.
+    #[cfg(feature = "editor")]
+    pub(crate) fn processing_window(
+        self,
+        region: SourceRegion,
+    ) -> Result<crate::resample::windows::Window, Error> {
+        let bounds = self.processing_bounds()?;
+        let area = self.composition.area();
+        let points = [
+            [0., 0.],
+            [f64::from(self.output[0]), 0.],
+            self.output.map(f64::from),
+            [0., f64::from(self.output[1])],
+        ]
+        .map(|p| self.source_point(p).0);
+        let origin = [bounds.x, bounds.y].map(f64::from);
+        let mut low = [region.x, region.y].map(f64::from);
+        let mut high = [region.x + region.width, region.y + region.height].map(f64::from);
+        let source_low = [area.x, area.y].map(f64::from);
+        let source_high = [area.x + area.width, area.y + area.height].map(f64::from);
+        for axis in 0..2 {
+            if low[axis] == source_low[axis] {
+                low[axis] =
+                    low[axis].min(points.iter().map(|p| p[axis]).fold(f64::INFINITY, f64::min));
+            }
+            if high[axis] == source_high[axis] {
+                high[axis] = high[axis].max(
+                    points
+                        .iter()
+                        .map(|p| p[axis])
+                        .fold(f64::NEG_INFINITY, f64::max),
+                );
+            }
+            low[axis] -= origin[axis];
+            high[axis] -= origin[axis];
+        }
+        Ok(crate::resample::windows::affine_output_rect(
+            self.affine_in(bounds)?,
+            self.output,
+            low,
+            high,
+        ))
+    }
+
     /// Source coordinates relative to the iteration bounds, per destination pixel edge.
     pub fn affine(self) -> Result<[[f32; 2]; 3], Error> {
-        let bounds = self.bounds()?;
+        self.affine_in(self.bounds()?)
+    }
+
+    pub(crate) fn affine_in(self, bounds: SourceRegion) -> Result<[[f32; 2]; 3], Error> {
         let origin = self.source_point([0., 0.]).0;
         let x = self.source_point([1., 0.]).0;
         let y = self.source_point([0., 1.]).0;

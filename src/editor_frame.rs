@@ -392,7 +392,7 @@ impl Editor {
         self.begin_control_history(match self.tab {
             0 => "Roll settings",
             1 => "Photo settings",
-            _ => "Rendering target",
+            _ => "Rendering settings",
         });
         let reset_scope = match (self.tab, self.current_source) {
             (0, _) => editing::Scope::Roll,

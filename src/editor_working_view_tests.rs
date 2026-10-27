@@ -74,7 +74,7 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
         };
         let first = ViewSourceSpec::new(7, frame, cal, scan.camera_to_ap1, None).unwrap();
 
-        for retirement in ["basis", "clear", "drop"] {
+        for retirement in ["basis", "support", "clear", "drop"] {
             let mut sources = ViewSource::acquire_many(
                 &device,
                 &queue,
@@ -118,6 +118,12 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
                         None,
                     )
                     .unwrap(),
+                    input.clone(),
+                ),
+                "support" => working.request(
+                    first
+                        .clone()
+                        .with_support(crate::processing_support::Support([8, 8])),
                     input.clone(),
                 ),
                 "clear" => working.clear(),

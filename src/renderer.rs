@@ -171,6 +171,8 @@ pub struct GpuRenderer {
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
     look_kernel: crate::gpu::look::Kernel,
+    #[cfg(any(feature = "ui", all(feature = "raw", feature = "export")))]
+    stages: std::sync::OnceLock<Result<Arc<crate::gpu::pixel_pipeline::Kernels>, Error>>,
     #[cfg(test)]
     look_uploads: std::sync::atomic::AtomicU64,
     look_cache: std::sync::Mutex<
@@ -219,6 +221,8 @@ impl GpuRenderer {
             display,
             targets,
             look_kernel,
+            #[cfg(any(feature = "ui", all(feature = "raw", feature = "export")))]
+            stages: std::sync::OnceLock::new(),
             #[cfg(test)]
             look_uploads: std::sync::atomic::AtomicU64::new(0),
             look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -228,6 +232,18 @@ impl GpuRenderer {
             average,
         }))
     }
+    #[cfg(any(feature = "ui", all(feature = "raw", feature = "export")))]
+    pub(crate) fn pixel_kernels(
+        &self,
+        device: &wgpu::Device,
+    ) -> Result<Arc<crate::gpu::pixel_pipeline::Kernels>, Error> {
+        self.stages
+            .get_or_init(|| {
+                pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(device)).map(Arc::new)
+            })
+            .clone()
+    }
+
     /// Native worker-only generation. No compiler, Python or OCIO runtime is involved.
     #[cfg(feature = "project")]
     pub fn bake_builtin(

@@ -126,9 +126,13 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
         "an irrelevant repair would actually fail if prepared"
     );
     assert_eq!(
-        crate::repair_source::resolve_output(&scan, &recipe)
-            .unwrap()
-            .len(),
+        crate::repair_source::resolve_output(
+            &scan,
+            &recipe,
+            recipe.pixel_pipeline().unwrap().support([1., 1.]).unwrap()
+        )
+        .unwrap()
+        .len(),
         1
     );
     let directory = tempfile::tempdir().unwrap();
@@ -255,9 +259,13 @@ fn cold_frame_edge_repairs_use_the_common_engine_for_tiff_and_exr() {
         .unwrap();
     let recipe = project.image_recipe(id).unwrap();
     assert_eq!(
-        crate::repair_source::resolve_output(&scan, &recipe)
-            .unwrap()
-            .len(),
+        crate::repair_source::resolve_output(
+            &scan,
+            &recipe,
+            recipe.pixel_pipeline().unwrap().support([1., 1.]).unwrap()
+        )
+        .unwrap()
+        .len(),
         1
     );
     let before = project.clone();

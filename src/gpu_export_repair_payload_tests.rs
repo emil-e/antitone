@@ -70,6 +70,8 @@ fn dense_repaired_unit_accounts_host_and_gpu_uploads_separately_from_retained_re
     let path = directory.path().join("not-opened.tif");
     let run = |repairs| {
         let request = Request {
+            film_emulation: Default::default(),
+            film_seed: 17,
             scan: &scan,
             field: None,
             input: calibration.into(),

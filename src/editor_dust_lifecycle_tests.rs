@@ -495,6 +495,29 @@ fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
 }
 
 #[test]
+fn film_settings_do_not_change_neutral_repair_admission_or_trigger_rehealing() {
+    let e = gpu_editor();
+    crate::application::test_support::with_application(e, |app| {
+        app.enter(|e, cx| {
+            let response = high_response(e);
+            let evaluated = response.evaluated.clone();
+            e.receive_dust(response.request, Ok(Some(response)));
+            let previous = e.dust_gpu_snapshot(None).unwrap();
+            assert_eq!(previous.0.len(), 1);
+            let controls = crate::editor::editing::ControlSettings::capture(e);
+            e.film_emulation = FilmEmulationPreset::Medium.settings();
+            e.validate_frame_edits(controls);
+            assert!(e.film_emulation.enabled);
+            let current = e.dust_gpu_snapshot(None).unwrap();
+            assert_eq!(current.0.len(), 1);
+            assert!(Arc::ptr_eq(&current.0[0].evaluated, &evaluated));
+            e.schedule_dust(e.dust_signature().unwrap(), cx);
+            assert!(e.document.dust.pending_request().is_none());
+        });
+    });
+}
+
+#[test]
 fn grade_range_rejection_retains_neutral_evaluation_and_readmits_without_rehealing() {
     let e = gpu_editor();
     crate::application::test_support::with_application(e, |app| {

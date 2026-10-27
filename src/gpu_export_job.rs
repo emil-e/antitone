@@ -35,7 +35,12 @@ pub(crate) fn write(
     let input = job.recipe.neutral.input;
     let repairs = timed!(
         SourcePrepare,
-        crate::repair_source::resolve_output_with(&scan, job.recipe, execution)
+        crate::repair_source::resolve_output_with(
+            &scan,
+            job.recipe,
+            job.recipe.pixel_pipeline()?.support([1., 1.])?,
+            execution
+        )
     )?
     .ok_or(Error::Cancelled)?;
     check()?;
@@ -49,6 +54,8 @@ pub(crate) fn write(
         composition: job.recipe.composition,
         format: job.format,
         look: job.recipe.look.clone(),
+        film_emulation: job.recipe.film_emulation,
+        film_seed: job.recipe.neutral.source.0,
     };
     super::write_checked(
         renderer,

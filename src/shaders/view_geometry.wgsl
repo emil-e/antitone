@@ -1,5 +1,5 @@
 struct WorkingView {
-    dimensions: vec4u,
+    dimensions: vec4u, // Width, height, reserved.
     origin: vec4f,
     axis_x: vec4f,
     axis_y: vec4f,

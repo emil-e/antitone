@@ -39,10 +39,11 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         high = max(high, points[i]);
     }
 
-    let lower = max(max(vec2i(floor(low)), parameters.origin), vec2i(0));
+    let last = vec2i(parameters.source) - vec2i(1);
+    let lower = max(clamp(vec2i(floor(low)), vec2i(0), last), parameters.origin);
     let upper = min(
-            min(vec2i(ceil(high)), parameters.origin + vec2i(parameters.tile)),
-            vec2i(parameters.source),
+            clamp(vec2i(ceil(high)), vec2i(1), last + vec2i(1)),
+            parameters.origin + vec2i(parameters.tile),
         );
     if any(lower >= upper) {
         return;
@@ -52,7 +53,14 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     var flags = 0u;
     for(var y = lower.y; y < upper.y; y++) {
         for(var x = lower.x; x < upper.x; x++) {
-            let weight = overlap(start, vec2f(f32(x), f32(y)), parameters.dx, parameters.dy);
+            let weight = extended_overlap(
+                    start,
+                    vec2f(f32(x), f32(y)),
+                    parameters.dx,
+                    parameters.dy,
+                    vec2f(0.),
+                    vec2f(parameters.source),
+                );
             if weight > 0. {
                 let sample = textureLoad(image, vec2i(x, y) - vec2i(parameters.origin), 0);
                 sum += sample.rgb * weight;

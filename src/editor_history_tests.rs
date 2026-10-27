@@ -465,6 +465,36 @@ fn scalar_control_edits_materialize_exact_before_and_after_projects_only_after_a
 }
 
 #[test]
+fn film_emulation_controls_are_saved_dirty_and_undoable_rendering_state() {
+    let mut editor = controller();
+    let directory = tempfile::tempdir().unwrap();
+    let saved = editor
+        .document
+        .save(
+            &directory.path().join("film.antitone"),
+            crate::project::Save::New,
+        )
+        .unwrap();
+    editor.document.accept_save(saved);
+    let before = editor.history_snapshot();
+    editor.begin_control_history("Rendering settings");
+    editor.film_emulation = FilmEmulationPreset::Fine.settings();
+    finish_controls(&mut editor);
+    assert!(editor.document.dirty());
+    let entry = &editor.document.history.undo[0];
+    assert_eq!(entry.before, before);
+    assert_eq!(entry.after.output.film_emulation, editor.film_emulation);
+    let written = serde_json::to_string(&entry.after).unwrap();
+    let reopened: Project = serde_json::from_str(&written).unwrap();
+    assert_eq!(reopened.output.film_emulation, editor.film_emulation);
+    editor = accept_history(editor, Direction::Undo);
+    assert_eq!(editor.film_emulation, before.output.film_emulation);
+    assert!(!editor.document.dirty());
+    editor = accept_history(editor, Direction::Redo);
+    assert_eq!(editor.film_emulation, FilmEmulationPreset::Fine.settings());
+}
+
+#[test]
 fn busy_decisions_and_drafts_cannot_dispatch_document_history() {
     let mut editor = controller();
     let before = editor.history_snapshot();

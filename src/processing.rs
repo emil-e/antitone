@@ -52,6 +52,8 @@ pub struct InputCapabilities {
     pub gamma_balance: bool,
     /// Toe/shoulder response applies to interpretation.
     pub response: bool,
+    /// Digital film emulation (image MTF, halation later, grain) is available.
+    pub film_emulation: bool,
 }
 
 /// The interpretation curve's toe and shoulder. Toe 1 with no shoulder removes their
@@ -309,6 +311,7 @@ impl InputSettings {
                 calibration: true,
                 gamma_balance: true,
                 response: true,
+                film_emulation: false,
             },
             Self::Digital => InputCapabilities {
                 scan_sources: false,
@@ -318,6 +321,7 @@ impl InputSettings {
                 calibration: false,
                 gamma_balance: false,
                 response: false,
+                film_emulation: true,
             },
         }
     }

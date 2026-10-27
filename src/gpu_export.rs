@@ -15,6 +15,10 @@ use crate::{
 use glam::{DVec3, Vec3};
 use std::{path::Path, sync::Arc};
 
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_export_film_files_tests.rs"]
+mod film_tests;
+
 #[path = "gpu_export_area.rs"]
 mod area;
 #[cfg(feature = "project")]
@@ -66,6 +70,8 @@ pub struct Request<'a> {
     pub composition: Composition,
     pub format: Format,
     pub look: Option<Arc<crate::looks::LookAsset>>,
+    pub film_emulation: crate::film_emulation::FilmEmulationSettings,
+    pub film_seed: u64,
 }
 
 /// One bounded dispatch/readback outstanding; no CPU photographic rendering fallback.

@@ -50,6 +50,79 @@ fn donorless_border(area: Rect) -> SupportMask {
 }
 
 #[test]
+fn film_mtf_includes_repair_support_just_outside_the_crop() {
+    let mut editor = crate::editor::tests::authored_fixture(&["roll-0.dng"]);
+    editor.set_dmin(Some(DVec3::splat(0.8)));
+    editor.set_dmax(Some(DVec3::splat(0.02)));
+    let id = editor.current_source.unwrap();
+    let area = editor
+        .document
+        .project
+        .source(id)
+        .unwrap()
+        .development
+        .active_area;
+    let area = Rect {
+        x: area[0],
+        y: area[1],
+        width: area[2],
+        height: area[3],
+    };
+    editor
+        .document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .repairs
+        .insert(
+            donorless_border(area),
+            RepairOrigin::Manual,
+            DonorChoice::Automatic,
+        )
+        .unwrap();
+    editor.crop = Some(crate::crop::Crop {
+        center: [area.x as f64 + 25., area.y as f64 + 32.],
+        size: [32, 32],
+        angle: 0.,
+    });
+    editor.sync_document();
+    let clean = editor.document.project.image_recipe(id).unwrap();
+    let scan = Scan::open(
+        &editor.document.source_path(id).unwrap(),
+        Some(clean.neutral.source_development.decode.fixed_wb),
+    )
+    .unwrap();
+    assert!(
+        crate::repair_source::resolve(&scan, &clean).is_err(),
+        "source-wide donor witness"
+    );
+    assert!(
+        crate::repair_source::resolve_output(
+            &scan,
+            &clean,
+            clean.pixel_pipeline().unwrap().support([1., 1.]).unwrap()
+        )
+        .unwrap()
+        .is_empty()
+    );
+    editor.film_emulation = FilmEmulationSettings {
+        enabled: true,
+        amount: 0.,
+        size: crate::film_emulation::MAX_SIZE,
+        ..Default::default()
+    };
+    editor.sync_document();
+    let film = editor.document.project.image_recipe(id).unwrap();
+    let error = crate::repair_source::resolve_output(
+        &scan,
+        &film,
+        film.pixel_pipeline().unwrap().support([1., 1.]).unwrap(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("repair"), "{error}");
+}
+
+#[test]
 fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_preserves_destinations()
 {
     pollster::block_on(async {
@@ -137,7 +210,12 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             scan.camera_to_ap1,
         )
         .unwrap();
-        let repairs = crate::repair_source::resolve_output(&scan, &recipe).unwrap();
+        let repairs = crate::repair_source::resolve_output(
+            &scan,
+            &recipe,
+            recipe.pixel_pipeline().unwrap().support([1., 1.]).unwrap(),
+        )
+        .unwrap();
         assert_eq!(repairs.len(), 1);
         let expected_exr: Vec<_> = repairs[0]
             .pixels()
@@ -242,9 +320,13 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             "the source-wide border has no complete donor"
         );
         assert!(
-            crate::repair_source::resolve_output(&scan, &recipe)
-                .unwrap()
-                .is_empty(),
+            crate::repair_source::resolve_output(
+                &scan,
+                &recipe,
+                recipe.pixel_pipeline().unwrap().support([1., 1.]).unwrap()
+            )
+            .unwrap()
+            .is_empty(),
             "zero exact output coverage, including a hole inside a support rectangle, excludes irrelevant repairs"
         );
         let cropped = directory.path().join("outside-failed-repair.tif");

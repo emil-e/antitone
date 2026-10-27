@@ -624,6 +624,8 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                     grade: grade.clone(),
                     repairs: &[],
                     composition,
+                    film_emulation: Default::default(),
+                    film_seed: 0,
                     format,
                     look: None,
                 },

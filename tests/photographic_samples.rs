@@ -188,6 +188,8 @@ fn photographic_tiff_pairs() {
                             grade: grade.clone(),
                             repairs: &[],
                             composition,
+                            film_emulation: Default::default(),
+                            film_seed: 0,
                             format: Format::Tiff(target),
                             look: None,
                         },

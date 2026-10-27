@@ -2,7 +2,7 @@ use super::{
     icons::{self, Icon},
     presentation::{
         INSPECTOR_ROW_HEIGHT, PARAMETER_GAP, PARAMETER_NUMERIC_WIDTH, PARAMETER_SLIDER_HEIGHT,
-        SectionHeader, SectionTool, ToolIdentity, labelled_row_at, section,
+        PARAMETER_UNIT_WIDTH, SectionHeader, SectionTool, ToolIdentity, labelled_row_at, section,
     },
 };
 use crate::adjustment_layers::{DEFAULT_COLOUR_MIX, DEFAULT_PIVOT};
@@ -63,6 +63,9 @@ pub enum Parameter {
     CropMargin,
     Strength,
     Feather,
+    FilmAmount,
+    FilmSize,
+    FilmColour,
 }
 
 #[derive(Clone, Copy)]
@@ -113,6 +116,9 @@ impl Parameter {
             Self::CropMargin => "Margin",
             Self::Strength => "Strength",
             Self::Feather => "Feather",
+            Self::FilmAmount => "Amount",
+            Self::FilmSize => "Size",
+            Self::FilmColour => "Colour",
         }
     }
 
@@ -127,6 +133,13 @@ impl Parameter {
             Self::Saturation => 0.0..=2.,
             Self::ColourMix | Self::Density | Self::Strength | Self::Feather => 0.0..=1.,
             Self::CropMargin => 0.0..=crate::auto_crop::MAX_MARGIN_PERCENT,
+            Self::FilmAmount => {
+                crate::film_emulation::MIN_AMOUNT..=crate::film_emulation::MAX_AMOUNT
+            }
+            Self::FilmSize => crate::film_emulation::MIN_SIZE..=crate::film_emulation::MAX_SIZE,
+            Self::FilmColour => {
+                crate::film_emulation::MIN_COLOUR..=crate::film_emulation::MAX_COLOUR
+            }
             _ => -1.0..=1.0,
         }
     }
@@ -148,6 +161,9 @@ impl Parameter {
             Self::Feather => DEFAULT_RADIAL_FEATHER,
             Self::ColourMix | Self::Density => DEFAULT_COLOUR_MIX,
             Self::CropMargin => crate::auto_crop::DEFAULT_MARGIN_PERCENT,
+            Self::FilmAmount => crate::film_emulation::DEFAULT_AMOUNT,
+            Self::FilmSize => crate::film_emulation::DEFAULT_SIZE,
+            Self::FilmColour => crate::film_emulation::DEFAULT_COLOUR,
             _ => 0.,
         }
     }
@@ -157,6 +173,8 @@ impl Parameter {
             Self::Exposure => 0.05,
             Self::Shoulder => 0.0001,
             Self::Pivot => 0.001,
+            Self::FilmSize => 0.001,
+            Self::FilmAmount => 0.001,
             _ => 0.01,
         }
     }
@@ -222,6 +240,11 @@ fn parameter_help(kind: Parameter) -> &'static str {
         Parameter::CropMargin => {
             "Trim each edge by a percentage of the detected frame's shorter side."
         }
+        Parameter::FilmAmount => "Relative grain strength at original resolution; 0 removes grain.",
+        Parameter::FilmSize => "Grain scale as a percentage of the source frame height.",
+        Parameter::FilmColour => {
+            "0 is monochrome; 0.5 matches the reference colour grain; 1 increases chroma."
+        }
         Parameter::Strength => "Scale the adjustment from no effect to full strength.",
         Parameter::Feather => "Soften the oval's edge; 0 is hard, 1 fades across the full radius.",
         Parameter::Shoulder => "Highlight roll-off; 0 turns the shoulder off.",
@@ -232,7 +255,7 @@ fn parameter_help(kind: Parameter) -> &'static str {
 fn parameter_unit(kind: Parameter) -> Option<&'static str> {
     match kind {
         Parameter::Exposure => Some("EV"),
-        Parameter::CropMargin => Some("%"),
+        Parameter::CropMargin | Parameter::FilmSize => Some("%"),
         _ => None,
     }
 }
@@ -349,6 +372,7 @@ fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> 
     let decimals = match kind {
         Parameter::Shoulder => 4,
         Parameter::Pivot => 3,
+        Parameter::FilmAmount | Parameter::FilmSize => 3,
         _ => 2,
     };
     let numeric = ui
@@ -359,6 +383,7 @@ fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> 
                     .speed(match kind {
                         Parameter::Shoulder => 0.0001,
                         Parameter::Pivot => 0.001,
+                        Parameter::FilmAmount | Parameter::FilmSize => 0.001,
                         _ => 0.01,
                     })
                     .range(kind.range())
@@ -399,25 +424,18 @@ pub fn parameter(ui: &mut Ui, kind: Parameter, value: &mut f64) -> (Response, Re
             if name_reset_gesture(ui, &label) {
                 reset_parameter(ui, kind, value);
             }
-            let reserved = PARAMETER_NUMERIC_WIDTH
-                + 3. * ui.spacing().item_spacing.x
-                + unit.map_or(0., |unit| {
-                    ui.painter()
-                        .layout_no_wrap(
-                            unit.into(),
-                            egui::TextStyle::Body.resolve(ui.style()),
-                            ui.visuals().text_color(),
-                        )
-                        .size()
-                        .x
-                });
+            // Reserve one unit column for every row, including rows without a unit, so the
+            // numeric fields and slider ends align across parameters.
+            let reserved =
+                PARAMETER_NUMERIC_WIDTH + 3. * ui.spacing().item_spacing.x + PARAMETER_UNIT_WIDTH;
             let width = (ui.available_width() - reserved).max(48.);
             let slider = track(ui, kind, value, width, label.id);
             let numeric = ui
                 .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(unit) = unit {
-                        ui.label(unit);
-                    }
+                    ui.add_sized(
+                        [PARAMETER_UNIT_WIDTH, INSPECTOR_ROW_HEIGHT - 2.],
+                        egui::Label::new(unit.unwrap_or("")),
+                    );
                     let numeric = numeric_field(ui, kind, value, INSPECTOR_ROW_HEIGHT - 2.)
                         .labelled_by(label.id);
                     numeric.clone().context_menu(|ui| {

@@ -6,6 +6,7 @@ pub(super) struct ControlSettings {
     pub input: InputSettings,
     pub roll: RollSettings,
     pub photo: AdjustmentLayerSettings,
+    pub film_emulation: FilmEmulationSettings,
 }
 
 impl ControlSettings {
@@ -14,6 +15,7 @@ impl ControlSettings {
             input: editor.input,
             roll: editor.roll,
             photo: editor.adjustment_layer_settings,
+            film_emulation: editor.film_emulation,
         }
     }
 
@@ -21,6 +23,7 @@ impl ControlSettings {
         editor.input = self.input;
         editor.roll = self.roll;
         editor.adjustment_layer_settings = self.photo;
+        editor.film_emulation = self.film_emulation;
     }
 }
 
@@ -134,6 +137,7 @@ impl Editor {
         previous: ControlSettings,
         candidate: ControlSettings,
     ) -> Result<(), Error> {
+        candidate.film_emulation.validate()?;
         if candidate == previous || !candidate.input.ready() {
             return Ok(());
         }
@@ -192,8 +196,27 @@ impl Editor {
             },
             Scope::Photo(..) => Err(Error::InvalidParameter("reset source changed")),
             Scope::Rendering => {
-                self.target = OutputTarget::DisplayP3;
-                Ok(())
+                if let controls::Reset::Parameter(kind, _) = reset {
+                    let previous = ControlSettings::capture(self);
+                    let mut candidate = previous;
+                    match kind {
+                        controls::Parameter::FilmAmount => {
+                            candidate.film_emulation.amount = kind.default()
+                        }
+                        controls::Parameter::FilmSize => {
+                            candidate.film_emulation.size = kind.default()
+                        }
+                        controls::Parameter::FilmColour => {
+                            candidate.film_emulation.colour = kind.default()
+                        }
+                        _ => {}
+                    }
+                    self.validate_control_edit(previous, candidate)
+                        .map(|()| candidate.apply(self))
+                } else {
+                    self.target = OutputTarget::DisplayP3;
+                    Ok(())
+                }
             }
         };
         if let Err(error) = result {

@@ -70,13 +70,14 @@ pub(crate) fn resolve_with(
     resolve_matching(scan, recipe, execution, |_| true)
 }
 
-/// Resolve only supports with positive exact coverage in the captured output composition.
+/// Resolve repairs influencing the captured output's declared processing support.
 #[cfg(feature = "project")]
 pub fn resolve_output(
     scan: &Scan,
     recipe: &crate::image_recipe::ImageRecipe,
+    support: crate::processing_support::Support,
 ) -> Result<Vec<std::sync::Arc<EvaluatedRepair>>, Error> {
-    resolve_output_with(scan, recipe, &mut Execution::default())
+    resolve_output_with(scan, recipe, support, &mut Execution::default())
         .map(|result| result.expect("uncancelled output repair resolution"))
 }
 
@@ -84,6 +85,7 @@ pub fn resolve_output(
 pub(crate) fn resolve_output_with(
     scan: &Scan,
     recipe: &crate::image_recipe::ImageRecipe,
+    support: crate::processing_support::Support,
     execution: &mut Execution<'_>,
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
     use crate::geometry::FramePoint;
@@ -95,7 +97,7 @@ pub(crate) fn resolve_output_with(
         repair
             .support
             .selected_points()
-            .any(|point| coverage.weight(point) > 0.)
+            .any(|point| support.contributes(point, coverage, scan.area))
     })
 }
 

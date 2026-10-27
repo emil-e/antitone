@@ -86,6 +86,47 @@ impl Coverage {
         .validate()
     }
 
+    /// Acquisition bounds including the nearest edge cells for constant source extension.
+    pub fn clipped_bounds(self, active: SourceRegion) -> Result<SourceRegion, Error> {
+        active.validate()?;
+        let lo: [u32; 2] = std::array::from_fn(|axis| {
+            let min = self
+                .corners
+                .iter()
+                .map(|p| p.0[axis])
+                .fold(f64::INFINITY, f64::min);
+            let origin = if axis == 0 { active.x } else { active.y };
+            let size = if axis == 0 {
+                active.width
+            } else {
+                active.height
+            };
+            min.floor().clamp(origin as f64, (origin + size - 1) as f64) as u32
+        });
+        let hi: [u32; 2] = std::array::from_fn(|axis| {
+            let max = self
+                .corners
+                .iter()
+                .map(|p| p.0[axis])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let origin = if axis == 0 { active.x } else { active.y };
+            let size = if axis == 0 {
+                active.width
+            } else {
+                active.height
+            };
+            max.ceil()
+                .clamp((origin + 1) as f64, (origin + size) as f64) as u32
+        });
+        SourceRegion {
+            x: lo[0],
+            y: lo[1],
+            width: hi[0] - lo[0],
+            height: hi[1] - lo[1],
+        }
+        .validate()
+    }
+
     pub fn exact_rectangle(self, active: SourceRegion) -> Option<SourceRegion> {
         let region = self.bounds(active).ok()?;
         if self.area() != f64::from(region.width) * f64::from(region.height) {
@@ -100,7 +141,18 @@ impl Coverage {
 
     /// Piecewise-constant source pixels contribute their exact positive intersection area.
     pub fn weight(self, pixel: [u32; 2]) -> f64 {
-        let origin = pixel.map(f64::from);
+        self.rectangle_weight(pixel.map(f64::from), [1.; 2])
+    }
+
+    /// Exact positive overlap with a source-cell rectangle, for nonlocal effect support.
+    pub fn intersection_area(self, region: SourceRegion) -> f64 {
+        self.rectangle_weight(
+            [region.x as f64, region.y as f64],
+            [region.width as f64, region.height as f64],
+        )
+    }
+
+    fn rectangle_weight(self, origin: [f64; 2], size: [f64; 2]) -> f64 {
         let mut first = [[0.; 2]; 8];
         let mut second = [[0.; 2]; 8];
         for (dst, point) in first.iter_mut().zip(self.corners) {
@@ -108,8 +160,12 @@ impl Coverage {
         }
         let (mut vertices, mut next) = (&mut first, &mut second);
         let mut count = 4;
-        for (axis, edge, greater) in [(0, 0., true), (0, 1., false), (1, 0., true), (1, 1., false)]
-        {
+        for (axis, edge, greater) in [
+            (0, 0., true),
+            (0, size[0], false),
+            (1, 0., true),
+            (1, size[1], false),
+        ] {
             if count == 0 {
                 return 0.;
             }
@@ -153,7 +209,7 @@ impl Coverage {
             std::mem::swap(&mut vertices, &mut next);
             count = n;
         }
-        polygon_area(&vertices[..count]).min(1.)
+        polygon_area(&vertices[..count]).min(size[0] * size[1])
     }
 
     pub fn pixels(

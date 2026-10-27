@@ -42,4 +42,10 @@ fn composed_working_view_validates() {
         &gpu::view::view_shader(),
         &["view_main", "inspection_main"],
     );
+    validate(
+        "image response",
+        &gpu::image_mtf::shader(),
+        &["horizontal", "vertical"],
+    );
+    validate("grain", &gpu::grain::shader(), &["field", "apply"]);
 }

@@ -12,6 +12,7 @@ developed camera RGB
   → normalized, ungraded working positive (optional source-owned dust repair here)
   → Roll exposure and photographic white balance
   → ordered adjustment layers: exposure, white balance, contrast and saturation
+  → optional Film Emulation: image MTF → grain
   → working positive, ready for rendering or EXR
 ```
 
@@ -91,7 +92,7 @@ Healing and nonlinear grading do not commute, so pre-grade donor matching can di
 
 ### One accepted image recipe
 
-[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, composition and the immutable creative-look asset. Navigation recipes retain grade/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Source-aware resolution](../src/repair_source.rs) shares the neutral sampling boundary across interactive and offscreen work.
+[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, Film Emulation, composition and the immutable creative-look asset. Navigation recipes retain grade/emulation/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Source-aware resolution](../src/repair_source.rs) shares the neutral sampling boundary across interactive and offscreen work.
 
 ### Photo contrast and saturation
 
@@ -102,6 +103,14 @@ Contrast scales a log-like ACEScct signal around a pivot; its Colour preservatio
 Each layer has the same photographic controls and global, linear-gradient or radial-gradient coverage. Layers run bottom to top in the editor's list, applying exposure, Bradford WB, contrast and saturation in AP1 before rendering or geometric averaging. Global coverage is simply weight one; a whole-image finishing grade can follow a gradient, and nonlinear stages make order significant.
 
 Coverage, inversion and strength produce a weight between zero and one: exposure and WB scale by it, while contrast and saturation interpolate toward identity. Thus half coverage of +1 EV means +0.5 EV — not a halfway blend of two output pixels. Masks are analytic gradients, not retained rasters; [geometry](geometry.md#source-anchored-local-masks) explains why composition and navigation must not move them. The scalar pipeline and GPU grades consume immutable snapshots; full-stack preflight rejects nonfinite constants and overflowing intermediates rather than clamping.
+
+### Film Emulation
+
+Rendering owns project-wide Film Emulation after the complete ordered adjustment-layer stack, before the creative look and ACES. Settings lower into independent source-scale Gaussian image-MTF and multiplicative RGB log-light grain stages. The [executor](architecture.md#pixel-stages-and-spatial-support) owns their ordering, spatial support and resources, with the future halation position between completed MTF and grain.
+
+Size is a percentage of the original source-frame height; crop, orientation and output tiles do not redefine it. The persistent source ID seeds the continuous grain field. Amount is green log-light RMS at a native source-pixel footprint; reduction loses variance, while magnification keeps that native footprint. Colour runs from shared monochrome through the fitted RGB covariance at its midpoint to stronger chroma. Mean compensation preserves expected AP1 light without tone-dependent strength compensation.
+
+Disabling emulation produces the clean plate; Amount zero retains the image MTF. Controls are visible for Digital, while stored enabled settings can process other positive interpretations. Source inspection bypasses emulation. Immutable grain fields survive Amount, Colour and photographic edits; geometry, Size or seed changes require reevaluation. Cold generation grows with footprint relative to grain Size, so very fine grain in reduced views remains expensive; the current view-sized cache does not reuse overlapping fields across pan or zoom. [Saved contracts](projects.md#save-accepted-choices-not-working-machinery) preserve the chosen interpretation.
 
 ### One f32 photographic implementation
 
@@ -114,6 +123,8 @@ Continuous signed contrast and the film-base continuation retain explicit zero-i
 ### Physical-view processing is an approximation
 
 The positive editor prototype factors Roll exposure/WB and adjustment layers downstream of baseline AP1 production: original camera samples still receive continuous correction and calibrated inversion before exact affine-footprint filtering into signed/HDR f32 AP1, and fixed-view grading reuses that filtered input rather than processing the whole original again.
+
+View-space film filtering also approximates original-sample processing: grain uses a Gaussian footprint approximation, while authoritative export and original references apply emulation before source-cell reconstruction. Physical views acquire the stages' declared neighbourhood beyond the viewport and extract the requested raster after processing; viewport edges are not source edges.
 
 Filtering before nonlinear grading does **not** commute with original-sample grading before reconstruction, and footprint-centre local masks are not the original-sample mask integral. These are preview approximations, not changes to the photographic model or export authority: the appearance requirement is the same photograph in the file, potentially with better-resolved detail. Source inspection similarly acquires filtered linear AP1 from corrected camera light without inversion, applying its [viewing WB and exposure](colour-and-output.md#source-inspection-has-its-own-exposure-convention) before pinned ACES. [Editor ownership](editor.md#a-stable-working-view-while-grading) and [diagnostics](diagnostics.md#stable-float32-view-grading) keep those distinctions explicit.
 
@@ -130,4 +141,4 @@ The current model is **5**. Negative calibration must be finite and satisfy `Dmi
 - [GPU processing](../src/gpu.rs): the production implementation and preflight.
 - [Adjustment layers](../src/adjustment_layers.rs) and [GPU grades](../src/gpu_adjustment_layers.rs): coverage, shared control settings and complete ordered snapshots.
 
-The scalar implementation is the f64 reference. Exact equations, supported ranges and numerical gates live with the implementation and its tests: [camera inversion](../tests/camera_inversion.rs), [film response](../tests/film_response.rs), [photographic grading](../tests/photographic.rs) and [GPU processing](../tests/gpu_processing.rs). Start with the relevant [development checks](development.md#feature-specific-checks).
+The scalar photographic implementation is the f64 reference. Exact equations, supported ranges and numerical gates live with the implementation and its tests: [camera inversion](../tests/camera_inversion.rs), [film response](../tests/film_response.rs), [photographic grading](../tests/photographic.rs) and [GPU processing](../tests/gpu_processing.rs). Start with the relevant [development checks](development.md#feature-specific-checks).

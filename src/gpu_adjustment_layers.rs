@@ -210,6 +210,11 @@ impl GpuAdjustmentLayers {
         self.camera_to_ap1
     }
 
+    #[cfg(all(feature = "ui", feature = "render"))]
+    pub(crate) fn area(&self) -> SourceRegion {
+        self.area
+    }
+
     pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {
         &self.snapshot
     }

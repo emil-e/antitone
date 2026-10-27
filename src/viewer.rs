@@ -15,6 +15,9 @@ use wgpu::util::DeviceExt;
 mod proxy;
 pub(crate) use proxy::GpuProxy;
 #[cfg(test)]
+#[path = "viewer_film_tests.rs"]
+mod film_tests;
+#[cfg(test)]
 #[path = "viewer_look_tests.rs"]
 mod look_tests;
 #[cfg(test)]
@@ -256,7 +259,8 @@ impl GpuImage {
             format: wgpu::TextureFormat::Rgba32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let matrix = target.linear_to_srgb();
@@ -385,7 +389,13 @@ impl GpuImage {
         if let Some(asset) = input.look() {
             crate::gpu::look::Lut::require_limits(&self.device_limits, asset.lut())?;
         }
-        input.require_source(&processing.source)
+        input.require_source(&processing.source)?;
+        if input.has_pixel_stages() && processing.source.geometry().is_none() {
+            return Err(Error::Gpu(
+                "pixel processing requires declared raster geometry".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Prepare an immutable adjustment-layer input; invalid inputs leave the prior preparation intact.
@@ -440,6 +450,24 @@ impl GpuImage {
             .processing
             .as_ref()
             .expect("validated processing source");
+        let stages = if input.has_pixel_stages() {
+            let geometry = processing
+                .source
+                .geometry()
+                .expect("validated raster geometry");
+            let pipeline = input.pixel_pipeline(
+                input
+                    .grade()
+                    .map_or(geometry.region().height, |grade| grade.area().height),
+            )?;
+            let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
+            Some((
+                processing.renderer.pixel_kernels(device)?,
+                crate::gpu::pixel_pipeline::Prepared::new(device, &pipeline, raster, None)?,
+            ))
+        } else {
+            None
+        };
         match input.grade() {
             Some(grade) => processing.renderer.kernel.encode_grade(
                 device,
@@ -473,6 +501,9 @@ impl GpuImage {
                     geometry,
                 )?;
             }
+        }
+        if let Some((kernels, prepared)) = stages {
+            kernels.encode(device, encoder, &prepared, &processing.working)?;
         }
         let mut binding = processing.aces_group.lock().unwrap();
         let id = input.look().map(|asset| asset.lut().id());

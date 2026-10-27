@@ -12,6 +12,9 @@ pub mod coverage;
 pub mod crop;
 #[cfg(feature = "dng-sdk")]
 pub mod dng;
+#[cfg(all(test, feature = "dng-sdk"))]
+#[path = "../tests/support/dng_fixture.rs"]
+mod dng_fixture;
 pub mod dust_repair;
 #[cfg(feature = "editor")]
 pub mod editor;
@@ -24,6 +27,7 @@ mod export_timing;
 #[cfg(feature = "project")]
 pub mod exposure_metadata;
 pub mod exposure_reference;
+pub mod film_emulation;
 pub mod flat_field;
 pub mod frame_raster;
 pub mod geometry;
@@ -31,6 +35,8 @@ pub mod geometry;
 pub mod gpu;
 #[cfg(all(feature = "gpu", feature = "export", feature = "raw"))]
 pub mod gpu_export;
+pub mod grain;
+pub mod image_mtf;
 #[cfg(feature = "project")]
 pub mod image_recipe;
 pub mod lens;
@@ -43,9 +49,11 @@ mod native_logging;
 #[cfg(all(feature = "raw", feature = "project"))]
 pub(crate) mod photo_preparation;
 pub mod photographic;
+pub mod pixel_pipeline;
 #[cfg(feature = "ui")]
 pub mod platform;
 pub mod processing;
+pub mod processing_support;
 #[cfg(feature = "render")]
 pub mod profiles;
 #[cfg(feature = "project")]

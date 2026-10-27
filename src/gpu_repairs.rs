@@ -314,8 +314,8 @@ impl Kernels {
         window: ([u32; 2], [u32; 2]),
         repairs: &Snapshot,
     ) -> Result<(), Error> {
-        let bounds = frame.bounds()?;
-        let affine = frame.affine()?;
+        let bounds = frame.processing_bounds()?;
+        let affine = frame.affine_in(bounds)?;
         for patch in &repairs.0 {
             let r = patch.region;
             if !intersects(r, bounds) {
@@ -343,6 +343,13 @@ impl Kernels {
             for pair in affine {
                 bytes.extend_from_slice(bytemuck::cast_slice(&[pair[0], pair[1], 0., 0.]));
             }
+            let area = frame.composition.area();
+            bytes.extend_from_slice(bytemuck::cast_slice(&[
+                area.x as i32 - bounds.x as i32,
+                area.y as i32 - bounds.y as i32,
+                area.width as i32,
+                area.height as i32,
+            ]));
             let view = uniform(device, &bytes);
             let Some(buffer) = patch.buffer_for(device, patch.region)? else {
                 continue;

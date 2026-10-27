@@ -2,8 +2,7 @@ use super::*;
 use glam::DVec3;
 use std::sync::atomic::AtomicUsize;
 
-#[path = "../tests/support/dng_fixture.rs"]
-mod fixture;
+use crate::dng_fixture as fixture;
 use fixture::{Fixture, Opcode};
 
 #[path = "dng_execution_tests.rs"]

@@ -41,6 +41,7 @@ struct ControlState {
     roll: RollSettings,
     photo: AdjustmentLayerSettings,
     target: OutputTarget,
+    film_emulation: FilmEmulationSettings,
     source: Option<SourceId>,
     layer: adjustment_layers::Target,
 }
@@ -52,6 +53,7 @@ impl ControlState {
             roll: editor.roll,
             photo: editor.adjustment_layer_settings,
             target: editor.target,
+            film_emulation: editor.film_emulation,
             source: editor.current_source,
             layer: editor.adjustment_layer_target(),
         }
@@ -61,6 +63,7 @@ impl ControlState {
         project.input = self.input;
         project.roll = self.roll;
         project.processing_model = self.input.processing_model();
+        project.output.film_emulation = self.film_emulation;
         project.output.tiff = match self.target {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
             OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,

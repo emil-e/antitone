@@ -3,6 +3,10 @@ use super::*;
 use crate::geometry::FramePoint;
 use wgpu::util::DeviceExt;
 
+#[cfg(all(test, target_os = "macos"))]
+#[path = "gpu_export_film_emulation_tests.rs"]
+mod film_tests;
+
 // A rotated 128-square spans at most 128*sqrt(2) source units. Fractional placement
 // can cover 183 cells, plus the two real-cell halo edges: 185, not 184.
 const MAX_SOURCE_SIDE: u32 = 185;
@@ -24,10 +28,25 @@ pub(super) struct Unit {
 }
 
 impl Unit {
+    #[cfg(test)]
     pub fn new(
         composition: Composition,
         origin: [u32; 2],
         extent: [u32; 2],
+    ) -> Result<Self, Error> {
+        Self::with_support(
+            composition,
+            origin,
+            extent,
+            crate::processing_support::Support::NONE,
+        )
+    }
+
+    fn with_support(
+        composition: Composition,
+        origin: [u32; 2],
+        extent: [u32; 2],
+        support: crate::processing_support::Support,
     ) -> Result<Self, Error> {
         if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
             return Err(Error::InvalidParameter("invalid export destination unit"));
@@ -44,16 +63,11 @@ impl Unit {
         let exact = raster.bounds()?;
         // One real-cell halo absorbs native mapping roundoff without omitting support/repairs.
         // Composition maps the developed source at unit pitch; lens development is upstream.
-        let x = exact.x.saturating_sub(1).max(area.x);
-        let y = exact.y.saturating_sub(1).max(area.y);
-        let right = (exact.x + exact.width)
-            .saturating_add(1)
-            .min(area.x + area.width);
-        let bottom = (exact.y + exact.height)
-            .saturating_add(1)
-            .min(area.y + area.height);
-        let bounds = SourceRegion::from([x, y, right - x, bottom - y]).validate()?;
-        if bounds.width > MAX_SOURCE_SIDE || bounds.height > MAX_SOURCE_SIDE {
+        let support = support.then(crate::processing_support::Support([1, 1]))?;
+        let bounds = support.expand(exact, area).validate()?;
+        if bounds.width > MAX_SOURCE_SIDE.saturating_add(support.0[0].saturating_mul(2))
+            || bounds.height > MAX_SOURCE_SIDE.saturating_add(support.0[1].saturating_mul(2))
+        {
             return Err(Error::Gpu(
                 "affine source unit exceeds bounded export scratch".into(),
             ));
@@ -82,8 +96,8 @@ impl Unit {
         let mapping = Mapping {
             sizes: [bounds.width, bounds.height, extent[0], extent[1]],
             origin: [
-                (p[0] - f64::from(x)) as f32,
-                (p[1] - f64::from(y)) as f32,
+                (p[0] - f64::from(bounds.x)) as f32,
+                (p[1] - f64::from(bounds.y)) as f32,
                 0.,
                 0.,
             ],
@@ -417,6 +431,15 @@ pub(super) fn write(
         request.scan.positive_matrix(&input)?,
         request.scan.area,
     )?);
+    let pipeline = crate::pixel_pipeline::PixelPipeline::film(
+        request.film_emulation,
+        request.scan.area.height,
+        request.film_seed,
+    )?;
+    let support = pipeline.support([1., 1.])?;
+    let stage_kernels = (!pipeline.is_empty())
+        .then(|| renderer.pixel_kernels(device))
+        .transpose()?;
     let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;
     repairs.require_area(request.scan.area)?;
     if !repairs.0.is_empty() {
@@ -474,7 +497,10 @@ pub(super) fn write(
             check()?;
             #[cfg(all(test, target_os = "macos"))]
             let mut timing = timestamps.borrow_mut();
-            let mut unit = timed!(CoveragePlan, Unit::new(request.composition, origin, extent))?;
+            let mut unit = timed!(
+                CoveragePlan,
+                Unit::with_support(request.composition, origin, extent, support)
+            )?;
             unit.mapping.space[0] = u32::from(matches!(request.format, Format::Exr(_)));
             let size = [unit.bounds.width, unit.bounds.height];
             if originals.as_ref().is_none_or(|s| s.size != size) {
@@ -557,6 +583,15 @@ pub(super) fn write(
                         geometry,
                     )?;
                 }
+                if let Some(kernels) = stage_kernels.as_ref() {
+                    let prepared = crate::gpu::pixel_pipeline::Prepared::new(
+                        device,
+                        &pipeline,
+                        crate::gpu::raster::Raster::native(unit.bounds),
+                        None,
+                    )?;
+                    kernels.encode(device, &mut encoder, &prepared, &source.working)?;
+                }
                 if let (Format::Tiff(target), Some(binding)) =
                     (request.format, source.binding.as_ref())
                 {
@@ -631,6 +666,7 @@ pub(super) fn write(
                             + 16
                             + 16
                             + 16
+                            + if !pipeline.is_empty() { 32 } else { 0 }
                             + if request.look.is_some() && matches!(request.format, Format::Tiff(_))
                             {
                                 16
