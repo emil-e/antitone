@@ -262,41 +262,6 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
     });
 }
 
-// Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
-// append to the loaded file.
-#[cfg(target_os = "macos")]
-#[test]
-fn changed_pre_work_revision_loads_authoritatively_without_publishing_a_fresh_key() {
-    pollster::block_on(async {
-        let file = raw_fixture::bayer_dng();
-        let document = document(file.path());
-        let (device, queue) = gpu().await;
-        let renderers = crate::renderer::RendererCache::default();
-        let (_, original) = prepare(&document, &device, &queue, &renderers);
-        let id = document.project.order[0];
-        let path = document.source_path(id).unwrap();
-        let expected = document.project.source(id).unwrap();
-        let wb = wb(&document);
-        let cache = LoadCache::new(&path, Some(expected), &document);
-        file.append(b"freshness-only annotation");
-        let (ready, fresh) = prepare_source_cached(
-            &renderers,
-            &device,
-            &queue,
-            path,
-            wb,
-            Some(expected),
-            None,
-            Some(&cache),
-        )
-        .unwrap();
-        assert!(!Arc::ptr_eq(original.source(), fresh.source()));
-        assert_eq!(codes(&original), codes(&fresh));
-        assert!(document.cache().get(&key(&document)).is_none());
-        assert_eq!(ready.thumbnail.unwrap().0, cache.file);
-    });
-}
-
 #[test]
 fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit() {
     pollster::block_on(async {
@@ -357,7 +322,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
         let (release, resume) = mpsc::channel();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker_calls = calls.clone();
-        let developments = development::Scheduler::test_executor(move |_| {
+        let developments = source_loader::SourceLoader::test_executor(move |_| {
             worker_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             entered.send(()).unwrap();
             resume.recv().unwrap();
@@ -470,7 +435,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
         let trace = Arc::new(std::sync::Mutex::new(Vec::new()));
         let worker_trace = trace.clone();
         let mut phases = std::collections::HashMap::new();
-        let developments = development::Scheduler::test_executor(move |path| {
+        let developments = source_loader::SourceLoader::test_executor(move |path| {
             let phase = phases.entry(path.to_owned()).or_insert(0);
             *phase += 1;
             worker_trace.lock().unwrap().push((path.to_owned(), *phase));

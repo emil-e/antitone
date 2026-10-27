@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
     dust_repair::{DonorChoice, RepairId, RepairOrigin, SupportMask},
-    editor::{development, document::Document},
+    editor::{document::Document, source_loader},
     geometry::SourceRegion,
 };
 use std::{
@@ -16,7 +16,7 @@ const LIMIT: Duration = Duration::from_secs(30);
 fn fixture(
     gate: crate::platform::SubmissionGate,
     screening: Arc<crate::gpu::dust_screening::Cache>,
-) -> (Editor, development::Scheduler) {
+) -> (Editor, source_loader::SourceLoader) {
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
         instance
@@ -32,7 +32,7 @@ fn fixture(
     let mut document = Document::default();
     document.import(std::slice::from_ref(&path)).unwrap();
     let source_id = document.project.order[0];
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let mut e = crate::editor::tests::fixture();
     let services = source::Services {
         developments: scheduler.clone(),

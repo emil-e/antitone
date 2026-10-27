@@ -1,7 +1,7 @@
 use super::*;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot};
 use crate::application::Application;
-use crate::editor::development;
+use crate::source_loader;
 use crate::{raw::Rect, source_store::SourceStore};
 use std::{
     sync::{Mutex, mpsc},
@@ -81,7 +81,7 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
             .unwrap();
         let lease = Arc::downgrade(scan.source());
         let mut editor = Editor::state();
-        let scheduler = development::Scheduler::new();
+        let scheduler = source_loader::SourceLoader::new();
         editor.source_services = Some(crate::editor::source::Services {
             developments: scheduler.clone(),
             renderers,
@@ -231,8 +231,8 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
         let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
         let (release_next, resume_next) = mpsc::channel();
         let resume_next = Mutex::new(resume_next);
-        let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-            if matches!(phase, development::NativePhase::UnpackBegin) {
+        let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
+            if matches!(phase, source_loader::NativePhase::UnpackBegin) {
                 resume_next
                     .lock()
                     .unwrap()
@@ -345,8 +345,8 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let sources = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin) {
+    let sources = source_loader::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loader::NativePhase::UnpackBegin) {
             entered.send(()).unwrap();
             resume
                 .lock()
@@ -359,13 +359,13 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
     let store = Arc::new(SourceStore::new(0));
     let ticket = sources
         .submit(
-            development::Request {
+            source_loader::Request {
                 path: file.path().to_owned(),
                 wb: Some([1.; 4]),
                 expected: None,
                 key: None,
             },
-            development::Priority::Foreground,
+            source_loader::Priority::Foreground,
         )
         .unwrap();
     starts.recv_timeout(Duration::from_secs(5)).unwrap();

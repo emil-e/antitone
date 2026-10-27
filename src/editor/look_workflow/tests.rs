@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{
-        FailureKind, Preparation, TaskRequest, development, document::Document, source,
+        FailureKind, Preparation, TaskRequest, document::Document, source, source_loader,
         tests::fixture,
     },
     looks::{LookOrigin, Lut3D, builtin::Builtin},
@@ -26,7 +26,7 @@ fn asset(value: f32) -> Arc<LookAsset> {
     )
 }
 
-fn editor() -> (Editor, development::Scheduler) {
+fn editor() -> (Editor, source_loader::SourceLoader) {
     let mut e = fixture();
     e.document = Document::default().into();
     e.set_dmin(None);
@@ -43,7 +43,7 @@ fn editor() -> (Editor, development::Scheduler) {
             .await
             .unwrap()
     });
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let renderers = Arc::new(crate::renderer::RendererCache::new(e.submissions.clone()));
     e.source_services = Some(source::Services {
         developments: scheduler.clone(),

@@ -15,15 +15,13 @@ use std::{
 /// Capture before development; grade/crop/correction/target/priority and SourceId are excluded.
 #[derive(Clone, Debug)]
 pub struct SourceKey {
-    // Recheck the original locator, not just its canonical file, after work.
     locator: PathBuf,
     file: FileKey,
     source: SourceDevelopment,
 }
 
 impl SourceKey {
-    /// Capture a load identity even when file stats are unavailable. Missing or stale
-    /// stats disable reuse, while the loader still reports authoritative source errors.
+    /// Capture identity when opening a source. Reuse the key for acquisitions in that session.
     pub fn new(path: &Path, source: &SourceDevelopment) -> Self {
         let locator = if path.is_absolute() {
             path.to_path_buf()
@@ -41,15 +39,16 @@ impl SourceKey {
         }
     }
 
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.locator
     }
 
+    #[cfg(feature = "editor")]
     pub(crate) fn file(&self) -> &FileKey {
         &self.file
     }
 
-    pub(crate) fn development(&self) -> &SourceDevelopment {
+    pub fn development(&self) -> &SourceDevelopment {
         &self.source
     }
 
@@ -73,10 +72,6 @@ impl SourceKey {
             file,
             source: source.clone(),
         })
-    }
-
-    pub(crate) fn current(&self) -> bool {
-        self.file.current_at(&self.locator)
     }
 
     pub(crate) fn matches(&self, source: &DevelopedSource) -> bool {
@@ -399,10 +394,7 @@ impl SourceStore {
     }
 
     fn get_resource(&self, key: KeyRef<'_>, kind: Kind) -> Option<Owned> {
-        if !key.current() {
-            self.evict_resource(key);
-            return None;
-        }
+
         let mut removed = Vec::new();
         let result = {
             let mut state = self.state.lock().unwrap();
@@ -424,12 +416,7 @@ impl SourceStore {
             result
         };
         drop(removed);
-        if key.current() {
-            result
-        } else {
-            self.evict_resource(key);
-            None
-        }
+        result
     }
 
     pub fn get(&self, key: &SourceKey) -> Option<Arc<DevelopedSource>> {
@@ -742,9 +729,6 @@ impl SourceStore {
         source: Arc<DevelopedSource>,
         bytes: u64,
     ) -> Result<Option<Arc<DevelopedSource>>, Error> {
-        if !key.current() {
-            return Ok(None);
-        }
         if !key.matches(&source) {
             return Err(Error::Project(
                 "native source differs from its development key".into(),
@@ -769,9 +753,6 @@ impl SourceStore {
         key: SourceKey,
         proxy: Arc<CameraProxy>,
     ) -> Result<Option<Arc<CameraProxy>>, Error> {
-        if !key.current() {
-            return Ok(None);
-        }
         if !key.matches_proxy(&proxy) {
             return Err(Error::Project(
                 "camera proxy differs from its development key".into(),
@@ -814,9 +795,6 @@ impl SourceStore {
     ) -> Result<Option<Owned>, Error> {
         if bytes == 0 {
             return Err(Error::InvalidParameter("source charge must be nonzero"));
-        }
-        if !key.current() {
-            return Ok(None);
         }
         let weak = incoming.downgrade();
         let mut removed = Vec::new();
@@ -875,12 +853,7 @@ impl SourceStore {
             result
         };
         drop(removed);
-        if key.current() {
-            Ok(Some(result))
-        } else {
-            self.evict_resource(key.as_ref());
-            Ok(None)
-        }
+        Ok(Some(result))
     }
 
     fn insert(

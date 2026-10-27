@@ -41,9 +41,9 @@ pub(super) fn service_job(
         store: thumbnails.sources.clone(),
         render,
         priority: if render {
-            development::Priority::Visible
+            source_loader::Priority::Visible
         } else {
-            development::Priority::Eager
+            source_loader::Priority::Eager
         },
         previous,
     }
@@ -147,7 +147,7 @@ pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
         },
         source: SourceKey::new(
             document.project.source(id).unwrap(),
-            FileKey::new(&document.source_path(id).unwrap()),
+            document.file_key(&document.source_path(id).unwrap()),
         ),
         target: OutputTarget::DisplayP3,
         field: document
@@ -228,16 +228,18 @@ fn file_stats_and_resolved_locators_keep_cache_revisions_separate() {
 }
 
 #[test]
-fn queued_thumbnail_results_do_not_install_after_file_stats_change() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("photo.ARW");
-    std::fs::write(&path, b"before").unwrap();
+fn queued_thumbnail_results_do_not_install_after_source_development_changes() {
     let mut document = fixture();
     let id = document.project.order[0];
-    document.project.source_mut(id).unwrap().path = path.clone();
     let (mut thumbnails, _requests) = controlled();
     let (ticket, key) = typed_ticket(&mut thumbnails, key(&document, id));
-    std::fs::write(&path, b"after a deliberate edit").unwrap();
+    document
+        .project
+        .source_mut(id)
+        .unwrap()
+        .development
+        .decode
+        .fixed_wb[0] *= 2.;
     thumbnails.complete(
         Outcome {
             ticket,
@@ -874,7 +876,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
         let visible = take_submission(app, &requests);
         assert_eq!(visible.job.key.source.id, first);
-        assert_eq!(visible.job.priority, development::Priority::Visible);
+        assert_eq!(visible.job.priority, source_loader::Priority::Visible);
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
         app.pump();
         assert!(matches!(
@@ -888,7 +890,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
             !eager.job.render,
             "original refinement keeps optional GPU priority"
         );
-        assert_eq!(eager.job.priority, development::Priority::Eager);
+        assert_eq!(eager.job.priority, source_loader::Priority::Eager);
     });
 }
 
@@ -951,21 +953,6 @@ fn eager_zero_budget_pass_completes_unvisited_work_without_idle_or_eviction_loop
                 Err(mpsc::TryRecvError::Empty)
             ));
         }
-        let last = app.read(|e| *e.document.project.order.last().unwrap());
-        std::fs::write(
-            app.read(|e| e.document.source_path(last).unwrap()),
-            b"changed revision",
-        )
-        .unwrap();
-        app.enter(|e, cx| {
-            filmstrip_frame(
-                e,
-                &context,
-                memory::CacheBudgets::new(e.thumbnails.limits, memory::Pressure::Normal),
-                cx,
-            )
-        });
-        assert_eq!(take_submission(app, &requests).job.key.source.id, last);
     });
 }
 
@@ -1216,7 +1203,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         let visible = take_submission(app, &requests);
         assert_ne!(retry.job.ticket, visible.job.ticket);
         assert_eq!(visible.job.key.source.id, first);
-        assert_eq!(visible.job.priority, development::Priority::Visible);
+        assert_eq!(visible.job.priority, source_loader::Priority::Visible);
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
         app.pump();
         assert!(matches!(
@@ -1261,9 +1248,9 @@ fn memory_pressure_suspends_idle_prefetch_without_blocking_allowed_visible_work(
             assert_eq!(
                 submitted.job.priority,
                 if pressure == memory::Pressure::Normal {
-                    development::Priority::Eager
+                    source_loader::Priority::Eager
                 } else {
-                    development::Priority::Visible
+                    source_loader::Priority::Visible
                 }
             );
             app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
@@ -1294,7 +1281,7 @@ fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
             let submitted = take_submission(app, &requests);
             assert_eq!(submitted.job.key.source.id, id);
             assert!(!submitted.job.render);
-            assert_eq!(submitted.job.priority, development::Priority::Eager);
+            assert_eq!(submitted.job.priority, source_loader::Priority::Eager);
             finish_submission(submitted, Ok(None), true);
         }
         app.pump();
@@ -1374,7 +1361,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
                 e.document.source_path(last).unwrap(),
                 e.document.project.source(last).unwrap().clone(),
                 true,
-                development::Priority::Eager,
+                source_loader::Priority::Eager,
                 cx,
             )
         });
@@ -1600,7 +1587,7 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
 }
 
 #[test]
-fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_stale_revisions() {
+fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -1686,6 +1673,7 @@ fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_st
             "a fresh session must grade its disk camera proxy without reopening the RAW"
         );
         std::fs::write(&path, b"changed").unwrap();
+        document.capture_source_files().unwrap();
         let mut restarted = Thumbnails::with_disk(
             device,
             queue,

@@ -1,11 +1,12 @@
 //! Explicit source acquisition and preparation. Each consumer leases immutable
 //! development and carries its own correction; no selected-source slot is needed.
-use super::{Correction, Document, Editor, Ready, development, document, thumbnails};
+use super::{Correction, Document, Editor, Ready, document, source_loader, thumbnails};
 use crate::{
     Error,
     project::Source,
     scan::{DevelopedSource, Scan},
-    source_provider::{SourceCache, SourceLoader, SourceProvider},
+    source_loader::SourceLoader,
+    source_provider::{SourceCache, SourceProvider},
     source_store::{SourceKey, SourceStore},
 };
 use std::{
@@ -69,7 +70,7 @@ impl Cache {
     }
 
     pub fn new(path: &Path, expected: Option<&Source>, document: &Document) -> Self {
-        let file = thumbnails::FileKey::new(path);
+        let file = document.file_key(path);
         let key = expected
             .and_then(|source| SourceKey::from_revision(path, file.clone(), &source.development));
         Self {
@@ -103,7 +104,7 @@ pub(super) struct Developed {
 
 #[derive(Clone)]
 pub(super) struct Services {
-    pub developments: development::Scheduler,
+    pub developments: source_loader::SourceLoader,
     pub renderers: Arc<crate::renderer::RendererCache>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -150,7 +151,8 @@ impl Services {
         let started = std::time::Instant::now();
         let retired = cancelled.clone();
 
-        let (request, key, cache) = crate::background::run(move || {
+        let needs_header = request.expected.is_none();
+        let capture = move || {
             let mut request = request;
             let cache = request.cache.clone();
             if independent {
@@ -159,24 +161,36 @@ impl Services {
             request.require_live(&|| retired.load(std::sync::atomic::Ordering::Relaxed))?;
             let key = request.load_key()?;
             Ok::<_, Error>((request, key, cache))
-        })
-        .await
-        .map_err(|_| "Source capture worker panicked".to_owned())?
-        .map_err(|error| error.to_string())?;
+
+        };
+        let captured = if needs_header {
+            crate::background::run(capture)
+                .await
+                .map_err(|_| "Source header worker panicked".to_owned())?
+        } else {
+            capture()
+        };
+        let (request, key, cache) = captured.map_err(|error| error.to_string())?;
         let references = cache.as_ref().map_or_else(
             || Arc::new(SourceStore::new(0)), |cache| cache.store.clone(),
         );
         let store = (!independent)
             .then(|| cache.as_ref().map(|cache| cache.store.clone()))
             .flatten();
-        let loader = SourceLoader::from_scheduler(
-            self.developments.clone(),
-            development::Priority::Foreground,
-        );
+        let loader = self.developments.clone();
         let load = async {
             match cache {
-                Some(cache) => cache.provider(loader).load_source(key.clone()).await,
-                None => loader.load_source(key.clone()).await,
+                Some(cache) => {
+                    cache
+                        .provider(loader)
+                        .load_source(key.clone(), source_loader::Priority::Foreground)
+                        .await
+                }
+                None => {
+                    loader
+                        .load_source(key.clone(), source_loader::Priority::Foreground)
+                        .await
+                }
             }
         };
         let source = if let Some(store) = store {
@@ -252,10 +266,14 @@ impl Request {
             }
             None => document::open_source(&self.path, self.wb)?.0,
         };
-        let file = self.cache.as_ref().map_or_else(
-            || thumbnails::FileKey::new(&self.path),
-            |cache| cache.file.clone(),
-        );
+        let file = if self.expected.is_none() {
+            thumbnails::FileKey::new(&self.path)
+        } else {
+            self.cache.as_ref().map_or_else(
+                || thumbnails::FileKey::unversioned(&self.path),
+                |cache| cache.file.clone(),
+            )
+        };
         Ok(SourceKey::for_load(&self.path, file, &record.development))
     }
 
@@ -263,19 +281,27 @@ impl Request {
     #[cfg(test)]
     pub fn load(
         self,
-        developments: &development::Scheduler,
+        developments: &source_loader::SourceLoader,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Developed, Error> {
         self.require_live(cancelled)?;
         let key = self.load_key()?;
         let file = key.file().clone();
         let started = std::time::Instant::now();
-        let loader =
-            SourceLoader::from_scheduler(developments.clone(), development::Priority::Foreground);
+        let loader = developments.clone();
         let mut load = Box::pin(async {
             match &self.cache {
-                Some(cache) => cache.provider(loader).load_source(key).await,
-                None => loader.load_source(key).await,
+                Some(cache) => {
+                    cache
+                        .provider(loader)
+                        .load_source(key, source_loader::Priority::Foreground)
+                        .await
+                }
+                None => {
+                    loader
+                        .load_source(key, source_loader::Priority::Foreground)
+                        .await
+                }
             }
         });
         let source = loop {
@@ -324,8 +350,6 @@ impl Request {
         let camera_proxy = prepared.proxy;
         scan = Scan::from_source(prepared.source);
         self.require_live(cancelled)?;
-        // A captured revision can disable cache publication, never be refreshed to
-        // relabel pixels developed from an earlier file version.
         let key = SourceKey::from_revision(&self.path, file.clone(), &record.development);
         if let Some(correction) = &self.correction {
             correction.settings.require_source(&record.development)?;

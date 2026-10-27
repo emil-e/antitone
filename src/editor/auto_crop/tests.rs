@@ -66,7 +66,7 @@ pub(super) fn fixture() -> (Editor, tempfile::TempDir) {
             .photo
             .exposure = i as f64 / 10.;
         std::fs::write(&s.path, b"metadata-only source fixture").unwrap();
-        editor.document.project.add_source(s).unwrap();
+        editor.document.register(s).unwrap();
     }
     editor.document.project.analysis_regions = editor
         .document
@@ -78,6 +78,7 @@ pub(super) fn fixture() -> (Editor, tempfile::TempDir) {
             areas: measured_areas(),
         })
         .collect();
+    editor.document.capture_source_files().unwrap();
     editor.sync_document();
     (editor, directory)
 }
@@ -319,7 +320,7 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
 
 #[test]
 fn abstentions_preserve_previous_crops_without_preventing_other_proposals() {
-    let (mut e, directory) = fixture();
+    let (mut e, _directory) = fixture();
     let ids = e.document.project.order.clone();
     for &id in &ids {
         e.document.project.source_mut(id).unwrap().crop = Some(small());
@@ -329,7 +330,9 @@ fn abstentions_preserve_previous_crops_without_preventing_other_proposals() {
         .areas
         .picture_observed[0] = false;
     e.document.project.analysis_regions[1].areas.picture_weak[0] = true;
-    std::fs::remove_file(directory.path().join("photo-2.ARW")).unwrap();
+    e.document.project.analysis_regions[2]
+        .areas
+        .picture_geometry = None;
     e.document
         .project
         .analysis_regions
@@ -345,36 +348,6 @@ fn abstentions_preserve_previous_crops_without_preventing_other_proposals() {
     expected.source_mut(ids[0]).unwrap().crop = draft;
     assert_eq!(e.document.project, expected);
     assert!(e.document.auto_crop_edit.is_none(), "{}", e.status);
-}
-
-#[test]
-fn loaded_file_freshness_survives_thumbnail_seed_consumption() {
-    let (mut e, directory) = fixture();
-    let before = e.document.project.clone();
-    e.document.visit.ready.as_mut().unwrap().thumbnail.take();
-    e.begin_crop();
-    std::fs::write(
-        directory.path().join("photo-0.ARW"),
-        b"different RAW revision",
-    )
-    .unwrap();
-    e.auto_crop(Target::Photo);
-    assert!(e.document.auto_crop_edit.is_none());
-    assert!(e.status.contains("reopen"));
-    assert_eq!(e.document.project, before);
-    e.document.visit.ready.as_mut().unwrap().file =
-        thumbnails::FileKey::new(&directory.path().join("photo-0.ARW"));
-    e.auto_crop(Target::Photo);
-    assert!(e.document.visit.crop_edit.is_some() && e.document.auto_crop_edit.is_none());
-    assert_eq!(
-        e.document.visit.crop_edit.as_ref().unwrap().draft,
-        default_crop(
-            e.document.visit.ready.as_ref().unwrap().area,
-            &measured_areas()
-        )
-    );
-    e.finish_crop(false);
-    assert_eq!(e.document.project, before);
 }
 
 #[test]
@@ -480,30 +453,6 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
     assert_eq!(e.crop, Some(small()));
     assert_eq!(e.viewport, viewport);
     assert!(e.document.auto_crop_edit.is_none() && !e.auto_crop_context());
-}
-
-#[test]
-fn apply_is_atomic_when_any_source_file_changes_after_the_draft() {
-    let (mut e, directory) = fixture();
-    let before = e.document.project.clone();
-    e.auto_crop(Target::Roll);
-    e.adjust_auto_crop_margin(2.);
-    // Source zero passes validation and is written only to a local candidate before source one fails.
-    std::fs::write(directory.path().join("photo-1.ARW"), b"changed source").unwrap();
-    e.finish_auto_crop(true);
-    assert!(e.status.contains("not applied"), "{}", e.status);
-    assert!(
-        e.source_tool_warning(before.order[1])
-            .unwrap()
-            .contains("source changed")
-    );
-    assert!(e.source_tool_warning(before.order[0]).is_none());
-    assert!(!e.auto_crop_valid());
-    assert_eq!(e.document.project, before);
-    assert_eq!(e.crop, None);
-    assert!(e.document.auto_crop_edit.is_some());
-    e.finish_auto_crop(false);
-    assert_eq!(e.document.project, before);
 }
 
 #[test]
@@ -708,7 +657,15 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
     e.document.visit.crop_edit.as_mut().unwrap().draft = small();
     let before = e.document.project.clone();
     let viewport = e.viewport;
-    std::fs::write(directory.path().join("photo-0.ARW"), b"changed").unwrap();
+    e.document
+        .visit
+        .ready
+        .as_mut()
+        .unwrap()
+        .record
+        .development
+        .camera_model
+        .push_str(" incompatible");
     e.auto_crop(Target::Photo);
     assert_eq!(e.document.visit.crop_edit.as_ref().unwrap().draft, small());
     assert!(e.document.auto_crop_edit.is_none());
@@ -721,7 +678,14 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
             .contains("Automatic crop unavailable")
     );
     let path = directory.path().join("photo-0.ARW");
-    e.document.visit.ready.as_mut().unwrap().file = thumbnails::FileKey::new(&path);
+    e.document.visit.ready.as_mut().unwrap().record.development = e
+        .document
+        .project
+        .source(e.current_source.unwrap())
+        .unwrap()
+        .development
+        .clone();
+    e.document.visit.ready.as_mut().unwrap().file = e.document.file_key(&path);
     e.auto_crop(Target::Photo);
     assert!(
         e.source_tool_warning(e.current_source.unwrap()).is_none(),

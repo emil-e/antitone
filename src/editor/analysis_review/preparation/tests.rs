@@ -64,34 +64,3 @@ fn async_roll_barrier_cancellation_does_not_reacquire_or_return_partial_support(
     assert_eq!(request.document.project, before);
     scheduler.close_and_wait().unwrap();
 }
-
-#[test]
-fn async_scratch_consumption_rejects_source_revision_changes_after_coarse_capture() {
-    use std::io::Write;
-    let (request, _directory, device) = request();
-    let before = request.document.project.clone();
-    let path = request.document.source_path(request.selected).unwrap();
-    let (scheduler, count) = observed();
-    let result = futures_lite::future::block_on(prepare(
-        request.clone(),
-        Services {
-            developments: scheduler.clone(),
-            device,
-        },
-        Cancellation::default(),
-        move |index, total| {
-            if index == total / 2 {
-                std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(&path)
-                    .unwrap()
-                    .write_all(&[0])
-                    .unwrap();
-            }
-        },
-    ));
-    assert!(result.err().unwrap().to_string().contains("source changed"));
-    assert_eq!(count.load(Ordering::Relaxed), 2);
-    assert_eq!(request.document.project, before);
-    scheduler.close_and_wait().unwrap();
-}

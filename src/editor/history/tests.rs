@@ -254,6 +254,50 @@ fn accepted_history_restores_exact_settings_and_activates_the_edited_photo_witho
 }
 
 #[test]
+fn save_as_keeps_removed_source_identity_available_to_the_undo_snapshot() {
+    use crate::project::Save;
+    let directory = tempfile::tempdir().unwrap();
+    let old = directory.path().join("old");
+    let new = directory.path().join("new");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::create_dir_all(&new).unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    for name in ["one.dng", "two.dng"] {
+        std::fs::copy(&fixture, old.join(name)).unwrap();
+    }
+    let mut imported = Document::default();
+    imported
+        .import(&[old.join("one.dng"), old.join("two.dng")])
+        .unwrap();
+    for source in &mut imported.project.sources {
+        source.path = source.path.file_name().unwrap().into();
+    }
+    let original_path = old.join("original.antitone");
+    imported.project.save(&original_path, Save::New).unwrap();
+    let mut document = Document::open(&original_path).unwrap();
+    let removed = document.project.order[0];
+    let identity = document.file_key(&document.source_path(removed).unwrap());
+    assert!(identity.revision.is_some());
+    let before = document.project.clone();
+    document.project.remove_from_filmstrip(removed).unwrap();
+    let mut history = History::default();
+    history.record(before, document.project.clone(), "Remove photo", None, None);
+    let destination = new.join("moved.antitone");
+    let saved = document.save(&destination, Save::New).unwrap();
+    history.rebase(document.path.as_deref(), saved.path.as_deref());
+    document.accept_save(saved);
+    document.project = history.undo.last().unwrap().before.clone();
+    let restored = document.file_key(&document.source_path(removed).unwrap());
+    assert_eq!(restored, identity);
+    assert!(
+        document
+            .spatial_inputs()
+            .iter()
+            .any(|input| input.source == removed)
+    );
+}
+
+#[test]
 fn save_as_rebases_both_sides_of_history_and_preserves_the_written_dirty_baseline() {
     let directory = tempfile::tempdir().unwrap();
     let old = directory.path().join("old/grade.antitone");

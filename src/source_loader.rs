@@ -1,9 +1,15 @@
-//! Bounded editor native owners. Mutable SDK owners never leave their worker
+//! Native source loading. Mutable SDK owners never leave their worker
 //! thread; consumers join immutable completion, independently of optional cache
 //! ownership and UI tickets. Started work stays pinned to its owner, and at most
 //! two owners overlap independent sources, yielding to foreground demand.
-use super::*;
-use crate::{scan::DevelopedSource, source_store::SourceKey};
+use crate::{
+    Error,
+    project::Source,
+    scan::{DevelopedSource, Scan},
+    source_metadata,
+    source_provider::SourceProvider,
+    source_store::SourceKey,
+};
 use std::{
     collections::HashMap,
     future::Future,
@@ -14,9 +20,12 @@ use std::{
     },
     task::{Context, Poll, Waker},
 };
+use std::{path::PathBuf, sync::Arc};
+#[cfg(test)]
+use std::{sync::mpsc, time::Duration};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Priority {
+pub enum Priority {
     Foreground,
     Visible,
     Eager,
@@ -177,7 +186,7 @@ impl Drop for Owner {
 }
 
 #[derive(Clone)]
-pub(crate) struct Scheduler {
+pub struct SourceLoader {
     owner: Arc<Owner>,
     #[cfg(test)]
     workers: Arc<Mutex<Vec<std::thread::JoinHandle<()>>>>,
@@ -268,7 +277,29 @@ impl Drop for Demand {
     }
 }
 
-impl Scheduler {
+impl Default for SourceLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SourceProvider for SourceLoader {
+    async fn load_source(
+        &self,
+        key: SourceKey,
+        priority: Priority,
+    ) -> Result<Arc<DevelopedSource>, Error> {
+        let source = self.submit_key(key.clone(), priority)?.await?;
+        if !key.matches(&source) {
+            return Err(Error::Project(
+                "developed source differs from requested development".into(),
+            ));
+        }
+        Ok(source)
+    }
+}
+
+impl SourceLoader {
     pub fn new() -> Self {
         #[cfg(test)]
         {
@@ -347,19 +378,21 @@ impl Scheduler {
                         NativePhase::DevelopEnd,
                         Some(&scan.source().metadata()),
                     )?;
-                    document::verify_scan(&input.record, &scan).map_err(|e| e.to_string())?;
+                    source_metadata::verify_scan(&input.record, &scan)
+                        .map_err(|e| e.to_string())?;
                     Ok(Some(scan.source().clone()))
                 } else {
                     #[cfg(test)]
                     observe(&task.request.path, NativePhase::Open, None)?;
                     let (record, mut raw) =
-                        document::open_source(&task.request.path, task.request.wb)
+                        source_metadata::open_source(&task.request.path, task.request.wb)
                             .map_err(|e| e.to_string())?;
                     // The bridge serializes SDK transactions process-wide, so the
                     // develop phase must not share native execution with anything.
                     task.sdk.store(raw.metadata.uses_sdk(), Ordering::Relaxed);
                     if let Some(expected) = &task.request.expected {
-                        document::verify_source(expected, &record).map_err(|e| e.to_string())?;
+                        source_metadata::verify_source(expected, &record)
+                            .map_err(|e| e.to_string())?;
                     }
                     if task
                         .request
@@ -530,12 +563,7 @@ impl Scheduler {
         self.submit_request(request, priority)
     }
 
-    fn submit_request(&self, mut request: Request, priority: Priority) -> Result<Ticket, Error> {
-        // Missing/stale stats disable joining, not authoritative opening. Never refresh
-        // a supplied pre-work revision after work or relabel the worker's result.
-        if request.key.as_ref().is_some_and(|key| !key.current()) {
-            request.key = None;
-        }
+    fn submit_request(&self, request: Request, priority: Priority) -> Result<Ticket, Error> {
         let shared = self.owner.0.clone();
         let demand = {
             let mut state = shared.state.lock().unwrap();
@@ -718,7 +746,6 @@ fn finish(shared: &Shared, task: &Arc<Task>, result: Completion) {
         task.request
             .key
             .as_ref()
-            .filter(|key| key.current())
             .map(|key| (key.clone(), Arc::downgrade(source)))
     });
     *task.result.lock().unwrap() = Some(result);
@@ -741,4 +768,7 @@ fn finish(shared: &Shared, task: &Arc<Task>, result: Completion) {
 }
 
 #[cfg(test)]
+
+#[path = "source_loader_tests.rs"]
+
 mod tests;

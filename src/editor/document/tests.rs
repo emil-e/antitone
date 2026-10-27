@@ -1,6 +1,9 @@
 use super::*;
 use crate::project::Development;
 use crate::{adjustment_layers::AdjustmentLayerSettings, color::Balance};
+
+use crate::{project::SourceDevelopment, raw::RawFile, scan::Scan};
+
 mod admission;
 mod dust;
 
@@ -683,6 +686,61 @@ fn open_empty_document_with_unavailable_flat_field_reference_checks_runtime_and_
     incompatible.output.contract = "different output".into();
     incompatible.save(&path, Save::Replace).unwrap();
     assert!(Document::open(&path).is_err());
+}
+
+#[test]
+fn explicit_import_captures_a_restored_reference_when_promoting_it_to_a_photo() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
+    let photo = directory.path().join("photo.dng");
+    let reference = directory.path().join("reference.dng");
+    std::fs::copy(&fixture, &photo).unwrap();
+    std::fs::copy(&fixture, &reference).unwrap();
+    let mut document = Document::default();
+    document.import(std::slice::from_ref(&photo)).unwrap();
+    let record = read_source(&reference, Some([1.; 4])).unwrap();
+    let id = document.register_reference(record.clone()).unwrap();
+    let map = std::sync::Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            record.development.active_area,
+            [2, 2],
+            vec![glam::DVec3::ONE; 4],
+        )
+        .unwrap(),
+    );
+    document
+        .project
+        .set_flat_field(Some(crate::project::FlatFieldSettings::new(
+            document.project.source(id).unwrap(),
+            map,
+        )));
+    let destination = directory.path().join("reference.antitone");
+    document.save(&destination, Save::New).unwrap();
+    std::fs::remove_file(&reference).unwrap();
+    let mut reopened = Document::open(&destination).unwrap();
+    assert!(reopened.project.source(id).unwrap().reference_only);
+    assert!(
+        reopened
+            .file_key(&reopened.source_path(id).unwrap())
+            .revision
+            .is_none()
+    );
+    std::fs::copy(&fixture, &reference).unwrap();
+    reopened.import(std::slice::from_ref(&reference)).unwrap();
+    assert!(!reopened.project.source(id).unwrap().reference_only);
+    assert!(reopened.project.order.contains(&id));
+    assert!(
+        reopened
+            .file_key(&reopened.source_path(id).unwrap())
+            .revision
+            .is_some()
+    );
+    assert!(
+        reopened
+            .spatial_inputs()
+            .iter()
+            .any(|input| input.source == id)
+    );
 }
 
 #[test]

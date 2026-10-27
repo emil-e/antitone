@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{development, history, tests::authored_fixture},
+    editor::{history, source_loader, tests::authored_fixture},
 };
 use std::{
     sync::{
@@ -15,7 +15,7 @@ mod consumers;
 
 const LIMIT: Duration = Duration::from_secs(30);
 
-fn fixture(scheduler: development::Scheduler) -> Editor {
+fn fixture(scheduler: source_loader::SourceLoader) -> Editor {
     let mut editor = authored_fixture(&["roll-0.dng", "roll-1.dng"]);
     let original = std::mem::replace(
         &mut editor.source_services.as_mut().unwrap().developments,
@@ -27,11 +27,11 @@ fn fixture(scheduler: development::Scheduler) -> Editor {
     editor
 }
 
-fn observed() -> (development::Scheduler, Arc<AtomicUsize>) {
+fn observed() -> (source_loader::SourceLoader, Arc<AtomicUsize>) {
     let count = Arc::new(AtomicUsize::new(0));
     let starts = count.clone();
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin) {
+    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loader::NativePhase::UnpackBegin) {
             starts.fetch_add(1, Ordering::SeqCst);
         }
         Ok(())
@@ -200,13 +200,17 @@ fn queued_shared_preparation_cancels_without_native_work_or_accepted_changes() {
     scheduler.close_and_wait().unwrap();
 }
 
-fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
+fn paused() -> (
+    source_loader::SourceLoader,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
     let once = AtomicUsize::new(0);
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin)
+    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loader::NativePhase::UnpackBegin)
             && once.fetch_add(1, Ordering::SeqCst) == 0
         {
             entered.send(()).unwrap();

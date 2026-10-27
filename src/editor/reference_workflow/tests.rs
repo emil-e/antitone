@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{development, document::Document, source, tests::fixture},
+    editor::{document::Document, source, source_loader, tests::fixture},
 };
 use std::{
     path::PathBuf,
@@ -15,7 +15,7 @@ fn path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn editor(scheduler: development::Scheduler) -> Editor {
+fn editor(scheduler: source_loader::SourceLoader) -> Editor {
     let mut e = fixture();
     e.document = Document::default().into();
     e.set_dmin(None);
@@ -66,8 +66,9 @@ fn import(app: &mut TestApplication<'_, Editor>) {
 fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_working_context() {
     let reference_reads = Arc::new(AtomicUsize::new(0));
     let observed = reference_reads.clone();
-    let scheduler = development::Scheduler::new_observed(move |file, phase, _| {
-        if file == path("bare-light.dng") && matches!(phase, development::NativePhase::UnpackBegin)
+    let scheduler = source_loader::SourceLoader::new_observed(move |file, phase, _| {
+        if file == path("bare-light.dng")
+            && matches!(phase, source_loader::NativePhase::UnpackBegin)
         {
             observed.fetch_add(1, Ordering::Relaxed);
         }
@@ -134,7 +135,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
 #[test]
 fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_operation() {
     for accept in [false, true] {
-        let scheduler = development::Scheduler::new();
+        let scheduler = source_loader::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
             let before = app.read(|e| e.document.project.clone());
             if accept {
@@ -178,7 +179,7 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
 
 #[test]
 fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_return_context() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         import(app);
         let (before, pixels, visit) = app.update(|e| {
@@ -233,8 +234,8 @@ fn departed_reference_waiter_can_join_running_unpack_without_stale_publication()
     let resume = Mutex::new(resume);
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin)
+    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loader::NativePhase::UnpackBegin)
             && observed.fetch_add(1, Ordering::Relaxed) == 0
         {
             started.send(()).unwrap();
@@ -276,7 +277,7 @@ fn departed_reference_waiter_can_join_running_unpack_without_stale_publication()
 
 #[test]
 fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         begin(app, "bare-light.dng");
         wait(app);
@@ -301,7 +302,7 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
 
 #[test]
 fn invalid_measured_support_fails_without_accepting_reference_records_or_history() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         let before = app.read(|e| e.document.project.clone());
         begin(app, "bare-light.dng");
@@ -430,7 +431,7 @@ fn click(app: &TestApplication<'_, Editor>, context: &egui::Context, label: &str
 #[test]
 fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_another_paint() {
     for enter in [false, true] {
-        let scheduler = development::Scheduler::new();
+        let scheduler = source_loader::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
             import(app);
             let context = egui::Context::default();
@@ -538,7 +539,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
 #[test]
 fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
     for accept in [false, true] {
-        let scheduler = development::Scheduler::new();
+        let scheduler = source_loader::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
             let before = app.read(|e| e.document.project.clone());
             if accept {

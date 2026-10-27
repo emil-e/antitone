@@ -164,37 +164,3 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
     assert_eq!(request.document.project, before);
     scheduler.close_and_wait().unwrap();
 }
-
-#[test]
-fn changed_source_after_sampling_rejects_the_complete_candidate_before_publication() {
-    use std::io::Write;
-    let (mut request, _directory, device) = request();
-    approved(&mut request);
-    let before = request.document.project.clone();
-    let path = request.document.source_path(request.selected).unwrap();
-    let (scheduler, _) = observed();
-    let services = Services {
-        developments: scheduler.clone(),
-        device,
-    };
-    let captured = input(&services, &request);
-    let result = futures_lite::future::block_on(run(
-        request.clone(),
-        captured,
-        services,
-        Cancellation::default(),
-        move |done, total| {
-            if done == total {
-                std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(&path)
-                    .unwrap()
-                    .write_all(&[0])
-                    .unwrap();
-            }
-        },
-    ));
-    assert!(result.err().unwrap().to_string().contains("source changed"));
-    assert_eq!(request.document.project, before);
-    scheduler.close_and_wait().unwrap();
-}

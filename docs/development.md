@@ -310,7 +310,7 @@ cargo clippy --locked --features editor --lib --tests -- -D warnings
 For scoped execution, source acquisition and measurement:
 
 ```sh
-for module in application:: background:: source_provider:: editor::development:: editor::measurement:: editor::photo_scope::; do
+for module in application:: background:: source_provider:: source_loader:: editor::measurement:: editor::photo_scope::; do
   cargo test --locked --features editor --lib "$module" || break
 done
 ```

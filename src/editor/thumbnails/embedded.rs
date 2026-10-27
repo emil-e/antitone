@@ -386,20 +386,23 @@ fn current(key: &SourceKey, document: &Document) -> bool {
             .ok()
             .zip(document.source_path(key.id).ok())
             .is_some_and(|(source, path)| {
-                !source.reference_only && SourceKey::new(source, FileKey::new(&path)) == *key
+                !source.reference_only && SourceKey::new(source, document.file_key(&path)) == *key
             })
 }
 
 fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::ColorImage>, String> {
-    if !active() || FileKey::new(&request.path) != request.key.file {
+    if !active() {
         return Ok(None);
     }
+
     let preview = request.store.preview(&request.key.file, || {
         crate::embedded_preview::read(&request.path, &request.source.development)
     })?;
-    if !active() || FileKey::new(&request.path) != request.key.file {
+
+    if !active() {
         return Ok(None);
     }
+
     Ok(preview.map(|preview| colour_image(&preview)))
 }
 

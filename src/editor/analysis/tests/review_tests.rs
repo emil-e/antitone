@@ -562,31 +562,7 @@ fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() 
 }
 
 #[test]
-fn changed_file_while_a_completed_native_reply_waits_cannot_promote_its_candidate() {
-    let editor = ready_state();
-    crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("source.ARW");
-            std::fs::write(&path, b"first snapshot").unwrap();
-            editor.document.project.sources[0].path = path.clone();
-            start_area_preparation(editor, cx);
-            prepared(editor);
-            let before = editor.document.project.clone();
-            editor.confirm_analysis_review(cx);
-            let id = editor.document.analysis_pending.as_ref().unwrap().id;
-            let candidate = outcome(editor);
-            std::fs::write(path, b"different-length revision while reply waits").unwrap();
-            editor.analysis_result(id, Ok(Some(Box::new(candidate))), cx);
-            assert_eq!(editor.document.project, before);
-            assert!(editor.document.analysis_review.is_none());
-            assert!(editor.status.contains("source changed"));
-        });
-    });
-}
-
-#[test]
-fn missing_or_revised_sources_cannot_start_analyze_even_after_area_confirmation() {
+fn missing_or_retargeted_review_inputs_cannot_start_analyze() {
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
@@ -609,12 +585,15 @@ fn missing_or_revised_sources_cannot_start_analyze_even_after_area_confirmation(
             let path = dir.path().join("source.ARW");
             std::fs::write(&path, b"first snapshot").unwrap();
             editor.document.project.sources[0].path = path.clone();
+            editor.document.capture_source_files().unwrap();
             start_area_preparation(editor, cx);
             prepared(editor);
-            std::fs::write(path, b"different-length snapshot").unwrap();
+            editor.document.project.sources[0].path = dir.path().join("different-source.ARW");
+            let accepted = editor.document.project.clone();
             editor.confirm_analysis_review(cx);
             assert!(editor.document.analysis_pending.is_none());
-            assert!(editor.status.contains("source changed"));
+            assert!(editor.document.analysis_review.is_none());
+            assert_eq!(editor.document.project, accepted);
         });
     });
 }

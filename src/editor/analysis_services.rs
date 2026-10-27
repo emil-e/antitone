@@ -1,5 +1,5 @@
-use super::{Document, Error, Scan, SourceId, analysis, development, source};
-use crate::source_provider::{SourceLoader, SourceProvider};
+use super::{Document, Error, Scan, SourceId, analysis, source, source_loader};
+use crate::source_provider::SourceProvider;
 use std::sync::Arc;
 
 pub(super) use crate::cancellation::Cancellation;
@@ -21,7 +21,7 @@ fn source_input(document: &Document, id: SourceId) -> Result<source::Request, Er
 
 #[derive(Clone)]
 pub(super) struct Services {
-    pub developments: development::Scheduler,
+    pub developments: source_loader::SourceLoader,
     pub device: wgpu::Device,
 }
 
@@ -83,34 +83,22 @@ impl Services {
 
     async fn acquire_captured(
         &self,
-        capture: impl FnOnce() -> Result<source::Request, Error> + Send + 'static,
+        capture: impl FnOnce() -> Result<source::Request, Error>,
         cancelled: Cancellation,
     ) -> Result<Option<Scan>, Error> {
-        let retired = cancelled.clone();
-        let captured = crate::background::run(move || {
-            if retired.is_cancelled() {
-                return Err(Error::Cancelled);
-            }
-            let request = capture()?;
-            let key = request.load_key()?;
-            Ok((key, request.cache.expect("analysis document cache")))
-        })
-        .await;
         if cancelled.is_cancelled() {
             return Ok(None);
         }
-        let (key, cache) = captured
-            .map_err(|_| Error::UnusableSample("analysis source capture worker panicked"))??;
+        let request = capture()?;
+        let key = request.load_key()?;
+        let cache = request.cache.expect("analysis document cache");
         let store = cache.store.clone();
         let changed = store.listen_for_close();
-        let loader = SourceLoader::from_scheduler(
-            self.developments.clone(),
-            development::Priority::Foreground,
-        );
+        let loader = self.developments.clone();
         let provider = cache.provider(loader);
         let load = async {
             provider
-                .load_source(key)
+                .load_source(key, source_loader::Priority::Foreground)
                 .await
                 .map(|source| Some(Scan::from_source(source)))
         };

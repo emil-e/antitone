@@ -3,9 +3,20 @@ use crate::raw::fixture;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 fn request(path: &std::path::Path) -> Request {
+<<<<<<<< HEAD:src/editor/development/tests.rs
     let (expected, _) = document::open_source(path, Some([1.; 4])).unwrap();
     let file = thumbnails::FileKey::new(path);
     let key = SourceKey::from_revision(path, file.clone(), &expected.development);
+========
+    let (expected, _) = source_metadata::open_source(path, Some([1.; 4])).unwrap();
+    let file = crate::source_revision::FileKey::new(path);
+    let key = SourceKey::from_revision_with_development(
+        path,
+        file.clone(),
+        &expected.development,
+        &Development::for_source(&expected.development, [1.; 4]),
+    );
+>>>>>>>> dee7199 (Make the native backend SourceLoader and remove in-session file rechecks):src/source_loader_tests.rs
     Request {
         path: path.to_owned(),
         wb: Some([1.; 4]),
@@ -14,7 +25,7 @@ fn request(path: &std::path::Path) -> Request {
     }
 }
 
-fn until(scheduler: &Scheduler, condition: impl Fn(&State) -> bool) {
+fn until(scheduler: &SourceLoader, condition: impl Fn(&State) -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let shared = &scheduler.owner.0;
     let mut state = shared.state.lock().unwrap();
@@ -64,7 +75,7 @@ fn async_joined_consumers_wake_independently_and_share_frozen_pixels() {
     let expected = source.clone();
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
-    let scheduler = Scheduler::start(move |shared| {
+    let scheduler = SourceLoader::start(move |shared| {
         run(shared, 0, crate::sys::memory_pressure, |_| {
             entered.send(()).unwrap();
             resume.recv().unwrap();
@@ -101,7 +112,7 @@ fn a_new_demand_during_native_retirement_starts_fresh_instead_of_receiving_retir
     let (release, resume) = mpsc::channel();
     let (retiring, cleanup) = mpsc::channel();
     let (release_cleanup, resume_cleanup) = mpsc::channel();
-    let scheduler = Scheduler::start(move |shared| {
+    let scheduler = SourceLoader::start(move |shared| {
         let owner = shared.clone();
         let mut unpacked = false;
         run(shared, 0, crate::sys::memory_pressure, move |task| {
@@ -137,7 +148,7 @@ fn async_native_waiters_observe_scheduler_closure_without_waiting_for_native_ret
         let file = fixture::bayer_dng();
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
-        let scheduler = Scheduler::start(move |shared| {
+        let scheduler = SourceLoader::start(move |shared| {
             run(shared, 0, crate::sys::memory_pressure, |_| {
                 entered.send(()).unwrap();
                 resume.recv().unwrap();
@@ -163,7 +174,7 @@ fn async_native_waiters_observe_scheduler_closure_without_waiting_for_native_ret
 #[test]
 fn native_ticket_can_be_awaited_when_completion_precedes_its_first_poll() {
     let file = fixture::bayer_dng();
-    let scheduler = Scheduler::new();
+    let scheduler = SourceLoader::new();
     let ticket = scheduler
         .submit(request(file.path()), Priority::Foreground)
         .unwrap();
@@ -184,7 +195,7 @@ fn foreground_runs_before_the_next_background_native_phase_on_one_thread() {
     let (release, resume) = mpsc::channel();
     let trace = Arc::new(Mutex::new(Vec::new()));
     let worker_trace = trace.clone();
-    let scheduler = Scheduler::start(move |shared| {
+    let scheduler = SourceLoader::start(move |shared| {
         let mut phases = HashMap::new();
         run(shared, 0, crate::sys::memory_pressure, |task| {
             let phase = phases.entry(task.id).or_insert(0);
@@ -236,7 +247,7 @@ fn foreground_joins_started_work_after_thumbnail_waiter_cancels() {
     let (release, resume) = mpsc::channel();
     let calls = Arc::new(AtomicUsize::new(0));
     let worker_calls = calls.clone();
-    let scheduler = Scheduler::start(move |shared| {
+    let scheduler = SourceLoader::start(move |shared| {
         run(shared, 0, crate::sys::memory_pressure, |task| {
             let call = worker_calls.fetch_add(1, Ordering::Relaxed);
             if call == 0 {
@@ -278,7 +289,7 @@ fn closing_worker_wakes_waiters_without_starting_a_second_development() {
     let job = request(file.path());
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
-    let scheduler = Scheduler::start(move |shared| {
+    let scheduler = SourceLoader::start(move |shared| {
         run(shared, 0, crate::sys::memory_pressure, |_| {
             entered.send(()).unwrap();
             resume.recv().unwrap();
@@ -296,7 +307,7 @@ fn closing_worker_wakes_waiters_without_starting_a_second_development() {
 #[test]
 fn actual_native_development_preserves_frozen_pixels_and_native_charge() {
     let file = fixture::bayer_dng();
-    let scheduler = Scheduler::new();
+    let scheduler = SourceLoader::new();
     let job = request(file.path());
     let expected = Scan::open(file.path(), Some([1.; 4])).unwrap();
     let result = scheduler.load(job, Priority::Eager, || false).unwrap();
@@ -370,7 +381,7 @@ fn composed_native_overlap_throughput_and_foreground_latency() {
     );
     let native_calls = Arc::new(AtomicUsize::new(0));
     let observed = native_calls.clone();
-    let scheduler = Scheduler::new_observed(move |_, phase, _| {
+    let scheduler = SourceLoader::new_observed(move |_, phase, _| {
         if matches!(phase, NativePhase::DevelopBegin) {
             observed.fetch_add(1, Ordering::Relaxed);
         }
@@ -612,7 +623,7 @@ fn cancelled_queued_demand_never_runs_native_work() {
     let (release, resume) = mpsc::channel();
     let calls = Arc::new(AtomicUsize::new(0));
     let worker_calls = calls.clone();
-    let scheduler = Scheduler::start(move |shared| {
+    let scheduler = SourceLoader::start(move |shared| {
         run(shared, 0, crate::sys::memory_pressure, |task| {
             assert_eq!(task.id, 1);
             worker_calls.fetch_add(1, Ordering::Relaxed);
@@ -654,7 +665,7 @@ fn native_failure_fans_out_to_joined_waiters_and_allows_a_new_attempt() {
     let (release, resume) = mpsc::channel();
     let calls = Arc::new(AtomicUsize::new(0));
     let worker_calls = calls.clone();
-    let scheduler = Scheduler::start(move |shared| {
+    let scheduler = SourceLoader::start(move |shared| {
         run(shared, 0, crate::sys::memory_pressure, |_| {
             if worker_calls.fetch_add(1, Ordering::Relaxed) == 0 {
                 entered.send(()).unwrap();
@@ -697,27 +708,33 @@ fn native_failure_fans_out_to_joined_waiters_and_allows_a_new_attempt() {
     assert_eq!(calls.load(Ordering::Relaxed), 2);
 }
 
-// Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
-// change the file beneath a live source.
-#[cfg(target_os = "macos")]
 #[test]
-fn joining_requires_the_same_current_versioned_source() {
+fn joining_uses_captured_source_identity_and_development() {
     let file = fixture::bayer_dng();
     let original = request(file.path());
-    let mut unversioned = original.clone();
-    unversioned.key = None;
-    assert!(!unversioned.joins(&original));
-    let same_source = request(file.path());
-    assert!(same_source.joins(&original));
-    use std::io::Write;
-    let mut modified = std::fs::OpenOptions::new()
-        .append(true)
-        .open(file.path())
-        .unwrap();
-    modified.write_all(&[0]).unwrap();
-    let changed = request(file.path());
-    assert!(!changed.joins(&original));
-    assert!(!original.key.unwrap().current());
+    let mut unkeyed = original.clone();
+    unkeyed.key = None;
+    assert!(!unkeyed.joins(&original));
+    assert!(request(file.path()).joins(&original));
+    let key = original.key.as_ref().unwrap();
+    let mut reopened_file = key.file().clone();
+    reopened_file.revision.as_mut().unwrap().bytes += 1;
+    let mut reopened = original.clone();
+    reopened.key = Some(SourceKey::for_load(
+        file.path(),
+        reopened_file,
+        key.development(),
+    ));
+    assert!(!reopened.joins(&original));
+    let mut development = key.development().clone();
+    development.decode.fixed_wb[0] = 2.;
+    let mut different_wb = original.clone();
+    different_wb.key = Some(SourceKey::for_load(
+        file.path(),
+        key.file().clone(),
+        &development,
+    ));
+    assert!(!different_wb.joins(&original));
 }
 
 #[test]
@@ -726,7 +743,7 @@ fn diagnostic_stop_before_unpack_rejects_without_development() {
     let job = request(file.path());
     let phases = Arc::new(Mutex::new(Vec::new()));
     let observed = phases.clone();
-    let scheduler = Scheduler::new_observed(move |_, phase, _| {
+    let scheduler = SourceLoader::new_observed(move |_, phase, _| {
         observed.lock().unwrap().push(format!("{phase:?}"));
         if matches!(phase, NativePhase::UnpackBegin) {
             Err("diagnostic stop".into())
@@ -867,7 +884,7 @@ fn overlapping_owners_run_native_steps_on_separate_threads() {
     let barrier = Arc::new((Mutex::new(0usize), Condvar::new()));
     let threads = Arc::new(Mutex::new(Vec::new()));
     let recorded = threads.clone();
-    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_, _| {
+    let scheduler = SourceLoader::start_workers(2, normal_pressure, move |_, _| {
         let barrier = barrier.clone();
         let threads = recorded.clone();
         let source = source.clone();
@@ -910,7 +927,7 @@ fn foreground_starts_on_the_free_owner_while_a_background_step_runs() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
-    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_, _| {
+    let scheduler = SourceLoader::start_workers(2, normal_pressure, move |_, _| {
         let entered = entered.clone();
         let resume = resume.clone();
         let source = source.clone();
@@ -949,7 +966,7 @@ fn background_work_yields_while_foreground_demand_lives() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
-    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_, _| {
+    let scheduler = SourceLoader::start_workers(2, normal_pressure, move |_, _| {
         let entered = entered.clone();
         let resume = resume.clone();
         let source = source.clone();
@@ -993,7 +1010,7 @@ fn concurrent_native_development_preserves_frozen_pixels_and_sensor_identity() {
     let b = fixture::bayer_dng();
     let expected_a = Scan::open(a.path(), Some([1.; 4])).unwrap();
     let expected_b = Scan::open(b.path(), Some([1.; 4])).unwrap();
-    let scheduler = Scheduler::new();
+    let scheduler = SourceLoader::new();
     let sa = scheduler.clone();
     let job_a = request(a.path());
     let sb = scheduler.clone();
@@ -1044,7 +1061,7 @@ fn closing_the_pair_wakes_waiters_and_stops_both_owners() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
-    let scheduler = Scheduler::start_workers(2, normal_pressure, move |_, _| {
+    let scheduler = SourceLoader::start_workers(2, normal_pressure, move |_, _| {
         let entered = entered.clone();
         let resume = resume.clone();
         let source = source.clone();
@@ -1077,7 +1094,7 @@ fn sdk_development_holds_native_execution_exclusive_end_to_end() {
     // overlap would halve the running call's team while the peer blocks.
     let a = fixture::bayer_dng();
     let b = fixture::bayer_dng();
-    let (record, raw) = document::open_source(a.path(), Some([1.; 4])).unwrap();
+    let (record, raw) = source_metadata::open_source(a.path(), Some([1.; 4])).unwrap();
     assert!(
         raw.metadata.uses_sdk(),
         "the fixture must exercise the direct SDK route"
@@ -1087,7 +1104,7 @@ fn sdk_development_holds_native_execution_exclusive_end_to_end() {
     let live = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
     let (counted, observed) = (live.clone(), peak.clone());
-    let scheduler = Scheduler::new_observed_with_pressure(
+    let scheduler = SourceLoader::new_observed_with_pressure(
         move |_, phase, _| {
             match phase {
                 NativePhase::DevelopBegin => {

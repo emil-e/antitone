@@ -2,7 +2,7 @@ use super::tests::{LIMIT, await_native, fixture, start};
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{Document, Preparation, development, history::Direction},
+    editor::{Document, Preparation, history::Direction, source_loader},
 };
 use std::sync::mpsc;
 
@@ -20,7 +20,7 @@ fn confirm(app: &TestApplication<'_, Editor>) {
 }
 
 fn gated() -> (
-    development::Scheduler,
+    source_loader::SourceLoader,
     Arc<AtomicBool>,
     mpsc::Receiver<()>,
     mpsc::Sender<()>,
@@ -30,8 +30,8 @@ fn gated() -> (
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::UnpackBegin)
+    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loader::NativePhase::UnpackBegin)
             && gate.swap(false, Ordering::Relaxed)
         {
             entered.send(()).unwrap();
@@ -44,7 +44,7 @@ fn gated() -> (
 
 #[test]
 fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and_grade_together() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let mut editor = fixture(scheduler.clone());
     let first = editor.current_source.unwrap();
     let other = editor.document.project.order[1];
@@ -98,7 +98,7 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
 
 #[test]
 fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibrated_roll() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let mut editor = fixture(scheduler.clone());
     let crate::processing::InputSettings::Negative { dmin, dmax, .. } = &mut editor.input else {
         panic!("authored scan roll must use Negative");
@@ -240,7 +240,7 @@ fn live_edits_during_fit_discard_the_entire_candidate_without_installing_reviewe
 
 #[test]
 fn new_document_supersedes_a_queued_fit_without_consuming_its_areas_or_history() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let editor = fixture(scheduler.clone());
     with_application(editor, |app| {
         review(app);

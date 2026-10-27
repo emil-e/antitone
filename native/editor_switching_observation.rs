@@ -164,12 +164,12 @@ fn workload(
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
     let native_monitor = monitor.clone();
-    let scheduler = development::Scheduler::new_observed(move |path, phase, metadata| {
+    let scheduler = source_loader::SourceLoader::new_observed(move |path, phase, metadata| {
         native_monitor.check()?;
         if let Some(metadata) = metadata {
             calibration::source_bound(metadata)?;
         }
-        if matches!(phase, development::NativePhase::UnpackBegin) {
+        if matches!(phase, source_loader::NativePhase::UnpackBegin) {
             observed.fetch_add(1, Ordering::Relaxed);
         }
         println!(

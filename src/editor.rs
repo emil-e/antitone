@@ -28,7 +28,9 @@ use std::{
 
 mod cache_limits;
 mod controls;
-pub(crate) mod development;
+
+use crate::source_loader;
+
 mod source;
 use source::Cache as LoadCache;
 mod document;
@@ -208,7 +210,7 @@ fn prepare_source_cached(
         expected,
         correction,
         cache,
-        &development::Scheduler::new(),
+        &source_loader::SourceLoader::new(),
         &|| false,
     )
 }
@@ -224,7 +226,7 @@ fn prepare_source_scheduled(
     expected: Option<&Source>,
     correction: Option<&Arc<Correction>>,
     cache: Option<&LoadCache>,
-    developments: &development::Scheduler,
+    developments: &source_loader::SourceLoader,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Ready, Scan), Error> {
     let developed = source::Request {
@@ -321,7 +323,7 @@ pub struct Editor {
     export_summary: Option<export_batch::Summary>,
     correction: Option<Arc<Correction>>,
     flat_edit: Option<FlatEdit>,
-    developments: Option<development::Scheduler>,
+    developments: Option<source_loader::SourceLoader>,
     source_services: Option<source::Services>,
     source_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
@@ -331,7 +333,7 @@ impl Editor {
         let submissions = crate::platform::SubmissionGate::default();
         let renderers = Arc::new(crate::renderer::RendererCache::new(submissions.clone()));
         renderers.prewarm(device.clone(), queue.clone());
-        let developments = development::Scheduler::new();
+        let developments = source_loader::SourceLoader::new();
         let thumbnails = Thumbnails::new(
             device.clone(),
             queue.clone(),

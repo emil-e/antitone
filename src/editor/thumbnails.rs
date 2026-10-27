@@ -281,7 +281,7 @@ impl SelectedPreview {
                 .zip(document.source_path(self.key.id).ok())
                 .is_some_and(|(source, path)| {
                     !source.reference_only
-                        && SourceKey::new(source, FileKey::new(&path)) == self.key
+                        && SourceKey::new(source, document.file_key(&path)) == self.key
                 })
     }
 }
@@ -294,7 +294,7 @@ struct Job {
     correction: Option<Arc<Correction>>,
     store: Arc<SourceStore>,
     render: bool,
-    priority: development::Priority,
+    priority: source_loader::Priority,
     previous: Option<Arc<Product>>,
 }
 
@@ -408,7 +408,7 @@ impl Thumbnails {
     ) -> Result<Option<SelectedPreview>, Error> {
         let started = std::time::Instant::now();
         let source = document.project.source(id)?;
-        let key = SourceKey::new(source, FileKey::new(&document.source_path(id)?));
+        let key = SourceKey::new(source, document.file_key(&document.source_path(id)?));
         if source.reference_only || key.file.revision.is_none() {
             return Ok(None);
         }
@@ -670,7 +670,7 @@ impl Thumbnails {
         device: wgpu::Device,
         queue: wgpu::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
-        developments: development::Scheduler,
+        developments: source_loader::SourceLoader,
     ) -> Self {
         Self::with_developments(
             device,
@@ -682,7 +682,7 @@ impl Thumbnails {
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
-    pub(super) fn without_disk(&self, developments: development::Scheduler) -> Self {
+    pub(super) fn without_disk(&self, developments: source_loader::SourceLoader) -> Self {
         let (device, queue, renderers) = self.gpu.as_ref().expect("thumbnail GPU resources");
         Self::with_developments(
             device.clone(),
@@ -705,7 +705,7 @@ impl Thumbnails {
             queue,
             renderers,
             disk,
-            development::Scheduler::new(),
+            source_loader::SourceLoader::new(),
         )
     }
 
@@ -714,7 +714,7 @@ impl Thumbnails {
         queue: wgpu::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
         disk: Option<disk::DiskCache>,
-        developments: development::Scheduler,
+        developments: source_loader::SourceLoader,
     ) -> Self {
         let (commands, receiver) = mpsc::channel();
         let mut state = Self {
@@ -783,7 +783,7 @@ impl Thumbnails {
                         .is_some_and(|source| {
                             SourceKey::new(
                                 source,
-                                FileKey::new(
+                                document.file_key(
                                     &document.source_path(source.id).expect("thumbnail locator"),
                                 ),
                             ) == key.source
@@ -817,7 +817,8 @@ impl Thumbnails {
                 .is_some_and(|source| {
                     SourceKey::new(
                         source,
-                        FileKey::new(&document.source_path(source.id).expect("thumbnail locator")),
+                        document
+                            .file_key(&document.source_path(source.id).expect("thumbnail locator")),
                     ) == outcome.key.source
                 });
         // CPU/disk completion belongs to the document even when its GPU ticket retired.
@@ -922,7 +923,7 @@ impl Editor {
             None
         };
         Some(ImageKey {
-            source: SourceKey::new(source, FileKey::new(path)),
+            source: SourceKey::new(source, self.document.file_key(path)),
             recipe,
             projection,
             target: self.target,

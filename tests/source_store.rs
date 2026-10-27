@@ -218,7 +218,7 @@ fn zero_limits_preserve_protected_proxies_but_never_exempt_full_native_ownership
 }
 
 #[test]
-fn stale_keys_and_candidate_close_drop_proxy_ownership_not_active_leases() {
+fn closure_drops_protected_proxy_ownership_not_active_leases() {
     let input = Input::new();
     let scan = Scan::open(input.file.path(), Some(WB)).unwrap();
     let proxy = Arc::new(CameraProxy::from_scan(&scan).unwrap());
@@ -228,7 +228,7 @@ fn stale_keys_and_candidate_close_drop_proxy_ownership_not_active_leases() {
         .publish_proxy(input.key.clone(), proxy.clone())
         .unwrap()
         .unwrap();
-    std::fs::write(input.file.path(), b"changed disposable source").unwrap();
+    store.close();
     assert!(store.get_proxy(&input.key).is_none());
     assert_eq!(store.protected_bytes(), 0);
     assert_eq!(
@@ -244,9 +244,6 @@ fn stale_keys_and_candidate_close_drop_proxy_ownership_not_active_leases() {
             .unwrap()
             .is_none()
     );
-    let candidate = SourceStore::new(proxy.retained_bytes());
-    candidate.close();
-    assert!(candidate.get_proxy(&input.key).is_none());
     drop(proxy);
     assert_eq!(store.charges(), Charges::default());
 }
@@ -627,7 +624,7 @@ fn duplicate_completions_share_one_charge_and_reject_alias_or_reweighting() {
 }
 
 #[test]
-fn changed_files_reject_prework_publication_and_hits_without_losing_leased_accounting() {
+fn cache_uses_captured_keys_without_revalidating_the_filesystem() {
     let input = Input::new();
     let source = input.source();
     let store = SourceStore::new(10);
@@ -635,14 +632,19 @@ fn changed_files_reject_prework_publication_and_hits_without_losing_leased_accou
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
         .unwrap();
-    input.file.append(b"changed");
-    assert!(store.get(&input.key).is_none());
-    assert!(
-        store
+    input.file.append(b"different identity for a later open");
+    let reopened = SourceKey::capture(input.file.path(), &input.record.development).unwrap();
+    assert_ne!(reopened, input.key);
+    assert!(store.get(&reopened).is_none());
+    assert!(Arc::ptr_eq(&store.get(&input.key).unwrap(), &source));
+    assert!(Arc::ptr_eq(
+        &store
             .publish(input.key.clone(), source.clone(), 10)
             .unwrap()
-            .is_none()
-    );
+            .unwrap(),
+        &source
+    ));
+    store.set_budget(0);
     assert_eq!(
         store.charges(),
         Charges {
@@ -656,24 +658,7 @@ fn changed_files_reject_prework_publication_and_hits_without_losing_leased_accou
 
 #[cfg(unix)]
 #[test]
-fn restored_mtime_and_symlink_retargeting_do_not_make_old_keys_current() {
-    use std::io::Write;
-    let input = Input::new();
-    let source = input.source();
-    let store = SourceStore::new(10);
-    store
-        .publish(input.key.clone(), source.clone(), 10)
-        .unwrap()
-        .unwrap();
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .open(input.file.path())
-        .unwrap();
-    let modified = file.metadata().unwrap().modified().unwrap();
-    file.write_all(b"MM").unwrap();
-    file.set_modified(modified).unwrap();
-    assert!(store.get(&input.key).is_none());
-
+fn alias_identity_is_captured_when_opened_not_reinterpreted_by_the_store() {
     let a = Input::new();
     let b = Input::new();
     let directory = tempfile::tempdir().unwrap();
@@ -683,18 +668,15 @@ fn restored_mtime_and_symlink_retargeting_do_not_make_old_keys_current() {
     let source = a.source();
     std::fs::remove_file(&alias).unwrap();
     std::os::unix::fs::symlink(b.file.path(), &alias).unwrap();
-    assert!(
-        store
-            .publish(captured.clone(), source.clone(), 10)
-            .unwrap()
-            .is_none()
-    );
-    assert!(store.get(&captured).is_none());
+    let reopened = SourceKey::capture(&alias, &b.record.development).unwrap();
+    assert_ne!(captured, reopened);
+    let store = SourceStore::new(10);
     store
-        .publish(a.key.clone(), source.clone(), 10)
+        .publish(captured.clone(), source.clone(), 10)
         .unwrap()
         .unwrap();
-    assert!(Arc::ptr_eq(&store.get(&a.key).unwrap(), &source));
+    assert!(Arc::ptr_eq(&store.get(&captured).unwrap(), &source));
+    assert!(store.get(&reopened).is_none());
 }
 
 #[test]

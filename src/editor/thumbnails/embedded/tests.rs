@@ -339,22 +339,16 @@ fn critical_pressure_cancels_jpeg_installation_but_preserves_visible_textures() 
 }
 
 #[test]
-fn stale_document_source_stats_and_development_reject_previews() {
+fn retired_document_source_and_development_reject_previews() {
     let context = egui::Context::default();
-    for stale in [
-        "document",
-        "source",
-        "revision",
-        "development",
-        "cancel",
-        "closed",
-    ] {
+    for stale in ["document", "source", "development", "cancel", "closed"] {
         let mut document = fixture();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("photo.ARW");
         std::fs::write(&path, b"initial").unwrap();
         let id = document.project.order[0];
         document.project.source_mut(id).unwrap().path = path.clone();
+        document.capture_source_files().unwrap();
         let wanted = vec![wanted(&document, 0)];
         let mut previews = state();
         previews.request_visible(&wanted, true);
@@ -362,7 +356,6 @@ fn stale_document_source_stats_and_development_reject_previews() {
         match stale {
             "document" => document = Document::default(),
             "source" => document.project.source_mut(id).unwrap().reference_only = true,
-            "revision" => std::fs::write(&path, b"changed-bytes").unwrap(),
             "development" => document.project.development_mut().unwrap().fixed_wb[0] += 0.5,
             "cancel" => previews.cancel(),
             "closed" => document.cache().close(),

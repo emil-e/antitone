@@ -23,7 +23,7 @@ impl Original {
     }
 
     fn verify(&self) -> Result<()> {
-        if !self.revision.current_at(&self.locator) {
+        if FileKey::new(&self.locator) != self.revision {
             return Err(
                 format!("source locator or file changed: {}", self.locator.display()).into(),
             );
@@ -191,7 +191,7 @@ fn original_freshness_checks_the_locator_after_file_or_parent_symlink_retargetin
         )
         .unwrap();
         assert!(
-            original.revision.current_at(&original.revision.path),
+            FileKey::new(&original.revision.path) == original.revision,
             "old canonical target is unchanged"
         );
         assert!(

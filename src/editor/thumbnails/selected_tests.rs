@@ -377,7 +377,7 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
 }
 
 #[test]
-fn unavailable_changed_or_incompatible_cached_sources_keep_the_loading_placeholder() {
+fn incompatible_cached_sources_keep_the_loading_placeholder() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
@@ -389,16 +389,11 @@ fn unavailable_changed_or_incompatible_cached_sources_keep_the_loading_placehold
                 let id = add_source(editor, path.clone());
                 editor.load(path.clone(), cx);
                 assert!(editor.pending_preview.is_some());
-                std::fs::write(&path, b"intentionally changed file stats").unwrap();
-                editor.validate_pending_preview();
-                assert!(editor.pending_preview.is_none());
-                editor.load(path.clone(), cx);
-                assert!(editor.pending_preview.is_none());
                 assert!(editor.document.visit.ready.is_none());
                 assert!(editor.busy);
                 editor.thumbnails.seed(
                     editor.document.project.source(id).unwrap(),
-                    FileKey::new(&path),
+                    editor.document.file_key(&path),
                     proxy(),
                 );
                 editor.document.project.development_mut().unwrap().fixed_wb[0] *= 1.01;

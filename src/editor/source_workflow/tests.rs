@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, Prepared, development, document::Document},
+    editor::{Preparation, Prepared, document::Document, source_loader},
 };
 use std::{
     path::PathBuf,
@@ -13,7 +13,7 @@ fn path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")
 }
 
-fn editor(scheduler: development::Scheduler) -> Editor {
+fn editor(scheduler: source_loader::SourceLoader) -> Editor {
     let mut editor = super::super::tests::fixture();
     let mut document = Document::default();
     document.import(&[path()]).unwrap();
@@ -49,13 +49,17 @@ fn normal_pressure() -> crate::sys::MemoryPressure {
 
 fn paused_with_pressure(
     pressure: fn() -> crate::sys::MemoryPressure,
-) -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
+) -> (
+    source_loader::SourceLoader,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let scheduler = development::Scheduler::new_observed_with_pressure(
+    let scheduler = source_loader::SourceLoader::new_observed_with_pressure(
         move |_, phase, _| {
-            if matches!(phase, development::NativePhase::UnpackBegin) {
+            if matches!(phase, source_loader::NativePhase::UnpackBegin) {
                 entered.send(()).unwrap();
                 resume
                     .lock()
@@ -70,7 +74,11 @@ fn paused_with_pressure(
     (scheduler, starts, release)
 }
 
-fn paused() -> (development::Scheduler, mpsc::Receiver<()>, mpsc::Sender<()>) {
+fn paused() -> (
+    source_loader::SourceLoader,
+    mpsc::Receiver<()>,
+    mpsc::Sender<()>,
+) {
     paused_with_pressure(crate::sys::memory_pressure)
 }
 
@@ -118,7 +126,7 @@ fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
 
 #[test]
 fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels() {
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let editor = editor(scheduler.clone());
     with_application(editor, |app| {
         start(app);
@@ -194,13 +202,13 @@ fn cancelling_an_unstarted_native_demand_does_not_wait_for_unrelated_calls() {
         backgrounds.push(
             scheduler
                 .submit(
-                    development::Request {
+                    source_loader::Request {
                         path: path(),
                         wb: None,
                         expected: None,
                         key: None,
                     },
-                    development::Priority::Eager,
+                    source_loader::Priority::Eager,
                 )
                 .unwrap(),
         );
@@ -247,9 +255,10 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
     let resume_b = Mutex::new(resume_b);
     // Both owners must run concurrently here, so this scenario fixes the
     // pressure reading it needs rather than trusting the live system level.
-    let scheduler = development::Scheduler::new_observed_with_pressure(
+    let scheduler = source_loader::SourceLoader::new_observed_with_pressure(
         move |file, phase, _| {
-            if file.ends_with("patches.dng") && matches!(phase, development::NativePhase::UnpackEnd)
+            if file.ends_with("patches.dng")
+                && matches!(phase, source_loader::NativePhase::UnpackEnd)
             {
                 parked.send(()).unwrap();
                 resume_a
@@ -259,7 +268,7 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
                     .unwrap();
             }
             if file.ends_with("roll-0.dng")
-                && matches!(phase, development::NativePhase::UnpackBegin)
+                && matches!(phase, source_loader::NativePhase::UnpackBegin)
             {
                 entered_b.send(()).unwrap();
                 resume_b
@@ -289,13 +298,13 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
             tickets.push(
                 scheduler
                     .submit(
-                        development::Request {
+                        source_loader::Request {
                             path: other.clone(),
                             wb: None,
                             expected: None,
                             key: None,
                         },
-                        development::Priority::Visible,
+                        source_loader::Priority::Visible,
                     )
                     .unwrap(),
             );

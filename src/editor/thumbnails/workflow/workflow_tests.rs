@@ -17,7 +17,11 @@ fn document(count: usize) -> (Document, tempfile::TempDir) {
     (document, directory)
 }
 
-fn editor(document: Document, disk: &std::path::Path, scheduler: development::Scheduler) -> Editor {
+fn editor(
+    document: Document,
+    disk: &std::path::Path,
+    scheduler: source_loader::SourceLoader,
+) -> Editor {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -56,7 +60,7 @@ fn begin(editor: &mut Editor, access: &crate::application::UiContext<'_, Editor>
 fn gated(
     document: &Document,
 ) -> (
-    development::Scheduler,
+    source_loader::SourceLoader,
     mpsc::Receiver<()>,
     mpsc::Sender<()>,
     Arc<AtomicUsize>,
@@ -73,7 +77,7 @@ fn gated(
     let (release, resume) = mpsc::channel();
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = calls.clone();
-    let scheduler = development::Scheduler::test_executor(move |_| {
+    let scheduler = source_loader::SourceLoader::test_executor(move |_| {
         if observed.fetch_add(1, Ordering::Relaxed) == 0 {
             entered.send(()).unwrap();
             let _ = resume.recv();
@@ -88,7 +92,7 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
     let (document, _sources) = document(3);
     let first = document.project.order[0];
     let disk = tempfile::tempdir().unwrap();
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let editor = editor(document, disk.path(), scheduler.clone());
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Visible(vec![first])));
@@ -124,7 +128,7 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
 fn composed_editor_registers_visible_work_then_uses_completed_proper_card_callbacks() {
     let (document, _sources) = document(2);
     let disk = tempfile::tempdir().unwrap();
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let editor = editor(document, disk.path(), scheduler.clone());
     let context = egui::Context::default();
     with_application(editor, |app| {
@@ -190,7 +194,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
     let (document, _sources) = document(3);
     let ids = document.project.order.clone();
     let disk = tempfile::tempdir().unwrap();
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let mut editor = editor(document, disk.path(), scheduler.clone());
     let (commands, requests) = mpsc::channel();
     editor.thumbnails.services = Some(Services { commands });
@@ -250,7 +254,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
 fn hidden_document_demand_completes_cpu_disk_work_without_gpu_residency_or_paint() {
     let (document, _sources) = document(3);
     let disk = tempfile::tempdir().unwrap();
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let editor = editor(document, disk.path(), scheduler.clone());
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Hidden));
@@ -372,13 +376,13 @@ fn document_retirement_drops_thumbnail_demand_queued_behind_unrelated_native_wor
     let (scheduler, starts, release, calls) = gated(&document);
     let unrelated = scheduler
         .submit(
-            development::Request {
+            source_loader::Request {
                 path,
                 wb: None,
                 expected: None,
                 key: None,
             },
-            development::Priority::Foreground,
+            source_loader::Priority::Foreground,
         )
         .unwrap();
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -443,50 +447,4 @@ fn application_retirement_drops_waiters_but_running_native_work_finishes_before_
             .unwrap()
             .is_none()
     );
-}
-
-// Gated to macOS: LibRaw holds an open RAW with write sharing denied on Windows, so the test cannot
-// append to the loaded file.
-#[cfg(target_os = "macos")]
-#[test]
-fn a_changed_source_revision_retries_current_demand_without_publishing_the_departed_result() {
-    use std::io::Write;
-    let (document, _sources) = document(1);
-    let id = document.project.order[0];
-    let path = document.source_path(id).unwrap();
-    let old_key = tests::key(&document, id);
-    let (scheduler, starts, release, calls) = gated(&document);
-    let disk = tempfile::tempdir().unwrap();
-    let editor = editor(document, disk.path(), scheduler.clone());
-    with_application(editor, |app| {
-        app.enter(|editor, access| begin(editor, access, Demand::Visible(vec![id])));
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(5)).unwrap();
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .unwrap()
-            .write_all(b"freshness-only annotation")
-            .unwrap();
-        release.send(()).unwrap();
-        app.run_until(Duration::from_secs(30), |editor| {
-            !editor.document.thumbnail_work.pending()
-        });
-        app.read(|editor| {
-            let current = tests::key(&editor.document, id);
-            assert_ne!(current.source.file, old_key.source.file);
-            assert!(!editor.thumbnails.cache.contains(&old_key));
-            assert!(
-                editor
-                    .thumbnails
-                    .cache
-                    .entries
-                    .iter()
-                    .any(|(key, image)| key == &current && image.is_ok())
-            );
-            assert_eq!(editor.thumbnails.attempted_sources, vec![current.source]);
-        });
-        assert_eq!(calls.load(Ordering::Relaxed), 2);
-    });
-    scheduler.close_and_wait().unwrap();
 }

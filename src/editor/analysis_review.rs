@@ -54,7 +54,7 @@ fn verify_file(request: &analysis::Request, approved: &Approved) -> Result<(), E
     }
     for (i, id) in request.document.project.order.iter().enumerate() {
         let path = request.document.source_path(*id)?;
-        if thumbnails::FileKey::new(&path) != approved.files[i] {
+        if request.document.file_key(&path) != approved.files[i] {
             return Err(Error::UnusableSample(
                 "source changed since analysis-area review",
             ));
@@ -105,7 +105,7 @@ fn fine_measurement(scan: &Scan, code_scale: f64) -> Result<([u32; 2], Vec<[u16;
 pub(super) fn prepare(
     request: &analysis::Request,
     generation: &AtomicU64,
-    developments: &development::Scheduler,
+    developments: &source_loader::SourceLoader,
     device: &wgpu::Device,
     progress: impl FnMut(usize, usize),
 ) -> Result<Option<Approved>, Error> {
@@ -123,7 +123,7 @@ pub(super) fn prepare(
 fn prepare_with_measurements(
     request: &analysis::Request,
     generation: &AtomicU64,
-    developments: &development::Scheduler,
+    developments: &source_loader::SourceLoader,
     device: &wgpu::Device,
     progress: impl FnMut(usize, usize),
     measurements: &mut measurements::Measurements,

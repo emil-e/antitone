@@ -1,8 +1,8 @@
 //! Async acquisition of immutable camera sources, with optional document-scoped reuse.
 use crate::{
     Error,
-    editor::development,
     scan::DevelopedSource,
+    source_loader::Priority,
     source_store::{SourceKey, SourceStore},
 };
 use std::{future::Future, sync::Arc};
@@ -17,55 +17,8 @@ pub trait SourceProvider: Send + Sync {
     fn load_source(
         &self,
         key: SourceKey,
+        priority: Priority,
     ) -> impl Future<Output = Result<Arc<DevelopedSource>, Error>> + Send;
-}
-
-/// Native execution without document cache ownership or retention decisions.
-#[derive(Clone)]
-pub struct SourceLoader {
-    developments: development::Scheduler,
-    priority: development::Priority,
-}
-
-impl Default for SourceLoader {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SourceLoader {
-    pub fn new() -> Self {
-        Self {
-            developments: development::Scheduler::new(),
-            priority: development::Priority::Foreground,
-        }
-    }
-
-    pub(crate) fn from_scheduler(
-        developments: development::Scheduler,
-        priority: development::Priority,
-    ) -> Self {
-        Self {
-            developments,
-            priority,
-        }
-    }
-}
-
-impl SourceProvider for SourceLoader {
-    async fn load_source(&self, key: SourceKey) -> Result<Arc<DevelopedSource>, Error> {
-        let developments = self.developments.clone();
-        let request = key.clone();
-        let priority = self.priority;
-        let ticket = blocking::unblock(move || developments.submit_key(request, priority)).await?;
-        let source = ticket.await?;
-        if !key.matches(&source) {
-            return Err(Error::Project(
-                "developed source differs from requested development".into(),
-            ));
-        }
-        Ok(source)
-    }
 }
 
 /// Reuses the existing store's live leases and optional retained ownership.
@@ -92,22 +45,21 @@ impl<P> SourceCache<P> {
 }
 
 impl<P: SourceProvider> SourceProvider for SourceCache<P> {
-    async fn load_source(&self, key: SourceKey) -> Result<Arc<DevelopedSource>, Error> {
-        let store = self.store.clone();
-        let parent = self.parent.clone();
-        let lookup = key.clone();
-        let existing = blocking::unblock(move || {
-            store
-                .get(&lookup)
-                .or_else(|| parent.and_then(|parent| parent.get(&lookup)))
-        })
-        .await;
-        let source = match existing {
+    async fn load_source(
+        &self,
+        key: SourceKey,
+        priority: Priority,
+    ) -> Result<Arc<DevelopedSource>, Error> {
+        if let Some(source) = self.store.get(&key) {
+            return Ok(source);
+        }
+        let source = match self.parent.as_ref().and_then(|parent| parent.get(&key)) {
             Some(source) => source,
-            None => self.inner.load_source(key.clone()).await?,
+            None => self.inner.load_source(key.clone(), priority).await?,
         };
-        let store = self.store.clone();
-        blocking::unblock(move || Ok(store.publish_source(key, source.clone())?.unwrap_or(source)))
-            .await
+        Ok(self
+            .store
+            .publish_source(key, source.clone())?
+            .unwrap_or(source))
     }
 }

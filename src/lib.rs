@@ -75,6 +75,10 @@ pub mod scan;
 #[cfg(feature = "project")]
 pub mod scan_regions;
 #[cfg(feature = "editor")]
+pub mod source_loader;
+#[cfg(feature = "editor")]
+mod source_metadata;
+#[cfg(feature = "editor")]
 pub mod source_provider;
 #[cfg(any(feature = "project", feature = "raw"))]
 mod source_revision;

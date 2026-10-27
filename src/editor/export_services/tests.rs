@@ -1,7 +1,7 @@
 use super::*;
 use crate::editor::{
-    development,
     export_batch::{Draft, Kind, Scope},
+    source_loader,
     tests::authored_fixture,
 };
 use std::sync::atomic::AtomicUsize;
@@ -27,12 +27,13 @@ fn a_cached_renderer_failure_stops_before_acquiring_later_photos() {
     let mut services = editor.export_services.take().unwrap();
     let acquisitions = Arc::new(AtomicUsize::new(0));
     let observed = acquisitions.clone();
-    services.sources.developments = development::Scheduler::new_observed(move |_, phase, _| {
-        if matches!(phase, development::NativePhase::Open) {
-            observed.fetch_add(1, Ordering::Relaxed);
-        }
-        Ok(())
-    });
+    services.sources.developments =
+        source_loader::SourceLoader::new_observed(move |_, phase, _| {
+            if matches!(phase, source_loader::NativePhase::Open) {
+                observed.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(())
+        });
     let cache = Arc::new(crate::renderer::RendererCache::new(
         services.submissions.clone(),
     ));

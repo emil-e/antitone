@@ -48,7 +48,7 @@ The supported format is **schema 12 with processing model 5**. Unsupported schem
 
 A source records its developed precision floor (including shading and WB-normalization amplification), while project calibration retains the separate native one-code base floor; each corrected source records a lens-development identity, and a flat reference requires an exact lens-development match. DNG development has a separate SDK/backend contract with canonical fixed RGB WB and per-source interpretation identity — SDK rejection never falls back to LibRaw.
 
-Antitone does not hash the RAW file to establish photograph identity. Selected development metadata identifies its interpretation; cheap file revisions tell disposable caches when to refresh, but do not establish capture identity. Missing or incompatible **ordered** sources reject Open; a missing flat-field reference does not block opening the project because the accepted map remains usable. Files containing other nonordered records are pruned on open to ordered photos and the accepted flat-field reference. Recovery and relinking UI are not implemented.
+Antitone does not hash the RAW file to establish photograph identity. Selected development metadata identifies its interpretation; file revisions captured at Import/Open validate disposable persisted caches. Open RAWs are treated as immutable for the session; reopening captures identity again. Missing or incompatible **ordered** sources reject Open; a missing flat-field reference does not block opening the project because the accepted map remains usable. Files containing other nonordered records are pruned on open to ordered photos and the accepted flat-field reference. Recovery and relinking UI are not implemented.
 
 ## Prepare before replacing
 

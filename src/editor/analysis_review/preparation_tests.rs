@@ -40,12 +40,12 @@ pub(in crate::editor) fn request() -> (analysis::Request, tempfile::TempDir, wgp
     )
 }
 
-pub(in crate::editor) fn observed() -> (development::Scheduler, Arc<AtomicUsize>) {
+pub(in crate::editor) fn observed() -> (source_loader::SourceLoader, Arc<AtomicUsize>) {
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
     (
-        development::Scheduler::new_observed(move |_, phase, _| {
-            if matches!(phase, development::NativePhase::DevelopBegin) {
+        source_loader::SourceLoader::new_observed(move |_, phase, _| {
+            if matches!(phase, source_loader::NativePhase::DevelopBegin) {
                 observed.fetch_add(1, Ordering::Relaxed);
             }
             Ok(())
@@ -108,35 +108,6 @@ fn scratch_and_unavailable_storage_produce_identical_areas_without_additional_na
     assert_eq!(cached.files, uncached.files);
     assert_eq!(request.document.project, before);
     assert_eq!(request.document.cache().charges().retained, 0);
-}
-
-#[test]
-fn source_revision_changes_between_capture_and_scratch_consumption_reject() {
-    use std::io::Write;
-    let (request, _directory, device) = request();
-    let before = request.document.project.clone();
-    let path = request.document.source_path(request.selected).unwrap();
-    let (scheduler, count) = observed();
-    let result = prepare(
-        &request,
-        &AtomicU64::new(1),
-        &scheduler,
-        &device,
-        |index, total| {
-            if index == total / 2 {
-                std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(&path)
-                    .unwrap()
-                    .write_all(&[0])
-                    .unwrap();
-            }
-        },
-    );
-    scheduler.close_and_wait().unwrap();
-    assert!(result.err().unwrap().to_string().contains("source changed"));
-    assert_eq!(count.load(Ordering::Relaxed), 2);
-    assert_eq!(request.document.project, before);
 }
 
 #[test]

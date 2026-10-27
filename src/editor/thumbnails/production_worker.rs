@@ -1,6 +1,6 @@
 use super::*;
 use crate::scan::DevelopedSource;
-use crate::source_provider::{SourceCache, SourceLoader, SourceProvider};
+use crate::source_provider::{SourceCache, SourceProvider};
 
 enum Input {
     Proxy(Arc<Proxy>),
@@ -29,7 +29,7 @@ struct Worker {
     generation: Arc<std::sync::atomic::AtomicU64>,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
-    developments: development::Scheduler,
+    developments: source_loader::SourceLoader,
     kernels: std::sync::OnceLock<Result<Arc<crate::gpu::view::ViewKernels>, Error>>,
 }
 
@@ -46,7 +46,7 @@ impl Worker {
         let cache_hit = cached.is_some();
         let mut metrics = ThumbnailMetrics::default();
         let input = (|| {
-            if !self.active(&job) || FileKey::new(&job.path) != job.key.source.file {
+            if !self.active(&job) {
                 return Ok(Input::Retired);
             }
             let positive = job.render && matches!(&job.key.recipe, Ok(Some(_)));
@@ -94,10 +94,11 @@ impl Worker {
                 job.key.source.file.clone(),
                 &job.source.development,
             );
-            let loader = SourceLoader::from_scheduler(self.developments.clone(), job.priority);
+            let loader = self.developments.clone();
             let provider = SourceCache::new(loader, job.store.clone());
+            let priority = job.priority;
             Ok(Input::Loading(Box::pin(async move {
-                provider.load_source(key).await
+                provider.load_source(key, priority).await
             })))
         })();
         Work {
@@ -271,7 +272,7 @@ impl Worker {
                     let tick = std::time::Instant::now();
                     document::verify_scan(&job.source, &scan)?;
                     work.metrics.verification_seconds = tick.elapsed().as_secs_f64();
-                    if job.store.is_closed() || FileKey::new(&job.path) != job.key.source.file {
+                    if job.store.is_closed() {
                         return Ok(None);
                     }
                     if let Some(key) = job.key.source.store_key_at(&job.path)
@@ -311,7 +312,7 @@ impl Worker {
                     .prepare_proxy(&key, recipe.neutral.input, &proxy)?;
             }
             // Proper CPU/disk completion is document demand, not the disposable GPU ticket.
-            if job.store.is_closed() || FileKey::new(&job.path) != job.key.source.file {
+            if job.store.is_closed() {
                 return Ok(None);
             }
             if let Some(key) = job.key.source.store_key_at(&job.path)
@@ -382,7 +383,7 @@ pub(super) fn worker(
     generation: Arc<std::sync::atomic::AtomicU64>,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
-    developments: development::Scheduler,
+    developments: source_loader::SourceLoader,
 ) {
     let worker = Worker {
         device,

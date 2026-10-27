@@ -269,17 +269,17 @@ fn profile_complete_roll_area_preparation() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let observed = events.clone();
         let guard = monitor.clone();
-        let scheduler = development::Scheduler::new_observed(move |path, phase, metadata| {
+        let scheduler = source_loader::SourceLoader::new_observed(move |path, phase, metadata| {
             within_limit(start, &guard)?;
             if let Some(m) = metadata {
                 cache_observation::source_bound(m)?;
             }
             let phase = match phase {
-                development::NativePhase::Open => "open",
-                development::NativePhase::UnpackBegin => "unpack_begin",
-                development::NativePhase::UnpackEnd => "unpack_end",
-                development::NativePhase::DevelopBegin => "develop_begin",
-                development::NativePhase::DevelopEnd => "develop_end",
+                source_loader::NativePhase::Open => "open",
+                source_loader::NativePhase::UnpackBegin => "unpack_begin",
+                source_loader::NativePhase::UnpackEnd => "unpack_end",
+                source_loader::NativePhase::DevelopBegin => "develop_begin",
+                source_loader::NativePhase::DevelopEnd => "develop_end",
             };
             observed.lock().unwrap().push(NativeEvent {
                 file: path.file_name().unwrap().to_string_lossy().into_owned(),

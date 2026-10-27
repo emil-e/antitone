@@ -45,7 +45,7 @@ fn request(name: &str) -> (Document, Request) {
 #[test]
 fn acquisition_preserves_source_identity_precision_and_pixels_without_editor_or_gpu() {
     let (document, request) = request("patches.dng");
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     let developed = request.load(&scheduler, &|| false).unwrap();
     let context = developed.context;
     assert_eq!(document.cache().charges().retained, 0);
@@ -86,7 +86,7 @@ fn incompatible_requests_reject_without_rewriting_document_authority() {
     let (document, mut request) = request("patches.dng");
     let accepted = document.project.clone();
     request.expected.as_mut().unwrap().development.camera_model = "different camera".into();
-    let scheduler = development::Scheduler::new();
+    let scheduler = source_loader::SourceLoader::new();
     assert!(request.load(&scheduler, &|| false).is_err());
     assert_eq!(document.project, accepted);
     assert_eq!(document.cache().charges().retained, 0);
@@ -100,8 +100,8 @@ fn native_wait_retires_on_cancellation_or_store_close_before_the_native_call_ret
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
         let resume = Mutex::new(resume);
-        let scheduler = development::Scheduler::new_observed(move |_, phase, _| {
-            if matches!(phase, development::NativePhase::UnpackBegin) {
+        let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
+            if matches!(phase, source_loader::NativePhase::UnpackBegin) {
                 entered.send(()).unwrap();
                 resume
                     .lock()
@@ -143,7 +143,7 @@ fn a_closed_or_cancelled_request_cannot_start_native_work() {
         let (document, request) = request("patches.dng");
         let entered = Arc::new(AtomicBool::new(false));
         let observed = entered.clone();
-        let scheduler = development::Scheduler::new_observed(move |_, _, _| {
+        let scheduler = source_loader::SourceLoader::new_observed(move |_, _, _| {
             observed.store(true, Ordering::Relaxed);
             Ok(())
         });
