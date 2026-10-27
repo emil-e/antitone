@@ -94,7 +94,7 @@ fn processing_input(
     photo: AdjustmentLayerSettings,
     scan: &Scan,
 ) -> ProcessingInput {
-    crate::gpu::GpuAdjustmentLayers::new(
+    crate::gpu::GpuPipeline::new(
         device,
         input,
         roll,
@@ -259,22 +259,9 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 saturation: 1.3,
                 ..Default::default()
             };
-            let snapshot = AdjustmentLayerSnapshot::new(vec![
-                crate::adjustment_layers::AdjustmentLayer::global(photo),
-            ])
-            .unwrap();
             let input = processing_input(&device, cal, roll, photo, &scan);
-            let view = RenderedView::new(
-                &device,
-                source.clone(),
-                cal,
-                roll,
-                snapshot.clone(),
-                &input,
-                OutputTarget::Srgb,
-                None,
-            )
-            .unwrap();
+            let view = RenderedView::new(&device, source.clone(), &input, OutputTarget::Srgb, None)
+                .unwrap();
             assert!(!view.in_flight());
             let buffer = view.graded.as_ref().unwrap().pixels.clone();
             view.ensure_submitted(&device, &queue, &gate, &context);
@@ -315,9 +302,6 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             let p3 = RenderedView::new(
                 &device,
                 source.clone(),
-                cal,
-                roll,
-                snapshot.clone(),
                 &input,
                 OutputTarget::DisplayP3,
                 Some(&view),
@@ -327,26 +311,6 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             p3.ensure_submitted(&device, &queue, &gate, &context);
             image(&device, &queue, &p3.image);
             assert_eq!(original, read(&device, &queue, &source.pixels));
-            let other = AdjustmentLayerSnapshot::new(vec![
-                crate::adjustment_layers::AdjustmentLayer::global(AdjustmentLayerSettings {
-                    exposure: 1.3,
-                    ..photo
-                }),
-            ])
-            .unwrap();
-            assert!(
-                RenderedView::new(
-                    &device,
-                    source.clone(),
-                    cal,
-                    roll,
-                    other,
-                    &input,
-                    OutputTarget::DisplayP3,
-                    Some(&p3)
-                )
-                .is_err()
-            );
             let changed_cal = Calibration {
                 dmin: cal.dmin * 1.01,
                 ..cal
@@ -356,12 +320,9 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 RenderedView::new(
                     &device,
                     source.clone(),
-                    changed_cal,
-                    roll,
-                    snapshot.clone(),
                     &changed_input,
                     OutputTarget::DisplayP3,
-                    Some(&p3)
+                    Some(&p3),
                 )
                 .is_err()
             );
@@ -386,17 +347,8 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 }),
             });
-            let partial = RenderedView::new(
-                &device,
-                partial,
-                cal,
-                roll,
-                snapshot,
-                &input,
-                OutputTarget::Srgb,
-                None,
-            )
-            .unwrap();
+            let partial =
+                RenderedView::new(&device, partial, &input, OutputTarget::Srgb, None).unwrap();
             partial.ensure_submitted(&device, &queue, &gate, &context);
             let actual = image(&device, &queue, &partial.image);
             assert_eq!(actual.last().unwrap()[3], 0.);

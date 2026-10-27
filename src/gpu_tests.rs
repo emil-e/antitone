@@ -85,7 +85,7 @@ fn layer_output_bounds_do_not_propagate_scratch_peaks_into_following_layers() {
     ])
     .unwrap();
     assert!(
-        GpuAdjustmentLayers::validate_limits(
+        GpuPipeline::validate_limits(
             &wgpu::Limits::default(),
             calibration,
             RollSettings::default(),
@@ -102,7 +102,7 @@ fn layer_output_bounds_do_not_propagate_scratch_peaks_into_following_layers() {
     };
     let snapshot = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(settings)]).unwrap();
     assert!(
-        GpuAdjustmentLayers::validate_limits(
+        GpuPipeline::validate_limits(
             &wgpu::Limits::default(),
             calibration,
             RollSettings::default(),

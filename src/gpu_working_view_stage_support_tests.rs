@@ -27,7 +27,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
         .unwrap();
         let snapshot = AdjustmentLayerSnapshot::new(vec![]).unwrap();
         let grade = Arc::new(
-            GpuAdjustmentLayers::new(
+            GpuPipeline::new(
                 &device,
                 InputSettings::Digital,
                 Default::default(),
@@ -70,17 +70,8 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 }),
             });
-            let view = RenderedView::new(
-                &device,
-                source,
-                InputSettings::Digital,
-                Default::default(),
-                snapshot.clone(),
-                &input,
-                OutputTarget::Srgb,
-                None,
-            )
-            .unwrap();
+            let view =
+                RenderedView::new(&device, source, &input, OutputTarget::Srgb, None).unwrap();
             view.ensure_submitted(
                 &device,
                 &queue,

@@ -171,7 +171,7 @@ fn exercise(
             let next = monitor.phase(case, || {
                 let snapshot = snapshot(&scan, local, edit)?;
                 let input: ProcessingInput = if local {
-                    Arc::new(GpuAdjustmentLayers::new(
+                    Arc::new(GpuPipeline::new(
                         device,
                         cal,
                         RollSettings::default(),
@@ -189,18 +189,7 @@ fn exercise(
                         &scan,
                     )
                 };
-                let make = |source, old| {
-                    RenderedView::new(
-                        device,
-                        source,
-                        cal,
-                        RollSettings::default(),
-                        snapshot.clone(),
-                        &input,
-                        target,
-                        old,
-                    )
-                };
+                let make = |source, old| RenderedView::new(device, source, &input, target, old);
                 let next = make(detail.clone(), previous.as_ref().map(|p| &p.0))?;
                 let background = make(underlay.clone(), previous.as_ref().map(|p| &p.1))?;
                 let visible = RenderedView::composite(

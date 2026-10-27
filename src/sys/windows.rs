@@ -1,4 +1,4 @@
-#[cfg(any(feature = "project", feature = "export"))]
+#[cfg(any(feature = "project", feature = "export", feature = "raw"))]
 use std::path::Path;
 
 #[cfg(feature = "raw")]
@@ -32,7 +32,7 @@ pub(crate) fn physical_memory() -> u64 {
     memory_status().map_or(0, |status| status.ullTotalPhys)
 }
 
-#[cfg(feature = "project")]
+#[cfg(any(feature = "project", feature = "raw"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FileIdentity {
     pub(crate) device: u64,
@@ -40,7 +40,7 @@ pub(crate) struct FileIdentity {
     pub(crate) changed: (i64, i64),
 }
 
-#[cfg(feature = "project")]
+#[cfg(any(feature = "project", feature = "raw"))]
 fn handle_identity(path: &Path) -> std::io::Result<FileIdentity> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -59,7 +59,7 @@ fn handle_identity(path: &Path) -> std::io::Result<FileIdentity> {
     })
 }
 
-#[cfg(feature = "project")]
+#[cfg(any(feature = "project", feature = "raw"))]
 pub(crate) fn file_identity(path: &Path) -> std::io::Result<FileIdentity> {
     handle_identity(path)
 }

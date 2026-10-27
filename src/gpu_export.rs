@@ -6,7 +6,7 @@ use crate::{
     export::{self, ExrPrecision, ImageSize, Overwrite},
     frame_raster::FrameRaster,
     geometry::{Composition, SourceRegion},
-    gpu::{GpuAdjustmentLayers, GpuFlatField, ProcessingSource, SourceGeometry, SubmissionGate},
+    gpu::{GpuFlatField, GpuPipeline, ProcessingSource, SourceGeometry, SubmissionGate},
     processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,

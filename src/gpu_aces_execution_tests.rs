@@ -518,7 +518,7 @@ fn performance_input(
         source
             .set_geometry(SourceGeometry::new([r.x, r.y, r.width, r.height], size).unwrap())
             .unwrap();
-        let grade = GpuAdjustmentLayers::new(
+        let grade = GpuPipeline::new(
             device,
             calibration,
             RollSettings::default(),

@@ -295,11 +295,34 @@ impl AdjustmentLayerSnapshot {
     }
 }
 
-/// Full scalar processing at original source pixel centres, before reconstruction.
+/// Photographic processing of working positives at original source pixel centres.
+#[derive(Debug, Clone)]
+pub struct GradingPipeline {
+    roll: crate::processing::RollPipeline,
+    layers: AdjustmentLayerStack,
+}
+
+impl GradingPipeline {
+    pub fn new(roll: RollSettings, grade: AdjustmentLayerSnapshot) -> Result<Self, Error> {
+        Ok(Self {
+            roll: crate::processing::RollPipeline::new(roll)?,
+            layers: grade.layers,
+        })
+    }
+
+    pub fn apply(&self, rgb: DVec3, source_pixel: [u32; 2]) -> Result<DVec3, Error> {
+        self.layers.apply_rgb(
+            self.roll.apply(rgb)?,
+            SourcePoint(source_pixel.map(|v| f64::from(v) + 0.5)),
+        )
+    }
+}
+
+/// Scalar composition of input interpretation and photographic grading before reconstruction.
 #[derive(Debug, Clone)]
 pub struct AdjustmentLayerPipeline {
     input: InputPipeline,
-    layers: AdjustmentLayerStack,
+    grading: GradingPipeline,
 }
 
 impl AdjustmentLayerPipeline {
@@ -310,28 +333,22 @@ impl AdjustmentLayerPipeline {
         camera_to_ap1: DMat3,
     ) -> Result<Self, Error> {
         Ok(Self {
-            input: InputPipeline::new(input, roll, camera_to_ap1)?,
-            layers: grade.layers,
+            input: InputPipeline::new(input, camera_to_ap1)?,
+            grading: GradingPipeline::new(roll, grade)?,
         })
     }
 
-    /// Grade absolute neutral AP1 at an original source pixel, retaining floor provenance.
     pub fn grade_neutral(
         &self,
-        pixel: InvertedPixel,
+        mut pixel: InvertedPixel,
         source_pixel: [u32; 2],
     ) -> Result<InvertedPixel, Error> {
-        self.layers.apply(
-            self.input.apply_roll(pixel)?,
-            SourcePoint(source_pixel.map(|v| f64::from(v) + 0.5)),
-        )
+        pixel.rgb = self.grading.apply(pixel.rgb, source_pixel)?;
+        Ok(pixel)
     }
 
     pub fn apply(&self, scan: DVec3, source_pixel: [u32; 2]) -> Result<InvertedPixel, Error> {
-        self.layers.apply(
-            self.input.apply(scan)?,
-            SourcePoint(source_pixel.map(|v| f64::from(v) + 0.5)),
-        )
+        self.grade_neutral(self.input.apply(scan)?, source_pixel)
     }
 }
 
@@ -355,7 +372,12 @@ impl AdjustmentLayerStack {
         mut pixel: InvertedPixel,
         point: SourcePoint,
     ) -> Result<InvertedPixel, Error> {
-        if !pixel.rgb.is_finite() {
+        pixel.rgb = self.apply_rgb(pixel.rgb, point)?;
+        Ok(pixel)
+    }
+
+    pub fn apply_rgb(&self, mut rgb: DVec3, point: SourcePoint) -> Result<DVec3, Error> {
+        if !rgb.is_finite() {
             return Err(Error::NumericalOverflow);
         }
         let point = source_point(point)?;
@@ -370,8 +392,8 @@ impl AdjustmentLayerStack {
             }
             let photo = weighted(photo, weight);
             let matrix = wb_matrix(photo.wb)? * exposure_multiplier(photo.exposure)?;
-            pixel.rgb = Grade::new(photo)?.apply(matrix * pixel.rgb)?;
+            rgb = Grade::new(photo)?.apply(matrix * rgb)?;
         }
-        Ok(pixel)
+        Ok(rgb)
     }
 }

@@ -1,3 +1,20 @@
+fn process_film(scan: vec3f) -> ProcessedPixel {
+    let positive = interpret_positive(scan);
+    return ProcessedPixel(
+            photographic_post(camera_positive_to_ap1(positive.rgb), 1.0),
+            positive.flags,
+        );
+}
+
+fn process_camera_source(scan: vec3f) -> vec4f {
+    let working = camera_positive_to_ap1(array<f32, 3>(scan.x, scan.y, scan.z));
+    return finish_pixel(ProcessedPixel(photographic_post(working, 1.0), 0u));
+}
+
+fn finish_pixel(pixel: ProcessedPixel) -> vec4f {
+    return vec4f(pixel.rgb[0], pixel.rgb[1], pixel.rgb[2], f32(pixel.flags));
+}
+
 struct Parameters {
     dmin_floor: vec4f,
     gamma_mode: vec4f,

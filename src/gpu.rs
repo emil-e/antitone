@@ -8,7 +8,13 @@ pub mod look;
 pub use flat::{GpuFlatField, SourceGeometry};
 #[path = "gpu_adjustment_layers.rs"]
 mod adjustment_layers;
-pub use adjustment_layers::GpuAdjustmentLayers;
+pub use adjustment_layers::GpuGrade;
+#[path = "gpu_input_program.rs"]
+mod input_program;
+pub use input_program::{GpuInputProgram, InputSignature};
+#[path = "gpu_pipeline.rs"]
+mod pipeline;
+pub use pipeline::GpuPipeline;
 
 #[cfg(any(
     feature = "editor",
@@ -66,7 +72,7 @@ use crate::processing::{
 };
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ProcessingParameters {
     dmin_floor: Vec4,
     gamma_mode: Vec4,
@@ -100,6 +106,19 @@ impl ProcessingParameters {
     /// Whether the result is a positive eligible for adjustment-layer grading.
     pub(crate) fn graded(&self) -> bool {
         self.stage != STAGE_SOURCE
+    }
+
+    // Working-view and repair entrypoints share this layout; only Roll fields are populated.
+    pub(super) fn photographic(roll: RollSettings) -> Result<Self, Error> {
+        let post = CameraMatrix::new(wb_matrix(roll.wb)?)?;
+        let gain = exposure_multiplier(roll.exposure)?;
+        let anchor = packed_constants(DVec3::ZERO, gain.ln())?;
+        Ok(Self {
+            post: post.columns,
+            anchor,
+            stage: STAGE_DIGITAL,
+            ..Self::zeroed()
+        })
     }
 
     pub fn source() -> Self {
@@ -339,6 +358,10 @@ impl ProcessingParameters {
     }
 }
 
+fn input_parameters(input: InputSettings, matrix: DMat3) -> Result<ProcessingParameters, Error> {
+    ProcessingParameters::interpret(input, RollSettings::default(), matrix)
+}
+
 fn packed_constants(value: DVec3, w: f64) -> Result<Vec4, Error> {
     let packed = value.as_vec3().extend(w as f32);
     if !packed.is_finite() {
@@ -554,6 +577,10 @@ impl ProcessingSource {
         self.input.size()
     }
 
+    pub(crate) fn pixel_count(&self) -> u32 {
+        self.pixels
+    }
+
     #[cfg(all(feature = "ui", feature = "render"))]
     pub(crate) fn geometry(&self) -> Option<SourceGeometry> {
         self.geometry
@@ -673,7 +700,7 @@ impl ProcessingKernel {
         encoder: &mut wgpu::CommandEncoder,
         source: &ProcessingSource,
         output: &wgpu::Buffer,
-        grade: &GpuAdjustmentLayers,
+        grade: &GpuPipeline,
     ) -> Result<(), Error> {
         grade.require_source(source)?;
         self.encode_resources(
@@ -682,7 +709,7 @@ impl ProcessingKernel {
             source,
             output,
             grade.parameters,
-            (&grade.buffer, &grade.context),
+            (&grade.grade.buffer, &grade.grade.context),
             #[cfg(test)]
             (None, None),
         );
@@ -696,7 +723,7 @@ impl ProcessingKernel {
         encoder: &mut wgpu::CommandEncoder,
         source: &ProcessingSource,
         output: &wgpu::Buffer,
-        grade: &GpuAdjustmentLayers,
+        grade: &GpuPipeline,
         queries: (&wgpu::QuerySet, u32),
     ) -> Result<(), Error> {
         grade.require_source(source)?;
@@ -706,7 +733,7 @@ impl ProcessingKernel {
             source,
             output,
             grade.parameters,
-            (&grade.buffer, &grade.context),
+            (&grade.grade.buffer, &grade.grade.context),
             (Some(queries), None),
         );
         Ok(())
@@ -851,6 +878,9 @@ mod execution_tests;
 #[cfg(test)]
 #[path = "gpu_flat_field_tests.rs"]
 mod flat_tests;
+#[cfg(test)]
+#[path = "gpu_input_grading_tests.rs"]
+mod input_grading_tests;
 #[cfg(test)]
 #[path = "gpu_tests.rs"]
 mod tests;

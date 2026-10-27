@@ -444,9 +444,9 @@ pub(super) fn evaluate_with<'a>(
     if cancelled() {
         return Ok(None);
     }
+    let source = crate::scan::ImageSource::new(scan, request.input)?;
     let Some(evaluated) = crate::repair_source::evaluate_with(
-        scan,
-        &request.input,
+        &source,
         &request.repair,
         &mut crate::dust_repair::Execution {
             screener,

@@ -30,7 +30,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             colour: 0.5,
         };
         let input = ProcessingInput::from(Arc::new(
-            GpuAdjustmentLayers::new(
+            GpuPipeline::new(
                 &device,
                 InputSettings::Digital,
                 Default::default(),
@@ -42,17 +42,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
         ))
         .with_film_emulation(settings)
         .with_film_seed(17);
-        let view = RenderedView::new(
-            &device,
-            source,
-            InputSettings::Digital,
-            Default::default(),
-            snapshot,
-            &input,
-            OutputTarget::Srgb,
-            None,
-        )
-        .unwrap();
+        let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None).unwrap();
         view.ensure_submitted(
             &device,
             &queue,

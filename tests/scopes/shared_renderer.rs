@@ -142,7 +142,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                         ),
                     ])
                     .and_then(|snapshot| {
-                        antitone::gpu::GpuAdjustmentLayers::new(
+                        antitone::gpu::GpuPipeline::new(
                             &device,
                             calibration,
                             RollSettings::default(),

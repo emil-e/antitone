@@ -360,7 +360,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                         .unwrap(),
                     ),
                     Some(
-                        GpuAdjustmentLayers::new(
+                        GpuPipeline::new(
                             &device,
                             input,
                             roll,

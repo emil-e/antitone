@@ -183,7 +183,7 @@ fn synthetic(near_base: bool) -> Dataset {
 
 enum ProcessingCase {
     Source(ProcessingParameters),
-    Layers(antitone::gpu::GpuAdjustmentLayers),
+    Layers(antitone::gpu::GpuPipeline),
 }
 
 struct Gpu {
@@ -554,7 +554,7 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
                 antitone::adjustment_layers::AdjustmentLayer::global(photo),
             ])
             .and_then(|snapshot| {
-                antitone::gpu::GpuAdjustmentLayers::new(
+                antitone::gpu::GpuPipeline::new(
                     &gpu.device,
                     cal,
                     roll,

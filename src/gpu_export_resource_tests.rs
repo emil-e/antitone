@@ -150,7 +150,7 @@ fn exercise(
         )
         .map_err(|e| e.to_string())?;
         let input: ProcessingInput = Arc::new(
-            GpuAdjustmentLayers::new(
+            GpuPipeline::new(
                 device,
                 adjusted,
                 roll,
@@ -211,17 +211,8 @@ fn exercise(
             .ok_or("source acquisition stopped")?;
         let mut rendered = Vec::new();
         for source in &sources {
-            let view = RenderedView::new(
-                device,
-                source.clone(),
-                adjusted,
-                roll,
-                snapshot.clone(),
-                &input,
-                OutputTarget::Srgb,
-                None,
-            )
-            .map_err(|e| e.to_string())?;
+            let view = RenderedView::new(device, source.clone(), &input, OutputTarget::Srgb, None)
+                .map_err(|e| e.to_string())?;
             view.ensure_submitted(device, queue, &gate, &context);
             rendered.push(view);
         }
@@ -408,7 +399,7 @@ fn exercise(
                             .chain(snapshot.layers().to_vec())
                             .collect(),
                         )?;
-                        let edited_input: ProcessingInput = Arc::new(GpuAdjustmentLayers::new(
+                        let edited_input: ProcessingInput = Arc::new(GpuPipeline::new(
                             device,
                             adjusted,
                             roll,
@@ -420,9 +411,6 @@ fn exercise(
                         let updated = RenderedView::new(
                             device,
                             sources[0].clone(),
-                            adjusted,
-                            roll,
-                            edited,
                             &edited_input,
                             OutputTarget::Srgb,
                             Some(&rendered[0]),
@@ -581,8 +569,8 @@ fn write_reference(
             .iter()
             .find(|repair| repair.support().contains([x, y]))
         {
-            let mut pixel = crate::processing::InputPipeline::ungraded(input, scan.camera_to_ap1)?
-                .apply(sample)?;
+            let mut pixel =
+                crate::processing::InputPipeline::new(input, scan.camera_to_ap1)?.apply(sample)?;
             pixel.rgb = glam::DVec3::from_array(repair.pixel([x, y], [0.; 3]).map(f64::from));
             pipeline.grade_neutral(pixel, [x, y])?.rgb
         } else {

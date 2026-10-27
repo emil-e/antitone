@@ -6,12 +6,10 @@ use antitone::{
     flat_field::FlatField,
     geometry::{SourcePoint, SourceRaster, SourceRegion},
     gpu::{
-        GpuAdjustmentLayers, GpuFlatField, ProcessingKernel, ProcessingParameters,
-        ProcessingSource, SourceGeometry,
+        GpuFlatField, GpuPipeline, ProcessingKernel, ProcessingParameters, ProcessingSource,
+        SourceGeometry,
     },
-    processing::{
-        Calibration, DEFAULT_GAMMA, InputPipeline, InputSettings, Response, RollSettings,
-    },
+    processing::{Calibration, DEFAULT_GAMMA, InputSettings, Pipeline, Response, RollSettings},
 };
 use glam::{DMat3, DVec2, DVec3};
 use std::sync::Arc;
@@ -102,7 +100,7 @@ fn read(
     kernel: &ProcessingKernel,
     source: &ProcessingSource,
     n: usize,
-    grade: &GpuAdjustmentLayers,
+    grade: &GpuPipeline,
     legacy: Option<ProcessingParameters>,
 ) -> Vec<[f32; 4]> {
     let size = n as u64 * 16;
@@ -225,7 +223,7 @@ fn assert_reference(
     pixels: &[[u16; 4]],
     raster: SourceRaster,
     snapshot: &AdjustmentLayerSnapshot,
-    global: InputPipeline,
+    global: Pipeline,
     field: Option<&FlatField>,
 ) {
     let mut signed = false;
@@ -355,7 +353,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
                 .collect(),
             )
             .unwrap();
-            let grade = GpuAdjustmentLayers::new(
+            let grade = GpuPipeline::new(
                 &device,
                 calibration(),
                 RollSettings::default(),
@@ -379,7 +377,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
                 &pixels,
                 SourceRaster::new(area, size).unwrap(),
                 &snapshot,
-                InputPipeline::new(calibration(), RollSettings::default(), matrix()).unwrap(),
+                Pipeline::new(calibration(), RollSettings::default(), matrix()).unwrap(),
                 corrected.then_some(field.as_ref()),
             );
         }
@@ -425,7 +423,7 @@ fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
         ),
     ])
     .unwrap();
-    let grade = GpuAdjustmentLayers::new(
+    let grade = GpuPipeline::new(
         &device,
         calibration(),
         roll,
@@ -449,7 +447,7 @@ fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
         &pixels,
         SourceRaster::new(area, size).unwrap(),
         &snapshot,
-        InputPipeline::new(calibration(), roll, matrix()).unwrap(),
+        Pipeline::new(calibration(), roll, matrix()).unwrap(),
         None,
     );
 }
@@ -522,17 +520,12 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
         )
         .unwrap();
         for matrix in [DMat3::IDENTITY, matrix()] {
-            let grade = GpuAdjustmentLayers::new(
-                &device,
-                input,
-                roll,
-                snapshot.clone(),
-                matrix,
-                area,
-            )
-            .unwrap_or_else(|error| {
-                panic!("gamma={gamma} global={global:?} count={count} matrix={matrix:?}: {error}")
-            });
+            let grade = GpuPipeline::new(&device, input, roll, snapshot.clone(), matrix, area)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "gamma={gamma} global={global:?} count={count} matrix={matrix:?}: {error}"
+                    )
+                });
             let (source, pixels) = source(&device, area, size, matrix, None);
             let actual = read(
                 &device,
@@ -548,7 +541,7 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
                 &pixels,
                 SourceRaster::new(area, size).unwrap(),
                 &snapshot,
-                InputPipeline::new(input, roll, matrix).unwrap(),
+                Pipeline::new(input, roll, matrix).unwrap(),
                 None,
             );
         }
@@ -644,8 +637,7 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                 .collect(),
             )
             .unwrap();
-            let grade =
-                GpuAdjustmentLayers::new(&device, cal, roll, snapshot, matrix(), area).unwrap();
+            let grade = GpuPipeline::new(&device, cal, roll, snapshot, matrix(), area).unwrap();
             let actual = read(
                 &device,
                 &queue,
@@ -655,7 +647,7 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                 &grade,
                 None,
             );
-            let global = InputPipeline::new(cal, roll, matrix()).unwrap();
+            let global = Pipeline::new(cal, roll, matrix()).unwrap();
             let mut signed = false;
             let mut hdr = false;
             for (i, pixel) in pixels.iter().enumerate() {
@@ -715,7 +707,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             global,
         )])
         .unwrap();
-    let prepared = GpuAdjustmentLayers::new(
+    let prepared = GpuPipeline::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -739,7 +731,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
         &pixels,
         SourceRaster::new(area, [8, 8]).unwrap(),
         &empty,
-        InputPipeline::new(calibration(), RollSettings::default(), matrix()).unwrap(),
+        Pipeline::new(calibration(), RollSettings::default(), matrix()).unwrap(),
         None,
     );
     let bits = |pixels: &[[f32; 4]]| {
@@ -779,7 +771,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             a,
         ])
         .unwrap();
-        let prepared = GpuAdjustmentLayers::new(
+        let prepared = GpuPipeline::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -852,7 +844,7 @@ fn source_centres_at_nonzero_origins_preserve_fractional_mask_geometry() {
                 ),
             ])
             .unwrap();
-        let grade = GpuAdjustmentLayers::new(
+        let grade = GpuPipeline::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -875,7 +867,7 @@ fn source_centres_at_nonzero_origins_preserve_fractional_mask_geometry() {
             &pixels,
             SourceRaster::new(area, size).unwrap(),
             &snapshot,
-            InputPipeline::new(calibration(), RollSettings::default(), matrix()).unwrap(),
+            Pipeline::new(calibration(), RollSettings::default(), matrix()).unwrap(),
             None,
         );
     }
@@ -922,7 +914,7 @@ fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
         ),
     ])
     .unwrap();
-    let grade = GpuAdjustmentLayers::new(
+    let grade = GpuPipeline::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -1010,15 +1002,9 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
                 adjustment(mask, photo),
             ])
             .unwrap();
-            let prepared = GpuAdjustmentLayers::new(
-                &device,
-                input,
-                roll,
-                snapshot.clone(),
-                camera_matrix,
-                area,
-            )
-            .unwrap();
+            let prepared =
+                GpuPipeline::new(&device, input, roll, snapshot.clone(), camera_matrix, area)
+                    .unwrap();
             let actual = read(
                 &device,
                 &queue,
@@ -1033,7 +1019,7 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
                 &pixels,
                 SourceRaster::new(area, [8, 8]).unwrap(),
                 &snapshot,
-                InputPipeline::new(input, roll, camera_matrix).unwrap(),
+                Pipeline::new(input, roll, camera_matrix).unwrap(),
                 None,
             );
         }
@@ -1069,7 +1055,7 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
         .collect(),
     )
     .unwrap();
-    let grade = GpuAdjustmentLayers::new(
+    let grade = GpuPipeline::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -1078,7 +1064,7 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
         area,
     )
     .unwrap();
-    let identity = GpuAdjustmentLayers::new(
+    let identity = GpuPipeline::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -1133,7 +1119,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     );
     let stack = AdjustmentLayerSnapshot::new(vec![active; 16]).unwrap();
     assert!(
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -1161,7 +1147,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     ])
     .unwrap();
     assert!(
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -1172,7 +1158,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
         .is_err()
     );
     let grade =
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             &device,
             calibration(),
             RollSettings::default(),

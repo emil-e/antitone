@@ -170,6 +170,30 @@ impl GpuImage {
         .await
     }
 
+    pub(crate) async fn from_source_shared(
+        renderer: &Arc<GpuRenderer>,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        source: ProcessingSource,
+        target: OutputTarget,
+    ) -> Result<Self, Error> {
+        if width.checked_mul(height) != Some(source.pixel_count()) {
+            return Err(Error::Gpu(
+                "source dimensions do not match the GPU image".into(),
+            ));
+        }
+        Self::create(
+            device,
+            width,
+            height,
+            Some((renderer.clone(), ImageSource::Owned(Box::new(source)))),
+            renderer.display.clone(),
+            target,
+        )
+        .await
+    }
+
     pub async fn new_rendered(
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
@@ -457,7 +481,7 @@ impl GpuImage {
                 .expect("validated raster geometry");
             let pipeline = input.pixel_pipeline(
                 input
-                    .grade()
+                    .pipeline()
                     .map_or(geometry.region().height, |grade| grade.area().height),
             )?;
             let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
@@ -468,7 +492,7 @@ impl GpuImage {
         } else {
             None
         };
-        match input.grade() {
+        match input.pipeline() {
             Some(grade) => processing.renderer.kernel.encode_grade(
                 device,
                 encoder,

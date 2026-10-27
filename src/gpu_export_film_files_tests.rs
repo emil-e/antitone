@@ -208,7 +208,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
     ])
     .unwrap();
     let grade = Arc::new(
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             &device,
             InputSettings::Digital,
             Default::default(),

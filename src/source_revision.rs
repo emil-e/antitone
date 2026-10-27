@@ -1,18 +1,20 @@
+#[cfg(feature = "project")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "raw")]
 use std::path::PathBuf;
 use std::{path::Path, time::SystemTime};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "project", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub struct FileRevision {
     pub(crate) bytes: u64,
     pub(crate) modified: SystemTime,
-    #[serde(default)]
+    #[cfg_attr(feature = "project", serde(default))]
     pub(crate) device: u64,
-    #[serde(default)]
+    #[cfg_attr(feature = "project", serde(default))]
     pub(crate) inode: u64,
-    #[serde(default)]
+    #[cfg_attr(feature = "project", serde(default))]
     pub(crate) changed: (i64, i64),
 }
 
@@ -32,8 +34,9 @@ impl FileRevision {
 
 /// Disposable freshness, not photograph identity or permission to accept a grade.
 #[cfg(feature = "raw")]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "project", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "project", serde(deny_unknown_fields))]
 pub(crate) struct FileKey {
     pub(crate) path: PathBuf,
     pub(crate) revision: Option<FileRevision>,

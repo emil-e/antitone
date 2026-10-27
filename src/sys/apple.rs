@@ -1,4 +1,4 @@
-#[cfg(any(feature = "project", feature = "export"))]
+#[cfg(any(feature = "project", feature = "export", feature = "raw"))]
 use std::path::Path;
 
 #[cfg(feature = "raw")]
@@ -40,7 +40,7 @@ fn sysctl<T: Default>(name: &std::ffi::CStr) -> Option<T> {
     (status == 0 && size == std::mem::size_of::<T>()).then_some(value)
 }
 
-#[cfg(feature = "project")]
+#[cfg(any(feature = "project", feature = "raw"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FileIdentity {
     pub(crate) device: u64,
@@ -48,7 +48,7 @@ pub(crate) struct FileIdentity {
     pub(crate) changed: (i64, i64),
 }
 
-#[cfg(feature = "project")]
+#[cfg(any(feature = "project", feature = "raw"))]
 pub(crate) fn file_identity(path: &Path) -> std::io::Result<FileIdentity> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::metadata(path)?;

@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     gpu::SubmissionGate,
     looks::{LookAsset, LookOrigin, Lut3D},
-    processing::InputPipeline,
+    processing::Pipeline,
     rendering::CpuRenderer,
 };
 use glam::{DMat3, DVec3, Vec3};
@@ -198,7 +198,7 @@ fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
             for selected in [None, Some(look.clone())] {
                 document.project.output.look = selected.clone();
                 let recipe = document.project.image_recipe(id).unwrap();
-                let pipeline = InputPipeline::new(
+                let pipeline = Pipeline::new(
                     recipe.neutral.processing_input().unwrap(),
                     recipe.roll,
                     DMat3::IDENTITY,

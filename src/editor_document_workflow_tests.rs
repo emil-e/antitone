@@ -200,10 +200,7 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
 
 #[test]
 fn input_switch_clears_live_correction_atomically_and_history_restores_activation() {
-    use crate::{
-        flat_field::FlatField, gpu::ProcessingParameters, processing::InputSettings,
-        project::FlatFieldSettings,
-    };
+    use crate::{flat_field::FlatField, processing::InputSettings, project::FlatFieldSettings};
     let scheduler = development::Scheduler::new();
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
@@ -323,10 +320,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
     scheduler.close_and_wait().unwrap();
 
     fn digital_proxy_pixels(e: &Editor, ready: &crate::editor::Ready) -> Vec<[f32; 4]> {
-        use crate::{
-            adjustment_layers::AdjustmentLayerSnapshot,
-            gpu::view::{RenderedView, ViewKernels, ViewSourceSpec},
-        };
+        use crate::gpu::view::{RenderedView, ViewKernels, ViewSourceSpec};
         let services = e.source_services.as_ref().unwrap();
         let (device, queue) = (&services.device, &services.queue);
         let composition =
@@ -344,24 +338,18 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 spec,
             )
             .unwrap();
-        let parameters =
-            ProcessingParameters::interpret(InputSettings::Digital, Default::default(), matrix)
-                .unwrap()
-                .into();
-        let view = RenderedView::new(
-            device,
-            source,
-            InputSettings::Digital,
-            Default::default(),
-            AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
+        let parameters = crate::gpu::ProcessingInput::from(Arc::new(
+            crate::gpu::GpuPipeline::new(
+                device,
+                InputSettings::Digital,
                 Default::default(),
-            )])
+                crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                matrix,
+                ready.area,
+            )
             .unwrap(),
-            &parameters,
-            e.target,
-            None,
-        )
-        .unwrap();
+        ));
+        let view = RenderedView::new(device, source, &parameters, e.target, None).unwrap();
         view.ensure_submitted(device, queue, &e.submissions, &egui::Context::default());
         crate::viewer::readback::image_pixels(device, queue, &view.image)
     }

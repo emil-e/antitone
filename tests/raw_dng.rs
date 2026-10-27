@@ -365,7 +365,7 @@ fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_sourc
 fn authored_export_image() -> (antitone::export::ImageSize, Vec<DVec3>) {
     use antitone::{
         export::ImageSize,
-        processing::{Calibration, InputPipeline, InputSettings},
+        processing::{Calibration, InputSettings, Pipeline},
     };
     let mut scan = Scan::open(&fixture(), Some(WB)).unwrap();
     let calibration = Calibration {
@@ -389,7 +389,7 @@ fn authored_export_image() -> (antitone::export::ImageSize, Vec<DVec3>) {
     };
     let roll = antitone::processing::RollSettings::default();
     let input = InputSettings::negative(calibration);
-    let pipeline = InputPipeline::new(input, roll, scan.camera_to_ap1).unwrap();
+    let pipeline = Pipeline::new(input, roll, scan.camera_to_ap1).unwrap();
     let mut working = Vec::new();
     for y in scan.area.y..scan.area.y + scan.area.height {
         for x in scan.area.x..scan.area.x + scan.area.width {

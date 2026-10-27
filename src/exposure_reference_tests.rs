@@ -11,7 +11,7 @@ fn normalized_ap1_precedes_repairs_and_is_not_normalized_again_by_grading() {
     let physical = DMat3::from_diagonal(DVec3::new(0.8, 1.2, 0.7));
     let camera = physical.inverse() * DVec3::splat(0.045);
     let matrix = physical * 4.;
-    let ungraded = InputPipeline::ungraded(input, matrix)
+    let ungraded = InputPipeline::new(input, matrix)
         .unwrap()
         .apply(camera)
         .unwrap();
@@ -157,7 +157,7 @@ fn normalization_scale_does_not_make_well_conditioned_source_transforms_singular
     for gain in [2_f64.powi(-16), 2_f64.powi(-14), 1., 2_f64.powi(16)] {
         let matrix = DMat3::IDENTITY * gain;
         validate_camera_matrix(matrix).unwrap();
-        let pipeline = InputPipeline::ungraded(InputSettings::Digital, matrix).unwrap();
+        let pipeline = InputPipeline::new(InputSettings::Digital, matrix).unwrap();
         let expected = DVec3::splat(0.18 * gain);
         assert!(
             (pipeline.apply(DVec3::splat(0.18)).unwrap().rgb - expected)

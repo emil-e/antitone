@@ -264,7 +264,7 @@ fn paired_kernel_variants() {
                 None
             } else {
                 Some(
-                    GpuAdjustmentLayers::new(
+                    GpuPipeline::new(
                         &device,
                         calibration,
                         RollSettings::default(),

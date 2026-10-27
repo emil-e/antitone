@@ -1,6 +1,6 @@
 #[cfg(all(feature = "ui", feature = "render"))]
 use super::ProcessingSource;
-use super::{GpuAdjustmentLayers, ProcessingParameters};
+use super::{GpuPipeline, ProcessingParameters};
 #[cfg(all(feature = "ui", feature = "render"))]
 use crate::Error;
 use crate::film_emulation::FilmEmulationSettings;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 /// Immutable processing input shared by image consumers, never their mutable image storage.
 ///
-/// A complete grade is always a [`GpuAdjustmentLayers`], which owns the semantic
+/// Positive execution composes input and grading in a [`GpuPipeline`], retaining the semantic
 /// [`crate::adjustment_layers::AdjustmentLayerSnapshot`] it was compiled from. Bare
 /// [`ProcessingParameters`] are reserved for source inspection and low-level GPU fixtures;
 /// they are not an alternative grade representation.
@@ -25,7 +25,7 @@ pub struct ProcessingInput {
 #[derive(Clone)]
 enum Processing {
     Parameters(Arc<ProcessingParameters>),
-    Grade(Arc<GpuAdjustmentLayers>),
+    Grade(Arc<GpuPipeline>),
 }
 
 impl From<ProcessingParameters> for ProcessingInput {
@@ -41,8 +41,8 @@ impl From<ProcessingParameters> for ProcessingInput {
     }
 }
 
-impl From<Arc<GpuAdjustmentLayers>> for ProcessingInput {
-    fn from(grade: Arc<GpuAdjustmentLayers>) -> Self {
+impl From<Arc<GpuPipeline>> for ProcessingInput {
+    fn from(grade: Arc<GpuPipeline>) -> Self {
         Self {
             processing: Processing::Grade(grade),
             look: None,
@@ -147,7 +147,11 @@ impl ProcessingInput {
         }
     }
 
-    pub(crate) fn grade(&self) -> Option<&GpuAdjustmentLayers> {
+    pub(crate) fn grade(&self) -> Option<&super::GpuGrade> {
+        self.pipeline().map(|pipeline| pipeline.grade.as_ref())
+    }
+
+    pub(crate) fn pipeline(&self) -> Option<&GpuPipeline> {
         match &self.processing {
             Processing::Parameters(_) => None,
             Processing::Grade(grade) => Some(grade),
@@ -159,7 +163,7 @@ impl ProcessingInput {
 #[derive(Clone)]
 pub struct ProcessingSignature {
     parameters: [u8; ProcessingParameters::BYTE_LEN],
-    grade: Option<Arc<GpuAdjustmentLayers>>,
+    grade: Option<Arc<GpuPipeline>>,
     look: Option<crate::looks::LookId>,
     film_emulation: FilmEmulationSettings,
     film_seed: Option<u64>,

@@ -118,8 +118,8 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
     assert_eq!(recipe.repairs().len(), 2);
     assert!(
         crate::repair_source::evaluate(
-            &scan,
-            &recipe.neutral.processing_input().unwrap(),
+            &crate::scan::ImageSource::new(&scan, recipe.neutral.processing_input().unwrap())
+                .unwrap(),
             &recipe.repairs()[1]
         )
         .is_err(),

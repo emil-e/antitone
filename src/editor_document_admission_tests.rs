@@ -112,7 +112,7 @@ fn complete_stack_preflight_is_read_only_with_adapter_or_default_limits() {
         uncalibrated.validate_for_device(&device).unwrap();
         uncalibrated.validate().unwrap();
         assert!(
-            crate::gpu::GpuAdjustmentLayers::new(
+            crate::gpu::GpuPipeline::new(
                 &device,
                 uncalibrated.project.input,
                 uncalibrated.project.roll,
@@ -397,8 +397,8 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
             .unwrap();
         assert!(std::ptr::eq(
-            accepted.grade().unwrap(),
-            current.grade().unwrap()
+            accepted.pipeline().unwrap(),
+            current.pipeline().unwrap()
         ));
     });
 }

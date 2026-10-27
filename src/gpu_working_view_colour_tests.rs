@@ -64,7 +64,7 @@ fn render_with_basis(
 ) -> Arc<RenderedView> {
     let settings = input.into();
     let grade = Arc::new(
-        GpuAdjustmentLayers::new(
+        GpuPipeline::new(
             device,
             settings,
             roll,
@@ -75,10 +75,7 @@ fn render_with_basis(
         .unwrap(),
     );
     let input = ProcessingInput::from(grade);
-    let view = RenderedView::new(
-        device, source, settings, roll, snapshot, &input, target, None,
-    )
-    .unwrap();
+    let view = RenderedView::new(device, source, &input, target, None).unwrap();
     view.ensure_submitted(
         device,
         queue,

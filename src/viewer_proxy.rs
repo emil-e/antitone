@@ -80,6 +80,7 @@ impl GpuProxy {
         self.0.matrix
     }
 
+    #[cfg(feature = "editor")]
     pub(crate) fn view_source(
         &self,
         queue: &wgpu::Queue,

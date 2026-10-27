@@ -309,7 +309,7 @@ impl Editor {
             .proxy
             .image(self.target)
             .map_err(|_| "View unavailable")?;
-        if parameters.grade().is_some() {
+        if parameters.pipeline().is_some() {
             image
                 .require_processing(&parameters)
                 .map_err(|_| "Positive grade unavailable")?;

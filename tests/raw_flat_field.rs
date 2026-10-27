@@ -248,7 +248,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     use antitone::{
         color::ap1_to_ap0,
         export::{self, ExrPrecision, ImageSize, Overwrite},
-        processing::{InputPipeline, InputSettings, RollSettings},
+        processing::{InputSettings, Pipeline, RollSettings},
         profiles,
         rendering::{CpuRenderer, OutputTarget},
     };
@@ -256,7 +256,7 @@ fn authored_corrected_dng_exports_reopen_in_rgb16_and_ap0() {
     let anchors = calibration(&mut scan);
     let roll = RollSettings::default();
     let input = InputSettings::negative(scan.processing_calibration(anchors).unwrap());
-    let pipeline = InputPipeline::new(input, roll, scan.camera_to_ap1).unwrap();
+    let pipeline = Pipeline::new(input, roll, scan.camera_to_ap1).unwrap();
     let size = ImageSize {
         width: scan.area.width,
         height: scan.area.height,

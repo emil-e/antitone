@@ -109,7 +109,7 @@ impl Product {
             + if positive {
                 std::mem::size_of::<crate::gpu::view::ViewSource>()
                     + std::mem::size_of::<crate::gpu::view::RenderedView>()
-                    + 2 * std::mem::size_of::<crate::gpu::GpuAdjustmentLayers>()
+                    + 2 * std::mem::size_of::<crate::gpu::GpuPipeline>()
             } else {
                 0
             }
@@ -199,7 +199,7 @@ impl ImageKey {
                 )?;
             }
             bytes = bytes.checked_add(
-                2 * (crate::gpu::GpuAdjustmentLayers::byte_len_for(&recipe.grade)
+                2 * (crate::gpu::GpuPipeline::byte_len_for(&recipe.grade)
                     + recipe.grade.retained_bytes() as u64),
             )?;
         }
@@ -550,7 +550,11 @@ impl Thumbnails {
                     .ok()
                     .and_then(|product| product.positive.as_ref())
                     .is_some_and(|(source, _)| {
-                        expected.is_ok_and(|matrix| source.spec_matrix() == matrix)
+                        expected
+                            .and_then(|matrix| {
+                                crate::gpu::GpuInputProgram::new(recipe.neutral.input, matrix)
+                            })
+                            .is_ok_and(|program| source.input_program() == Some(&program))
                     })
             });
             self.sources = sources;

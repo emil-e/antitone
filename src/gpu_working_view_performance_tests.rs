@@ -168,20 +168,7 @@ fn cost_and_retirement(with_underlay: bool) {
                     {
                         return old.clone();
                     }
-                    RenderedView::new(
-                        &device,
-                        s,
-                        cal,
-                        roll,
-                        AdjustmentLayerSnapshot::new(vec![
-                            crate::adjustment_layers::AdjustmentLayer::global(photo),
-                        ])
-                        .unwrap(),
-                        &input,
-                        target,
-                        old,
-                    )
-                    .unwrap()
+                    RenderedView::new(&device, s, &input, target, old).unwrap()
                 };
                 let next = make(source.clone(), previous.as_ref());
                 let background = underlay

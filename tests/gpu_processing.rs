@@ -2,7 +2,7 @@
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
-use antitone::{geometry::SourceRegion, gpu::GpuAdjustmentLayers};
+use antitone::{geometry::SourceRegion, gpu::GpuPipeline};
 
 use antitone::color::Balance;
 use antitone::gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource};
@@ -124,7 +124,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                 };
                 let parameters = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                     .and_then(|snapshot| {
-                        GpuAdjustmentLayers::new(
+                        GpuPipeline::new(
                             &device,
                             interpretation,
                             roll,
@@ -189,7 +189,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
             ),
             AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(attenuated_photo)])
                 .and_then(|snapshot| {
-                    GpuAdjustmentLayers::new(
+                    GpuPipeline::new(
                         &device,
                         attenuated,
                         attenuated_roll,
@@ -250,7 +250,7 @@ fn metal_processing_matches_the_cpu_model_and_source_bypass() {
                                 ),
                                 AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                                     .and_then(|snapshot| {
-                                        GpuAdjustmentLayers::new(
+                                        GpuPipeline::new(
                                             &device,
                                             interpretation,
                                             roll,
@@ -416,7 +416,7 @@ fn metal_digital_processing_matches_the_cpu_model() {
                             .unwrap(),
                             AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                                 .and_then(|snapshot| {
-                                    GpuAdjustmentLayers::new(
+                                    GpuPipeline::new(
                                         &device,
                                         InputSettings::Digital,
                                         roll,
@@ -693,7 +693,7 @@ fn layer_range_preflight_covers_creative_stages() {
     )])
     .unwrap();
     assert!(
-        GpuAdjustmentLayers::validate_limits(
+        GpuPipeline::validate_limits(
             &limits,
             extreme,
             RollSettings::default(),
@@ -710,7 +710,7 @@ fn layer_range_preflight_covers_creative_stages() {
         })])
         .unwrap();
     assert!(
-        GpuAdjustmentLayers::validate_limits(
+        GpuPipeline::validate_limits(
             &limits,
             extreme,
             RollSettings::default(),
@@ -746,7 +746,7 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
             exposure: 16.0,
             ..Default::default()
         })])
-        .and_then(|snapshot| GpuAdjustmentLayers::validate_limits(
+        .and_then(|snapshot| GpuPipeline::validate_limits(
             &wgpu::Limits::default(),
             interpretation,
             roll,

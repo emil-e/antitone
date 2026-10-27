@@ -75,6 +75,7 @@ export = ["render", "dep:tiff", "dep:exr", "dep:tempfile", "dep:libc", "dep:half
 gpu = ["dep:wgpu", "dep:ash", "dep:pollster", "dep:bytemuck", "dep:objc2-metal", "dep:blake3", "glam/bytemuck"]
 
 [dev-dependencies]
+tempfile = "=3.27.0"
 # Device-free shader validation: the same naga the GPU backends use.
 naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }
 

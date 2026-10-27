@@ -174,7 +174,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
                         editor.adjustment_layer_settings,
                     )
                     .unwrap();
-                let snapshot = input.grade().unwrap().snapshot().clone();
+                let snapshot = input.pipeline().unwrap().snapshot().clone();
                 let layout = editor.last_layout.unwrap().0;
                 let start = endpoint(editor);
                 (input, snapshot, layout, start)
@@ -190,11 +190,11 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
                     .view_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
                     .unwrap();
                 assert_ne!(preview.signature(), input.signature());
-                assert_eq!(input.grade().unwrap().snapshot(), &snapshot);
+                assert_eq!(input.pipeline().unwrap().snapshot(), &snapshot);
                 let AdjustmentLayerCoverage::Linear {
                     end: preview_end, ..
                 } = preview
-                    .grade()
+                    .pipeline()
                     .unwrap()
                     .snapshot()
                     .layers()
@@ -232,7 +232,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
                 assert_eq!(
                     accepted_mask(editor),
                     preview
-                        .grade()
+                        .pipeline()
                         .unwrap()
                         .snapshot()
                         .layers()

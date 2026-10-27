@@ -5,7 +5,7 @@ use antitone::color::{
     wb_matrix,
 };
 use antitone::processing::{
-    Calibration, DEFAULT_GAMMA, InputPipeline, InputSettings, Inversion, NegativeInput, Response,
+    Calibration, DEFAULT_GAMMA, InputSettings, Inversion, NegativeInput, Pipeline, Response,
     RollSettings, exposure_multiplier,
 };
 use antitone::sampling::{mean, roll_neutral, weighted_mean, weighted_mean_iter, white_balance};
@@ -57,7 +57,8 @@ fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion
             tint: 0.1,
         },
     };
-    let neutral = InputPipeline::ungraded(inp(cal, gamma, balance), matrix).unwrap();
+    let neutral =
+        antitone::processing::InputPipeline::new(inp(cal, gamma, balance), matrix).unwrap();
     let reference = Inversion::new(neg(cal, gamma, balance)).unwrap();
     for input in [cal.dmin * 1.1, cal.dmin, cal.dmax, cal.dmax * 0.5] {
         let actual = neutral.apply(input).unwrap();
@@ -66,14 +67,14 @@ fn ungraded_positive_excludes_photographic_roll_controls_but_preserves_inversion
         assert_eq!(actual.rgb, matrix * inverted.rgb);
         assert_eq!(
             actual,
-            InputPipeline::ungraded(inp(cal, gamma, balance), matrix)
+            antitone::processing::InputPipeline::new(inp(cal, gamma, balance), matrix)
                 .unwrap()
                 .apply(input)
                 .unwrap()
         );
     }
     // The grade is wired separately and does reach the graded pipeline.
-    let graded = InputPipeline::new(inp(cal, gamma, balance), graded_roll, matrix).unwrap();
+    let graded = Pipeline::new(inp(cal, gamma, balance), graded_roll, matrix).unwrap();
     let mid = cal.dmax * 0.5;
     assert_ne!(
         graded.apply(mid).unwrap().rgb,
@@ -88,8 +89,7 @@ fn digital_input_is_already_positive_and_reuses_the_shared_grade() {
     let matrix = DMat3::from_diagonal(DVec3::new(0.8, 1.1, 1.3));
     // Identity grade + neutral roll WB + zero exposure: apply is camera→AP1 only,
     // with no polarity flip (the sample is already a scene-referred positive).
-    let pipeline =
-        InputPipeline::new(InputSettings::Digital, RollSettings::default(), matrix).unwrap();
+    let pipeline = Pipeline::new(InputSettings::Digital, RollSettings::default(), matrix).unwrap();
     for input in [
         DVec3::splat(0.18),
         DVec3::new(-0.02, 0.5, 1.7),
@@ -100,14 +100,14 @@ fn digital_input_is_already_positive_and_reuses_the_shared_grade() {
         assert_eq!(actual.rgb, matrix * input);
     }
     // Ungraded digital positive is camera→AP1, before roll/photo controls.
-    let neutral = InputPipeline::ungraded(InputSettings::Digital, matrix).unwrap();
+    let neutral = antitone::processing::InputPipeline::new(InputSettings::Digital, matrix).unwrap();
     assert_eq!(
         neutral.apply(DVec3::splat(0.18)).unwrap().rgb,
         matrix * DVec3::splat(0.18)
     );
     // The shared grade reaches the digital positive: roll exposure scales the working value.
     let stops = 1.5;
-    let graded = InputPipeline::new(
+    let graded = Pipeline::new(
         InputSettings::Digital,
         RollSettings {
             exposure: stops,
@@ -352,7 +352,7 @@ fn near_dmin_is_not_rounded_to_zero_by_power_subtraction() {
 fn exposure_scopes_combine_without_changing_inversion() {
     let cal = calibration();
     let scan = DVec3::new(0.06, 0.08, 0.04);
-    let base = InputPipeline::new(
+    let base = Pipeline::new(
         inp(cal, DEFAULT_GAMMA, Balance::default()),
         RollSettings::default(),
         ap0_to_ap1(),
@@ -532,7 +532,7 @@ fn pipeline_maps_camera_positive_to_ap1_and_ap0_export_preserves_xyz() {
     let original = DVec3::new(4.0, 0.03, 0.1);
     let scan = scan_for_positive(cal, interpretation, original);
     let inverted = Inversion::new(interpretation).unwrap().apply(scan).unwrap();
-    let processed = InputPipeline::new(
+    let processed = Pipeline::new(
         inp(cal, DEFAULT_GAMMA, Balance::default()),
         RollSettings::default(),
         ap0_to_ap1(),
@@ -616,7 +616,7 @@ fn photo_pick_uses_ap1_after_the_inversion_conversion() {
     };
     let cast_ap1 = wb_matrix(correction).unwrap().inverse() * DVec3::splat(0.2);
     let scan = scan_for_positive(cal, interpretation, ap1_to_ap0() * cast_ap1);
-    let before_wb = InputPipeline::new(
+    let before_wb = Pipeline::new(
         inp(cal, DEFAULT_GAMMA, Balance::default()),
         RollSettings::default(),
         ap0_to_ap1(),
@@ -828,4 +828,27 @@ fn layer_white_balance_respects_fractional_patch_area_when_samples_disagree() {
         adjustment_layer_white_balance(&[(DVec3::ONE, 1., 1e-5)]).unwrap(),
         Balance::default()
     );
+}
+
+#[test]
+fn one_photographic_stage_grades_working_positives_without_input_settings() {
+    use antitone::adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot, GradingPipeline,
+    };
+    let grade = GradingPipeline::new(
+        RollSettings {
+            exposure: 0.5,
+            ..Default::default()
+        },
+        AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+            exposure: 0.25,
+            ..Default::default()
+        })])
+        .unwrap(),
+    )
+    .unwrap();
+    for rgb in [DVec3::splat(0.18), DVec3::new(-0.02, 0.4, 1.3)] {
+        let actual = grade.apply(rgb, [37, 19]).unwrap();
+        assert!((actual - rgb * 0.75_f64.exp2()).abs().max_element() < 1e-12);
+    }
 }

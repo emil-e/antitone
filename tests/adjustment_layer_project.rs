@@ -5,9 +5,7 @@ use antitone::{
         AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline, CONTRACT,
     },
     geometry::SourcePoint,
-    processing::{
-        Calibration, DEFAULT_GAMMA, InputPipeline, InputSettings, Response, RollSettings,
-    },
+    processing::{Calibration, DEFAULT_GAMMA, InputSettings, Pipeline, Response, RollSettings},
     project::{
         AdjustmentLayerId, AdjustmentLayers, Development, Project, Save, Source, SourceDevelopment,
         SourceId,
@@ -356,7 +354,7 @@ fn spatial_pipeline_uses_snapshot_and_full_source_pixel_centres() {
         balance: Default::default(),
     };
     let roll = RollSettings::default();
-    let global = InputPipeline::new(input, roll, DMat3::IDENTITY).unwrap();
+    let global = Pipeline::new(input, roll, DMat3::IDENTITY).unwrap();
     let spatial = AdjustmentLayerPipeline::new(input, roll, snapshot, DMat3::IDENTITY).unwrap();
     project.source_mut(id).unwrap().adjustment_layers = None;
     let scan = DVec3::new(0., 0.1, 0.3);

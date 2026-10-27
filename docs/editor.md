@@ -101,7 +101,7 @@ Source and positive caches have distinct identities: switching modes reacquires 
 
 ## Immutable adjustment-layer routing
 
-Adjustment layers are recipe values, not rendered pixels: selected and cached previews, thumbnails and scopes share complete processing snapshots, and each image owns only its mutable output/preparation state. Roll WB, calibration/correction, camera basis, ordered layer values invalidate a grade; names, IDs, view selection and source-inspection WB/EV do not. [Processing](processing.md#adjustment-layers-change-controls-not-rendered-pixels) owns what that means for the recipe.
+Adjustment layers are recipe values, not rendered pixels: selected and cached previews, thumbnails and scopes share complete processing snapshots, and each image owns only its mutable output/preparation state. Calibration/correction and camera interpretation identify the input source; Roll WB and ordered layer values identify photographic grading. The composed processing identity includes both, excluding names, IDs, view selection and source-inspection WB/EV. [Processing](processing.md#adjustment-layers-change-controls-not-rendered-pixels) owns what that means for the recipe.
 
 The Layers section creates global, linear and radial layers above the selection and displays processing order bottom to top. One set of photographic controls targets the selected layer, named in the Layers header even when the list is collapsed. Strength, gradient inversion and radial Feather appear below the list. Empty stacks and ineffective controls remain visible but greyed out; the initial global layer has the same selection, reordering and deletion behavior as any other layer.
 
