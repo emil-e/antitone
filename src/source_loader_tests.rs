@@ -76,7 +76,7 @@ fn async_joined_consumers_wake_independently_and_share_frozen_pixels() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let scheduler = SourceLoader::start(move |shared| {
-        run(shared, 0, crate::sys::memory_pressure, |_| {
+        run(shared, 0, |_| {
             entered.send(()).unwrap();
             resume.recv().unwrap();
             Ok(Some(source.clone()))
@@ -115,7 +115,7 @@ fn a_new_demand_during_native_retirement_starts_fresh_instead_of_receiving_retir
     let scheduler = SourceLoader::start(move |shared| {
         let owner = shared.clone();
         let mut unpacked = false;
-        run(shared, 0, crate::sys::memory_pressure, move |task| {
+        run(shared, 0, move |task| {
             if owner.retire_if_unwanted(task) {
                 retiring.send(()).unwrap();
                 resume_cleanup.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -149,7 +149,7 @@ fn async_native_waiters_observe_scheduler_closure_without_waiting_for_native_ret
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
         let scheduler = SourceLoader::start(move |shared| {
-            run(shared, 0, crate::sys::memory_pressure, |_| {
+            run(shared, 0, |_| {
                 entered.send(()).unwrap();
                 resume.recv().unwrap();
                 Err("retired native call".into())
@@ -197,7 +197,7 @@ fn foreground_runs_before_the_next_background_native_phase_on_one_thread() {
     let worker_trace = trace.clone();
     let scheduler = SourceLoader::start(move |shared| {
         let mut phases = HashMap::new();
-        run(shared, 0, crate::sys::memory_pressure, |task| {
+        run(shared, 0, |task| {
             let phase = phases.entry(task.id).or_insert(0);
             *phase += 1;
             worker_trace
@@ -248,7 +248,7 @@ fn foreground_joins_started_work_after_thumbnail_waiter_cancels() {
     let calls = Arc::new(AtomicUsize::new(0));
     let worker_calls = calls.clone();
     let scheduler = SourceLoader::start(move |shared| {
-        run(shared, 0, crate::sys::memory_pressure, |task| {
+        run(shared, 0, |task| {
             let call = worker_calls.fetch_add(1, Ordering::Relaxed);
             if call == 0 {
                 entered.send(()).unwrap();
@@ -290,7 +290,7 @@ fn closing_worker_wakes_waiters_without_starting_a_second_development() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let scheduler = SourceLoader::start(move |shared| {
-        run(shared, 0, crate::sys::memory_pressure, |_| {
+        run(shared, 0, |_| {
             entered.send(()).unwrap();
             resume.recv().unwrap();
             Err("closed native phase".into())
@@ -624,7 +624,7 @@ fn cancelled_queued_demand_never_runs_native_work() {
     let calls = Arc::new(AtomicUsize::new(0));
     let worker_calls = calls.clone();
     let scheduler = SourceLoader::start(move |shared| {
-        run(shared, 0, crate::sys::memory_pressure, |task| {
+        run(shared, 0, |task| {
             assert_eq!(task.id, 1);
             worker_calls.fetch_add(1, Ordering::Relaxed);
             entered.send(()).unwrap();
@@ -666,7 +666,7 @@ fn native_failure_fans_out_to_joined_waiters_and_allows_a_new_attempt() {
     let calls = Arc::new(AtomicUsize::new(0));
     let worker_calls = calls.clone();
     let scheduler = SourceLoader::start(move |shared| {
-        run(shared, 0, crate::sys::memory_pressure, |_| {
+        run(shared, 0, |_| {
             if worker_calls.fetch_add(1, Ordering::Relaxed) == 0 {
                 entered.send(()).unwrap();
                 resume.recv().unwrap();
@@ -762,10 +762,6 @@ fn diagnostic_stop_before_unpack_rejects_without_development() {
     assert_eq!(*phases.lock().unwrap(), ["Open", "UnpackBegin"]);
 }
 
-fn normal_pressure() -> crate::sys::MemoryPressure {
-    crate::sys::MemoryPressure::Normal
-}
-
 fn synthetic_task(id: u64, path: &std::path::Path, priority: Priority) -> Arc<Task> {
     let task = Arc::new(Task::new(id, request(path)));
     task.demands.lock().unwrap().push(Consumer {
@@ -777,7 +773,7 @@ fn synthetic_task(id: u64, path: &std::path::Path, priority: Priority) -> Arc<Ta
 }
 
 #[test]
-fn unowned_starts_yield_to_foreground_demand_and_collapse_under_pressure() {
+fn unowned_starts_yield_to_foreground_demand_and_started_work_stays_on_its_owner() {
     let file = fixture::bayer_dng();
     let foreground = synthetic_task(1, file.path(), Priority::Foreground);
     let background = synthetic_task(2, file.path(), Priority::Eager);
@@ -790,43 +786,19 @@ fn unowned_starts_yield_to_foreground_demand_and_collapse_under_pressure() {
         sdk_steps: 0,
         closed: false,
     };
-    let normal = crate::sys::MemoryPressure::Normal;
-    // While a foreground demand lives, background work starts on neither owner.
-    assert!(!eligible(&state, &background, 0, normal));
-    assert!(!eligible(&state, &background, 1, normal));
-    // The foreground demand itself may start on either owner.
-    assert!(eligible(&state, &foreground, 0, normal));
-    assert!(eligible(&state, &foreground, 1, normal));
+    assert!(!eligible(&state, &background, 0));
+    assert!(!eligible(&state, &background, 1));
+    assert!(eligible(&state, &foreground, 0));
+    assert!(eligible(&state, &foreground, 1));
     state.tasks.retain(|task| task.id != 1);
     state.queue.retain(|task| task.id != 1);
-    // Without foreground demand, background starts — except on the second owner
-    // under memory pressure, where the pair collapses to one owner.
-    assert!(eligible(&state, &background, 0, normal));
-    assert!(eligible(&state, &background, 1, normal));
-    assert!(eligible(
-        &state,
-        &background,
-        0,
-        crate::sys::MemoryPressure::Warning
-    ));
-    assert!(!eligible(
-        &state,
-        &background,
-        1,
-        crate::sys::MemoryPressure::Warning
-    ));
-    assert!(!eligible(
-        &state,
-        &background,
-        1,
-        crate::sys::MemoryPressure::Critical
-    ));
-    // Started work is pinned to its owner regardless of yield and pressure rules.
+    assert!(eligible(&state, &background, 0));
+    assert!(eligible(&state, &background, 1));
     background.owner.store(0, Ordering::Relaxed);
-    assert!(eligible(&state, &background, 0, normal));
-    assert!(!eligible(&state, &background, 1, normal));
+    assert!(eligible(&state, &background, 0));
+    assert!(!eligible(&state, &background, 1));
     foreground.owner.store(1, Ordering::Relaxed);
-    assert!(!eligible(&state, &foreground, 0, normal));
+    assert!(!eligible(&state, &foreground, 0));
 }
 
 #[test]
@@ -844,18 +816,17 @@ fn sdk_steps_hold_native_execution_exclusive_so_they_keep_the_full_budget() {
         sdk_steps: 0,
         closed: false,
     };
-    let normal = crate::sys::MemoryPressure::Normal;
     // With nothing in flight both may start; an admitted SDK step therefore
     // records share 1 and keeps the undivided team the SDK route had alone.
-    assert!(eligible(&state, &sdk, 0, normal));
-    assert!(eligible(&state, &sdk, 1, normal));
+    assert!(eligible(&state, &sdk, 0));
+    assert!(eligible(&state, &sdk, 1));
     // Ordinary native work in flight blocks the serialized SDK transaction on
     // both owners, including the owner it would otherwise be pinned to.
     state.steps = 1;
-    assert!(!eligible(&state, &sdk, 0, normal));
-    assert!(!eligible(&state, &sdk, 1, normal));
+    assert!(!eligible(&state, &sdk, 0));
+    assert!(!eligible(&state, &sdk, 1));
     sdk.owner.store(1, Ordering::Relaxed);
-    assert!(!eligible(&state, &sdk, 1, normal));
+    assert!(!eligible(&state, &sdk, 1));
     // A running SDK transaction blocks every other native step: the second
     // owner would otherwise block on the bridge's process-wide transaction
     // mutex while still halving the running call's thread team.
@@ -864,13 +835,13 @@ fn sdk_steps_hold_native_execution_exclusive_so_they_keep_the_full_budget() {
     state.queue.retain(|task| task.id != 1);
     state.steps = 1;
     state.sdk_steps = 1;
-    assert!(!eligible(&state, &raw, 0, normal));
-    assert!(!eligible(&state, &raw, 1, normal));
+    assert!(!eligible(&state, &raw, 0));
+    assert!(!eligible(&state, &raw, 1));
     // Once it returns, ordinary work resumes.
     state.steps = 0;
     state.sdk_steps = 0;
-    assert!(eligible(&state, &raw, 0, normal));
-    assert!(eligible(&state, &raw, 1, normal));
+    assert!(eligible(&state, &raw, 0));
+    assert!(eligible(&state, &raw, 1));
 }
 
 #[test]
@@ -884,7 +855,7 @@ fn overlapping_owners_run_native_steps_on_separate_threads() {
     let barrier = Arc::new((Mutex::new(0usize), Condvar::new()));
     let threads = Arc::new(Mutex::new(Vec::new()));
     let recorded = threads.clone();
-    let scheduler = SourceLoader::start_workers(2, normal_pressure, move |_, _| {
+    let scheduler = SourceLoader::start_workers(2, move |_, _| {
         let barrier = barrier.clone();
         let threads = recorded.clone();
         let source = source.clone();
@@ -927,7 +898,7 @@ fn foreground_starts_on_the_free_owner_while_a_background_step_runs() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
-    let scheduler = SourceLoader::start_workers(2, normal_pressure, move |_, _| {
+    let scheduler = SourceLoader::start_workers(2, move |_, _| {
         let entered = entered.clone();
         let resume = resume.clone();
         let source = source.clone();
@@ -966,7 +937,7 @@ fn background_work_yields_while_foreground_demand_lives() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
-    let scheduler = SourceLoader::start_workers(2, normal_pressure, move |_, _| {
+    let scheduler = SourceLoader::start_workers(2, move |_, _| {
         let entered = entered.clone();
         let resume = resume.clone();
         let source = source.clone();
@@ -1061,7 +1032,7 @@ fn closing_the_pair_wakes_waiters_and_stops_both_owners() {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Arc::new(Mutex::new(resume));
-    let scheduler = SourceLoader::start_workers(2, normal_pressure, move |_, _| {
+    let scheduler = SourceLoader::start_workers(2, move |_, _| {
         let entered = entered.clone();
         let resume = resume.clone();
         let source = source.clone();
@@ -1104,22 +1075,19 @@ fn sdk_development_holds_native_execution_exclusive_end_to_end() {
     let live = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
     let (counted, observed) = (live.clone(), peak.clone());
-    let scheduler = SourceLoader::new_observed_with_pressure(
-        move |_, phase, _| {
-            match phase {
-                NativePhase::DevelopBegin => {
-                    let now = counted.fetch_add(1, Ordering::SeqCst) + 1;
-                    observed.fetch_max(now, Ordering::SeqCst);
-                }
-                NativePhase::DevelopEnd => {
-                    counted.fetch_sub(1, Ordering::SeqCst);
-                }
-                _ => {}
+    let scheduler = SourceLoader::new_observed(move |_, phase, _| {
+        match phase {
+            NativePhase::DevelopBegin => {
+                let now = counted.fetch_add(1, Ordering::SeqCst) + 1;
+                observed.fetch_max(now, Ordering::SeqCst);
             }
-            Ok(())
-        },
-        normal_pressure,
-    );
+            NativePhase::DevelopEnd => {
+                counted.fetch_sub(1, Ordering::SeqCst);
+            }
+            _ => {}
+        }
+        Ok(())
+    });
     let mut waiters = Vec::new();
     for file in [&a, &b] {
         let job = request(file.path());

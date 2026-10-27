@@ -39,10 +39,11 @@ Export instead owns an application-level batch: fixed recipes, resolved paths, c
 Workflows never block; services run the work off the UI thread and workflows await typed results:
 
 - **Synchronous work** runs on the shared blocking pool through [`background.rs`](../src/background.rs), with worker panics returned as errors. Each job owns its captured inputs; unrelated features can proceed concurrently.
-- **Two native owners at most** ([`source_loader.rs`](../src/source_loader.rs)) serve foreground, visible and eager development; each runs one non-interruptible call with worker-local mutable RAW handles, background work yields to foreground demand, and the pair collapses to one owner under memory pressure. [Scheduling rationale](native-development.md#editor-scheduling) describes the tradeoff.
-- **Thumbnail and embedded-preview processing** ([`editor_thumbnail_worker.rs`](../src/editor/thumbnails/production_worker.rs)) is a background path, not another RAW development pool: it never borrows the selected `Scan` from foreground operations, GPU processing is serial, and obsolete tickets never install images.
+- **Two native owners at most** ([`source_loader.rs`](../src/source_loader.rs)) serve foreground, visible and eager development; each runs one non-interruptible call with worker-local mutable RAW handles, and background work yields to foreground demand. [Scheduling rationale](native-development.md#editor-scheduling) describes the tradeoff.
+- **Thumbnail and embedded-preview processing** ([`editor_thumbnail_worker.rs`](../src/editor_thumbnail_worker.rs)) is a background path, not another RAW development pool: it never borrows the selected `Scan` from foreground operations, GPU processing is serial, and obsolete tickets never install images.
 - **Lazy photo preparation** ([`source_store.rs`](../src/source_store.rs)) resolves Digital starting exposure during native/proxy acquisition, before processed-positive publication. Camera preview display shares decoded leases and in-flight work across same-document candidates. These candidates share immutable metering results while isolating pixel publication. AP1 production folds the completed gain into its source transform; consumers use normalized pixels and source identity rather than handling exposure readiness.
 - **The CPU store** is a byte-bounded, oldest-unprotected LRU for native data, proxies and decoded camera references: active leases survive eviction, selected/visible proxies are protected separately, and native cache ownership is always optional. Retention settings and pressure behavior: [editor](editor.md#retention-settings-and-pressure).
+
 
 
 

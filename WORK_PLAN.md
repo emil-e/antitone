@@ -50,6 +50,15 @@ Both retirement regression tests fail with their fixes disabled and pass when re
 - Focused native/provider/thumbnail lifecycle suite: 37 passed, 1 ignored. Negative controls: both new retirement regressions fail as intended without their fixes.
 - Final formatting, documentation links and diff checks passed. Shared checkout-local native dependencies; offline builds, no downloads/system installs. Disposable logs/artifacts are under .cache/.
 
+## Pressure-independent development follow-up (#37)
+User explicitly authorized removing pressure-driven RAW thread-count reductions and second-owner collapse. Keep optional cache backoff/prefetch suspension, priority, CPU reservation, shared native thread budgeting and SDK ownership/exclusivity unchanged. Do not add replacement throttles or a speculative benchmark project. GPU internals remain out of scope.
+
+Completed: RAW thread selection and loader eligibility no longer read or accept memory pressure; removed loader pressure-injection constructors and fixture plumbing. Cap/reservation/sharing and both-owner priority/pinning/SDK exclusivity tests remain. Cache/prefetch and GPU implementation files are unchanged. Owning guides reflect the separation. No replacement policy or benchmark added.
+
+Verified: 154 focused debug tests passed (2 existing opt-in diagnostics ignored); 166 release tests passed (6 opt-in diagnostics ignored), including RAW/native/provider/source workflows and thumbnail/cache/prefetch behavior. Strict editor and UI-feature clippy, separate production check, repository formatting, documentation links and diff checks passed. No private workload, Windows-runtime check or full-library rerun for this narrow follow-up. Ticket/thumbnail-loop discussion does not independently authorize those separate changes.
+
+Latest upstream refresh is 727c70d; guidance remains unchanged, while main's resolved-input/photographic work requires later integration adaptation. Continue in this task worktree without mixing that unrelated implementation into this follow-up.
+
 ## Limits / handoff
 The whole editor-feature library debug attempt reached unrelated spatial-math tests before a five-minute timeout. Its one editor cancellation-fixture failure was fixed and included in the completed final editor-domain suite; no full-library pass is claimed. No Windows runtime, private throughput workload or native-window automation was performed.
 

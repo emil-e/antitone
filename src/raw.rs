@@ -508,26 +508,17 @@ pub enum DevelopmentPriority {
 }
 
 impl DevelopmentPriority {
-    fn threads(self, cpus: usize, pressure: crate::sys::MemoryPressure) -> c_int {
-        use crate::sys::MemoryPressure;
-        let cap = match (self, pressure) {
-            (_, MemoryPressure::Critical) => 1,
-            (Self::Background, MemoryPressure::Warning) => 1,
-            (Self::Background, MemoryPressure::Normal) => 2,
-            (_, MemoryPressure::Warning) => 2,
-            (Self::Foreground, MemoryPressure::Normal) => 8,
+    fn threads(self, cpus: usize) -> c_int {
+        let cap = match self {
+            Self::Foreground => 8,
+            Self::Background => 2,
         };
         cpus.saturating_sub(2).max(1).min(cap) as c_int
     }
 
     /// Concurrent native owners split the reported budget; never below one thread.
-    fn shared_threads(
-        self,
-        cpus: usize,
-        pressure: crate::sys::MemoryPressure,
-        share: usize,
-    ) -> c_int {
-        (self.threads(cpus, pressure) / share.max(1) as c_int).max(1)
+    fn shared_threads(self, cpus: usize, share: usize) -> c_int {
+        (self.threads(cpus) / share.max(1) as c_int).max(1)
     }
 }
 
@@ -745,7 +736,6 @@ impl RawFile {
     fn call_threads(&self) -> c_int {
         self.priority.shared_threads(
             std::thread::available_parallelism().map_or(1, usize::from),
-            crate::sys::memory_pressure(),
             self.share,
         )
     }
@@ -1744,43 +1734,29 @@ mod tests {
 
     #[test]
     fn development_threads_are_bounded_and_leave_foreground_capacity() {
-        use crate::sys::MemoryPressure::*;
         for cpus in 0..=128 {
-            for priority in [
-                DevelopmentPriority::Foreground,
-                DevelopmentPriority::Background,
+            for (priority, cap) in [
+                (DevelopmentPriority::Foreground, 8),
+                (DevelopmentPriority::Background, 2),
             ] {
-                for pressure in [Normal, Warning, Critical] {
-                    let count = priority.threads(cpus, pressure);
-                    assert!((1..=8).contains(&count));
-                    assert!(count as usize <= cpus.saturating_sub(2).max(1));
+                let count = priority.threads(cpus);
+                assert!((1..=cap).contains(&count));
+                assert!(count as usize <= cpus.saturating_sub(2).max(1));
+                for share in 0..=8 {
+                    let shared = priority.shared_threads(cpus, share);
+                    assert!((1..=count).contains(&shared));
                 }
             }
         }
-        assert_eq!(DevelopmentPriority::Foreground.threads(18, Normal), 8);
-        assert_eq!(DevelopmentPriority::Foreground.threads(18, Warning), 2);
-        assert_eq!(DevelopmentPriority::Background.threads(18, Normal), 2);
-        assert_eq!(DevelopmentPriority::Background.threads(18, Warning), 1);
-        assert_eq!(DevelopmentPriority::Foreground.threads(18, Critical), 1);
-        // Concurrent owners split the budget without ever dropping below one thread.
-        assert_eq!(
-            DevelopmentPriority::Foreground.shared_threads(18, Normal, 1),
-            8
-        );
-        assert_eq!(
-            DevelopmentPriority::Foreground.shared_threads(18, Normal, 2),
-            4
-        );
-        assert_eq!(
-            DevelopmentPriority::Foreground.shared_threads(18, Critical, 2),
-            1
-        );
-        for share in 0..=8 {
-            for pressure in [Normal, Warning, Critical] {
-                let count = DevelopmentPriority::Foreground.shared_threads(18, pressure, share);
-                assert!((1..=8).contains(&count));
-            }
-        }
+        assert_eq!(DevelopmentPriority::Foreground.threads(18), 8);
+        assert_eq!(DevelopmentPriority::Background.threads(18), 2);
+        assert_eq!(DevelopmentPriority::Foreground.threads(4), 2);
+        assert_eq!(DevelopmentPriority::Foreground.threads(3), 1);
+        assert_eq!(DevelopmentPriority::Foreground.shared_threads(18, 0), 8);
+        assert_eq!(DevelopmentPriority::Foreground.shared_threads(18, 1), 8);
+        assert_eq!(DevelopmentPriority::Foreground.shared_threads(18, 2), 4);
+        assert_eq!(DevelopmentPriority::Background.shared_threads(18, 2), 1);
+        assert_eq!(DevelopmentPriority::Foreground.shared_threads(18, 8), 1);
     }
 
     #[test]

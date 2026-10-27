@@ -43,13 +43,7 @@ fn editor(scheduler: source_loader::SourceLoader) -> Editor {
     editor
 }
 
-fn normal_pressure() -> crate::sys::MemoryPressure {
-    crate::sys::MemoryPressure::Normal
-}
-
-fn paused_with_pressure(
-    pressure: fn() -> crate::sys::MemoryPressure,
-) -> (
+fn paused() -> (
     source_loader::SourceLoader,
     mpsc::Receiver<()>,
     mpsc::Sender<()>,
@@ -57,29 +51,18 @@ fn paused_with_pressure(
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let scheduler = source_loader::SourceLoader::new_observed_with_pressure(
-        move |_, phase, _| {
-            if matches!(phase, source_loader::NativePhase::UnpackBegin) {
-                entered.send(()).unwrap();
-                resume
-                    .lock()
-                    .unwrap()
-                    .recv_timeout(Duration::from_secs(15))
-                    .unwrap();
-            }
-            Ok(())
-        },
-        pressure,
-    );
+    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loader::NativePhase::UnpackBegin) {
+            entered.send(()).unwrap();
+            resume
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+        }
+        Ok(())
+    });
     (scheduler, starts, release)
-}
-
-fn paused() -> (
-    source_loader::SourceLoader,
-    mpsc::Receiver<()>,
-    mpsc::Sender<()>,
-) {
-    paused_with_pressure(crate::sys::memory_pressure)
 }
 
 fn start(app: &crate::application::test_support::TestApplication<'_, Editor>) {
@@ -194,9 +177,7 @@ fn retired_visit_cannot_publish_or_block_unrelated_cpu_work() {
 
 #[test]
 fn cancelling_an_unstarted_native_demand_does_not_wait_for_unrelated_calls() {
-    // Both owners must stay inside their unrelated calls for the demand below to
-    // stay unstarted, so this scenario fixes the pressure reading it needs.
-    let (scheduler, starts, release) = paused_with_pressure(normal_pressure);
+    let (scheduler, starts, release) = paused();
     let mut backgrounds = Vec::new();
     for _ in 0..2 {
         backgrounds.push(
@@ -253,34 +234,26 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
     let (entered_b, at_b) = mpsc::channel();
     let (continue_b, resume_b) = mpsc::channel();
     let resume_b = Mutex::new(resume_b);
-    // Both owners must run concurrently here, so this scenario fixes the
-    // pressure reading it needs rather than trusting the live system level.
-    let scheduler = source_loader::SourceLoader::new_observed_with_pressure(
-        move |file, phase, _| {
-            if file.ends_with("patches.dng")
-                && matches!(phase, source_loader::NativePhase::UnpackEnd)
-            {
-                parked.send(()).unwrap();
-                resume_a
-                    .lock()
-                    .unwrap()
-                    .recv_timeout(Duration::from_secs(15))
-                    .unwrap();
-            }
-            if file.ends_with("roll-0.dng")
-                && matches!(phase, source_loader::NativePhase::UnpackBegin)
-            {
-                entered_b.send(()).unwrap();
-                resume_b
-                    .lock()
-                    .unwrap()
-                    .recv_timeout(Duration::from_secs(15))
-                    .unwrap();
-            }
-            Ok(())
-        },
-        normal_pressure,
-    );
+    let scheduler = source_loader::SourceLoader::new_observed(move |file, phase, _| {
+        if file.ends_with("patches.dng") && matches!(phase, source_loader::NativePhase::UnpackEnd) {
+            parked.send(()).unwrap();
+            resume_a
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+        }
+        if file.ends_with("roll-0.dng") && matches!(phase, source_loader::NativePhase::UnpackBegin)
+        {
+            entered_b.send(()).unwrap();
+            resume_b
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+        }
+        Ok(())
+    });
     let editor = editor(scheduler.clone());
     with_application(editor, |app| {
         start(app);

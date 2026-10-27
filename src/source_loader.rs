@@ -303,7 +303,7 @@ impl SourceLoader {
     pub fn new() -> Self {
         #[cfg(test)]
         {
-            Self::start_native(Arc::new(|_, _, _| Ok(())), crate::sys::memory_pressure)
+            Self::start_native(Arc::new(|_, _, _| Ok(())))
         }
         #[cfg(not(test))]
         {
@@ -322,35 +322,11 @@ impl SourceLoader {
         + Sync
         + 'static,
     ) -> Self {
-        Self::start_native(Arc::new(observe), crate::sys::memory_pressure)
+        Self::start_native(Arc::new(observe))
     }
 
-    /// The second owner admits background demand only under Normal pressure, so
-    /// a scenario that needs both owners running concurrently must inject that
-    /// reading; live system pressure during a test run would otherwise turn a
-    /// correct schedule into a spurious rendezvous timeout.
-    #[cfg(test)]
-    pub(super) fn new_observed_with_pressure(
-        observe: impl Fn(
-            &std::path::Path,
-            NativePhase,
-            Option<&crate::raw::Metadata>,
-        ) -> Result<(), String>
-        + Send
-        + Sync
-        + 'static,
-        pressure: fn() -> crate::sys::MemoryPressure,
-    ) -> Self {
-        Self::start_native(Arc::new(observe), pressure)
-    }
-
-    fn start_native(
-        #[cfg(test)] observe: NativeObserver,
-        #[cfg(test)] pressure: fn() -> crate::sys::MemoryPressure,
-    ) -> Self {
-        #[cfg(not(test))]
-        let pressure = crate::sys::memory_pressure;
-        Self::start_workers(2, pressure, move |_, shared| {
+    fn start_native(#[cfg(test)] observe: NativeObserver) -> Self {
+        Self::start_workers(2, move |_, shared| {
             #[cfg(test)]
             let observe = observe.clone();
             // LibRaw decoded handles and SDK inspected headers stay worker-local across
@@ -465,7 +441,6 @@ impl SourceLoader {
     // thread-local; the factory is consulted once per owner on its own thread.
     fn start_workers(
         count: usize,
-        pressure: fn() -> crate::sys::MemoryPressure,
         build: impl Fn(usize, Arc<Shared>) -> Step + Send + Sync + 'static,
     ) -> Self {
         let shared = Self::shared();
@@ -478,7 +453,7 @@ impl SourceLoader {
                 // Also wake consumers if a worker unwinds; this is not native/OOM recovery.
                 let _exit = Owner(worker_shared.clone());
                 let mut step = build(slot, worker_shared.clone());
-                run(worker_shared, slot, pressure, move |task| step(task));
+                run(worker_shared, slot, move |task| step(task));
             }));
         }
         #[cfg(test)]
@@ -514,11 +489,7 @@ impl SourceLoader {
         + Send
         + 'static,
     ) -> Self {
-        Self::start(move |shared| {
-            run(shared, 0, crate::sys::memory_pressure, |task| {
-                step(&task.request.path)
-            })
-        })
+        Self::start(move |shared| run(shared, 0, |task| step(&task.request.path)))
     }
 
     #[cfg(test)]
@@ -615,8 +586,8 @@ impl SourceLoader {
 
 // Started work stays on its owner because worker-local mutable native handles are
 // not Send. Unowned starts obey the yield rule — background work begins only when
-// no foreground demand lives — and the second owner idles under memory pressure.
-fn eligible(state: &State, task: &Task, slot: usize, pressure: crate::sys::MemoryPressure) -> bool {
+// no foreground demand lives.
+fn eligible(state: &State, task: &Task, slot: usize) -> bool {
     if task.sdk.load(Ordering::Relaxed) {
         if state.steps != 0 {
             return false;
@@ -626,9 +597,6 @@ fn eligible(state: &State, task: &Task, slot: usize, pressure: crate::sys::Memor
     }
     match task.owner.load(Ordering::Relaxed) {
         UNOWNED => {
-            if slot != 0 && !matches!(pressure, crate::sys::MemoryPressure::Normal) {
-                return false;
-            }
             task.priority() == Priority::Foreground
                 || !state
                     .tasks
@@ -663,7 +631,6 @@ impl Drop for StepCount<'_> {
 fn run(
     shared: Arc<Shared>,
     slot: usize,
-    pressure: fn() -> crate::sys::MemoryPressure,
     mut step: impl FnMut(&Arc<Task>) -> Result<Option<Arc<DevelopedSource>>, String>,
 ) {
     loop {
@@ -673,12 +640,11 @@ fn run(
                 if state.closed {
                     return;
                 }
-                let level = pressure();
                 if let Some(index) = state
                     .queue
                     .iter()
                     .enumerate()
-                    .filter(|(_, task)| eligible(&state, task, slot, level))
+                    .filter(|(_, task)| eligible(&state, task, slot))
                     .min_by_key(|(_, task)| (task.priority(), task.id))
                     .map(|(index, _)| index)
                 {
