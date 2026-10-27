@@ -14,7 +14,7 @@ LibRaw/OpenMP and the independent OCIO test dependency use the maintained native
 
 The `cargo xtask` setup/check/package sequence below is the macOS workflow. Windows uses the PowerShell setup and packaging scripts in [build and run](build-and-run.md#windows), with ordinary Cargo commands for verification.
 
-`setup` checks tools, runs native setup, installs pinned Ruff/clang-format into a local Python environment and installs the revision-pinned WGSL formatter locally through Cargo. Rustup selects the checked-in Rust toolchain. All generated tools/dependencies stay in ignored storage or Cargo's normal cache; no system installation is performed.
+`setup` checks tools, runs native setup, installs pinned Ruff/clang-format into a local Python environment and installs the revision-pinned WGSL formatter locally through Cargo. `setup-native` stops after native setup; jobs that do not format sources use it. Rustup selects the checked-in Rust toolchain. All generated tools/dependencies stay in ignored storage or Cargo's normal cache; no system installation is performed.
 
 `check` runs authored-source formatting, packaging/format-tool tests, core tests, production editor tests/lints, all-feature reference tests/lints and release-profile composed UI tests. Production is checked separately so feature unification cannot conceal an OCIO runtime dependency. No private samples are needed. Ignored photographic/resource diagnostics and explicitly launched native-window exercises remain separate, as described in [development](development.md).
 
@@ -48,14 +48,18 @@ CI covers the hardware-independent subset only. The split of responsibility:
 | --- | --- |
 | Authored-source formatting, documentation links, packaging/format-tool unit tests | `checks` job, hosted (`cargo xtask tools` first) |
 | Numerical-core tests | `checks` job, hosted |
-| Native setup, vendored-SDK adapter tests, production/all-features clippy, package + relocated ZIP verification, ZIP artifact | `editor` job, hosted (Metal-free stages) |
-| Windows native setup, formatting, clippy, numerical-core and direct-SDK tests, editor build, portable ZIP artifact | Windows workflow, hosted |
+| Native setup, vendored-SDK adapter tests, production and all-features clippy | `editor-checks` job, hosted (Metal-free stages) |
+| Native setup, package build, relocated ZIP verification and ZIP artifact | `package` job, hosted |
+| Windows formatting, clippy, numerical-core and direct-SDK tests | Windows `lint-and-tests` job, hosted |
+| Windows editor build and portable ZIP artifact | Windows `package` job, hosted |
 | Editor library tests, kittest `ui-tests`, GPU suites | Agent/local machine before integration — these need a Metal device on macOS or a Vulkan device on Windows, outside the hardware-independent hosted jobs |
 | Photographic, physical-input, native-window acceptance | Unchanged: manual/local exercise, never CI |
 
+The all-features clippy compiles the reference and `ui-tests` configurations without running them, so that test-harness code stays buildable in CI even though only a local run can execute it.
+
 A green PR therefore does not authorize merging on its own: the device-dependent suites in [development checks](development.md) still need to run in an agent session or on the developer's machine before integration, until a labeled self-hosted runner joins CI. Do not respond to missing hosted coverage by making those tests skip or silently pass in the workflow.
 
-GitHub's runner images change over time (Xcode and tool versions drift); the pinned native-dependency cache is keyed on the setup scripts, so force a fresh cache when a runner-image change needs re-verification. CI uses SHA-pinned actions with `contents: read` permissions, per-run concurrency cancellation, and selects Xcode 26.3 via `DEVELOPER_DIR` because the image's default Xcode (16.4) ships a `swift-format` too old for the checked-in `.swift-format` schema; a runner-image update may require re-pinning that path. Cached paths are the pinned native dependencies and format tools (keyed on the setup scripts) and Cargo downloads (keyed on the lockfile); `target/` is not cached. The workflow mirrors the documented local commands rather than defining a second build system.
+GitHub's runner images change over time (Xcode and tool versions drift); the pinned native-dependency cache is keyed on the setup scripts, so force a fresh cache when a runner-image change needs re-verification. CI uses SHA-pinned actions with `contents: read` permissions, per-run concurrency cancellation, and selects Xcode 26.3 via `DEVELOPER_DIR` because the image's default Xcode (16.4) ships a `swift-format` too old for the checked-in `.swift-format` schema; a runner-image update may require re-pinning that path. Cached paths are the pinned native dependencies (keyed on the setup scripts), the pinned formatting tools (keyed on the xtask crate) and Cargo downloads (keyed on the lockfile); `target/` is not cached. Formatting tools are installed and cached only in the job that formats sources, and their cache is restored only on an exact key match so a changed pin cannot keep an older formatter. Within a workflow one job writes each cache, and the jobs that only need its contents restore it without saving. The jobs each run the stages they need concurrently, so a pull request finishes when the slowest job does. The workflow mirrors the documented local commands rather than defining a second build system.
 
 ## Releasing a tag
 

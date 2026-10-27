@@ -26,6 +26,20 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Cache pinned formatting tools
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .cache/format-tools
+          key: format-tools-${{ runner.os }}-${{ hashFiles('scripts/xtask/src/main.rs') }}
+      - name: Cache Cargo downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-
       - name: Install pinned formatting tools
         run: cargo xtask tools
       - name: Authored-source formatting
@@ -37,24 +51,23 @@ jobs:
       - name: Numerical core tests
         run: cargo test --locked --no-default-features
 
-  editor:
-    name: native build, editor and package
+  editor-checks:
+    name: native adapter tests and clippy
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Cache pinned native dependencies and tools
+      - name: Cache pinned native dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             .cache/native-deps
             .cache/deps
-            .cache/format-tools
           key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup-native.sh', 'scripts/build-*.sh', 'scripts/xtask/src/main.rs') }}
           restore-keys: |
             native-${{ runner.os }}-${{ runner.arch }}-
-      - name: Cache Cargo downloads
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      - name: Restore Cargo downloads
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -62,14 +75,41 @@ jobs:
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-${{ runner.os }}-${{ runner.arch }}-
-      - name: Prepare pinned dependencies and tools
-        run: cargo xtask setup
+      - name: Prepare pinned native dependencies
+        run: cargo xtask setup-native
       - name: Direct-SDK adapter tests
         run: "cargo test --locked --features dng-sdk --lib dng::"
       - name: Production editor clippy
         run: cargo clippy --locked --features editor --all-targets -- -D warnings
       - name: All-features clippy
         run: cargo clippy --locked --all-features --all-targets -- -D warnings
+
+  package:
+    name: package and verify
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Restore pinned native dependencies
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            .cache/native-deps
+            .cache/deps
+          key: native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup-native.sh', 'scripts/build-*.sh', 'scripts/xtask/src/main.rs') }}
+          restore-keys: |
+            native-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore Cargo downloads
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-
+      - name: Prepare pinned native dependencies
+        run: cargo xtask setup-native
       - name: Package the relocatable app
         run: cargo xtask package
       - name: Verify the relocated package

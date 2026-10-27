@@ -36,8 +36,17 @@ fn prerequisites() -> Result {
 
 fn install_tools() -> Result {
     let tools = Path::new(".cache/format-tools");
+    let venv = tools.join("venv");
     fs::create_dir_all(tools)?;
-    if !tools.join("venv/bin/python").exists() {
+    // A restored cache can carry a virtual environment whose interpreter no longer
+    // exists on this runner image; recreate it rather than fail when the formatter runs.
+    let venv_usable = Command::new(venv.join("bin/python"))
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !venv_usable {
+        fs::remove_dir_all(&venv).ok();
         run("python3", &["-m", "venv", ".cache/format-tools/venv"])?;
     }
     if !(tools.join("venv/bin/ruff").exists() && tools.join("venv/bin/clang-format").exists()) {
@@ -73,9 +82,13 @@ fn tools() -> Result {
     install_tools()
 }
 
-fn setup() -> Result {
+fn setup_native() -> Result {
     prerequisites()?;
-    run("sh", &["scripts/setup-native.sh"])?;
+    run("sh", &["scripts/setup-native.sh"])
+}
+
+fn setup() -> Result {
+    setup_native()?;
     install_tools()
 }
 
@@ -181,6 +194,7 @@ fn main() -> Result {
     }
     match action {
         "setup" => setup(),
+        "setup-native" => setup_native(),
         "tools" => tools(),
         "doctor" => prerequisites(),
         "check" => check(),
@@ -195,7 +209,7 @@ fn main() -> Result {
         }
         "help" | "--help" | "-h" => {
             println!(
-                "cargo xtask <doctor|setup|tools|check|build|package|verify-package|all>\n\nsetup downloads/builds pinned dependencies and installs formatters locally.\ntools installs only the pinned formatting tools and warms Cargo downloads; no native build.\ncheck requires native setup and Metal, but opens no desktop windows.\npackage builds the production editor and creates a local .app and ZIP.\nverify-package extracts the ZIP, audits its runtime paths/signature and runs it.\nall performs setup, check, package and verification. No system packages are installed."
+                "cargo xtask <doctor|setup|setup-native|tools|check|build|package|verify-package|all>\n\nsetup downloads/builds pinned dependencies and installs formatters locally.\nsetup-native downloads/builds only the pinned native dependencies, without the formatters.\ntools installs only the pinned formatting tools and warms Cargo downloads; no native build.\ncheck requires native setup and Metal, but opens no desktop windows.\npackage builds the production editor and creates a local .app and ZIP.\nverify-package extracts the ZIP, audits its runtime paths/signature and runs it.\nall performs setup, check, package and verification. No system packages are installed."
             );
             Ok(())
         }

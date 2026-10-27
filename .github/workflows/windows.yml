@@ -18,10 +18,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: build, format and device-free tests
+  lint-and-tests:
+    name: formatting, clippy and device-free tests
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install the pinned toolchain
@@ -61,6 +61,37 @@ jobs:
         run: cargo test --locked --no-default-features
       - name: Direct-SDK adapter tests
         run: "cargo test --locked --features dng-sdk --lib dng::"
+
+  package:
+    name: build and package
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Install the pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
+      - name: Restore pinned tools and native dependencies
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            .cache/tools
+            .cache/native-deps
+          key: windows-native-${{ hashFiles('scripts/setup-windows.ps1', 'scripts/build-libraw.ps1') }}
+          restore-keys: |
+            windows-native-
+      - name: Restore the Cargo downloads
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+      - name: Prepare the toolchain and native dependencies
+        run: powershell -ExecutionPolicy Bypass -File scripts/setup-windows.ps1
       - name: Build the editor
         run: cargo build --locked --release --features editor --bin antitone
       - name: Package the portable ZIP
