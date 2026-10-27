@@ -87,6 +87,7 @@ The stages can also be run separately:
 ```sh
 cargo xtask doctor          # Inspect required tools.
 cargo xtask setup           # Download/verify/build dependencies and prepare formatters.
+cargo xtask setup-native    # Download/verify/build dependencies only; no formatters.
 cargo xtask check           # Authored-source formatting, lints, production/reference and UI tests.
 cargo xtask package         # Build the production editor, bundle libraries/notices, create ZIP.
 cargo xtask verify-package  # Extract and verify the ZIP outside the checkout.
