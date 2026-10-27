@@ -8,8 +8,8 @@ The processing pipeline is:
 developed camera RGB
   → Negative: optional scan-illumination correction and per-channel inversion
     Digital: scene-referred positive
-  → camera-to-AP1 colour conversion
-  → ungraded working positive (optional source-owned dust repair here)
+  → camera-to-AP1 conversion, including fixed Digital brightness normalization
+  → normalized, ungraded working positive (optional source-owned dust repair here)
   → Roll exposure and photographic white balance
   → ordered adjustment layers: exposure, white balance, contrast and saturation
   → working positive, ready for rendering or EXR
@@ -25,6 +25,8 @@ Negative uses one shared scan basis: the camera interpretation and developer con
 
 The accepted domain is three-colour integer Bayer without repeated black-level patterns: Sony ARW, Canon CR2/CR3 (including CRAW), Nikon NEF, Olympus ORF and Panasonic RW2 develop through it. LibRaw recognizes further formats (X-Trans, decimated sRAW/mRAW, others); broader compatibility is future work.
 
+LibRaw's highlight-safe development divides WB gains by their maximum. [Immutable source reads](../src/scan.rs) restore `max(WB) / green(WB)` in floating point before camera conversion, retaining above-one headroom and scaling the precision floor with the signal. CPU sampling, proxies, GPU views, repairs and exports share these samples. Unity-WB Negative and direct SDK DNG keep their existing scale. This decoder correction leaves photographic exposure controls and deliberate capture exposure differences intact; camera/ISO exposure-reference calibration is a separate concern.
+
 Negative inverts before the camera-to-working-space matrix: a matrix mixes channels, while inversion applies a different nonlinear response to each channel. An optional [flat-field map](flat-field.md) corrects scan illumination in these camera coordinates before inversion.
 
 ### Direct DNG development
@@ -38,6 +40,14 @@ Sony RAW development automatically applies available embedded vignetting, distor
 The current binding reconstructs one conservative valid rectangle at unchanged pixel pitch from the active image geometry; distortion and red/blue CA scales combine at the radial knots before interpolation. Shading multiplies each original developed sample **before** bilinear reconstruction (`2^(0.5 - 2^(v/8192 - 1))` at the knots, interpolated then reciprocated) — this is the [darktable 5.6.2 v2](https://github.com/darktable-org/darktable/blob/release-5.6.2/src/iop/lens.cc) interpretation; [RawTherapee 5.12](https://github.com/RawTherapee/RawTherapee/blob/5.12/rtengine/lensmetadata.cc) instead interpolates reciprocal gains, agreeing at knots but not between them. Neither decoder inspection nor these public interpretations proves exact vendor output.
 
 Corrected originals retain continuous f32 camera samples (fractions and values above native white included) and release LibRaw's redundant RGB16 development; absent or all-zero profiles keep the native integer source. Corrected clipping flags let picks, Analyze and flat-field estimation check eligibility without tracing geometry. [The source-storage study](diagnostics.md#sony-source-storage-precision) distinguishes rounding differences from headroom loss. All consumers use the corrected developed raster rather than applying their own lens warp: [flat references](flat-field.md) require matching lens development, and [projects](projects.md#compatibility-is-about-the-processing-basis) retain its identity.
+
+## Digital starting brightness
+
+Digital uses the embedded camera preview as a per-capture brightness reference, leaving Roll and layer exposure at zero. Source preparation folds the fixed gain into the camera-to-AP1 transform, so tools, repairs, viewer, thumbnails and exports receive the same normalized baseline pixels. The native samples and recorded colour matrix remain unchanged; no additional full-image pass is needed. Roll and adjustment-layer grading follow that baseline.
+
+The estimator compares interior luminance quantiles from an as-shot AP1 proxy before brightness normalization with a colour-managed preview. A small [generated inverse neutral-ACES lookup](../assets/ocio/README.md#neutral-exposure-reference) translates display luminance into the current 100-nit rendering convention. This chooses roughly camera-like brightness without copying the camera's contrast, saturation or monochrome style. Photographer-set exposure compensation is not subtracted.
+
+[Lazy source preparation](architecture.md#services-workers-and-admission) resolves the value before publishing a processed positive, including cache hits and cold exports. Edits to crop, WB, exposure or look do not re-meter the capture. Missing usable colour/framing or insufficient nonclipped luminance produces an explicit unavailable result with zero starting EV; manual exposure remains available. [Projects](projects.md#save-accepted-choices-not-working-machinery) retain completed values separately from accepted controls.
 
 ## Two anchors define the response
 
@@ -73,9 +83,9 @@ After input interpretation, each source's metadata-derived camera matrix maps th
 
 ### Ungraded positive and repair placement
 
-The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, but before Roll or layer controls. `InputPipeline::ungraded` keeps that boundary explicit: Negative includes correction and calibrated inversion; Digital preserves scene-referred light.
+The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, including fixed Digital brightness normalization, but before Roll or layer controls. `InputPipeline::ungraded` consumes the source's resolved production transform: Negative includes correction and calibrated inversion; Digital supplies its normalized positive.
 
-The provisional Dust tool heals here. RAW-development WB and gamma balance are upstream; exposure, photographic WB, contrast, saturation and adjustment layers are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
+The provisional Dust tool heals here. RAW-development WB, gamma balance and fixed Digital normalization are upstream; Roll and adjustment-layer controls are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
 
 Healing and nonlinear grading do not commute, so pre-grade donor matching can differ from matching graded input. Full-resolution repair composition precedes view filtering; saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer and TIFF/AP0 EXR consume those repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) and measurement inputs omit them.
 
@@ -103,13 +113,13 @@ Continuous signed contrast and the film-base continuation retain explicit zero-i
 
 ### Physical-view processing is an approximation
 
-The positive editor prototype factors exposure and photographic WB downstream of neutral inversion/camera AP1: original camera samples still receive continuous correction and calibrated inversion before exact affine-footprint filtering into signed/HDR f32 AP1, and fixed-view grading reuses that filtered input rather than processing the whole original again.
+The positive editor prototype factors Roll exposure/WB and adjustment layers downstream of baseline AP1 production: original camera samples still receive continuous correction and calibrated inversion before exact affine-footprint filtering into signed/HDR f32 AP1, and fixed-view grading reuses that filtered input rather than processing the whole original again.
 
 Filtering before nonlinear grading does **not** commute with original-sample grading before reconstruction, and footprint-centre local masks are not the original-sample mask integral. These are preview approximations, not changes to the photographic model or export authority: the appearance requirement is the same photograph in the file, potentially with better-resolved detail. Source inspection similarly acquires filtered linear AP1 from corrected camera light without inversion, applying its [viewing WB and exposure](colour-and-output.md#source-inspection-has-its-own-exposure-convention) before pinned ACES. [Editor ownership](editor.md#a-stable-working-view-while-grading) and [diagnostics](diagnostics.md#stable-float32-view-grading) keep those distinctions explicit.
 
 ## Important boundaries
 
-The current model is **4**. Negative calibration must be finite and satisfy `Dmin > Dmax >= input_floor > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
+The current model is **5**. Negative calibration must be finite and satisfy `Dmin > Dmax >= input_floor > 0` per camera channel. Its scan sources share one compatible acquisition basis; Digital has no calibration and uses each source's camera matrix.
 
 ## Working on this area
 

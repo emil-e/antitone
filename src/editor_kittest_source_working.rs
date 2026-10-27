@@ -2,6 +2,85 @@ use super::*;
 use crate::raw::sony_fixture as sony;
 
 #[test]
+fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_controls() {
+    let file = sony::source_with_as_shot(sony::Order::Little, vec![], [4, 1, 2]);
+    let directory = tempfile::tempdir().unwrap();
+    editor_harness_with_thumbnails(true, |mut h, _| {
+        h.update(|editor| {
+            editor.input = crate::processing::InputSettings::Digital;
+            editor.sync_document();
+        });
+        h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
+        wait_for(&mut h, |e| {
+            !e.busy
+                && e.document_pending.is_none()
+                && e.working.support_ready()
+                && e.thumbnails.ready_count(&e.document, e.target) == 1
+        });
+        h.render().unwrap();
+        let accepted = h.read(|editor| {
+            assert!(!editor.source);
+            assert_eq!(editor.roll.exposure, 0.);
+            assert_eq!(editor.adjustment_layer_settings.exposure, 0.);
+            let ready = editor.document.visit.ready.as_ref().unwrap();
+            assert_eq!(ready.record.development.decode.fixed_wb, [4., 1., 2., 1.]);
+            assert_eq!(
+                ready.record.development.decode.contract,
+                crate::project::DEVELOPMENT_CONTRACT
+            );
+            assert_eq!(
+                ready.record.development.input_floor,
+                4. * crate::processing::CAMERA_INPUT_FLOOR
+            );
+            editor.document.project.clone()
+        });
+        h.get_by_label("View source").click();
+        h.step();
+        wait_for(&mut h, |e| {
+            e.working.support_ready()
+                && e.working
+                    .displayed
+                    .as_ref()
+                    .is_some_and(|v| v.spec.is_inspection())
+        });
+        h.render().unwrap();
+        h.read(|editor| {
+            assert!(editor.source);
+            // Inspection retains only its separate +1 EV convention, not another x4.
+            assert_eq!(
+                bytemuck::bytes_of(&editor.source_parameters(0.).unwrap()),
+                bytemuck::bytes_of(&ProcessingParameters::source_preview(None, 0.).unwrap())
+            );
+            let record = editor
+                .document
+                .project
+                .source(editor.current_source.unwrap())
+                .unwrap();
+            assert_eq!(editor.document.project, accepted);
+            let saved = editor
+                .document
+                .save(
+                    &directory.path().join("digital.antitone"),
+                    crate::project::Save::New,
+                )
+                .unwrap();
+            let opened =
+                crate::editor::document::Document::open(saved.path.as_ref().unwrap()).unwrap();
+            assert_eq!(opened.project.roll.exposure, 0.);
+            assert!(
+                opened.project.sources[0]
+                    .grade_snapshot()
+                    .unwrap()
+                    .layers()
+                    .iter()
+                    .all(|layer| layer.photo.exposure == 0.)
+            );
+            assert_eq!(opened.project.sources[0].development, record.development);
+        });
+    });
+}
+
+#[test]
 fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_redevelopment() {
     use crate::raw::SourceWhiteBalance;
     let authored = crate::raw::fixture::bayer_dng();

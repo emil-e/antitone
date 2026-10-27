@@ -166,9 +166,10 @@ fn transient_reference_with_the_same_development_cannot_seed_the_working_photo()
     ready.thumbnail = Some((
         FileKey::new(&ready.record.path),
         Arc::new(Proxy {
+            reference_exposure: Default::default(),
             width: 1,
             height: 1,
-            pixels: vec![[0.; 4]],
+            pixels: vec![[0.; 4]].into(),
             matrix: glam::DMat3::IDENTITY,
         }),
     ));
@@ -761,18 +762,44 @@ fn digital_source_inspection_does_not_balance_as_shot_development_twice() {
     )
     .unwrap();
     std::fs::write(&path, super::super::tests::dng_with_red_as_shot(&original)).unwrap();
-    let mut editor = Editor::state();
-    editor.document.project.input = InputSettings::Digital;
-    editor.document.import(&[path]).unwrap();
-    editor.input = InputSettings::Digital;
-    let id = editor.document.project.order[0];
-    let source = editor.document.project.source(id).unwrap();
-    assert_ne!(source.development.decode.fixed_wb, crate::project::UNITY_WB);
-    let expected = ProcessingParameters::source_preview(None, 0.37).unwrap();
-    for white in [SourceWhiteBalance::Daylight, SourceWhiteBalance::AsShot] {
-        editor.source_white_balance = white;
-        let actual = editor.source_parameters_for(source, 0.37).unwrap();
-        assert_eq!(bytemuck::bytes_of(&actual), bytemuck::bytes_of(&expected));
+    let native = crate::raw::sony_fixture::source_with_as_shot(
+        crate::raw::sony_fixture::Order::Little,
+        vec![],
+        [4, 1, 2],
+    );
+    let (device, queue) = pollster::block_on(async {
+        let adapter = crate::gpu::instance()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        adapter.request_device(&Default::default()).await.unwrap()
+    });
+    for path in [path, native.path().to_owned()] {
+        let mut editor = Editor::state();
+        editor.initialize_viewer(&device, &queue);
+        editor.document.project.input = InputSettings::Digital;
+        editor.document.import(&[path]).unwrap();
+        editor.input = InputSettings::Digital;
+        editor.source = true;
+        editor.source_exposure = 0.37;
+        let id = editor.document.project.order[0];
+        let source = editor.document.project.source(id).unwrap().clone();
+        assert_ne!(source.development.decode.fixed_wb, crate::project::UNITY_WB);
+        let expected = ProcessingParameters::source_preview(None, 0.37).unwrap();
+        let positive = ProcessingParameters::digital(
+            editor.roll,
+            glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
+        )
+        .unwrap();
+        for white in [SourceWhiteBalance::Daylight, SourceWhiteBalance::AsShot] {
+            editor.source_white_balance = white;
+            let actual = editor.source_parameters_for(&source, 0.37).unwrap();
+            assert_eq!(bytemuck::bytes_of(&actual), bytemuck::bytes_of(&expected));
+            assert_eq!(
+                bytemuck::bytes_of(&editor.thumbnail_parameters(&source).unwrap().parameters()),
+                bytemuck::bytes_of(&positive)
+            );
+        }
     }
 }
 
@@ -1508,9 +1535,10 @@ fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
         source,
         FileKey::new(&document.source_path(source.id).unwrap()),
         Arc::new(Proxy {
+            reference_exposure: Default::default(),
             width: 1,
             height: 1,
-            pixels: vec![[0.; 4]],
+            pixels: vec![[0.; 4]].into(),
             matrix: glam::DMat3::IDENTITY,
         }),
     );
@@ -1535,9 +1563,10 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
         editor.document.project.source(id).unwrap(),
         FileKey::new(&editor.document.source_path(id).unwrap()),
         Arc::new(Proxy {
+            reference_exposure: Default::default(),
             width: 1,
             height: 1,
-            pixels: vec![[1.; 4]],
+            pixels: vec![[1.; 4]].into(),
             matrix: glam::DMat3::IDENTITY,
         }),
     );
@@ -1601,9 +1630,10 @@ fn disk_worker_reuses_camera_pixels_for_source_and_positive_cards_and_rejects_st
         disk.store(
             &SourceKey::new(&source, FileKey::new(&path)),
             &Proxy {
+                reference_exposure: Default::default(),
                 width: 2,
                 height: 1,
-                pixels: vec![[1., 2., 3., 0.]; 2],
+                pixels: vec![[1., 2., 3., 0.]; 2].into(),
                 matrix: glam::DMat3::IDENTITY,
             },
         )

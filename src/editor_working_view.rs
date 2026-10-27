@@ -853,7 +853,7 @@ impl Editor {
             Some(base) => base_input.with_calibration(self.processing_calibration(base)?),
             None => base_input,
         };
-        let matrix = glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1);
+        let matrix = ready.developed.positive_matrix(&settings)?;
         let snapshot = match input.grade() {
             Some(grade) => grade.snapshot().clone(),
             None => AdjustmentLayerSnapshot::new(vec![

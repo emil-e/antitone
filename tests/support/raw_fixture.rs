@@ -4,6 +4,10 @@ pub const SIDE: u32 = 64;
 
 /// Tiny authored integer-Bayer DNG; no private photographs or GPU work.
 pub fn bayer_dng() -> FixturePath {
+    bayer_dng_with_rgb([8000, 16000, 24000])
+}
+
+pub fn bayer_dng_with_rgb(rgb: [u16; 3]) -> FixturePath {
     let short = |value: u16| value.to_le_bytes().to_vec();
     let long = |value: u32| value.to_le_bytes().to_vec();
     let rational = |value: u32| [value.to_le_bytes(), 1u32.to_le_bytes()].concat();
@@ -84,9 +88,9 @@ pub fn bayer_dng() -> FixturePath {
     for y in 0..SIDE {
         for x in 0..SIDE {
             let value: u16 = match (x % 2, y % 2) {
-                (0, 0) => 8000,
-                (1, 1) => 24000,
-                _ => 16000,
+                (0, 0) => rgb[0],
+                (1, 1) => rgb[2],
+                _ => rgb[1],
             };
             bytes.extend_from_slice(&value.to_le_bytes());
         }

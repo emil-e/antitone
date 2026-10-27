@@ -37,7 +37,7 @@ The [project embeds that accepted numeric asset](projects.md#embed-the-accepted-
 
 Negative source viewing balances unity-developed camera light for inspection before ACES. LibRaw uses green-relative daylight/as-shot gain ratios, expressed in the cached source's AP1 basis. The DNG SDK supplies profile-adapted viewing matrices; applying generic gains on top would balance it twice. Header preparation retains these per-source transforms separately from development identity. Unavailable as-shot WB falls back to daylight; unavailable daylight leaves the source's existing balance.
 
-LibRaw's highlight-safe development divides fixed WB gains by their maximum. Source presentation restores a green-referenced scale; SDK development needs no such compensation. Both use a common **+1 EV** ACES preview baseline, with manual inspection EV relative to it. Canvas and source-preview thumbnails share this transform without changing their underlying pixels. This is a viewing convention, not a camera exposure calibration or camera-JPEG match. [Source inspection](editor.md#source-inspection-is-a-view) owns the transient controls.
+Canvas and source-preview thumbnails use a common **+1 EV** ACES inspection baseline, with manual inspection EV relative to it. They consume the [shared source exposure scale](processing.md#start-with-the-cameras-measurements) without repeating WB normalization. This extra stop belongs only to inspection; Digital positives and exports use their [per-capture starting exposure](processing.md#digital-starting-brightness). [Source inspection](editor.md#source-inspection-is-a-view) owns the transient controls.
 
 ## Let the OS handle the monitor
 

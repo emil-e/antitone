@@ -21,7 +21,7 @@ fn initial_brush_size(active: SourceRegion) -> u32 {
     ((active.width.min(active.height) as f64 * 0.01).round() as u32).clamp(4, 128)
 }
 
-pub(super) type Signature = [u8; ProcessingParameters::BYTE_LEN];
+pub(super) type Signature = super::processing::NeutralSourceSignature;
 
 #[derive(Clone)]
 pub(super) struct Request {
@@ -1723,23 +1723,7 @@ impl Editor {
     }
 
     pub(super) fn dust_signature(&self) -> Option<Signature> {
-        self.dust_signature_for(&self.input()).ok()
-    }
-
-    fn dust_signature_for(&self, input: &InputSettings) -> Result<Signature, Error> {
-        let ready = self
-            .document
-            .visit
-            .ready
-            .as_ref()
-            .ok_or(Error::InvalidParameter("dust source unavailable"))?;
-        let matrix = glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1);
-        let input = match input.calibration() {
-            Some(base) => input.with_calibration(self.processing_calibration(base)?),
-            None => *input,
-        };
-        let parameters = ProcessingParameters::interpret(input, RollSettings::default(), matrix)?;
-        Ok(bytemuck::bytes_of(&parameters).try_into().unwrap())
+        self.neutral_source_signature(&self.input()).ok()
     }
 
     pub(super) fn dust_validate_processing(
@@ -1765,7 +1749,7 @@ impl Editor {
         let Some(source) = self.current_source else {
             return Ok(());
         };
-        let signature = self.dust_signature_for(&input)?;
+        let signature = self.neutral_source_signature(&input)?;
         let mut bound = DVec3::ZERO;
         for repair in self
             .effective_dust_repairs(source)
@@ -1798,7 +1782,7 @@ impl Editor {
                 bound = bound.max(cached.bound);
             }
         }
-        self.validate_dust_snapshot(&input, roll, snapshot, bound)
+        self.validate_repaired_source(&input, roll, snapshot, bound)
     }
 
     fn dust_grade_snapshot(
@@ -1809,35 +1793,6 @@ impl Editor {
             Some(id) => self.adjustment_layer_snapshot(self.document.project.source(id)?, photo),
             None => AdjustmentLayerSnapshot::new(Vec::new()),
         }
-    }
-
-    fn validate_dust_snapshot(
-        &self,
-        input: &InputSettings,
-        roll: RollSettings,
-        snapshot: &AdjustmentLayerSnapshot,
-        bound: DVec3,
-    ) -> Result<(), Error> {
-        if bound == DVec3::ZERO {
-            return Ok(());
-        }
-        let (Some(device), Some(ready)) = (self.working.device(), &self.document.visit.ready)
-        else {
-            return Ok(());
-        };
-        let input = match input.calibration() {
-            Some(base) => input.with_calibration(self.processing_calibration(base)?),
-            None => *input,
-        };
-        crate::gpu::GpuAdjustmentLayers::validate_repaired(
-            device,
-            input,
-            roll,
-            snapshot,
-            glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1),
-            ready.area,
-            bound,
-        )
     }
 
     pub(super) fn dust_gpu_snapshot(
@@ -1886,14 +1841,15 @@ impl Editor {
             .iter()
             .fold(DVec3::ZERO, |bound, (_, c)| bound.max(c.bound));
         let all_valid = self
-            .validate_dust_snapshot(&input, self.roll, &snapshot, bound)
+            .validate_repaired_source(&input, self.roll, &snapshot, bound)
             .is_ok();
         let mut admitted_bound = DVec3::ZERO;
         let mut patches = Vec::new();
         for (id, cached) in candidates {
             let bound = admitted_bound.max(cached.bound);
             if !all_valid
-                && let Err(error) = self.validate_dust_snapshot(&input, self.roll, &snapshot, bound)
+                && let Err(error) =
+                    self.validate_repaired_source(&input, self.roll, &snapshot, bound)
             {
                 self.document.dust.render_error = Some(error.to_string());
                 continue;
@@ -2339,7 +2295,7 @@ mod tests {
             request: 4,
             loaded: 8,
             source,
-            signature: [3; ProcessingParameters::BYTE_LEN],
+            signature: [3; ProcessingParameters::BYTE_LEN].into(),
             repair: first,
             input: Calibration {
                 dmin: DVec3::splat(0.5),
@@ -2352,14 +2308,24 @@ mod tests {
         let repairs = committed.repairs().to_vec();
         assert_eq!(
             state
-                .next_stale(source, 8, [3; ProcessingParameters::BYTE_LEN], &repairs)
+                .next_stale(
+                    source,
+                    8,
+                    [3; ProcessingParameters::BYTE_LEN].into(),
+                    &repairs
+                )
                 .unwrap()
                 .id,
             RepairId(2)
         );
         assert_eq!(
             state
-                .next_stale(source, 8, [4; ProcessingParameters::BYTE_LEN], &repairs)
+                .next_stale(
+                    source,
+                    8,
+                    [4; ProcessingParameters::BYTE_LEN].into(),
+                    &repairs
+                )
                 .unwrap()
                 .id,
             RepairId(1)

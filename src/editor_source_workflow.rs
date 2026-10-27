@@ -58,6 +58,7 @@ impl Editor {
         let wb = self.document.project.acquisition_wb(expected.as_ref());
         let cache = LoadCache::new(&path, expected.as_ref(), &self.document);
         source::Request {
+            input: self.input(),
             path,
             wb,
             expected,
@@ -260,6 +261,7 @@ impl Editor {
                         id,
                         &ready.developed.metadata(),
                         ready.developed.fixed_wb(),
+                        ready.developed.file.clone(),
                     );
                 }
                 self.document.visit.ready = Some(*ready);

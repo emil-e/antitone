@@ -12,7 +12,8 @@ fn jpeg(width: u32, height: u32, flip: i32) -> crate::raw::EmbeddedThumbnail {
         )
         .unwrap();
     crate::raw::EmbeddedThumbnail {
-        jpeg: bytes,
+        data: bytes,
+        rgb_dimensions: None,
         flip,
         color_space: 1,
     }
@@ -97,10 +98,12 @@ fn jpeg_decode_is_bounded_oriented_and_display_referred_without_upscaling() {
     assert_eq!(rotated.size, [4, 8]);
     let reduced = decode(jpeg(400, 200, 5)).unwrap().unwrap();
     assert_eq!(reduced.size, [128, 256]);
-    assert!(decode(jpeg(2049, 1, 0)).is_err());
+    assert!(decode(jpeg(2049, 1, 0)).unwrap().is_some());
+    assert!(decode(jpeg(8193, 1, 0)).is_err());
     assert!(
         decode(crate::raw::EmbeddedThumbnail {
-            jpeg: vec![1, 2, 3],
+            data: vec![1, 2, 3],
+            rgb_dimensions: None,
             flip: 0,
             color_space: 1
         })
@@ -129,7 +132,8 @@ fn embedded_icc_and_exif_are_honoured_without_camera_inversion() {
         .encode(&[127; 8 * 4 * 3], 8, 4, image::ExtendedColorType::Rgb8)
         .unwrap();
     let image = decode(crate::raw::EmbeddedThumbnail {
-        jpeg: bytes,
+        data: bytes,
+        rgb_dimensions: None,
         flip: 6,
         color_space: 65535,
     })
@@ -788,9 +792,10 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         .publish_proxy(
             image_key.source.store_key().unwrap(),
             Arc::new(Proxy {
+                reference_exposure: Default::default(),
                 width: 8,
                 height: 4,
-                pixels: vec![[1000., 2000., 3000., 0.]; 32],
+                pixels: vec![[1000., 2000., 3000., 0.]; 32].into(),
                 matrix: glam::DMat3::IDENTITY,
             }),
         )

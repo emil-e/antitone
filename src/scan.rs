@@ -64,16 +64,36 @@ pub struct AnalysisSamples {
 ///     image.pixel_codes(0, 0).unwrap();
 /// }
 /// ```
+#[derive(Clone)]
 pub struct DevelopedSource {
-    raw: FrozenRaw,
+    raw: Arc<FrozenRaw>,
+    #[cfg(feature = "project")]
+    pub(crate) file: crate::source_revision::FileKey,
     camera_to_ap1: DMat3,
     camera_model: String,
     area: Rect,
     fixed_wb: [f64; 4],
+    source_scale: f64,
     input_floor: f64,
+    pub(crate) reference_exposure:
+        std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>,
 }
 
 impl DevelopedSource {
+    #[cfg(feature = "project")]
+    pub(crate) fn interpreted(
+        self: &Arc<Self>,
+        value: &crate::exposure_reference::ReferenceExposure,
+    ) -> Arc<Self> {
+        let _ = self.reference_exposure.set(value.clone());
+        if self.reference_exposure.get() == Some(value) {
+            return self.clone();
+        }
+        let mut view = self.as_ref().clone();
+        view.reference_exposure = std::sync::OnceLock::from(value.clone());
+        Arc::new(view)
+    }
+
     fn from_raw(mut raw: RawFile, fixed_wb: Option<[f64; 4]>) -> Result<Self> {
         let wb = fixed_wb.unwrap_or_else(|| raw.metadata.as_shot_wb());
         raw.prepare_basis(wb)?;
@@ -82,14 +102,19 @@ impl DevelopedSource {
         let area = raw.metadata.image_area()?;
         raw.develop_camera(wb)?;
         let wb = raw.fixed_wb(wb);
-        let input_floor = raw.metadata.input_floor()?;
+        let source_scale = raw.metadata.source_scale(wb)?;
+        let input_floor = raw.metadata.source_input_floor(wb)?;
         Ok(Self {
-            raw: raw.freeze()?,
+            #[cfg(feature = "project")]
+            file: raw.file.clone(),
+            raw: Arc::new(raw.freeze()?),
             camera_to_ap1: matrix,
             camera_model,
             area,
             fixed_wb: wb,
+            source_scale,
             input_floor,
+            reference_exposure: std::sync::OnceLock::new(),
         })
     }
 
@@ -97,18 +122,29 @@ impl DevelopedSource {
     /// Excludes SDK-private/stdlib heap, Arc/store bookkeeping and allocator-held VM;
     /// this is not total native heap or process footprint. None disables cache admission.
     pub fn retained_bytes(&self) -> Option<u64> {
-        self.raw
+        let bytes = self
+            .raw
             .retained_bytes()?
             .checked_add(size_of::<Self>() as u64)?
-            .checked_add(self.camera_model.capacity() as u64)
+            .checked_add(size_of::<FrozenRaw>() as u64)?
+            .checked_add(self.camera_model.capacity() as u64)?;
+        #[cfg(feature = "project")]
+        let bytes = bytes.checked_add(self.file.path.capacity() as u64)?;
+        Some(bytes)
     }
 
     pub fn metadata(&self) -> Metadata {
         self.raw.metadata()
     }
 
+    /// Recorded colour basis; positive image production uses `positive_matrix`.
     pub fn camera_to_ap1(&self) -> DMat3 {
         self.camera_to_ap1
+    }
+
+    /// Camera-to-AP1 production includes fixed Digital normalization, never manual grading.
+    pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
+        positive_matrix(input, self.camera_to_ap1, self.reference_exposure.get())
     }
 
     pub fn camera_model(&self) -> &str {
@@ -128,8 +164,11 @@ impl DevelopedSource {
         self.input_floor
     }
 
+    /// Source camera light, with LibRaw's WB-normalization scale already restored.
     pub fn camera_image(&self) -> Result<Developed<'_>> {
-        self.raw.camera_image()
+        self.raw
+            .camera_image()?
+            .with_source_scale(self.source_scale)
     }
 
     pub fn sensor_diagnostics(&self) -> Result<SensorDiagnostics> {
@@ -148,14 +187,32 @@ impl DevelopedSource {
 
 /// Developed camera-RGB thumbnail data before measured illumination correction or rendering.
 /// The production proxy has a 256-pixel maximum edge, without upscaling.
+#[derive(Clone)]
 pub struct CameraProxy {
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) pixels: Vec<[f32; 4]>,
+    pub(crate) pixels: Arc<Vec<[f32; 4]>>,
+    // Physical colour basis retained for estimator sampling and source inspection.
     pub(crate) matrix: DMat3,
+    pub(crate) reference_exposure:
+        std::sync::OnceLock<crate::exposure_reference::ReferenceExposure>,
 }
 
 impl CameraProxy {
+    #[cfg(feature = "project")]
+    pub(crate) fn interpreted(
+        self: &Arc<Self>,
+        value: &crate::exposure_reference::ReferenceExposure,
+    ) -> Arc<Self> {
+        let _ = self.reference_exposure.set(value.clone());
+        if self.reference_exposure.get() == Some(value) {
+            return self.clone();
+        }
+        let mut view = self.as_ref().clone();
+        view.reference_exposure = std::sync::OnceLock::from(value.clone());
+        Arc::new(view)
+    }
+
     pub const MAX_EDGE: u32 = 256;
     #[cfg(feature = "editor")]
     pub(crate) const SAMPLING_VERSION: u32 = 1;
@@ -200,9 +257,14 @@ impl CameraProxy {
         Ok(Self {
             width,
             height,
-            pixels,
+            pixels: Arc::new(pixels),
             matrix: scan.camera_to_ap1,
+            reference_exposure: scan.source.reference_exposure.clone(),
         })
+    }
+
+    pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
+        positive_matrix(input, self.matrix, self.reference_exposure.get())
     }
 
     pub fn dimensions(&self) -> [u32; 2] {
@@ -210,13 +272,31 @@ impl CameraProxy {
     }
 
     pub fn retained_bytes(&self) -> u64 {
-        (self.pixels.capacity() * size_of::<[f32; 4]>() + size_of::<Self>()) as u64
+        (self.pixels.capacity() * size_of::<[f32; 4]>()
+            + size_of::<Self>()
+            + size_of::<Vec<[f32; 4]>>()) as u64
     }
 }
 
 #[cfg(test)]
 #[path = "scan_proxy_tests.rs"]
 mod proxy_tests;
+#[cfg(all(test, feature = "project"))]
+#[path = "scan_source_scale_tests.rs"]
+mod source_scale_tests;
+
+pub(crate) fn positive_matrix(
+    input: &crate::processing::InputSettings,
+    matrix: DMat3,
+    reference: Option<&crate::exposure_reference::ReferenceExposure>,
+) -> Result<DMat3> {
+    let gain = if input.is_negative() {
+        1.
+    } else {
+        crate::processing::exposure_multiplier(reference.map_or(0., |value| value.ev()))?
+    };
+    Ok(matrix * gain)
+}
 
 pub struct Scan {
     source: Arc<DevelopedSource>,
@@ -398,6 +478,10 @@ impl Scan {
                 self.area.y as f64 + self.area.height as f64 / 2.,
             ],
         )
+    }
+
+    pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
+        self.source.positive_matrix(input)
     }
 
     pub fn flat_field(&self) -> Option<&Arc<FlatField>> {
@@ -676,7 +760,7 @@ impl Scan {
             self.refined_input(input)?,
             roll,
             upstream,
-            self.camera_to_ap1,
+            self.positive_matrix(input)?,
         )?;
         let pixels = coverage
             .pixels(self.area)?

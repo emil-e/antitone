@@ -51,7 +51,9 @@ pub fn refine(
         tile_width,
         tile_height,
         &zeros,
-        scan.camera_to_ap1,
+        input
+            .grade()
+            .map_or(scan.camera_to_ap1, |grade| grade.source_matrix()),
         target,
     ))?;
     tile.set_flat_field(

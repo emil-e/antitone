@@ -336,11 +336,11 @@ async fn camera_processing(
     queue: &wgpu::Queue,
 ) -> Result<(wgpu::Buffer, Vec<u8>), Box<dyn std::error::Error>> {
     use antitone::gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource};
-    let scans = std::fs::read(".cache/probes/camera-source-model4.rgb16")?;
-    let matrix = std::fs::read(".cache/probes/camera-to-ap1-model4.f64")?;
-    let reference = std::fs::read(".cache/probes/camera-working-ap1-model4.f32")?;
-    let flags = std::fs::read(".cache/probes/camera-floor-flags-model4.u8")?;
-    let parameters = std::fs::read(".cache/probes/camera-processing-model4.bin")?;
+    let scans = std::fs::read(".cache/probes/camera-source-model5.rgb16")?;
+    let matrix = std::fs::read(".cache/probes/camera-to-ap1-model5.f64")?;
+    let reference = std::fs::read(".cache/probes/camera-working-ap1-model5.f32")?;
+    let flags = std::fs::read(".cache/probes/camera-floor-flags-model5.u8")?;
+    let parameters = std::fs::read(".cache/probes/camera-processing-model5.bin")?;
     if scans.is_empty()
         || scans.len() % 8 != 0
         || matrix.len() != 72

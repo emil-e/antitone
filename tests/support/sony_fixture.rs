@@ -34,6 +34,18 @@ pub(crate) fn profile_tags(order: Order) -> Vec<Entry> {
     ]
 }
 
+/// Declares camera WB on the authored CFA TIFF without selecting the DNG backend.
+pub(crate) fn source_with_as_shot(order: Order, mut tags: Vec<Entry>, wb: [u32; 3]) -> FixturePath {
+    tags.push((
+        50728,
+        5,
+        wb.into_iter()
+            .flat_map(|gain| [order.long(1), order.long(gain)].concat())
+            .collect(),
+    ));
+    source(order, tags, false, false)
+}
+
 /// The optional rendered IFD deliberately carries conflicting coefficients.
 pub(crate) fn source(order: Order, tags: Vec<Entry>, dng: bool, decoy: bool) -> FixturePath {
     source_oriented(order, tags, dng, decoy, 1)

@@ -9,9 +9,38 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <stdexcept>
 #include <vector>
 
 namespace OCIO = OCIO_NAMESPACE;
+
+static void neutralExposureReference() {
+    auto group = OCIO::GroupTransform::Create();
+    const auto &parameters = antitone::output_parameters(0);
+    auto tone = OCIO::FixedFunctionTransform::Create(OCIO::FIXED_FUNCTION_ACES_OUTPUT_TRANSFORM_20,
+                                                     parameters.data(), parameters.size());
+    tone->setDirection(OCIO::TRANSFORM_DIR_INVERSE);
+    group->appendTransform(tone);
+    auto toAP1 = OCIO::BuiltinTransform::Create();
+    toAP1->setStyle("ACEScg_to_ACES2065-1");
+    toAP1->setDirection(OCIO::TRANSFORM_DIR_INVERSE);
+    group->appendTransform(toAP1);
+    auto cpu = OCIO::Config::CreateRaw()->getProcessor(group)->getDefaultCPUProcessor();
+    std::ofstream output(".cache/probes/exposure-neutral-log2.f32", std::ios::binary);
+    for (unsigned i = 0; i <= 256; ++i) {
+        const float value = std::exp2(-12.f + 12.f * float(i) / 256.f);
+        float rgb[3] = {value, value, value};
+        cpu->applyRGB(rgb);
+        const float luminance =
+            0.2722287168f * rgb[0] + 0.6740817658f * rgb[1] + 0.0536895174f * rgb[2];
+        const float exposure = std::log2(luminance);
+        if (!std::isfinite(exposure))
+            throw std::runtime_error("nonfinite neutral exposure reference");
+        output.write(reinterpret_cast<const char *>(&exposure), sizeof(exposure));
+    }
+    if (!output)
+        throw std::runtime_error("unable to write neutral exposure reference");
+}
 
 int main(int argc, char **argv) try {
     const bool withCamera = argc == 2 && std::strcmp(argv[1], "--camera") == 0;
@@ -20,6 +49,7 @@ int main(int argc, char **argv) try {
         return 1;
     }
     std::printf("OCIO %s / input_space=ACEScg (linear AP1, D60)\n", OCIO::GetVersion());
+    neutralExposureReference();
     auto toAP0 = OCIO::BuiltinTransform::Create();
     toAP0->setStyle("ACEScg_to_ACES2065-1");
     auto ap1ToAP0 = OCIO::Config::CreateRaw()->getProcessor(toAP0)->getDefaultCPUProcessor();
@@ -37,7 +67,7 @@ int main(int argc, char **argv) try {
     }
     size_t cameraCount = 0;
     if (withCamera) {
-        std::ifstream camera(".cache/probes/camera-working-ap1-model4.f32",
+        std::ifstream camera(".cache/probes/camera-working-ap1-model5.f32",
                              std::ios::binary | std::ios::ate);
         if (!camera) {
             std::fprintf(stderr, "Generate camera references before requesting --camera\n");

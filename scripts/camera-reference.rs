@@ -1,4 +1,4 @@
-//! Writes deterministic RGB16/model-4 CPU references for the optional OCIO/Metal camera chain.
+//! Writes deterministic RGB16/model-5 CPU references for the optional OCIO/Metal camera chain.
 //! Requires pinned LibRaw and the committed patch DNG; `gpu` supplies the parameter ABI, not a device.
 //! Overwrites five generated `.cache/probes` artifacts. Includes two explicit code-floor cases.
 //! These are numerical inputs, not photographic calibration or an independent output oracle.
@@ -93,18 +93,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     fs::create_dir_all(".cache/probes")?;
     fs::write(
-        ".cache/probes/camera-source-model4.rgb16",
+        ".cache/probes/camera-source-model5.rgb16",
         bytemuck::cast_slice(&codes),
     )?;
     fs::write(
-        ".cache/probes/camera-to-ap1-model4.f64",
+        ".cache/probes/camera-to-ap1-model5.f64",
         bytemuck::cast_slice(&matrix.to_cols_array()),
     )?;
     fs::write(
-        ".cache/probes/camera-working-ap1-model4.f32",
+        ".cache/probes/camera-working-ap1-model5.f32",
         bytemuck::cast_slice(&working),
     )?;
-    fs::write(".cache/probes/camera-floor-flags-model4.u8", flags)?;
+    fs::write(".cache/probes/camera-floor-flags-model5.u8", flags)?;
     println!("camera_reference authored_pixels=1024 code_floor_cases=2 output=.cache/probes");
     Ok(())
 }

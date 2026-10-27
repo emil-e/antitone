@@ -214,7 +214,17 @@ impl Editor {
                     .with_calibration(self.processing_calibration(base)?),
                 None => self.input,
             };
-            ViewSourceSpec::new(self.id, frame, settings, matrix, field)?
+            let source = self.document.project.source(
+                self.current_source
+                    .ok_or(Error::UnusableSample("original source unavailable"))?,
+            )?;
+            ViewSourceSpec::new(
+                self.id,
+                frame,
+                settings,
+                self.document.positive_matrix(source, settings)?,
+                field,
+            )?
         }
         .with_repairs(input.repairs.clone());
         if let Some(rendered) = &self.original.rendered

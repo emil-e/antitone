@@ -28,16 +28,21 @@ pub(crate) fn write(
     };
     check()?;
     job.recipe.neutral.require_scan(job.scan)?;
+    let prepared = crate::source_store::SourceStore::new(0)
+        .prepare_source(job.recipe.neutral.input, job.scan.source())?;
+    let mut scan = Scan::from_source(prepared.source);
+    scan.set_flat_field(job.scan.flat_field().cloned())?;
+    let input = job.recipe.neutral.input;
     let repairs = timed!(
         SourcePrepare,
-        crate::repair_source::resolve_output_with(job.scan, job.recipe, execution)
+        crate::repair_source::resolve_output_with(&scan, job.recipe, execution)
     )?
     .ok_or(Error::Cancelled)?;
     check()?;
     let request = Request {
-        scan: job.scan,
+        scan: &scan,
         field: job.field,
-        input: job.recipe.neutral.input,
+        input,
         roll: job.recipe.roll,
         grade: job.recipe.grade.clone(),
         repairs: &repairs,

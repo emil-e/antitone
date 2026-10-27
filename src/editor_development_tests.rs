@@ -1,17 +1,11 @@
 use super::*;
-use crate::project::Development;
 use crate::raw::fixture;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 fn request(path: &std::path::Path, store: Arc<SourceStore>) -> Request {
     let (expected, _) = document::open_source(path, Some([1.; 4])).unwrap();
     let file = thumbnails::FileKey::new(path);
-    let key = SourceKey::from_revision_with_development(
-        path,
-        file.clone(),
-        &expected.development,
-        &Development::for_source(&expected.development, [1.; 4]),
-    );
+    let key = SourceKey::from_revision(path, file.clone(), &expected.development);
     Request {
         path: path.to_owned(),
         wb: Some([1.; 4]),

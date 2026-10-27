@@ -134,9 +134,9 @@ The editor uses several image representations for different jobs:
 | Accepted target-linear view | Shared viewer/scope input; never graded or composed again |
 | Original-sample regional result | Explicit same-position comparison or precision-tool refinement |
 | Cached pending preview | Temporary display while the selected RAW prepares |
-| Embedded camera JPEG | Filmstrip-only navigation placeholder |
+| Embedded camera preview | Filmstrip navigation placeholder and Digital brightness reference |
 
-A pending preview can show the current grade from a retained compatible camera proxy, but it is not a ready `Scan`: picks, crop editing, refinement, scopes and export wait for full preparation. An embedded JPEG is different again — already camera-rendered, with its **Camera** badge making that distinction visible. It never becomes the selected processing image or a source for inversion, correction, measurement or export; completed current-recipe thumbnails supersede it.
+A pending preview can show the current grade from a retained compatible camera proxy, but it is not a ready `Scan`: picks, crop editing, refinement, scopes and export wait for full preparation. An embedded preview is different again — already camera-rendered, with its **Camera** badge making that distinction visible. Its colour-managed luminance can seed [Digital starting brightness](processing.md#digital-starting-brightness), but RAW pixels still supply inversion, correction, measurements and exports. Completed current-recipe thumbnails supersede the camera image.
 
 ## Select and remove roll photos
 
@@ -149,7 +149,7 @@ Selection is temporary workspace state, separate from each source's accepted Pho
 
 ## Responsiveness and optional caches
 
-Demanded immutable full-resolution developments and uncorrected proxies are retained within fixed optional byte limits; [retention settings](#retention-settings-and-pressure) control those limits in whole MiB, including zero. A compatible native hit avoids LibRaw development, while correction, grade and crop remain independent consumer state. File revisions are cache freshness checks, [not photographic identity](projects.md#compatibility-is-about-the-processing-basis).
+Demanded immutable full-resolution developments, uncorrected proxies and decoded camera references share fixed optional CPU byte limits; [retention settings](#retention-settings-and-pressure) control those limits in whole MiB, including zero. A compatible native hit avoids LibRaw development, while correction, grade and crop remain independent consumer state. File revisions are cache freshness checks, [not photographic identity](projects.md#compatibility-is-about-the-processing-basis).
 
 ### Scheduling and readiness
 
@@ -159,7 +159,9 @@ Two [native owners](../src/editor_development.rs) at most serve selected/referen
 
 Positive navigation cards interpret a small camera-RGB proxy, then apply ordered layer grading, look and output target. They favor responsive browsing and recognizable photographs over original-sample fidelity. Use the main viewer or exports to inspect Dust repairs rather than inferring their accuracy from a small navigation card.
 
-Compatible neutral products survive grade, look and target changes. While an update prepares, the previous card stays visible with an updating indicator if source, correction, framing and target match. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
+Camera preview display and Digital preparation share bounded JPEG/RGB8 extraction and decoding, including in-flight work. ICC profiles or explicit colour labels, including the matching DNG preview IFD, establish interpretation. Completed starting EV survives pixel eviction; a Digital proxy without resolved exposure waits for preparation rather than displaying an uninitialized positive.
+
+Compatible neutral products survive grade, look and target changes. Across project replacement, Digital positives also require a known matching normalization, even when captured pixels and photographic controls match. While an update prepares, the previous card stays visible with an updating indicator if source, correction, framing and target match. Replacements retire older outputs for that source; shared look allocations are charged once across cards.
 
 ### Retention settings and pressure
 

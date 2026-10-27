@@ -37,9 +37,10 @@ async fn gpu() -> (wgpu::Device, wgpu::Queue) {
 
 fn proxy() -> Arc<Proxy> {
     Arc::new(Proxy {
+        reference_exposure: Default::default(),
         width: 3,
         height: 2,
-        pixels: vec![[8000., 6000., 4000., 0.]; 6],
+        pixels: vec![[8000., 6000., 4000., 0.]; 6].into(),
         matrix: glam::DMat3::IDENTITY,
     })
 }

@@ -286,6 +286,7 @@ impl Editor {
                 let expected = expected.clone();
                 let wb = Some(expected.development.decode.fixed_wb);
                 Input::Acquire(Box::new(source::Request {
+                    input: self.input(),
                     cache: Some(source::Cache::new(
                         &source_path,
                         Some(&expected),

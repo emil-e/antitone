@@ -27,6 +27,7 @@ pub(crate) struct ViewSourceSpec {
     area: crate::raw::Rect,
     matrix: DMat3,
     neutral: ProcessingParameters,
+    input: InputSettings,
     inspection: bool,
     field: Option<Arc<crate::flat_field::FlatField>>,
 }
@@ -79,7 +80,9 @@ impl ViewSourceSpec {
     ) -> Result<Self, Error> {
         let input = input.into();
         let neutral = ProcessingParameters::interpret(input, RollSettings::default(), matrix)?;
-        Self::with_parameters(authority, frame, matrix, neutral, field, false)
+        let mut spec = Self::with_parameters(authority, frame, matrix, neutral, field, false)?;
+        spec.input = input;
+        Ok(spec)
     }
 
     pub(crate) fn inspection(
@@ -130,6 +133,7 @@ impl ViewSourceSpec {
             area,
             matrix,
             neutral,
+            input: InputSettings::Digital,
             field,
             inspection,
         })
@@ -447,6 +451,10 @@ pub(crate) struct ViewSource {
 }
 
 impl ViewSource {
+    pub(crate) fn spec_matrix(&self) -> DMat3 {
+        self.spec.matrix
+    }
+
     /// Navigation positives process the already-sampled camera raster, not the originals.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_camera_proxy(
@@ -469,7 +477,7 @@ impl ViewSource {
             || !spec.repairs.0.is_empty()
             || proxy.width.max(proxy.height) > crate::scan::CameraProxy::MAX_EDGE
             || proxy.pixels.len() as u64 != u64::from(proxy.width) * u64::from(proxy.height)
-            || spec.matrix != proxy.matrix
+            || spec.matrix != proxy.positive_matrix(&spec.input)?
             || spec.frame != frame
             || spec.field.as_ref() != field.as_ref().map(|field| field.field())
         {
@@ -477,7 +485,7 @@ impl ViewSource {
                 "camera proxy does not match thumbnail source raster".into(),
             ));
         }
-        let mut camera = ProcessingSource::new_continuous(device, &proxy.pixels, proxy.matrix)?;
+        let mut camera = ProcessingSource::new_continuous(device, &proxy.pixels, spec.matrix)?;
         camera.set_flat_field(
             field,
             SourceGeometry::new(
@@ -520,6 +528,7 @@ impl ViewSource {
                 "repaired previews require original-coordinate acquisition".into(),
             ));
         }
+        let source = source.with_matrix(device, spec.matrix)?;
         let geometry = source
             .geometry()
             .ok_or_else(|| Error::Gpu("preview source has no geometry".into()))?;
@@ -632,7 +641,11 @@ impl ViewSource {
             .ok_or_else(|| Error::Gpu("empty physical-view acquisition".into()))?;
         scan.validate_area(spec.area)?;
         if scan.area != spec.area
-            || scan.camera_to_ap1 != spec.matrix
+            || (if spec.is_inspection() {
+                scan.camera_to_ap1
+            } else {
+                scan.positive_matrix(&spec.input)?
+            }) != spec.matrix
             || scan.flat_field() != spec.field.as_ref()
             || spec.field.as_ref() != field.as_ref().map(|f| f.field())
             || specs

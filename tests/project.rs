@@ -625,7 +625,10 @@ fn references_are_rgb_only_and_survive_removal_of_all_source_records() {
     let calibration = project.calibration().unwrap();
     let mut value = serde_json::to_value(&project).unwrap();
     assert_eq!(value["schema"], antitone::project::SCHEMA_VERSION);
-    assert_eq!(value["processing_model"], 4);
+    assert_eq!(
+        value["processing_model"],
+        antitone::PROCESSING_MODEL_VERSION
+    );
     assert!(value["sources"][0].get("fingerprint").is_none());
     assert_eq!(
         value["input"]["dmin"],
@@ -795,6 +798,9 @@ fn malformed_source_identity_order_and_rgb_references_are_rejected_before_serial
 }
 
 fn mixed_source(path: &str, camera: &str, fixed_wb: [f64; 4], matrix: [[f64; 3]; 3]) -> Source {
+    let gains = fixed_wb.map(|gain| gain as f32);
+    let source_floor = CAMERA_INPUT_FLOOR * f64::from(gains.into_iter().fold(0_f32, f32::max))
+        / f64::from(gains[1]);
     let path = std::path::PathBuf::from(path);
     std::fs::write(&path, b"mixed source bytes").unwrap();
     Source {
@@ -808,7 +814,7 @@ fn mixed_source(path: &str, camera: &str, fixed_wb: [f64; 4], matrix: [[f64; 3];
             active_area: [0, 0, 900, 600],
             camera_model: camera.into(),
             camera_to_ap1: matrix,
-            input_floor: CAMERA_INPUT_FLOOR,
+            input_floor: source_floor,
         },
         reference_only: false,
         adjustment_layers: Some(antitone::project::AdjustmentLayers::with_global(
@@ -885,7 +891,8 @@ fn digital_accepts_mixed_cameras_with_per_source_recipes_but_scan_stage_refuses(
         balance: Balance::default(),
     };
     for source in &mut project.sources {
-        source.development.decode.fixed_wb = antitone::project::UNITY_WB;
+        source.development.decode = Development::new("0.22.0".into(), antitone::project::UNITY_WB);
+        source.development.input_floor = CAMERA_INPUT_FLOOR;
     }
     let error = project.require_scan_sources().unwrap_err();
     assert!(error.to_string().contains("one scanning setup"));

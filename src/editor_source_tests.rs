@@ -1,4 +1,8 @@
 use super::*;
+
+#[cfg(feature = "ocio-reference")]
+#[path = "editor_source_exposure_tests.rs"]
+mod exposure;
 use std::{
     sync::{
         Mutex,
@@ -29,6 +33,7 @@ fn request(name: &str) -> (Document, Request) {
         .map(|development| development.fixed_wb);
     let cache = Cache::new(&path, Some(&expected), &document);
     let request = Request {
+        input: document.project.input,
         path,
         wb,
         expected: Some(expected),

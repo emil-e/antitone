@@ -4,7 +4,7 @@ use crate::{
     color::{Balance, wb_matrix},
     geometry::SourcePoint,
     photographic::Grade,
-    processing::{InputPipeline, InputSettings, InvertedPixel, RollSettings, exposure_multiplier},
+    processing::{InputPipeline, InvertedPixel, RollSettings, exposure_multiplier},
 };
 use glam::{DMat3, DVec2, DVec3};
 
@@ -304,7 +304,7 @@ pub struct AdjustmentLayerPipeline {
 
 impl AdjustmentLayerPipeline {
     pub fn new(
-        input: impl Into<InputSettings>,
+        input: impl Into<crate::processing::InputSettings>,
         roll: RollSettings,
         grade: AdjustmentLayerSnapshot,
         camera_to_ap1: DMat3,

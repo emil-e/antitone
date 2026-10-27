@@ -21,6 +21,8 @@ mod inspection;
 mod performance;
 #[path = "gpu_repair_view_tests.rs"]
 mod repairs;
+#[path = "gpu_working_view_source_scale_tests.rs"]
+mod source_scale;
 #[path = "gpu_working_view_underlay_tests.rs"]
 mod underlay;
 

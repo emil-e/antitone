@@ -15,10 +15,15 @@ pub mod dng;
 pub mod dust_repair;
 #[cfg(feature = "editor")]
 pub mod editor;
+#[cfg(all(feature = "raw", feature = "project"))]
+pub(crate) mod embedded_preview;
 #[cfg(feature = "export")]
 pub mod export;
 #[cfg(feature = "export")]
 mod export_timing;
+#[cfg(feature = "project")]
+pub mod exposure_metadata;
+pub mod exposure_reference;
 pub mod flat_field;
 pub mod frame_raster;
 pub mod geometry;
@@ -35,6 +40,8 @@ pub mod logging;
 pub mod looks;
 #[cfg(any(feature = "raw", feature = "dng-sdk", feature = "ocio-reference"))]
 mod native_logging;
+#[cfg(all(feature = "raw", feature = "project"))]
+pub(crate) mod photo_preparation;
 pub mod photographic;
 #[cfg(feature = "ui")]
 pub mod platform;
@@ -101,10 +108,25 @@ pub mod viewer;
 pub(crate) mod cache_observation;
 #[cfg(all(
     test,
+    feature = "raw",
+    feature = "project",
+    feature = "ocio-reference",
+    any(
+        feature = "editor",
+        all(target_os = "macos", feature = "gpu", feature = "export")
+    )
+))]
+#[path = "../tests/support/exposure_fixture.rs"]
+mod exposure_fixture;
+#[cfg(all(
+    test,
     any(feature = "dng-sdk", all(feature = "raw", feature = "project"))
 ))]
 #[path = "../tests/support/fixture_path.rs"]
 mod fixture_path;
+#[cfg(all(test, feature = "raw", feature = "project"))]
+#[path = "../tests/support/preview_fixture.rs"]
+mod preview_fixture;
 #[cfg(all(test, feature = "raw", feature = "gpu"))]
 mod raw_test_support;
 
@@ -118,7 +140,7 @@ mod spatial_observation;
 #[cfg(all(test, feature = "gpu"))]
 mod shader_validation_tests;
 
-pub const PROCESSING_MODEL_VERSION: u32 = 4;
+pub const PROCESSING_MODEL_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {

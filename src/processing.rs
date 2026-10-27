@@ -17,6 +17,23 @@ pub const MIN_TOE: f64 = 1.0;
 pub const MAX_TOE: f64 = 4.0;
 pub const MAX_SHOULDER: f64 = 0.02;
 
+/// Restores green-relative light from pinned LibRaw's highlight-safe WB normalization.
+#[cfg(any(feature = "raw", feature = "project", feature = "gpu"))]
+pub(crate) fn libraw_green_scale(wb: [f64; 4]) -> Result<f64, Error> {
+    let wb = wb.map(|value| value as f32);
+    if wb.iter().any(|value| !value.is_finite() || *value <= 0.) {
+        return Err(Error::InvalidParameter(
+            "development WB must be positive finite f32",
+        ));
+    }
+    let maximum = wb.into_iter().fold(0_f32, f32::max);
+    if maximum <= 0.00001 {
+        // LibRaw skips gain normalization in this degenerate branch.
+        return Ok(1.);
+    }
+    Ok(f64::from(maximum) / f64::from(wb[1]))
+}
+
 /// What a stage can offer the editor. Scan-based stages share the film tools; the
 /// interpretation controls differ per stage. UI reads this instead of matching variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -566,7 +583,15 @@ impl InputPipeline {
 }
 
 pub(crate) fn validate_camera_matrix(matrix: DMat3) -> Result<(), Error> {
-    let determinant = matrix.determinant();
+    // Test independence in each column's own units. Fixed normalization and unequal
+    // channel scales must not turn an independent, representable transform into a singular one.
+    let normalized = |column: DVec3| column / column.abs().max_element();
+    let determinant = DMat3::from_cols(
+        normalized(matrix.x_axis),
+        normalized(matrix.y_axis),
+        normalized(matrix.z_axis),
+    )
+    .determinant();
     if !matrix.is_finite() || !determinant.is_finite() || determinant.abs() <= 1e-12 {
         return Err(Error::InvalidParameter("invalid camera-to-AP1 matrix"));
     }

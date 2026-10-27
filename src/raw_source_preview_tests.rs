@@ -35,25 +35,11 @@ fn native_viewing_white_matches_an_independent_balanced_development() {
     let mut metadata = unity.source().metadata();
     metadata.cam_mul = desired;
     let preview = metadata.source_preview([1.; 4]);
-    let codes = |scan: &crate::scan::Scan| {
-        let pixel = scan
-            .source()
-            .camera_image()
-            .unwrap()
-            .pixel_codes(32, 32)
-            .unwrap();
-        DVec3::new(
-            f64::from(pixel[0]),
-            f64::from(pixel[1]),
-            f64::from(pixel[2]),
-        ) / 65535.
-    };
-    let before = codes(&unity);
+    let before = unity.pixel(32, 32).unwrap();
     let actual = preview.transform(SourceWhiteBalance::AsShot) * (unity.camera_to_ap1 * before);
-    // LibRaw stores the balanced development at half scale (max gain = 2).
-    let expected = balanced.camera_to_ap1 * codes(&balanced) * 2.;
+    let expected = balanced.camera_to_ap1 * balanced.pixel(32, 32).unwrap();
     assert!((actual - expected).abs().max_element() < 4. / 65535.);
-    assert_eq!(codes(&unity), before);
+    assert_eq!(unity.pixel(32, 32).unwrap(), before);
 }
 
 #[cfg(feature = "dng-sdk")]

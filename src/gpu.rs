@@ -57,18 +57,7 @@ const SOURCE_PREVIEW_EXPOSURE: f64 = 1.0;
 
 fn source_preview_gain(fixed_wb: Option<[f64; 4]>) -> f64 {
     let headroom = fixed_wb.and_then(|wb| {
-        // Match the bridge's f32 gains and pinned LibRaw highlight=1 normalization.
-        // Sensor black/white scaling is already in RGB16 and cancels from this ratio.
-        let wb = wb.map(|v| v as f32);
-        if wb.iter().any(|v| !v.is_finite() || *v <= 0.) {
-            return None;
-        }
-        let maximum = wb.into_iter().fold(0_f32, f32::max);
-        if f64::from(maximum) <= 0.00001 {
-            // LibRaw does not normalize gains in this degenerate scaling branch.
-            return None;
-        }
-        let gain = f64::from(maximum) / f64::from(wb[1]);
+        let gain = crate::processing::libraw_green_scale(wb).ok()?;
         // Bound preview gain for pathological development WB.
         (gain.is_finite() && gain <= crate::processing::MAX_EXPOSURE.exp2()).then_some(gain)
     });
@@ -94,7 +83,8 @@ impl ProcessingParameters {
     }
 
     /// Display-only source convention; inspection EV is relative to the preview baseline.
-    /// `fixed_wb` must describe the development, not each photo's as-shot WB.
+    /// Pass WB only for LibRaw samples still on its max-normalized scale.
+    /// `DevelopedSource` and SDK samples use `None`.
     pub fn source_preview(fixed_wb: Option<[f64; 4]>, exposure: f64) -> Result<Self, Error> {
         Self::source_preview_with_transform(fixed_wb, exposure, DMat3::IDENTITY)
     }
@@ -370,6 +360,36 @@ pub struct ProcessingSource {
 }
 
 impl ProcessingSource {
+    #[cfg(feature = "editor")]
+    pub(crate) fn with_matrix(
+        self: &Arc<Self>,
+        device: &wgpu::Device,
+        matrix: DMat3,
+    ) -> Result<Arc<Self>, Error> {
+        if self.camera_to_ap1 == matrix {
+            return Ok(self.clone());
+        }
+        validate_camera_matrix(matrix)?;
+        let mut packed = CameraMatrix::new(matrix)?;
+        if self.continuous {
+            CameraMatrix::new(matrix * crate::processing::MAX_SOURCE_GAIN)?;
+        }
+        packed.columns[0].w = if self.continuous { 1. } else { 0. };
+        Ok(Arc::new(Self {
+            input: self.input.clone(),
+            matrix: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("normalized camera-to-AP1 source transform"),
+                contents: bytemuck::bytes_of(&packed),
+                usage: wgpu::BufferUsages::UNIFORM,
+            }),
+            pixels: self.pixels,
+            camera_to_ap1: matrix,
+            geometry: self.geometry,
+            flat_field: self.flat_field.clone(),
+            continuous: self.continuous,
+        }))
+    }
+
     pub fn new(device: &wgpu::Device, pixels: &[[u16; 4]], matrix: DMat3) -> Result<Self, Error> {
         Self::from_bytes(
             device,

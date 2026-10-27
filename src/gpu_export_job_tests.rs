@@ -7,6 +7,11 @@ use std::cell::Cell;
 #[cfg(feature = "ocio-reference")]
 #[path = "gpu_export_corrected_source_tests.rs"]
 mod corrected_source;
+#[path = "gpu_export_source_scale_tests.rs"]
+mod source_scale;
+#[cfg(feature = "ocio-reference")]
+#[path = "gpu_export_starting_exposure_tests.rs"]
+mod starting_exposure;
 
 fn fixture(scan: &Scan) -> (Project, SourceId) {
     let (width, height) = scan.dimensions().unwrap();

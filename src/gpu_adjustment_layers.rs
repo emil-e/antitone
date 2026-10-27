@@ -80,6 +80,7 @@ impl GpuAdjustmentLayers {
         camera_to_ap1: DMat3,
         area: SourceRegion,
     ) -> Result<Self, Error> {
+        let input = input.into();
         let Prepared {
             parameters,
             packed,
@@ -87,7 +88,7 @@ impl GpuAdjustmentLayers {
             active,
         } = Self::prepare(
             &device.limits(),
-            &input.into(),
+            &input,
             roll,
             &snapshot,
             camera_to_ap1,
@@ -169,7 +170,7 @@ impl GpuAdjustmentLayers {
         }
         let area = area.validate()?;
         let (parameters, mut bound) = ProcessingParameters::interpret_with_neutral_bound(
-            input,
+            *input,
             roll,
             camera_to_ap1,
             neutral_bound,
@@ -202,6 +203,11 @@ impl GpuAdjustmentLayers {
             area,
             active,
         })
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn source_matrix(&self) -> DMat3 {
+        self.camera_to_ap1
     }
 
     pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {

@@ -157,7 +157,7 @@ impl Worker {
                 job.source.id.0,
                 frame,
                 recipe.neutral.processing_input()?,
-                proxy.matrix,
+                proxy.positive_matrix(&recipe.neutral.processing_input()?)?,
                 recipe.neutral.correction.clone(),
             )?;
             let kernels = self
@@ -180,12 +180,13 @@ impl Worker {
             source
         };
         let tick = std::time::Instant::now();
+        let settings = recipe.neutral.processing_input()?;
         let grade = Arc::new(crate::gpu::GpuAdjustmentLayers::new(
             &self.device,
-            recipe.neutral.processing_input()?,
+            settings,
             recipe.roll,
             recipe.grade.clone(),
-            glam::DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1),
+            source.spec_matrix(),
             recipe.neutral.source_development.active_area.into(),
         )?);
         let input = crate::gpu::ProcessingInput::from(grade).with_look(recipe.look.clone());
@@ -289,6 +290,21 @@ impl Worker {
                 }
                 Input::Native(_) => unreachable!("native completion precedes proxy work"),
             };
+            let previous_reference = proxy.reference_exposure.get().cloned();
+            if job.render
+                && let Ok(Some(recipe)) = &job.key.recipe
+            {
+                let key = job
+                    .key
+                    .source
+                    .store_key_at(&job.path)
+                    .ok_or(Error::UnusableSample(
+                        "thumbnail source freshness unavailable",
+                    ))?;
+                proxy = job
+                    .store
+                    .prepare_proxy(&key, recipe.neutral.input, &proxy)?;
+            }
             // Proper CPU/disk completion is document demand, not the disposable GPU ticket.
             if job.store.is_closed() || FileKey::new(&job.path) != job.key.source.file {
                 return Ok(None);
@@ -299,7 +315,12 @@ impl Worker {
                 proxy = canonical;
             }
             if let Some(disk) = &self.disk
-                && let Err(error) = disk.store_if_missing(&job.key.source, &proxy)
+                && let Err(error) = if previous_reference.as_ref() != proxy.reference_exposure.get()
+                {
+                    disk.store(&job.key.source, &proxy)
+                } else {
+                    disk.store_if_missing(&job.key.source, &proxy)
+                }
             {
                 log::warn!(
                     source_id = job.source.id.0,

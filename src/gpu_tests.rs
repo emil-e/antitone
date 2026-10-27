@@ -192,26 +192,13 @@ fn authored_source_preview_scale_agrees_with_actual_libraw_development_gains() {
         [0.5, 1., 0.25, 0.75],
         [1., 1., 0.5, 3.5],
     ] {
-        let raw = crate::raw::RawFile::open_uncorrected(&path).unwrap();
-        let scan = crate::scan::Scan::from_raw(raw, Some(wb)).unwrap();
-        let before = scan
-            .source()
-            .camera_image()
-            .unwrap()
-            .pixel_codes(32, 32)
-            .unwrap();
-        let image = scan.source().camera_image().unwrap();
+        let mut raw = crate::raw::RawFile::open_uncorrected(&path).unwrap();
+        let image = raw.develop_camera(wb).unwrap();
+        let before = image.pixel_codes(32, 32).unwrap();
         let gain = 2. / image.pre_mul[1];
-        let parameters = ProcessingParameters::source_preview(Some(scan.fixed_wb), 0.).unwrap();
+        let parameters = ProcessingParameters::source_preview(Some(wb), 0.).unwrap();
         assert!((f64::from(parameters.post[0].x) - gain).abs() < 1e-6 * gain);
-        assert_eq!(
-            scan.source()
-                .camera_image()
-                .unwrap()
-                .pixel_codes(32, 32)
-                .unwrap(),
-            before
-        );
+        assert_eq!(image.pixel_codes(32, 32).unwrap(), before);
     }
 }
 

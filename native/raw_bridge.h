@@ -39,9 +39,10 @@ struct AntitoneRawView {
 };
 
 struct AntitoneRawThumbnail {
-    const uint8_t *jpeg;
+    const uint8_t *data;
     uint32_t bytes, width, height;
     int32_t flip, color_space;
+    uint32_t format;
 };
 
 extern "C" {

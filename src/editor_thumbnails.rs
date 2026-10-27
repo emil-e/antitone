@@ -419,6 +419,9 @@ impl Thumbnails {
         let Some(proxy) = self.sources.get_proxy(&native_key) else {
             return Ok(None);
         };
+        if !document.project.input.is_negative() && proxy.reference_exposure.get().is_none() {
+            return Ok(None);
+        }
         let Some((device, queue, renderers)) = &self.gpu else {
             return Ok(None);
         };
@@ -519,6 +522,34 @@ impl Thumbnails {
             self.selected_key = None;
             self.visible_keys.clear();
             self.attempted_sources.clear();
+            // CPU source identity is not sufficient for a positive: another project may
+            // restore a different canonical normalization for the same captured pixels.
+            self.cache.retain(|key, product| {
+                let Ok(Some(recipe)) = &key.recipe else {
+                    return true;
+                };
+                if recipe.neutral.input.is_negative() {
+                    return true;
+                }
+                let Some(native) = key.source.store_key() else {
+                    return false;
+                };
+                let Some(reference) = sources.completed_reference(&native) else {
+                    return false;
+                };
+                let expected = crate::scan::positive_matrix(
+                    &recipe.neutral.input,
+                    glam::DMat3::from_cols_array_2d(&key.source.source.camera_to_ap1),
+                    Some(&reference),
+                );
+                product
+                    .as_ref()
+                    .ok()
+                    .and_then(|product| product.positive.as_ref())
+                    .is_some_and(|(source, _)| {
+                        expected.is_ok_and(|matrix| source.spec_matrix() == matrix)
+                    })
+            });
             self.sources = sources;
         }
         self.sources.set_budget(self.budgets.sources as u64);
