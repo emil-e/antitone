@@ -1,7 +1,7 @@
 use super::*;
 use crate::project::Development;
 use crate::raw::fixture as raw_fixture;
-use crate::{scan::CameraProxy, source_store::SourceKey};
+use crate::{scan::CameraProxy, source::SourceKey};
 
 mod dust_worker;
 mod lazy_worker;
@@ -322,7 +322,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
         let (release, resume) = mpsc::channel();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker_calls = calls.clone();
-        let developments = source_loader::SourceLoader::test_executor(move |_| {
+        let developments = source_loading::SourceLoader::test_executor(move |_| {
             worker_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             entered.send(()).unwrap();
             resume.recv().unwrap();
@@ -435,7 +435,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
         let trace = Arc::new(std::sync::Mutex::new(Vec::new()));
         let worker_trace = trace.clone();
         let mut phases = std::collections::HashMap::new();
-        let developments = source_loader::SourceLoader::test_executor(move |path| {
+        let developments = source_loading::SourceLoader::test_executor(move |path| {
             let phase = phases.entry(path.to_owned()).or_insert(0);
             *phase += 1;
             worker_trace.lock().unwrap().push((path.to_owned(), *phase));

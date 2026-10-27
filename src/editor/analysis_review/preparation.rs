@@ -416,7 +416,7 @@ async fn prepare_staged(
 pub(super) fn prepare_with_measurements(
     request: &analysis::Request,
     generation: &AtomicU64,
-    developments: &source_loader::SourceLoader,
+    developments: &source_loading::SourceLoader,
     device: &wgpu::Device,
     mut progress: impl FnMut(usize, usize),
     measurements: measurements::Measurements,

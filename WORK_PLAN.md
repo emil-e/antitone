@@ -59,6 +59,18 @@ Verified: 154 focused debug tests passed (2 existing opt-in diagnostics ignored)
 
 Latest upstream refresh is 727c70d; guidance remains unchanged, while main's resolved-input/photographic work requires later integration adaptation. Continue in this task worktree without mixing that unrelated implementation into this follow-up.
 
+## Shared document cache design discussion
+Agreed direction: DocumentScope owns one SourceCache across same-document operations; storage moves into SourceCache, replacing separate SourceStore/fork/parent/transfer machinery. Joining stays in SourceLoader alongside native execution and priority promotion, avoiding another cross-layer priority/cancellation protocol. The cache lifetime/storage simplification remains pending.
+
+Explicit user requirement: when a source queued by eager thumbnail loading is selected, promote that existing joined load to foreground priority so selection does not wait behind the remaining low-priority queue. Preserve highest-active-consumer priority and independent waiter cancellation; do not create duplicate foreground development. Native calls already executing remain non-preemptible. The current loader-level joining already supports promotion and will stay there.
+
+## Source module containment
+Current user request: put core source acquisition in one module. Consolidate loader, provider/cache interface, storage, keys, persisted identity and metadata validation under src/source/ with a small re-exported API; private implementation files are not separate public module APIs. Keep editor-specific view/correction preparation outside. Preserve feature boundaries, source behavior and loader-owned joining/priority. This containment change does not implement the separate pending DocumentScope/cache-storage redesign.
+
+Completed containment: src/source/mod.rs exports the provider, cache, loader, keys and storage types; implementation files are private. SourceKey is separate from LRU storage. Imports, diagnostics, integration tests and guide links use the unified module. Native loader scheduling and storage bodies are unchanged (apart from visibility restored after nesting). No GPU/prefetch implementation changed.
+
+Verification: 216 focused debug and 216 release tests passed (2 opt-in diagnostics ignored in each); 26 source/DNG integration tests passed (2 opt-in diagnostics ignored), and 39 project persistence integrations passed; the no-default-feature core suite passed. Strict editor and UI-feature lib/test clippy, separate production editor check and project-only check passed; raw,project tests compile with the existing off-editor unused helpers. The added queued-selection regression runs through SourceCache with independent per-source fixture developments: selecting the last eager entry executes it ahead of the middle entry, once only. It fails when joined promotion is disabled (first-waiter priority only) and passes after restoration. Logs: .cache/source-module-*.log. Formatting/docs/diff checks and final inspection passed. This containment change is complete; next is the separate DocumentScope/cache-storage simplification. No push/PR.
+
 ## Limits / handoff
 The whole editor-feature library debug attempt reached unrelated spatial-math tests before a five-minute timeout. Its one editor cancellation-fixture failure was fixed and included in the completed final editor-domain suite; no full-library pass is claimed. No Windows runtime, private throughput workload or native-window automation was performed.
 

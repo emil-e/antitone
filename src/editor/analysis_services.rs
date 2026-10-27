@@ -1,5 +1,5 @@
-use super::{Document, Error, Scan, SourceId, analysis, source, source_loader};
-use crate::source_provider::SourceProvider;
+use super::{Document, Error, Scan, SourceId, analysis, source, source_loading};
+use crate::source::SourceProvider;
 use std::sync::Arc;
 
 pub(super) use crate::cancellation::Cancellation;
@@ -21,7 +21,7 @@ fn source_input(document: &Document, id: SourceId) -> Result<source::Request, Er
 
 #[derive(Clone)]
 pub(super) struct Services {
-    pub developments: source_loader::SourceLoader,
+    pub developments: source_loading::SourceLoader,
     pub device: wgpu::Device,
 }
 
@@ -98,7 +98,7 @@ impl Services {
         let provider = cache.provider(loader);
         let load = async {
             provider
-                .load_source(key, source_loader::Priority::Foreground)
+                .load_source(key, source_loading::Priority::Foreground)
                 .await
                 .map(|source| Some(Scan::from_source(source)))
         };

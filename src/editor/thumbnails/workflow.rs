@@ -61,7 +61,7 @@ impl Editor {
         path: PathBuf,
         source: Source,
         render: bool,
-        priority: source_loader::Priority,
+        priority: source_loading::Priority,
         cx: &UiContext<'_, Self>,
     ) {
         if self.thumbnails.pending.is_some() || self.thumbnails.cache.get(&key).is_some() {
@@ -262,9 +262,9 @@ impl Editor {
                 source,
                 render,
                 if visible {
-                    source_loader::Priority::Visible
+                    source_loading::Priority::Visible
                 } else {
-                    source_loader::Priority::Eager
+                    source_loading::Priority::Eager
                 },
                 cx,
             );

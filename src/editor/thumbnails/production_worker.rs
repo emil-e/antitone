@@ -1,6 +1,6 @@
 use super::*;
 use crate::scan::DevelopedSource;
-use crate::source_provider::{SourceCache, SourceProvider};
+use crate::source::{SourceCache, SourceProvider};
 
 enum Input {
     Proxy(Arc<Proxy>),
@@ -29,7 +29,7 @@ struct Worker {
     generation: Arc<std::sync::atomic::AtomicU64>,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
-    developments: source_loader::SourceLoader,
+    developments: source_loading::SourceLoader,
     kernels: std::sync::OnceLock<Result<Arc<crate::gpu::view::ViewKernels>, Error>>,
 }
 
@@ -89,7 +89,7 @@ impl Worker {
             if !self.active(&job) {
                 return Ok(Input::Retired);
             }
-            let key = crate::source_store::SourceKey::for_load(
+            let key = crate::source::SourceKey::for_load(
                 &job.path,
                 job.key.source.file.clone(),
                 &job.source.development,
@@ -383,7 +383,7 @@ pub(super) fn worker(
     generation: Arc<std::sync::atomic::AtomicU64>,
     disk: Option<disk::DiskCache>,
     repaint: Arc<std::sync::OnceLock<egui::Context>>,
-    developments: source_loader::SourceLoader,
+    developments: source_loading::SourceLoader,
 ) {
     let worker = Worker {
         device,

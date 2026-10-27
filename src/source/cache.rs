@@ -1,25 +1,11 @@
-//! Async acquisition of immutable camera sources, with optional document-scoped reuse.
-use crate::{
-    Error,
-    scan::DevelopedSource,
-    source_loader::Priority,
-    source_store::{SourceKey, SourceStore},
-};
-use std::{future::Future, sync::Arc};
+//! Source-provider reuse over the shared pixel storage.
+use super::{Priority, SourceKey, SourceProvider, SourceStore};
+use crate::{Error, scan::DevelopedSource};
+use std::sync::Arc;
 
 #[cfg(test)]
-#[path = "source_provider_tests.rs"]
+#[path = "cache_tests.rs"]
 mod tests;
-
-/// Acquires an owning source lease. Dropping the future retires that request;
-/// a native call already in progress keeps its inputs until it finishes.
-pub trait SourceProvider: Send + Sync {
-    fn load_source(
-        &self,
-        key: SourceKey,
-        priority: Priority,
-    ) -> impl Future<Output = Result<Arc<DevelopedSource>, Error>> + Send;
-}
 
 /// Reuses the existing store's live leases and optional retained ownership.
 /// Store closure ends cache reuse/publication, not the underlying load's authority.

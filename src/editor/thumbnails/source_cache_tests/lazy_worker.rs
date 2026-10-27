@@ -10,7 +10,7 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
         let (_, reference) = prepare(&document, &device, &queue, &renderers);
         let expected = reference.propose_flat_field_area().unwrap();
         let before = codes(&reference);
-        let scheduler = source_loader::SourceLoader::new();
+        let scheduler = source_loading::SourceLoader::new();
         let services = source::Services {
             developments: scheduler.clone(),
             renderers,

@@ -18,7 +18,7 @@ fn gpu() -> (wgpu::Device, wgpu::Queue) {
     })
 }
 
-fn editor() -> (Editor, crate::editor::source_loader::SourceLoader) {
+fn editor() -> (Editor, crate::source::SourceLoader) {
     let mut editor = fixture();
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     let mut document = Document::default();
@@ -26,7 +26,7 @@ fn editor() -> (Editor, crate::editor::source_loader::SourceLoader) {
     editor.document.install(document);
     editor.current_source = editor.document.project.order.first().copied();
     let (device, queue) = gpu();
-    let scheduler = crate::editor::source_loader::SourceLoader::new();
+    let scheduler = crate::source::SourceLoader::new();
     editor.source_services = Some(source::Services {
         developments: scheduler.clone(),
         renderers: Arc::default(),

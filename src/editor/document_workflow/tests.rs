@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, document::Document, source, source_loader, tests::fixture},
+    editor::{Preparation, document::Document, source, source_loading, tests::fixture},
 };
 use std::{
     path::{Path, PathBuf},
@@ -15,7 +15,7 @@ fn path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn editor(scheduler: source_loader::SourceLoader) -> Editor {
+fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     let mut editor = fixture();
     editor.document.install(Document::default());
     editor.set_dmin(None);
@@ -43,7 +43,7 @@ fn editor(scheduler: source_loader::SourceLoader) -> Editor {
 
 #[test]
 fn import_history_correction_and_new_run_without_backend_or_painting() {
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, access| {
             e.add_raws(vec![path("patches.dng")], access);
@@ -149,7 +149,7 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
         }
     };
 
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng"), red.clone()], cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
@@ -195,9 +195,11 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
 #[test]
 fn input_switch_clears_live_correction_atomically_and_history_restores_activation() {
 
+
     use crate::{flat_field::FlatField, processing::InputSettings, project::FlatFieldSettings};
 
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
+
 
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
@@ -355,7 +357,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
 #[test]
 fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_history_and_pixels()
 {
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let directory = tempfile::tempdir().unwrap();
     let destination = directory.path().join("candidate.antitone");
     let mut candidate = Document::default();
@@ -405,7 +407,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
 
 #[test]
 fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_new_work() {
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let e = editor(scheduler.clone());
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
@@ -446,8 +448,8 @@ fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_ret
     let resume = Mutex::new(resume);
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
-    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
-        if matches!(phase, source_loader::NativePhase::UnpackBegin) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             observed.fetch_add(1, Ordering::Relaxed);
             entered.send(()).unwrap();
             resume

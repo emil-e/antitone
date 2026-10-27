@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, Prepared, document::Document, source_loader},
+    editor::{Preparation, Prepared, document::Document, source_loading},
 };
 use std::{
     path::PathBuf,
@@ -13,7 +13,7 @@ fn path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")
 }
 
-fn editor(scheduler: source_loader::SourceLoader) -> Editor {
+fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     let mut editor = super::super::tests::fixture();
     let mut document = Document::default();
     document.import(&[path()]).unwrap();
@@ -44,15 +44,15 @@ fn editor(scheduler: source_loader::SourceLoader) -> Editor {
 }
 
 fn paused() -> (
-    source_loader::SourceLoader,
+    source_loading::SourceLoader,
     mpsc::Receiver<()>,
     mpsc::Sender<()>,
 ) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
-        if matches!(phase, source_loader::NativePhase::UnpackBegin) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             entered.send(()).unwrap();
             resume
                 .lock()
@@ -109,7 +109,7 @@ fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
 
 #[test]
 fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels() {
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = editor(scheduler.clone());
     with_application(editor, |app| {
         start(app);
@@ -183,13 +183,13 @@ fn cancelling_an_unstarted_native_demand_does_not_wait_for_unrelated_calls() {
         backgrounds.push(
             scheduler
                 .submit(
-                    source_loader::Request {
+                    source_loading::Request {
                         path: path(),
                         wb: None,
                         expected: None,
                         key: None,
                     },
-                    source_loader::Priority::Eager,
+                    source_loading::Priority::Eager,
                 )
                 .unwrap(),
         );
@@ -234,8 +234,9 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
     let (entered_b, at_b) = mpsc::channel();
     let (continue_b, resume_b) = mpsc::channel();
     let resume_b = Mutex::new(resume_b);
-    let scheduler = source_loader::SourceLoader::new_observed(move |file, phase, _| {
-        if file.ends_with("patches.dng") && matches!(phase, source_loader::NativePhase::UnpackEnd) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |file, phase, _| {
+        if file.ends_with("patches.dng") && matches!(phase, source_loading::NativePhase::UnpackEnd)
+        {
             parked.send(()).unwrap();
             resume_a
                 .lock()
@@ -243,7 +244,7 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
                 .recv_timeout(Duration::from_secs(15))
                 .unwrap();
         }
-        if file.ends_with("roll-0.dng") && matches!(phase, source_loader::NativePhase::UnpackBegin)
+        if file.ends_with("roll-0.dng") && matches!(phase, source_loading::NativePhase::UnpackBegin)
         {
             entered_b.send(()).unwrap();
             resume_b
@@ -271,13 +272,13 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
             tickets.push(
                 scheduler
                     .submit(
-                        source_loader::Request {
+                        source_loading::Request {
                             path: other.clone(),
                             wb: None,
                             expected: None,
                             key: None,
                         },
-                        source_loader::Priority::Visible,
+                        source_loading::Priority::Visible,
                     )
                     .unwrap(),
             );

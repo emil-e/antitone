@@ -158,7 +158,7 @@ fn proposed_document(
 
 #[cfg(test)]
 pub(super) fn develop_scan(
-    developments: &source_loader::SourceLoader,
+    developments: &source_loading::SourceLoader,
     document: &Document,
     expected: &Source,
     path: &std::path::Path,

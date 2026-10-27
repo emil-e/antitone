@@ -3,7 +3,7 @@ use antitone::{
     project::{Development, Source, SourceDevelopment, SourceId},
     raw::RawFile,
     scan::{CameraProxy, DevelopedSource, Scan},
-    source_store::{Charges, SourceKey, SourceStore},
+    source::{Charges, SourceKey, SourceStore},
 };
 use std::sync::Arc;
 

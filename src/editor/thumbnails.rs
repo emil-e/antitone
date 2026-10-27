@@ -1,10 +1,9 @@
 use super::presentation::ContactSheetLayout;
 use super::*;
 use crate::project::SourceDevelopment;
-pub(super) use crate::source_revision::FileKey;
+pub(super) use crate::source::FileKey;
 #[cfg(test)]
-use crate::source_revision::FileRevision;
-use crate::source_store::{SourceKey as NativeKey, SourceStore};
+use crate::source::{FileRevision, SourceKey as NativeKey, SourceStore};
 mod disk;
 mod lru;
 use lru::Cache;
@@ -294,7 +293,7 @@ struct Job {
     correction: Option<Arc<Correction>>,
     store: Arc<SourceStore>,
     render: bool,
-    priority: source_loader::Priority,
+    priority: source_loading::Priority,
     previous: Option<Arc<Product>>,
 }
 
@@ -670,7 +669,7 @@ impl Thumbnails {
         device: wgpu::Device,
         queue: wgpu::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
-        developments: source_loader::SourceLoader,
+        developments: source_loading::SourceLoader,
     ) -> Self {
         Self::with_developments(
             device,
@@ -682,7 +681,7 @@ impl Thumbnails {
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
-    pub(super) fn without_disk(&self, developments: source_loader::SourceLoader) -> Self {
+    pub(super) fn without_disk(&self, developments: source_loading::SourceLoader) -> Self {
         let (device, queue, renderers) = self.gpu.as_ref().expect("thumbnail GPU resources");
         Self::with_developments(
             device.clone(),
@@ -705,7 +704,7 @@ impl Thumbnails {
             queue,
             renderers,
             disk,
-            source_loader::SourceLoader::new(),
+            source_loading::SourceLoader::new(),
         )
     }
 
@@ -714,7 +713,7 @@ impl Thumbnails {
         queue: wgpu::Queue,
         renderers: Arc<crate::renderer::RendererCache>,
         disk: Option<disk::DiskCache>,
-        developments: source_loader::SourceLoader,
+        developments: source_loading::SourceLoader,
     ) -> Self {
         let (commands, receiver) = mpsc::channel();
         let mut state = Self {

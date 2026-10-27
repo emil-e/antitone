@@ -20,7 +20,7 @@ fn document(count: usize) -> (Document, tempfile::TempDir) {
 fn editor(
     document: Document,
     disk: &std::path::Path,
-    scheduler: source_loader::SourceLoader,
+    scheduler: source_loading::SourceLoader,
 ) -> Editor {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
@@ -60,7 +60,7 @@ fn begin(editor: &mut Editor, access: &crate::application::UiContext<'_, Editor>
 fn gated(
     document: &Document,
 ) -> (
-    source_loader::SourceLoader,
+    source_loading::SourceLoader,
     mpsc::Receiver<()>,
     mpsc::Sender<()>,
     Arc<AtomicUsize>,
@@ -77,7 +77,7 @@ fn gated(
     let (release, resume) = mpsc::channel();
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = calls.clone();
-    let scheduler = source_loader::SourceLoader::test_executor(move |_| {
+    let scheduler = source_loading::SourceLoader::test_executor(move |_| {
         if observed.fetch_add(1, Ordering::Relaxed) == 0 {
             entered.send(()).unwrap();
             let _ = resume.recv();
@@ -92,7 +92,7 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
     let (document, _sources) = document(3);
     let first = document.project.order[0];
     let disk = tempfile::tempdir().unwrap();
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = editor(document, disk.path(), scheduler.clone());
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Visible(vec![first])));
@@ -128,7 +128,7 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
 fn composed_editor_registers_visible_work_then_uses_completed_proper_card_callbacks() {
     let (document, _sources) = document(2);
     let disk = tempfile::tempdir().unwrap();
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = editor(document, disk.path(), scheduler.clone());
     let context = egui::Context::default();
     with_application(editor, |app| {
@@ -194,7 +194,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
     let (document, _sources) = document(3);
     let ids = document.project.order.clone();
     let disk = tempfile::tempdir().unwrap();
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let mut editor = editor(document, disk.path(), scheduler.clone());
     let (commands, requests) = mpsc::channel();
     editor.thumbnails.services = Some(Services { commands });
@@ -254,7 +254,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
 fn hidden_document_demand_completes_cpu_disk_work_without_gpu_residency_or_paint() {
     let (document, _sources) = document(3);
     let disk = tempfile::tempdir().unwrap();
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = editor(document, disk.path(), scheduler.clone());
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Hidden));
@@ -376,13 +376,13 @@ fn document_retirement_drops_thumbnail_demand_queued_behind_unrelated_native_wor
     let (scheduler, starts, release, calls) = gated(&document);
     let unrelated = scheduler
         .submit(
-            source_loader::Request {
+            source_loading::Request {
                 path,
                 wb: None,
                 expected: None,
                 key: None,
             },
-            source_loader::Priority::Foreground,
+            source_loading::Priority::Foreground,
         )
         .unwrap();
     starts.recv_timeout(Duration::from_secs(5)).unwrap();

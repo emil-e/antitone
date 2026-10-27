@@ -2,7 +2,7 @@ use super::tests::{LIMIT, fixture};
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::source_loader,
+    source as source_loading,
 };
 use std::{cell::Cell, rc::Rc, sync::mpsc};
 
@@ -89,7 +89,7 @@ fn start_cpu(
 #[test]
 fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting() {
     for fitting in [false, true] {
-        let scheduler = source_loader::SourceLoader::new();
+        let scheduler = source_loading::SourceLoader::new();
         let editor = fixture(scheduler.clone());
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
@@ -132,7 +132,7 @@ fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting(
 
 #[test]
 fn application_retirement_drops_cpu_continuation_while_the_worker_finishes() {
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
@@ -162,7 +162,7 @@ fn application_retirement_drops_cpu_continuation_while_the_worker_finishes() {
 
 #[test]
 fn cancellation_before_first_poll_acknowledges_without_starting_a_cpu_stage() {
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
     let (entered, starts) = mpsc::channel();
     let (_release, resume) = mpsc::channel();

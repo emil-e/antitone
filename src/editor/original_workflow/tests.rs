@@ -3,12 +3,12 @@ use crate::{
     application::test_support::with_application,
     editor::{
         OriginalPurpose, OutputTarget, ProcessingInput, ProcessingParameters, ViewRequest,
-        source_loader, tests::fixture,
+        source_loading, tests::fixture,
     },
 };
 use std::time::{Duration, Instant};
 
-fn editor() -> (Editor, source_loader::SourceLoader) {
+fn editor() -> (Editor, source_loading::SourceLoader) {
     let mut e = fixture();
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
@@ -20,7 +20,7 @@ fn editor() -> (Editor, source_loader::SourceLoader) {
             .await
             .unwrap()
     });
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     e.source_services = Some(source::Services {
         device,
         queue,

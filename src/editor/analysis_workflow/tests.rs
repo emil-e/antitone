@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
-    editor::{Document, Preparation, Thumbnails, source, source_loader},
+    editor::{Document, Preparation, Thumbnails, source, source_loading},
 };
 use std::{
     cell::RefCell,
@@ -12,7 +12,7 @@ use std::{
 
 pub(super) const LIMIT: Duration = Duration::from_secs(20);
 
-pub(super) fn fixture(scheduler: source_loader::SourceLoader) -> Editor {
+pub(super) fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
     let mut editor = crate::editor::tests::fixture();
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
@@ -24,7 +24,7 @@ pub(super) fn fixture(scheduler: source_loader::SourceLoader) -> Editor {
             .await
             .unwrap()
     });
-    let initial = source_loader::SourceLoader::new();
+    let initial = source_loading::SourceLoader::new();
     editor.source_services = Some(source::Services {
         developments: initial.clone(),
         renderers: Arc::default(),
@@ -66,15 +66,15 @@ pub(super) fn start(app: &TestApplication<'_, Editor>) {
 }
 
 fn paused() -> (
-    source_loader::SourceLoader,
+    source_loading::SourceLoader,
     mpsc::Receiver<()>,
     mpsc::Sender<()>,
 ) {
     let (entered, starts) = mpsc::channel();
     let (release, resume) = mpsc::channel();
     let resume = Mutex::new(resume);
-    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
-        if matches!(phase, source_loader::NativePhase::UnpackBegin) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             entered.send(()).unwrap();
             resume.lock().unwrap().recv_timeout(LIMIT).unwrap();
         }
@@ -105,7 +105,7 @@ pub(super) fn await_native(app: &mut TestApplication<'_, Editor>, starts: &mpsc:
 
 #[test]
 fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
     with_application(editor, |app| {
@@ -131,7 +131,7 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
 
 #[test]
 fn queued_user_cancel_acknowledges_without_starting_native_work() {
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
     let admission = crate::background::testing::pause();
@@ -271,7 +271,7 @@ fn live_edits_while_native_preparation_runs_discard_the_draft() {
 
 #[test]
 fn unavailable_services_finish_the_activity_without_opening_review() {
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     let mut editor = fixture(scheduler.clone());
     let before = editor.document.project.clone();
     editor.source_services = None;

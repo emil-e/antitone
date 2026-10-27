@@ -3,7 +3,7 @@ use super::{
     source,
 };
 use crate::processing::InputSettings;
-use crate::source_store::SourceKey;
+use crate::source::SourceKey;
 use std::path::PathBuf;
 use std::sync::{
     Arc,

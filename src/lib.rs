@@ -74,16 +74,11 @@ pub mod sampling;
 pub mod scan;
 #[cfg(feature = "project")]
 pub mod scan_regions;
-#[cfg(feature = "editor")]
-pub mod source_loader;
-#[cfg(feature = "editor")]
-mod source_metadata;
-#[cfg(feature = "editor")]
-pub mod source_provider;
+
 #[cfg(any(feature = "project", feature = "raw"))]
-mod source_revision;
-#[cfg(all(feature = "raw", feature = "project"))]
-pub mod source_store;
+
+pub mod source;
+
 #[cfg(feature = "project")]
 pub mod spatial_metadata;
 #[cfg(any(

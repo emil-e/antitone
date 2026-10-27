@@ -1,13 +1,11 @@
 //! Explicit source acquisition and preparation. Each consumer leases immutable
 //! development and carries its own correction; no selected-source slot is needed.
-use super::{Correction, Document, Editor, Ready, document, source_loader, thumbnails};
+use super::{Correction, Document, Editor, Ready, document, source_loading, thumbnails};
 use crate::{
     Error,
     project::Source,
     scan::{DevelopedSource, Scan},
-    source_loader::SourceLoader,
-    source_provider::{SourceCache, SourceProvider},
-    source_store::{SourceKey, SourceStore},
+    source::{SourceCache, SourceKey, SourceLoader, SourceProvider, SourceStore},
 };
 use std::{
     path::{Path, PathBuf},
@@ -104,7 +102,7 @@ pub(super) struct Developed {
 
 #[derive(Clone)]
 pub(super) struct Services {
-    pub developments: source_loader::SourceLoader,
+    pub developments: source_loading::SourceLoader,
     pub renderers: Arc<crate::renderer::RendererCache>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -183,12 +181,12 @@ impl Services {
                 Some(cache) => {
                     cache
                         .provider(loader)
-                        .load_source(key.clone(), source_loader::Priority::Foreground)
+                        .load_source(key.clone(), source_loading::Priority::Foreground)
                         .await
                 }
                 None => {
                     loader
-                        .load_source(key.clone(), source_loader::Priority::Foreground)
+                        .load_source(key.clone(), source_loading::Priority::Foreground)
                         .await
                 }
             }
@@ -281,7 +279,7 @@ impl Request {
     #[cfg(test)]
     pub fn load(
         self,
-        developments: &source_loader::SourceLoader,
+        developments: &source_loading::SourceLoader,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Developed, Error> {
         self.require_live(cancelled)?;
@@ -294,12 +292,12 @@ impl Request {
                 Some(cache) => {
                     cache
                         .provider(loader)
-                        .load_source(key, source_loader::Priority::Foreground)
+                        .load_source(key, source_loading::Priority::Foreground)
                         .await
                 }
                 None => {
                     loader
-                        .load_source(key, source_loader::Priority::Foreground)
+                        .load_source(key, source_loading::Priority::Foreground)
                         .await
                 }
             }

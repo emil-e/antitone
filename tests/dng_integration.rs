@@ -6,7 +6,7 @@ use antitone::{
     project::{Project, Save, Source, SourceDevelopment, SourceId},
     raw::{RawFile, Rect},
     scan::Scan,
-    source_store::{SourceKey, SourceStore},
+    source::{SourceKey, SourceStore},
 };
 use glam::DVec3;
 use std::{path::Path, sync::Arc};

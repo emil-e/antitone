@@ -9,7 +9,7 @@ fn fixture() -> (
     Editor,
     source::Context,
     ViewSourceSpec,
-    source_loader::SourceLoader,
+    source_loading::SourceLoader,
 ) {
     let mut e = crate::editor::tests::fixture();
     let (device, queue) = pollster::block_on(async {
@@ -41,7 +41,7 @@ fn fixture() -> (
         source: scan.source().clone(),
         correction: None,
     };
-    let scheduler = source_loader::SourceLoader::new();
+    let scheduler = source_loading::SourceLoader::new();
     e.source_services = Some(source::Services {
         device: device.clone(),
         queue: queue.clone(),

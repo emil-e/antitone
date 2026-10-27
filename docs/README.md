@@ -31,9 +31,11 @@ Where each area's implementation lives — navigation, not specification. Follow
 | --- | --- | --- |
 | Processing | [processing](../src/processing.rs), [photographic](../src/photographic.rs), [colour](../src/color.rs) | Scalar reference, response and positive grading |
 
+
 | Adjustment layers | [scalar processing](../src/adjustment_layers.rs), [GPU grades](../src/gpu/adjustment_layers.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers, whole-document admission |
 
-| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [provider/cache](../src/source_provider.rs), [loader](../src/source_loader.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and capture diagnostics |
+| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source acquisition](../src/source/mod.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and capture diagnostics |
+
 
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |
 | Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu/flat.rs) | Source-coordinate illumination gains |

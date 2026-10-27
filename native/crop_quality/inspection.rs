@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     project::Development, project::SourceDevelopment, raw::RawFile, rendering::OutputTarget,
-    scan::Scan, source_revision::FileKey,
+    scan::Scan, source::FileKey,
 };
 use image::{Rgb, RgbImage};
 

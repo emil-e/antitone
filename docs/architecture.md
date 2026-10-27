@@ -39,7 +39,7 @@ Export instead owns an application-level batch: fixed recipes, resolved paths, c
 Workflows never block; services run the work off the UI thread and workflows await typed results:
 
 - **Synchronous work** runs on the shared blocking pool through [`background.rs`](../src/background.rs), with worker panics returned as errors. Each job owns its captured inputs; unrelated features can proceed concurrently.
-- **Two native owners at most** ([`source_loader.rs`](../src/source_loader.rs)) serve foreground, visible and eager development; each runs one non-interruptible call with worker-local mutable RAW handles, and background work yields to foreground demand. [Scheduling rationale](native-development.md#editor-scheduling) describes the tradeoff.
+- **Two native owners at most** ([`source/loader.rs`](../src/source/loader.rs)) serve foreground, visible and eager development; each runs one non-interruptible call with worker-local mutable RAW handles, and background work yields to foreground demand. [Scheduling rationale](native-development.md#editor-scheduling) describes the tradeoff.
 - **Thumbnail and embedded-preview processing** ([`editor_thumbnail_worker.rs`](../src/editor_thumbnail_worker.rs)) is a background path, not another RAW development pool: it never borrows the selected `Scan` from foreground operations, GPU processing is serial, and obsolete tickets never install images.
 - **Lazy photo preparation** ([`source_store.rs`](../src/source_store.rs)) resolves Digital starting exposure during native/proxy acquisition, before processed-positive publication. Camera preview display shares decoded leases and in-flight work across same-document candidates. These candidates share immutable metering results while isolating pixel publication. AP1 production folds the completed gain into its source transform; consumers use normalized pixels and source identity rather than handling exposure readiness.
 - **The CPU store** is a byte-bounded, oldest-unprotected LRU for native data, proxies and decoded camera references: active leases survive eviction, selected/visible proxies are protected separately, and native cache ownership is always optional. Retention settings and pressure behavior: [editor](editor.md#retention-settings-and-pressure).
@@ -51,7 +51,7 @@ Presentation follows the same separation: [`editor_activity.rs`](../src/editor/a
 
 ## Source acquisition and retention
 
-[`SourceProvider`](../src/source_provider.rs) asynchronously returns an `Arc<DevelopedSource>` lease. Selected views, analysis, thumbnails and export use the same acquisition boundary:
+The [`source` module](../src/source/mod.rs) contains acquisition, native execution and storage behind `SourceProvider`, which asynchronously returns an `Arc<DevelopedSource>` lease. Selected views, analysis, thumbnails and export use the same acquisition boundary:
 
 ```mermaid
 flowchart LR
@@ -62,11 +62,11 @@ flowchart LR
     Cache -->|owning source lease| Consumer
 ```
 
-[`SourceLoader`](../src/source_loader.rs) owns native execution and joining, independently of document stores. Cache misses forward the request's priority; joined consumers contribute their priorities to the shared work. Weak discovery of completed live results covers the handoff before cache publication. Waiting occupies no blocking-pool thread.
+[`SourceLoader`](../src/source/loader.rs) owns native execution and joining, independently of document stores. Cache misses forward the request's priority; joined work uses the highest active priority, so selecting a queued thumbnail promotes its existing load. Weak discovery of completed live results covers the handoff before cache publication. Waiting occupies no blocking-pool thread.
 
 RAWs are treated as immutable while open. Import/Open captures file identity for persisted-cache validity; acquisitions reuse it. Cache lookup/publication and request joining are in-memory operations.
 
-`SourceCache` wraps a provider using the existing [CPU store](../src/source_store.rs): weak live lookup plus optional strong ownership under an LRU byte budget. Candidate stores can reuse a parent. Eviction preserves consumer leases; zero retention still permits live reuse. Cache closure disables lookup/publication; document consumers retire their own loading futures. After every strong reference disappears, reacquisition can develop again. Selected/visible protection applies to proxies, not full-resolution sources. [Retention settings](editor.md#retention-settings-and-pressure) govern optional ownership.
+`SourceCache` wraps a provider using the existing [CPU store](../src/source/store.rs): weak live lookup plus optional strong ownership under an LRU byte budget. Candidate stores can reuse a parent. Eviction preserves consumer leases; zero retention still permits live reuse. Cache closure disables lookup/publication; document consumers retire their own loading futures. After every strong reference disappears, reacquisition can develop again. Selected/visible protection applies to proxies, not full-resolution sources. [Retention settings](editor.md#retention-settings-and-pressure) govern optional ownership.
 
 Analysis owns measured samples through fitting rather than a full-roll set of source leases.
 

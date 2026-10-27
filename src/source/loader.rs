@@ -2,13 +2,11 @@
 //! thread; consumers join immutable completion, independently of optional cache
 //! ownership and UI tickets. Started work stays pinned to its owner, and at most
 //! two owners overlap independent sources, yielding to foreground demand.
+use super::{SourceKey, SourceProvider, metadata as source_metadata};
 use crate::{
     Error,
     project::Source,
     scan::{DevelopedSource, Scan},
-    source_metadata,
-    source_provider::SourceProvider,
-    source_store::SourceKey,
 };
 use std::{
     collections::HashMap,
@@ -32,7 +30,7 @@ pub enum Priority {
 }
 
 #[derive(Clone)]
-pub(super) struct Request {
+pub(crate) struct Request {
     pub path: PathBuf,
     pub wb: Option<[f64; 4]>,
     pub expected: Option<Source>,
@@ -468,7 +466,7 @@ impl SourceLoader {
     }
 
     #[cfg(test)]
-    pub(super) fn close_and_wait(&self) -> Result<(), String> {
+    pub(crate) fn close_and_wait(&self) -> Result<(), String> {
         self.close();
         let workers = std::mem::take(&mut *self.workers.lock().unwrap());
         for worker in workers {
@@ -484,7 +482,7 @@ impl SourceLoader {
     }
 
     #[cfg(test)]
-    pub(super) fn test_executor(
+    pub(crate) fn test_executor(
         mut step: impl FnMut(&std::path::Path) -> Result<Option<Arc<DevelopedSource>>, String>
         + Send
         + 'static,
@@ -506,7 +504,7 @@ impl SourceLoader {
     }
 
     #[cfg(test)]
-    pub(super) fn load(
+    pub(crate) fn load(
         &self,
         request: Request,
         priority: Priority,
@@ -530,7 +528,7 @@ impl SourceLoader {
         )
     }
 
-    pub(super) fn submit(&self, request: Request, priority: Priority) -> Result<Ticket, Error> {
+    pub(crate) fn submit(&self, request: Request, priority: Priority) -> Result<Ticket, Error> {
         self.submit_request(request, priority)
     }
 
@@ -735,6 +733,6 @@ fn finish(shared: &Shared, task: &Arc<Task>, result: Completion) {
 
 #[cfg(test)]
 
-#[path = "source_loader_tests.rs"]
+#[path = "loader_tests.rs"]
 
 mod tests;

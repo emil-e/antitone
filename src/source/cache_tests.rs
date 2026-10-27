@@ -1,6 +1,6 @@
 use super::*;
-use crate::source_loader::{self, SourceLoader};
-use crate::{project::SourceDevelopment, raw::fixture, scan::Scan, source_store::Charges};
+use crate::source::{self as source_loading, SourceLoader};
+use crate::{project::SourceDevelopment, raw::fixture, scan::Scan, source::Charges};
 use std::sync::{
     Weak,
     atomic::{AtomicUsize, Ordering},
@@ -72,13 +72,13 @@ fn zero_retention_reuses_live_consumer_leases_without_owning_the_pixels() {
     let cache = SourceCache::new(Existing::new(&original), store.clone());
     futures_lite::future::block_on(async {
         let first = cache
-            .load_source(key.clone(), source_loader::Priority::Eager)
+            .load_source(key.clone(), source_loading::Priority::Eager)
             .await
             .unwrap();
         assert!(Arc::ptr_eq(&first, &original));
         drop(original);
         let second = cache
-            .load_source(key.clone(), source_loader::Priority::Foreground)
+            .load_source(key.clone(), source_loading::Priority::Foreground)
             .await
             .unwrap();
         assert!(Arc::ptr_eq(&first, &second));
@@ -108,7 +108,7 @@ fn cache_budget_owns_a_keepalive_after_consumers_finish() {
     let cache = SourceCache::new(Existing::new(&original), store.clone());
     futures_lite::future::block_on(async {
         let lease = cache
-            .load_source(key.clone(), source_loader::Priority::Foreground)
+            .load_source(key.clone(), source_loading::Priority::Foreground)
             .await
             .unwrap();
         drop(original);
@@ -122,7 +122,7 @@ fn cache_budget_owns_a_keepalive_after_consumers_finish() {
             }
         );
         let lease = cache
-            .load_source(key, source_loader::Priority::Foreground)
+            .load_source(key, source_loading::Priority::Foreground)
             .await
             .unwrap();
         assert_eq!(cache.inner.calls.load(Ordering::Relaxed), 1);
@@ -151,9 +151,10 @@ fn candidate_reuse_registers_a_lease_without_taking_parent_cache_ownership() {
     let candidate = Arc::new(SourceStore::new(0));
     let cache = SourceCache::new(Existing::new(&source), candidate.clone())
         .with_parent(Some(parent.clone()));
-    let lease =
-        futures_lite::future::block_on(cache.load_source(key, source_loader::Priority::Foreground))
-            .unwrap();
+    let lease = futures_lite::future::block_on(
+        cache.load_source(key, source_loading::Priority::Foreground),
+    )
+    .unwrap();
     assert!(Arc::ptr_eq(&source, &lease));
     assert_eq!(cache.inner.calls.load(Ordering::Relaxed), 0);
     assert_eq!(parent.charges().retained, bytes);
@@ -175,9 +176,10 @@ fn closed_cache_is_not_authority_to_cancel_an_independent_load() {
     let store = Arc::new(SourceStore::new(0));
     store.close();
     let cache = SourceCache::new(Existing::new(&source), store.clone());
-    let lease =
-        futures_lite::future::block_on(cache.load_source(key, source_loader::Priority::Foreground))
-            .unwrap();
+    let lease = futures_lite::future::block_on(
+        cache.load_source(key, source_loading::Priority::Foreground),
+    )
+    .unwrap();
     assert!(Arc::ptr_eq(&lease, &source));
     assert_eq!(cache.inner.calls.load(Ordering::Relaxed), 1);
     assert_eq!(store.charges(), Charges::default());
@@ -187,7 +189,7 @@ fn closed_cache_is_not_authority_to_cancel_an_independent_load() {
 fn unpolled_acquisition_does_not_start_loading() {
     let (_file, key, source) = input();
     let cache = SourceCache::new(Existing::new(&source), Arc::new(SourceStore::new(0)));
-    drop(cache.load_source(key, source_loader::Priority::Foreground));
+    drop(cache.load_source(key, source_loading::Priority::Foreground));
     assert_eq!(cache.inner.calls.load(Ordering::Relaxed), 0);
 }
 
@@ -203,8 +205,8 @@ fn concurrent_document_cache_misses_join_native_work_and_one_waiter_can_leave() 
     let resume = Mutex::new(resume);
     let developments = Arc::new(AtomicUsize::new(0));
     let observed = developments.clone();
-    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
-        if matches!(phase, source_loader::NativePhase::UnpackBegin) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             entered.send(()).unwrap();
             resume
                 .lock()
@@ -212,7 +214,7 @@ fn concurrent_document_cache_misses_join_native_work_and_one_waiter_can_leave() 
                 .recv_timeout(Duration::from_secs(5))
                 .unwrap();
         }
-        if matches!(phase, source_loader::NativePhase::DevelopBegin) {
+        if matches!(phase, source_loading::NativePhase::DevelopBegin) {
             observed.fetch_add(1, Ordering::Relaxed);
         }
         Ok(())
@@ -225,13 +227,13 @@ fn concurrent_document_cache_misses_join_native_work_and_one_waiter_can_leave() 
         let first_key = key.clone();
         let first = executor.spawn(async move {
             first_cache
-                .load_source(first_key, source_loader::Priority::Foreground)
+                .load_source(first_key, source_loading::Priority::Foreground)
                 .await
         });
         blocking::unblock(move || starts.recv_timeout(Duration::from_secs(5)).unwrap()).await;
         let second = executor.spawn(async move {
             second_cache
-                .load_source(key, source_loader::Priority::Foreground)
+                .load_source(key, source_loading::Priority::Foreground)
                 .await
         });
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -260,14 +262,14 @@ fn completed_native_result_is_reused_before_any_cache_wrapper_has_published_it()
     let (_file, key, _original) = input();
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = calls.clone();
-    let scheduler = source_loader::SourceLoader::new_observed(move |_, phase, _| {
-        if matches!(phase, source_loader::NativePhase::DevelopBegin) {
+    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+        if matches!(phase, source_loading::NativePhase::DevelopBegin) {
             observed.fetch_add(1, Ordering::Relaxed);
         }
         Ok(())
     });
     let first = scheduler
-        .submit_key(key.clone(), source_loader::Priority::Foreground)
+        .submit_key(key.clone(), source_loading::Priority::Foreground)
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     let produced = loop {
@@ -281,9 +283,10 @@ fn completed_native_result_is_reused_before_any_cache_wrapper_has_published_it()
     let store = Arc::new(SourceStore::new(0));
     let loader = scheduler;
     let cache = SourceCache::new(loader, store);
-    let lease =
-        futures_lite::future::block_on(cache.load_source(key, source_loader::Priority::Foreground))
-            .unwrap();
+    let lease = futures_lite::future::block_on(
+        cache.load_source(key, source_loading::Priority::Foreground),
+    )
+    .unwrap();
     assert!(Arc::ptr_eq(&lease, &produced));
     assert_eq!(
         calls.load(Ordering::Relaxed),
@@ -302,7 +305,7 @@ fn native_loader_returns_the_requested_development_and_rejects_a_different_basis
     let (_file, key, source) = input();
     let loader = SourceLoader::new();
     let lease = futures_lite::future::block_on(
-        loader.load_source(key.clone(), source_loader::Priority::Foreground),
+        loader.load_source(key.clone(), source_loading::Priority::Foreground),
     )
     .unwrap();
     assert!(key.matches(&lease));
@@ -319,7 +322,7 @@ fn native_loader_returns_the_requested_development_and_rejects_a_different_basis
     let wrong = SourceKey::new(key.path(), &different);
     assert!(matches!(
         futures_lite::future::block_on(
-            loader.load_source(wrong, source_loader::Priority::Foreground)
+            loader.load_source(wrong, source_loading::Priority::Foreground)
         ),
         Err(Error::Project(_))
     ));

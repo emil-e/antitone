@@ -40,12 +40,12 @@ pub(in crate::editor) fn request() -> (analysis::Request, tempfile::TempDir, wgp
     )
 }
 
-pub(in crate::editor) fn observed() -> (source_loader::SourceLoader, Arc<AtomicUsize>) {
+pub(in crate::editor) fn observed() -> (source_loading::SourceLoader, Arc<AtomicUsize>) {
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
     (
-        source_loader::SourceLoader::new_observed(move |_, phase, _| {
-            if matches!(phase, source_loader::NativePhase::DevelopBegin) {
+        source_loading::SourceLoader::new_observed(move |_, phase, _| {
+            if matches!(phase, source_loading::NativePhase::DevelopBegin) {
                 observed.fetch_add(1, Ordering::Relaxed);
             }
             Ok(())

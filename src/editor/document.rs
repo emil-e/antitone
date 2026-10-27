@@ -2,14 +2,14 @@ use crate::{
     Error,
     project::{Project, Save, Source, SourceId},
     raw::Metadata,
-    source_store::{SourceKey, SourceStore},
+    source::{SourceKey, SourceStore},
 };
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-pub(super) use crate::source_metadata::{
+pub(super) use crate::source::{
     metadata_development, open_source, source_metadata, verify_scan, verify_source,
 };
 type Result<T> = std::result::Result<T, Error>;
@@ -44,7 +44,7 @@ pub(super) struct Document {
     source_previews: std::collections::HashMap<SourceId, HeaderPreview>,
 
     // Keep identities for undo; each record locator follows project-path rebasing on Save As.
-    source_files: std::collections::HashMap<SourceId, (PathBuf, crate::source_revision::FileKey)>,
+    source_files: std::collections::HashMap<SourceId, (PathBuf, crate::source::FileKey)>,
     #[cfg(test)]
     pub(super) fixture_directory: Option<Arc<tempfile::TempDir>>,
 }
@@ -94,7 +94,7 @@ impl Document {
         &self.cache.0
     }
 
-    pub fn file_key(&self, path: &Path) -> crate::source_revision::FileKey {
+    pub fn file_key(&self, path: &Path) -> crate::source::FileKey {
         self.project
             .sources
             .iter()
@@ -108,7 +108,7 @@ impl Document {
                     .filter(|(locator, _)| *locator == source.path)
             })
             .map(|(_, file)| file.clone())
-            .unwrap_or_else(|| crate::source_revision::FileKey::unversioned(path))
+            .unwrap_or_else(|| crate::source::FileKey::unversioned(path))
     }
 
     pub(super) fn capture_source_files(&mut self) -> Result<()> {
@@ -120,10 +120,7 @@ impl Document {
                 let path = self.source_path(source.id)?;
                 Ok((
                     source.id,
-                    (
-                        source.path.clone(),
-                        crate::source_revision::FileKey::new(&path),
-                    ),
+                    (source.path.clone(), crate::source::FileKey::new(&path)),
                 ))
             })
             .collect::<Result<_>>()?;
@@ -501,7 +498,7 @@ impl Document {
                     id,
                     (
                         self.project.source(id)?.path.clone(),
-                        crate::source_revision::FileKey::new(&resolved),
+                        crate::source::FileKey::new(&resolved),
                     ),
                 );
             } else {
@@ -567,7 +564,7 @@ impl Document {
             id,
             (
                 self.project.source(id)?.path.clone(),
-                crate::source_revision::FileKey::new(&path),
+                crate::source::FileKey::new(&path),
             ),
         );
         Ok(id)

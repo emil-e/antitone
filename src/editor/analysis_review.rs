@@ -105,7 +105,7 @@ fn fine_measurement(scan: &Scan, code_scale: f64) -> Result<([u32; 2], Vec<[u16;
 pub(super) fn prepare(
     request: &analysis::Request,
     generation: &AtomicU64,
-    developments: &source_loader::SourceLoader,
+    developments: &source_loading::SourceLoader,
     device: &wgpu::Device,
     progress: impl FnMut(usize, usize),
 ) -> Result<Option<Approved>, Error> {
@@ -123,7 +123,7 @@ pub(super) fn prepare(
 fn prepare_with_measurements(
     request: &analysis::Request,
     generation: &AtomicU64,
-    developments: &source_loader::SourceLoader,
+    developments: &source_loading::SourceLoader,
     device: &wgpu::Device,
     progress: impl FnMut(usize, usize),
     measurements: &mut measurements::Measurements,

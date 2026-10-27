@@ -9,7 +9,7 @@ fn request(path: &std::path::Path) -> Request {
     let key = SourceKey::from_revision(path, file.clone(), &expected.development);
 ========
     let (expected, _) = source_metadata::open_source(path, Some([1.; 4])).unwrap();
-    let file = crate::source_revision::FileKey::new(path);
+    let file = crate::source::FileKey::new(path);
     let key = SourceKey::from_revision_with_development(
         path,
         file.clone(),
@@ -232,6 +232,75 @@ fn foreground_runs_before_the_next_background_native_phase_on_one_thread() {
         [(1, 1), (2, 1), (2, 2), (1, 2)]
     );
     assert!(trace.iter().all(|(_, _, thread)| *thread == trace[0].2));
+}
+
+#[test]
+fn selecting_the_last_eager_source_promotes_its_existing_queued_load() {
+    use crate::source::{SourceCache, SourceStore};
+
+    let first = fixture::bayer_dng();
+    let middle = fixture::bayer_dng();
+    let selected = fixture::bayer_dng();
+    let sources: HashMap<_, _> = [&first, &middle, &selected]
+        .into_iter()
+        .map(|file| {
+            let source = Scan::open(file.path(), Some([1.; 4]))
+                .unwrap()
+                .source()
+                .clone();
+            (file.path().to_owned(), source)
+        })
+        .collect();
+    let first_path = first.path().to_owned();
+    let blocked = first_path.clone();
+    let (entered, starts) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let recorded = trace.clone();
+    let loader = SourceLoader::start(move |shared| {
+        run(shared, 0, |task| {
+            recorded.lock().unwrap().push(task.request.path.clone());
+            if task.request.path == blocked {
+                entered.send(()).unwrap();
+                resume.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+            Ok(Some(sources[&task.request.path].clone()))
+        });
+    });
+    let cache = SourceCache::new(loader.clone(), Arc::new(SourceStore::new(0)));
+    let key = |path| request(path).key.unwrap();
+    let mut first_load = Box::pin(cache.load_source(key(first.path()), Priority::Eager));
+    assert!(
+        futures_lite::future::block_on(futures_lite::future::poll_once(&mut first_load)).is_none()
+    );
+    starts.recv_timeout(Duration::from_secs(5)).unwrap();
+    let mut middle_load = Box::pin(cache.load_source(key(middle.path()), Priority::Eager));
+    assert!(
+        futures_lite::future::block_on(futures_lite::future::poll_once(&mut middle_load)).is_none()
+    );
+    let selected_key = key(selected.path());
+    let mut eager = Box::pin(cache.load_source(selected_key.clone(), Priority::Eager));
+    assert!(futures_lite::future::block_on(futures_lite::future::poll_once(&mut eager)).is_none());
+    let mut foreground = Box::pin(cache.load_source(selected_key, Priority::Foreground));
+    assert!(
+        futures_lite::future::block_on(futures_lite::future::poll_once(&mut foreground)).is_none()
+    );
+
+    release.send(()).unwrap();
+    futures_lite::future::block_on(foreground).unwrap();
+    futures_lite::future::block_on(eager).unwrap();
+    futures_lite::future::block_on(middle_load).unwrap();
+    futures_lite::future::block_on(first_load).unwrap();
+    loader.close_and_wait().unwrap();
+    assert_eq!(
+        *trace.lock().unwrap(),
+        [
+            first_path,
+            selected.path().to_owned(),
+            middle.path().to_owned()
+        ],
+        "selection must move ahead of queued eager work without a duplicate development"
+    );
 }
 
 #[test]

@@ -9,7 +9,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub use crate::source_revision::FileRevision;
+pub use crate::source::FileRevision;
 
 mod geometry;
 mod store;

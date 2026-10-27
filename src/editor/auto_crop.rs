@@ -22,7 +22,7 @@ struct Entry {
 }
 
 pub(super) struct Draft {
-    document: std::sync::Weak<crate::source_store::SourceStore>,
+    document: std::sync::Weak<crate::source::SourceStore>,
     order: Vec<SourceId>,
     target: Target,
     attempted: usize,

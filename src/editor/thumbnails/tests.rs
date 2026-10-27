@@ -41,9 +41,9 @@ pub(super) fn service_job(
         store: thumbnails.sources.clone(),
         render,
         priority: if render {
-            source_loader::Priority::Visible
+            source_loading::Priority::Visible
         } else {
-            source_loader::Priority::Eager
+            source_loading::Priority::Eager
         },
         previous,
     }
@@ -876,7 +876,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
         let visible = take_submission(app, &requests);
         assert_eq!(visible.job.key.source.id, first);
-        assert_eq!(visible.job.priority, source_loader::Priority::Visible);
+        assert_eq!(visible.job.priority, source_loading::Priority::Visible);
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
         app.pump();
         assert!(matches!(
@@ -890,7 +890,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
             !eager.job.render,
             "original refinement keeps optional GPU priority"
         );
-        assert_eq!(eager.job.priority, source_loader::Priority::Eager);
+        assert_eq!(eager.job.priority, source_loading::Priority::Eager);
     });
 }
 
@@ -1203,7 +1203,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         let visible = take_submission(app, &requests);
         assert_ne!(retry.job.ticket, visible.job.ticket);
         assert_eq!(visible.job.key.source.id, first);
-        assert_eq!(visible.job.priority, source_loader::Priority::Visible);
+        assert_eq!(visible.job.priority, source_loading::Priority::Visible);
         app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
         app.pump();
         assert!(matches!(
@@ -1248,9 +1248,9 @@ fn memory_pressure_suspends_idle_prefetch_without_blocking_allowed_visible_work(
             assert_eq!(
                 submitted.job.priority,
                 if pressure == memory::Pressure::Normal {
-                    source_loader::Priority::Eager
+                    source_loading::Priority::Eager
                 } else {
-                    source_loader::Priority::Visible
+                    source_loading::Priority::Visible
                 }
             );
             app.enter(|e, cx| filmstrip_frame(e, &context, budgets, cx));
@@ -1281,7 +1281,7 @@ fn hidden_filmstrip_keeps_cpu_only_eager_completion_and_pressure_gates() {
             let submitted = take_submission(app, &requests);
             assert_eq!(submitted.job.key.source.id, id);
             assert!(!submitted.job.render);
-            assert_eq!(submitted.job.priority, source_loader::Priority::Eager);
+            assert_eq!(submitted.job.priority, source_loading::Priority::Eager);
             finish_submission(submitted, Ok(None), true);
         }
         app.pump();
@@ -1361,7 +1361,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
                 e.document.source_path(last).unwrap(),
                 e.document.project.source(last).unwrap().clone(),
                 true,
-                source_loader::Priority::Eager,
+                source_loading::Priority::Eager,
                 cx,
             )
         });
