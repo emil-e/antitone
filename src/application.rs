@@ -10,15 +10,12 @@ use std::{
 };
 
 #[cfg(test)]
-#[path = "application_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "application_test_support.rs"]
 pub(crate) mod test_support;
 
 #[cfg(test)]
-#[path = "application_context_tests.rs"]
 mod context_tests;
 
 type Repaint = Arc<dyn Fn() + Send + Sync>;

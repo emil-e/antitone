@@ -1,6 +1,5 @@
 //! Repair evaluation from resolved working-positive samples.
 #[cfg(all(test, feature = "project", feature = "ocio-reference"))]
-#[path = "repair_source_normalization_tests.rs"]
 mod normalization_tests;
 
 use crate::{

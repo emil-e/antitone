@@ -2,7 +2,6 @@
 use image::{ImageDecoder, metadata::Orientation};
 
 #[cfg(test)]
-#[path = "embedded_preview_tests.rs"]
 mod tests;
 
 pub(crate) struct Preview {

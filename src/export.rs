@@ -16,10 +16,8 @@ use tiff::{
 };
 
 #[cfg(all(test, target_os = "macos"))]
-#[path = "export_publication_tests.rs"]
 mod publication_tests;
 #[cfg(all(test, target_os = "macos"))]
-#[path = "export_tests.rs"]
 mod tests;
 
 type Result<T> = std::result::Result<T, Error>;

@@ -64,9 +64,9 @@ Colour wheels drag relative to the accepted value; holding Shift gives ten-times
 
 ## Decisions are not operation failures
 
-A decision asks permission before changing or replacing something; a failure explains why an attempted operation did not complete. Save/Discard, project and output replacement use the shared [decision dialog](../src/editor_ui_dialogs.rs) family, so a required choice is not presented as a warning and none of these confirmations is an operation failure. Analyze folds its Photo-reset consequence into the sampling-area review instead of opening another dialog.
+A decision asks permission before changing or replacing something; a failure explains why an attempted operation did not complete. Save/Discard, project and output replacement use the shared [decision dialog](../src/editor/presentation/dialogs.rs) family, so a required choice is not presented as a warning and none of these confirmations is an operation failure. Analyze folds its Photo-reset consequence into the sampling-area review instead of opening another dialog.
 
-[Feedback presentation](../src/editor_ui_feedback.rs) distinguishes information, warning and error with a named severity, glyph and restrained colour — never colour alone. Acknowledged messages state what did not happen and what remains intact, with full diagnostic details behind a subdued disclosure. [Operation controllers](../src/editor_feedback.rs) retain the typed failure separately from status text: acknowledgement or a matching success retires it, while merely starting another job or receiving stale results does not. Other import/analysis failures remain passive status rather than acknowledged messages.
+[Feedback presentation](../src/editor/presentation/feedback.rs) distinguishes information, warning and error with a named severity, glyph and restrained colour — never colour alone. Acknowledged messages state what did not happen and what remains intact, with full diagnostic details behind a subdued disclosure. [Operation controllers](../src/editor/feedback.rs) retain the typed failure separately from status text: acknowledgement or a matching success retires it, while merely starting another job or receiving stale results does not. Other import/analysis failures remain passive status rather than acknowledged messages.
 
 ## Working feedback follows what remains usable
 
@@ -83,7 +83,7 @@ Working feedback answers two questions: **what is happening, and what can I stil
 
 Save/Save As remain available through application commands during shared region preparation; they capture ready results without waiting for preparation. A deferred consumer resumes after the write, or after acknowledgement of a failed write.
 
-[Task activity](../src/editor_activity.rs) is the foreground integration point: begin a typed task on the controller's request ID, report counted or indeterminate progress, and finish the matching request on success, failure or send-failure. Request keys are scoped by operation, so a photo-load result cannot finish an export that happens to share a number; stale reports are ignored. Cancellation has two responsibilities — signal the real worker, then mark the task `cancelling`, which drops measured progress and Cancel until matching completion. [Working presentation](../src/editor_ui_progress.rs) renders the task's modal or local surface.
+[Task activity](../src/editor/activity.rs) is the foreground integration point: begin a typed task on the controller's request ID, report counted or indeterminate progress, and finish the matching request on success, failure or send-failure. Request keys are scoped by operation, so a photo-load result cannot finish an export that happens to share a number; stale reports are ignored. Cancellation has two responsibilities — signal the real worker, then mark the task `cancelling`, which drops measured progress and Cancel until matching completion. [Working presentation](../src/editor/presentation/progress.rs) renders the task's modal or local surface.
 
 ## Export photographs
 
@@ -153,7 +153,7 @@ Demanded immutable full-resolution developments, uncorrected proxies and decoded
 
 ### Scheduling and readiness
 
-Two [native owners](../src/editor_development.rs) at most serve selected/reference/Analyze and thumbnail development: each keeps worker-local mutable RAW handles and runs one synchronous unpack/development call at a time. Foreground work precedes visible misses, then eager work for unvisited sources; a pending foreground demand can start on a free owner, while background work starts only while no foreground demand exists. Cancelling a GPU ticket releases visible admission without discarding already-owned CPU/disk work. CPU/disk preloads and GPU-ready cards have separate completion states, allowing idle work to render an offscreen card later. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff.
+Two [native owners](../src/editor/development.rs) at most serve selected/reference/Analyze and thumbnail development: each keeps worker-local mutable RAW handles and runs one synchronous unpack/development call at a time. Foreground work precedes visible misses, then eager work for unvisited sources; a pending foreground demand can start on a free owner, while background work starts only while no foreground demand exists. Cancelling a GPU ticket releases visible admission without discarding already-owned CPU/disk work. CPU/disk preloads and GPU-ready cards have separate completion states, allowing idle work to render an offscreen card later. [Native scheduling](native-development.md#editor-scheduling) explains the thread policy and its latency tradeoff.
 
 ### Positive thumbnail reuse
 
@@ -165,22 +165,22 @@ Compatible neutral products survive grade, look and target changes. Across proje
 
 ### Retention settings and pressure
 
-Settings controls CPU/GPU optional retention in whole MiB, including zero, independently of project/grade state; [current defaults and units](../src/editor_cache_limits.rs) describe the choices. Pressure warnings drop unprotected optional ownership and suspend offscreen work without rewriting chosen limits; selected/visible essentials may exceed the optional limits. Visible missing cards remain protected even at zero optional retention, and a retained CPU source proxy alone does not suppress camera-preview loading until the processed image is available. GPU infrastructure is shared, but mutable image storage, revision and processing signatures belong to each image/job; [architecture](architecture.md) describes those worker boundaries.
+Settings controls CPU/GPU optional retention in whole MiB, including zero, independently of project/grade state; [current defaults and units](../src/editor/cache_limits.rs) describe the choices. Pressure warnings drop unprotected optional ownership and suspend offscreen work without rewriting chosen limits; selected/visible essentials may exceed the optional limits. Visible missing cards remain protected even at zero optional retention, and a retained CPU source proxy alone does not suppress camera-preview loading until the processed image is available. GPU infrastructure is shared, but mutable image storage, revision and processing signatures belong to each image/job; [architecture](architecture.md) describes those worker boundaries.
 
 ## Build UI from shared presentation
 
 Use the existing component families rather than copying their painting or interaction logic:
 
-- [Presentation](../src/editor_ui.rs): header/branding, fallback menus and panels, labelled rows, stage tool shelves.
-- [Viewer framing](../src/editor_ui_viewer.rs) / [Hierarchy](../src/editor_ui_hierarchy.rs): docked controls, sections, disclosure/reset, stage tabs, selectable rows.
-- [Decisions](../src/editor_ui_dialogs.rs), [Feedback](../src/editor_ui_feedback.rs), [Tasks](../src/editor_activity.rs), [Working](../src/editor_ui_progress.rs): the shared modal, severity, task and progress surfaces.
-- [Cards](../src/editor_ui_cards.rs), [Icons](../src/editor_icons.rs), [Controls](../src/editor_controls.rs): filmstrip geometry, semantic actions, photographic value widgets.
+- [Presentation](../src/editor/presentation.rs): header/branding, fallback menus and panels, labelled rows, stage tool shelves.
+- [Viewer framing](../src/editor/presentation/viewer.rs) / [Hierarchy](../src/editor/presentation/hierarchy.rs): docked controls, sections, disclosure/reset, stage tabs, selectable rows.
+- [Decisions](../src/editor/presentation/dialogs.rs), [Feedback](../src/editor/presentation/feedback.rs), [Tasks](../src/editor/activity.rs), [Working](../src/editor/presentation/progress.rs): the shared modal, severity, task and progress surfaces.
+- [Cards](../src/editor/presentation/cards.rs), [Icons](../src/editor/icons.rs), [Controls](../src/editor/controls.rs): filmstrip geometry, semantic actions, photographic value widgets.
 
 Presentation receives display-ready state and returns responses; controllers still own availability, IDs, accepted/draft state and dispatch. Inspector dropdowns fill the section width, with truncation rather than value-dependent sizing.
 
 ### Inspector density and value grammar
 
-The inspector uses its own spacing scale, tighter than the rest of the application: [Presentation](../src/editor_ui.rs) owns the inspector row height, item gap, section gap, slider height and numeric width, and `inspector_spacing` applies them to the column. Sections separate with a separator and a short gap; a section header carries its disclosure, its changed cue, a reset, and optionally one section tool. Anything added to the inspector should take its height and gaps from these constants rather than choosing its own. Consecutive value rows use a tighter gap than sections: their tracks read as one block only when the neighbouring rows are closer than the separators around them.
+The inspector uses its own spacing scale, tighter than the rest of the application: [Presentation](../src/editor/presentation.rs) owns the inspector row height, item gap, section gap, slider height and numeric width, and `inspector_spacing` applies them to the column. Sections separate with a separator and a short gap; a section header carries its disclosure, its changed cue, a reset, and optionally one section tool. Anything added to the inspector should take its height and gaps from these constants rather than choosing its own. Consecutive value rows use a tighter gap than sections: their tracks read as one block only when the neighbouring rows are closer than the separators around them.
 
 A parameter is one row: a fixed-width name column, the track, then an editable value with its unit. The shared name column makes every track start at the same x, and names are right-aligned inside it so each sits against the control it labels; a unit label shortens the track's right end, and a name longer than the column truncates rather than buying track. Reset is a name gesture rather than a control — double-click or Option-click the name — backed by a **Reset to default** item in the value's context menu; a section reset still covers its whole group. Keep the row to those three parts: a per-row icon competes with the value for the narrow column.
 
@@ -196,7 +196,7 @@ Feature controllers use ordinary `&mut Editor`, raw `egui::Ui` and a separate bo
 
 ### Contextual status indicators
 
-Use the named [contextual status pattern](../src/editor_ui_feedback.rs) for a local condition, not a feature-specific badge or global notification. `ContextualStatus` carries display-ready reason and level; cards and tool warning identities reuse the same primitive, and controllers own the condition and its retirement.
+Use the named [contextual status pattern](../src/editor/presentation/feedback.rs) for a local condition, not a feature-specific badge or global notification. `ContextualStatus` carries display-ready reason and level; cards and tool warning identities reuse the same primitive, and controllers own the condition and its retirement.
 
 | Condition | Presentation |
 | --- | --- |
@@ -221,7 +221,7 @@ Before adding help, ask: *What is unclear here? Does this text resolve it? Is th
 
 ### Typography roles
 
-Reading text should be quiet; short instrument markings give the workspace its camera-body character. The editor embeds [IBM Plex Sans](../assets/fonts/README.md): Text for ordinary controls, explanations, filenames and numeric entry; Medium for stage tabs, active tool names and compact readouts. [Presentation](../src/editor_ui.rs) installs the fonts and owns `instrument_label`, `instrument_readout` and `TextAction::readout`; use those shared roles rather than restyling per feature. The Arimo wordmark remains separate artwork; stage tabs share equal breathing room around their labels rather than equal widths.
+Reading text should be quiet; short instrument markings give the workspace its camera-body character. The editor embeds [IBM Plex Sans](../assets/fonts/README.md): Text for ordinary controls, explanations, filenames and numeric entry; Medium for stage tabs, active tool names and compact readouts. [Presentation](../src/editor/presentation.rs) installs the fonts and owns `instrument_label`, `instrument_readout` and `TextAction::readout`; use those shared roles rather than restyling per feature. The Arimo wordmark remains separate artwork; stage tabs share equal breathing room around their labels rather than equal widths.
 
 ### Colour roles
 
@@ -229,6 +229,6 @@ Colour expresses interaction state, not feature ownership. Presentation installs
 
 ## Working on this area
 
-Start with [editor orchestration](../src/editor.rs), then the feature owner: [viewer](../src/editor_viewer.rs), [crop](../src/editor_crop.rs), [auto-crop](../src/editor_auto_crop.rs), [analysis](../src/editor_analysis.rs), [correction](../src/editor_flat_field.rs), [thumbnails](../src/editor_thumbnails.rs), [pending previews](../src/editor_selected_preview.rs) or [camera placeholders](../src/editor_embedded_preview.rs).
+Start with [editor orchestration](../src/editor.rs), then the feature owner: [viewer](../src/editor/viewer_ui.rs), [crop](../src/editor/crop_editor.rs), [auto-crop](../src/editor/auto_crop.rs), [analysis](../src/editor/analysis.rs), [correction](../src/editor/flat.rs), [thumbnails](../src/editor/thumbnails.rs), [pending previews](../src/editor/selected_preview.rs) or [camera placeholders](../src/editor/thumbnails/embedded.rs).
 
 Use both component and composed-event checks from [development](development.md#shared-editor-ui-checks).

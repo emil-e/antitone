@@ -4,7 +4,7 @@
 
 ## Current boundary
 
-The [ordered pixel pipeline](src/pixel_pipeline.rs) composes stage support, and its [GPU executor](src/gpu_pixel_pipeline.rs) owns post-grade dispatch, scratch, grain-field reuse and valid-output extraction. View, export and original-refinement adapters separately query that support and arrange acquisition, repair relevance, tiling and output reconstruction. This shares the neighbourhood calculation, not the complete processing plan.
+The [ordered pixel pipeline](src/pixel_pipeline.rs) composes stage support, and its [GPU executor](src/gpu/pixel_pipeline.rs) owns post-grade dispatch, scratch, grain-field reuse and valid-output extraction. View, export and original-refinement adapters separately query that support and arrange acquisition, repair relevance, tiling and output reconstruction. This shares the neighbourhood calculation, not the complete processing plan.
 
 ## Direction
 

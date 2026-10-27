@@ -573,5 +573,4 @@ impl From<[f32; 4]> for TextureMapping {
 }
 
 #[cfg(test)]
-#[path = "geometry_tests.rs"]
 mod tests;

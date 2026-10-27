@@ -63,7 +63,7 @@ Bradford WB multiplies cone responses. Taking logarithms turns those gains into 
 
 Imagine one photograph with warm highlights and cool shadows, and another with the opposite scene colours. Penalizing each photo separately would pressure both toward neutral bands. Averaging their differences first lets opposing scene trends cancel; the fit targets a trend shared by the roll instead.
 
-That is still an assumption. A roll dominated by the same materials or coloured lighting can have a genuine common scene trend; the optimizer cannot prove whether it comes from the film response or the scenes. A bounded search compares valid starting balances and refines them within the existing controls; undefined or out-of-range candidates are rejected, not clamped. Search mechanics and stopping criteria live in [the fitter](../src/roll_analysis_gamma.rs).
+That is still an assumption. A roll dominated by the same materials or coloured lighting can have a genuine common scene trend; the optimizer cannot prove whether it comes from the film response or the scenes. A bounded search compares valid starting balances and refines them within the existing controls; undefined or out-of-range candidates are rejected, not clamped. Search mechanics and stopping criteria live in [the fitter](../src/roll_analysis/gamma.rs).
 
 ## 4. Set shared photographic WB
 
@@ -107,10 +107,10 @@ Faint/off-image or scene-confounded boundaries can defeat area suggestions; hold
 ## Working on this area
 
 - [Sampler](../src/scan.rs) and [Dmin estimator](../src/sampling.rs): eligible original pixels and endpoint statistics.
-- [Estimator](../src/roll_analysis.rs) and [curve fitter](../src/roll_analysis_gamma.rs): the numerical proposal.
-- [Spatial hypotheses](../src/scan_regions.rs), [staged preparation](../src/editor_analysis_preparation.rs), [source services](../src/editor_analysis_services.rs) and [review controller](../src/editor_analysis_review.rs): source-owned support, bounded scratch/fallback, drafts and review lifecycle.
-- [Captured sampling/fitting](../src/editor_analysis_fit.rs) and [workflow](../src/editor_analysis_workflow.rs): awaited source acquisition, bounded statistics, cancellation and direct typed completion.
-- [Editor analysis](../src/editor_analysis.rs): adequacy and atomic installation of reviewed areas with grade.
-- [Scalar tests](../tests/roll_analysis.rs), [sampling tests](../tests/roll_sampling.rs) and [editor tests](../src/editor_analysis_tests.rs): synthetic recovery, invariance and transaction behavior.
+- [Estimator](../src/roll_analysis.rs) and [curve fitter](../src/roll_analysis/gamma.rs): the numerical proposal.
+- [Spatial hypotheses](../src/scan_regions.rs), [staged preparation](../src/editor/analysis_review/preparation.rs), [source services](../src/editor/analysis_services.rs) and [review controller](../src/editor/analysis_review.rs): source-owned support, bounded scratch/fallback, drafts and review lifecycle.
+- [Captured sampling/fitting](../src/editor/analysis/fit.rs) and [workflow](../src/editor/analysis_workflow.rs): awaited source acquisition, bounded statistics, cancellation and direct typed completion.
+- [Editor analysis](../src/editor/analysis.rs): adequacy and atomic installation of reviewed areas with grade.
+- [Scalar tests](../tests/roll_analysis.rs), [sampling tests](../tests/roll_sampling.rs) and [editor tests](../src/editor/analysis/tests.rs): synthetic recovery, invariance and transaction behavior.
 
 Use [development checks](development.md#roll-analysis) for changes and [diagnostics](diagnostics.md#analyze-roll) for real-RAW exercises.

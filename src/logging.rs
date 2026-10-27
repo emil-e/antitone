@@ -612,5 +612,4 @@ fn now_ms() -> u64 {
 }
 
 #[cfg(test)]
-#[path = "logging_tests.rs"]
 mod tests;

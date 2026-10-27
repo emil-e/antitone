@@ -16,31 +16,22 @@ use glam::{DVec3, Vec3};
 use std::{path::Path, sync::Arc};
 
 #[cfg(all(test, target_os = "macos"))]
-#[path = "gpu_export_film_files_tests.rs"]
 mod film_tests;
 
-#[path = "gpu_export_area.rs"]
 mod area;
 #[cfg(feature = "project")]
-#[path = "gpu_export_job.rs"]
 pub(crate) mod job;
-#[path = "gpu_rgb16.rs"]
 mod rgb16;
 
 #[cfg(all(test, target_os = "macos", feature = "ocio-reference"))]
-#[path = "gpu_export_common_exr_tests.rs"]
 mod common_exr_tests;
 #[cfg(all(test, target_os = "macos"))]
-#[path = "gpu_export_observation_clock.rs"]
 mod observation_clock;
 #[cfg(all(test, target_os = "macos"))]
-#[path = "gpu_export_production_tests.rs"]
 mod production_tests;
 #[cfg(all(test, target_os = "macos", feature = "editor"))]
-#[path = "gpu_export_resource_tests.rs"]
 mod resource_tests;
 #[cfg(test)]
-#[path = "gpu_export_tests.rs"]
 mod tests;
 
 const TILE: [u32; 2] = export::BLOCK;
@@ -205,8 +196,6 @@ fn working_readback(pixels: Vec<[f32; 4]>) -> Result<Vec<DVec3>, Error> {
 }
 
 #[cfg(all(test, target_os = "macos"))]
-#[path = "gpu_export_packing_tests.rs"]
 mod packing_tests;
 #[cfg(all(test, target_os = "macos"))]
-#[path = "gpu_rgb16_publication_tests.rs"]
 mod rgb16_publication_tests;

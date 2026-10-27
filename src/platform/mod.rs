@@ -7,11 +7,13 @@ pub mod menu;
 mod termination;
 
 #[cfg(target_os = "macos")]
-#[path = "macos.rs"]
-mod native;
+mod macos;
 #[cfg(target_os = "windows")]
-#[path = "windows.rs"]
-mod native;
+mod windows;
+#[cfg(target_os = "macos")]
+use self::macos as native;
+#[cfg(target_os = "windows")]
+use self::windows as native;
 #[cfg(not(any(target_os = "macos", windows)))]
 compile_error!(
     "desktop platform support is implemented for macOS and Windows; add a Linux capability module with the same exports"

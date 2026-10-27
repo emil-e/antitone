@@ -3,7 +3,6 @@ use async_lock::Semaphore;
 use std::{panic::AssertUnwindSafe, sync::Arc};
 
 #[cfg(test)]
-#[path = "blocking_jobs_tests.rs"]
 mod tests;
 
 pub(crate) type Admission = Arc<async_lock::SemaphoreGuardArc>;

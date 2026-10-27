@@ -32,6 +32,6 @@ The Scopes disclosure collapses the plot and suspends its work. A single header 
 
 ## Working on this area
 
-[Scopes](../src/scopes.rs) owns target-native measurement and plot conventions; [GPU scopes](../src/gpu_scopes.rs) owns reduction and diagnostics; [editor scopes](../src/editor_scopes.rs) owns availability, scheduling and drawing.
+[Scopes](../src/scopes.rs) owns target-native measurement and plot conventions; [GPU scopes](../src/gpu_scopes.rs) owns reduction and diagnostics; [editor scopes](../src/editor/scopes.rs) owns availability, scheduling and drawing.
 
 Use [measurement/GPU tests](../tests/scopes.rs) and [final-frame geometry tests](../tests/scopes/geometry.rs) for their respective boundaries, and [authored scope widget checks](diagnostics.md#responsive-image-scopes) for composed controls.

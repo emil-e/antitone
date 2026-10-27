@@ -58,6 +58,6 @@ Save captures accepted choices, validates them, writes a same-directory temporar
 
 ## Working on this area
 
-[Project types](../src/project.rs) own format, validation and compatibility identifiers. [Document](../src/editor_document.rs) and [file actions](../src/editor_files.rs) own staged editor transitions. [Preferences](../src/editor_preferences.rs) own independent UI persistence.
+[Project types](../src/project.rs) own format, validation and compatibility identifiers. [Document](../src/editor/document.rs) and [file actions](../src/editor/files.rs) own staged editor transitions. [Preferences](../src/editor/preferences.rs) own independent UI persistence.
 
 Exact serialization details belong to those types and [project tests](../tests/project.rs), [repair persistence tests](../tests/dust_project.rs), [camera compatibility tests](../tests/camera_project.rs), [film tests](../tests/film_project.rs) and [correction tests](../tests/flat_field_project.rs). Use [development checks](development.md#feature-specific-checks) before proposing recovery or source-identity changes.

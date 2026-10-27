@@ -4,10 +4,8 @@ use crate::{Error, gpu::ProcessingKernel, rendering::OutputTarget};
 use std::{borrow::Cow, sync::Arc};
 use wgpu::util::DeviceExt;
 
-#[path = "renderer_aces.rs"]
 mod aces;
 #[cfg(feature = "project")]
-#[path = "renderer_look_reference.rs"]
 mod look_reference;
 
 pub(crate) const VERTEX: &str = r#"

@@ -98,7 +98,6 @@ pub(crate) fn exclusive_rename(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(all(test, feature = "export"))]
-#[path = "windows/file_tests.rs"]
 mod file_tests;
 
 /// Vulkan avoids the DX12 runtime HLSL compiler and is the Windows production backend.
@@ -118,7 +117,6 @@ pub(crate) fn backend_options() -> wgpu::BackendOptions {
 }
 
 #[cfg(feature = "gpu")]
-#[path = "windows/gpu.rs"]
 mod gpu;
 
 #[cfg(all(feature = "gpu", any(test, feature = "ui")))]

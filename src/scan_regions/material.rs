@@ -1,7 +1,6 @@
 use super::lines::{Family, Line};
 use super::*;
 
-#[path = "framing/mod.rs"]
 pub(super) mod framing;
 use crate::region_timing::timed;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

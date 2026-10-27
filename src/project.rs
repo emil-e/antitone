@@ -19,7 +19,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[path = "project_json.rs"]
 mod json;
 
 pub const SCHEMA_VERSION: u32 = 12;
@@ -325,10 +324,8 @@ impl Default for Output {
         }
     }
 }
-#[path = "project_flat_field.rs"]
 mod flat;
 pub use flat::FlatFieldSettings;
-#[path = "project_adjustment_layers.rs"]
 mod adjustment_layers;
 pub use adjustment_layers::{AdjustmentLayerId, AdjustmentLayerRecord, AdjustmentLayers};
 
@@ -1086,5 +1083,4 @@ fn copy_exclusive(temporary: &tempfile::NamedTempFile, path: &Path) -> Result<()
 }
 
 #[cfg(test)]
-#[path = "project_tests.rs"]
 mod tests;

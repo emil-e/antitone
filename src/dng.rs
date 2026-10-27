@@ -443,5 +443,4 @@ fn hash_interpretation(v: &NativeView) -> [u8; 32] {
 }
 
 #[cfg(test)]
-#[path = "dng_tests.rs"]
 mod tests;

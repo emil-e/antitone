@@ -1,8 +1,6 @@
 use wgpu::util::DeviceExt;
 #[cfg(test)]
-#[path = "resample_look_tests.rs"]
 mod look_tests;
-#[path = "resample_windows.rs"]
 pub(crate) mod windows;
 
 const SHADER: &str = r#"

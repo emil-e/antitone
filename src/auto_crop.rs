@@ -133,7 +133,6 @@ pub(crate) fn inferred_draft(active: SourceRegion, frame: Quad) -> Result<Crop, 
 }
 
 #[cfg(test)]
-#[path = "auto_crop_tests.rs"]
 mod tests;
 
 #[cfg(test)]
