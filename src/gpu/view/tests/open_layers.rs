@@ -14,10 +14,12 @@ fn max_error(expected: &[DVec3], actual: &[[f32; 4]]) -> f64 {
         })
         .fold(0., f64::max)
 }
+#[cfg(feature = "ocio-reference")]
+use crate::gpu::SourceGeometry;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::{Composition, FramePoint},
-    gpu::{GpuPipeline, ProcessingInput, SourceGeometry, SubmissionGate},
+    gpu::{GpuPipeline, ProcessingInput, SubmissionGate},
     pixel_pipeline::{PixelPipeline, PixelStage, test_layer::NeighbourLayer},
     processing::InputSettings,
     rendering::{OutputReference, OutputTarget},

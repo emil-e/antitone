@@ -8,7 +8,7 @@ use crate::{
     renderer::GpuRenderer,
     rendering::{OutputReference, OutputTarget},
 };
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use crate::{gpu::ProcessingSource, scan::Scan};
 use std::sync::Arc;
 

@@ -252,7 +252,12 @@ fn native_pull_resource_comparison() {
         );
     }
     drop(executor);
-    crate::cache_observation::wait(&device, &queue).unwrap();
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(queue.submit([])),
+            timeout: Some(std::time::Duration::from_secs(10)),
+        })
+        .unwrap();
     println!(
         "pull_retired implementation={mode} device={:?}",
         crate::gpu::allocated_resource_bytes(&device)
