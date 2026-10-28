@@ -32,7 +32,7 @@ impl Identity {
     pub fn captured(&self) -> bool {
         !matches!(self, Self::Unbound(_))
     }
-    pub fn proxy(proxy: &crate::scan::CameraProxy) -> Self {
+    pub fn proxy(proxy: &crate::scan::CameraPixels) -> Self {
         proxy
             .identity()
             .cloned()

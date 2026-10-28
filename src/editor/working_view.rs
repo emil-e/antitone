@@ -830,7 +830,8 @@ impl Editor {
                         .displayed
                         .as_ref()
                         .is_none_or(|rendered| {
-                            rendered.spec.frame != frame || rendered.processing != input.signature()
+                            rendered.spec.frame() != frame
+                                || rendered.processing != input.signature()
                         });
             return Ok(self.document.visit.working_view.displayed.clone());
         }

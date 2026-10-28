@@ -58,7 +58,8 @@ pub(crate) fn original_chain(
     if let Some(field) = &field {
         field.validate_matrix(matrix, crate::processing::MAX_SOURCE_GAIN)?;
     }
-    let mut snapshot = crate::scan::Scan::from_source(scan.source().clone());
+    let mut snapshot =
+        crate::scan::Scan::with_reference(scan.source().clone(), scan.reference_exposure.clone());
     snapshot.set_flat_field(scan.flat_field().cloned())?;
     let mut node = source(Arc::new(Native { scan: snapshot }));
     let empty = || {

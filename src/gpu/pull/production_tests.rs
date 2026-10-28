@@ -50,7 +50,7 @@ fn canonical(
 }
 #[test]
 fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_processing() {
-    use crate::dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask};
+    use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::dng_fixture::Fixture {
         side: 512,
@@ -115,7 +115,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         enabled: true,
         origin: RepairOrigin::Manual,
         support: SupportMask::new([a.x + 64, a.y + 100], [40, 40], vec![true; 1600]).unwrap(),
-        donor: DonorChoice::Offset([48, -32]),
+        offset: [48, -32],
     };
     let neutral = crate::scan::ImageSource::new(&scan, InputSettings::from(base)).unwrap();
     let evaluated = Arc::new(crate::repair_source::evaluate(&neutral, &repair).unwrap());

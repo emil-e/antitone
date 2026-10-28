@@ -103,61 +103,96 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
     );
     with_application(e, |app| {
         app.enter(|e, access| e.request_working(small.clone(), input.clone(), access));
-        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
-        let old = app.read(|e| e.working.source.as_ref().unwrap().clone());
-        let hold = app.read(|e| crate::editor::tests::hold_blocking_work(&e.workflow_jobs));
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
+        let old = app.read(|e| {
+            e.document
+                .visit
+                .working_view
+                .source
+                .as_ref()
+                .unwrap()
+                .clone()
+        });
+        let hold = crate::background::testing::pause();
         app.enter(|e, access| e.request_working(queued.clone(), input.clone(), access));
         app.pump();
         app.enter(|e, access| e.request_working(latest.clone(), input.clone(), access));
         app.pump();
         app.update(|e| {
-            assert!(!e.working.support_ready());
+            assert!(!e.document.visit.working_view.support_ready());
             assert!(
-                e.working.underlay.is_none(),
+                e.document.visit.working_view.underlay.is_none(),
                 "old underlay lacks the new neighbourhood"
             );
             assert!(e.document.visit.working.task.is_some());
-            e.working.acquired(Completion {
+            e.document.visit.working_view.acquired(Completion {
                 spec: queued.clone(),
                 result: Ok(old.clone()),
             });
             assert!(
-                e.working.error.is_none(),
+                e.document.visit.working_view.error.is_none(),
                 "obsolete completion cannot fail current demand"
             );
             // Publication must validate actual coverage as well as the completion ticket.
-            e.working.acquired(Completion {
+            e.document.visit.working_view.acquired(Completion {
                 spec: latest.clone(),
                 result: Ok(old.clone()),
             });
-            assert!(!e.working.support_ready());
-            assert!(e.working.error.is_some());
-            assert!(Arc::ptr_eq(&old, e.working.source.as_ref().unwrap()));
+            assert!(!e.document.visit.working_view.support_ready());
+            assert!(e.document.visit.working_view.error.is_some());
+            assert!(Arc::ptr_eq(
+                &old,
+                e.document.visit.working_view.source.as_ref().unwrap()
+            ));
         });
         drop(hold);
-        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
         let acquired = app.read(|e| {
-            assert!(e.working.error.is_none());
-            assert!(e.working.source.as_ref().unwrap().spec.satisfies(&latest));
+            assert!(e.document.visit.working_view.error.is_none());
             assert!(
-                e.working
+                e.document
+                    .visit
+                    .working_view
+                    .source
+                    .as_ref()
+                    .unwrap()
+                    .spec
+                    .satisfies(&latest)
+            );
+            assert!(
+                e.document
+                    .visit
+                    .working_view
                     .underlay
                     .as_ref()
                     .unwrap()
                     .spec
                     .compatible_processing(&latest)
             );
-            e.working.source.as_ref().unwrap().clone()
+            e.document
+                .visit
+                .working_view
+                .source
+                .as_ref()
+                .unwrap()
+                .clone()
         });
         app.enter(|e, access| e.request_working(small.clone(), input, access));
         app.pump();
         app.read(|e| {
-            assert!(e.working.support_ready());
+            assert!(e.document.visit.working_view.support_ready());
             assert!(
                 e.document.visit.working.task.is_none(),
                 "smaller support does not reacquire an already sufficient input"
             );
-            assert!(Arc::ptr_eq(&acquired, e.working.source.as_ref().unwrap()));
+            assert!(Arc::ptr_eq(
+                &acquired,
+                e.document.visit.working_view.source.as_ref().unwrap()
+            ));
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -186,6 +221,7 @@ fn support_growth_during_submission_cancels_obsolete_units_before_publishing_lat
     )
     .unwrap();
     let input = source::Context {
+        reference: None,
         source: scan.source().clone(),
         correction: None,
     };
@@ -243,8 +279,8 @@ fn support_growth_during_submission_cancels_obsolete_units_before_publishing_lat
         app.enter(|e, access| e.request_working(latest.clone(), input, access));
         app.pump();
         app.read(|e| {
-            assert!(!e.working.support_ready());
-            let state = e.working.mailbox.0.lock().unwrap();
+            assert!(!e.document.visit.working_view.support_ready());
+            let state = e.document.visit.working_view.mailbox.0.lock().unwrap();
             assert!(
                 state.neutral_detail.is_none()
                     && state.neutral_underlay.is_none()
@@ -252,23 +288,36 @@ fn support_growth_during_submission_cancels_obsolete_units_before_publishing_lat
                 "partially acquired buffers must remain private"
             );
             assert!(
-                !e.workflow_jobs.idle(),
-                "the parked submission retains physical admission"
+                e.document.visit.working.task.is_some(),
+                "latest support remains pending while the previous submission is parked"
             );
         });
         release.send(()).unwrap();
-        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
         app.read(|e| {
-            assert!(e.working.source.as_ref().unwrap().spec.satisfies(&latest));
             assert!(
-                e.working
+                e.document
+                    .visit
+                    .working_view
+                    .source
+                    .as_ref()
+                    .unwrap()
+                    .spec
+                    .satisfies(&latest)
+            );
+            assert!(
+                e.document
+                    .visit
+                    .working_view
                     .underlay
                     .as_ref()
                     .unwrap()
                     .spec
                     .compatible_processing(&latest)
             );
-            assert!(e.workflow_jobs.idle());
+            assert!(e.document.visit.working.task.is_none());
         });
     });
     // The planner's geometry is protected by independent coverage oracles; this separately
@@ -282,26 +331,42 @@ fn current_ticket_reuses_captured_support_and_rejects_the_previous_ticket_comple
     let (e, input, spec, scheduler) = fixture();
     with_application(e, |app| {
         app.enter(|e, cx| e.request_working(spec.clone(), input.clone(), cx));
-        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
         let mut current = spec.clone();
         current.authority += 1;
         app.update(|e| {
-            e.working.request(current.clone(), input);
-            assert!(e.working.support_ready());
+            e.document
+                .visit
+                .working_view
+                .request(current.clone(), input);
+            assert!(e.document.visit.working_view.support_ready());
             assert!(
-                e.working.acquisition(current.authority).is_none(),
+                e.document
+                    .visit
+                    .working_view
+                    .acquisition(current.authority)
+                    .is_none(),
                 "new rights do not reacquire equal content"
             );
             assert_eq!(
-                e.working.source.as_ref().unwrap().spec.authority,
+                e.document
+                    .visit
+                    .working_view
+                    .source
+                    .as_ref()
+                    .unwrap()
+                    .spec
+                    .authority,
                 current.authority
             );
-            e.working.acquired(Completion {
+            e.document.visit.working_view.acquired(Completion {
                 spec,
                 result: Err("departed owner".into()),
             });
             assert!(
-                e.working.error.is_none(),
+                e.document.visit.working_view.error.is_none(),
                 "equal content cannot restore a departed continuation's rights"
             );
         });

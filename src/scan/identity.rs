@@ -6,7 +6,7 @@ use std::sync::Weak;
 #[derive(Clone)]
 pub struct CameraIdentity {
     native: Weak<FrozenRaw>,
-    capture: crate::source_revision::FileKey,
+    capture: crate::source::FileKey,
     fixed_wb: [f64; 4],
     lens_correction: bool,
     dng_interpretation: Option<String>,

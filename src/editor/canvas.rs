@@ -502,7 +502,12 @@ impl Editor {
         let source = proxy
             .view_source(queue, &self.submissions, kernels, spec)
             .ok()?;
-        let previous = self.document.visit.preview_rendered.as_ref().map(|entry| &entry.4);
+        let previous = self
+            .document
+            .visit
+            .preview_rendered
+            .as_ref()
+            .map(|entry| &entry.4);
         let rendered = if inspection {
             crate::gpu::view::RenderedView::inspection(
                 device,
