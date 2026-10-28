@@ -74,7 +74,6 @@ mod analysis_review;
 mod analysis_services;
 mod analysis_workflow;
 mod dust;
-mod dust_workflow;
 mod flat;
 mod reference_services;
 mod reference_workflow;
@@ -252,7 +251,6 @@ pub struct Editor {
     menus: menu::Menus,
     submissions: crate::platform::SubmissionGate,
     scopes: Scopes,
-    dust_services: Option<dust_workflow::Services>,
     reset_repairs_pending: bool,
     fullscreen: Option<FullscreenView>,
     // Running physical work outlives logical cancellation.
@@ -324,7 +322,6 @@ impl Editor {
             device: device.clone(),
             queue: queue.clone(),
         });
-        editor.dust_services = Some(dust_workflow::Services::new());
         editor.export_services = Some(export_services::Services::new(
             renderers,
             device,
@@ -381,7 +378,6 @@ impl Editor {
             source_services: None,
             source_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             scopes: Scopes::default(),
-            dust_services: None,
             reset_repairs_pending: false,
             fullscreen: None,
             started: false,

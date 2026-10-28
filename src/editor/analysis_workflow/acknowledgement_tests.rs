@@ -159,7 +159,7 @@ fn application_retirement_drops_cpu_continuation_while_the_worker_finishes() {
         release.send(()).unwrap();
         returns.recv_timeout(LIMIT).unwrap();
     });
-    futures_lite::future::block_on(crate::background::run(|| {})).unwrap();
+    futures_lite::future::block_on(crate::background::run(|_| {})).unwrap();
     assert!(!continued.get());
     scheduler.close_and_wait().unwrap();
 }

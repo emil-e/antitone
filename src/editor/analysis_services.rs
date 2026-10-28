@@ -56,7 +56,7 @@ impl Services {
         job: impl FnOnce() -> Result<T, Error> + Send + 'static,
     ) -> Result<Option<T>, Error> {
         let stopped = cancelled.clone();
-        let result = crate::background::run(move || {
+        let result = crate::background::run(move |_| {
             if stopped.is_cancelled() {
                 return Ok(None);
             }

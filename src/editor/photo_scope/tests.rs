@@ -188,7 +188,7 @@ fn leaving_a_visit_cancels_its_continuation_but_not_running_source_computation()
         let view = app.read(|editor| editor.document.visit.view);
         let task = tasks
             .spawn(move |state| async move {
-                let result = crate::background::run(move || {
+                let result = crate::background::run(move |_| {
                     entered.send(()).unwrap();
                     let _ = resume.recv();
                     let result = input.measure().map_err(|error| error.to_string());

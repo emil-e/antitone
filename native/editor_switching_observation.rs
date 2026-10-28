@@ -214,7 +214,6 @@ fn workload(
         device: device.clone(),
         queue: queue.clone(),
     });
-    editor.dust_services = Some(dust_workflow::Services::new());
     editor.export_services = Some(export_services::Services::new(
         renderers.clone(),
         device.clone(),

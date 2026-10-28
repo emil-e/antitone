@@ -27,7 +27,7 @@ impl Acquisition {
         epoch: Arc<std::sync::atomic::AtomicU64>,
         retired: Arc<AtomicBool>,
     ) -> Result<Option<Completion>, String> {
-        crate::background::run(move || {
+        crate::background::run(move |_| {
             if retired.load(Ordering::Relaxed) {
                 return None;
             }

@@ -27,10 +27,10 @@ Editor state is nested scopes rather than one flat struct ([`editor_document_sco
 | Scope | Owns |
 | --- | --- |
 | [`DocumentScope`](../src/editor/document_scope.rs) | Accepted data/history, [spatial metadata](spatial-metadata.md), source/thumbnail/grade retention, correction, cross-visit tool sessions and the dependent photo visit |
-| [`PhotoScope`](../src/editor/photo_scope.rs) | Source readiness, working images/tasks, measurement, Crop/gradient/Dust interaction, repair evaluation and visit-bound region consumers |
+| [`PhotoScope`](../src/editor/photo_scope.rs) | Source readiness, working images/tasks, measurement, Crop/gradient/Dust interaction and donor searches, repair evaluation and visit-bound region consumers |
 | [`GradeScope`](../src/editor/grade_scope.rs) | Effective photographic content and original-reconstruction demand, continuation and results |
 
-Navigation creates fresh visits, dropping their transient tools and image ownership without accepting geometry or changing source-owned adjustments. Picker/reference sessions, batch tools and released donor searches can span visits under the document owner. Rejected navigation or failed candidates preserve the current visit. Document replacement drops its RAM retention; captured documents contain data, while physical jobs retain their required pixel leases through cleanup. Accepted state, drafts and durable preferences are separated in [editor](editor.md#accepted-state-and-drafts).
+Navigation creates fresh visits, dropping their transient tools and image ownership without accepting geometry or changing source-owned adjustments. Picker/reference sessions and batch tools can span visits under the document owner. Rejected navigation or failed candidates preserve the current visit. Document replacement drops its RAM retention; captured documents contain data, while physical jobs retain their required pixel leases through cleanup. Accepted state, drafts and durable preferences are separated in [editor](editor.md#accepted-state-and-drafts).
 
 Document-owned export captures a batch of fixed recipes, resolved paths, correction and service handles. It acquires originals directly from the shared backend, one at a time, without preparing viewer resources or retaining a document cache. The current UI blocks document replacement and closing during export.
 
@@ -74,11 +74,11 @@ Analysis owns measured samples through fitting rather than a full-roll set of so
 
 ## Results are proposals
 
-Every awaited result carries request IDs, generations and input snapshots. Validate a complete result against current state before promoting anything: stale or superseded results are discarded, and successful candidates promote atomically — the UI installs Analyze's support and grade together, or not at all.
+Validate awaited results against captured inputs and current feature state before promoting them. Request IDs or generations distinguish superseded demand where needed; successful candidates promote atomically — the UI installs Analyze's support and grade together, or not at all.
 
 ### Cooperative cancellation
 
-Use the shared [cancellation signal](../src/cancellation.rs) for new cancellable workflows. Each operation gets a fresh, one-way signal with polling and async wakeup; capture its cancel-on-drop guard in the continuation so retirement before the first poll also signals stop. Analysis, region preparation and export use this pattern.
+Each [`background::run`](../src/background.rs) wait owns a [cancellation signal](../src/cancellation.rs) passed to its blocking job. Dropping the waiting future signals stop; the job checks at safe checkpoints. Task retirement propagates when the executor destroys its future. Explicit user cancellation can also signal work while retaining the continuation for acknowledgement; analysis, region preparation and export own signals for that purpose.
 
 User Cancel keeps the continuation and cancelling feedback until acknowledgement. Owner retirement drops continuation rights while running work retains its inputs through cleanup. Dropping a source future retires that demand independently of joined consumers; running native calls finish on their owner. CPU work checks cancellation at its safe checkpoints. Return cancellation distinctly from failure, never by parsing diagnostic text, and preserve already-committed side effects as successes. [Development checks](development.md#cancellation-checks) exercise these boundaries.
 

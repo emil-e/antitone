@@ -58,7 +58,7 @@ impl Services {
             return Err("Flat-field reference must be uncorrected".into());
         }
         let ready = self.0.clone().prepare(request, cancelled.clone()).await?;
-        crate::background::run(move || {
+        crate::background::run(move |_| {
             if cancelled.is_cancelled() {
                 return Err(Error::UnusableSample("reference retired"));
             }
@@ -82,7 +82,7 @@ impl Services {
         cancelled: crate::cancellation::Cancellation,
     ) -> Result<document_services::Request, String> {
         let sources = request.sources.take();
-        let mut result = crate::background::run(move || {
+        let mut result = crate::background::run(move |_| {
             if cancelled.is_cancelled() {
                 return Err(Error::UnusableSample("reference retired"));
             }

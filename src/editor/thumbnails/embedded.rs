@@ -67,7 +67,7 @@ impl Services {
                     &request.source.development,
                 );
                 let preview = sources.load_preview(key).await;
-                match crate::background::run(move || {
+                match crate::background::run(move |_| {
                     if cancelled.load(Ordering::Relaxed) {
                         return Ok(None);
                     }

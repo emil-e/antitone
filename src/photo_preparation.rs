@@ -49,7 +49,7 @@ pub(crate) async fn acquire(
     if proxy.is_none() && matches!(&preview, Some(Ok(Some(_)))) && reference.get().is_none() {
         proxy = Some(provider.load_proxy(key, priority).await?);
     }
-    crate::background::run(move || {
+    crate::background::run(move |_| {
         native_with_preview(proxy.as_ref(), &reference, input, &source, preview).map(
             |mut prepared| {
                 prepared.proxy = prepared.proxy.or(proxy);

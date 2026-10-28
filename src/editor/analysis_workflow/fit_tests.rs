@@ -166,7 +166,7 @@ fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cp
         let probe = app
             .access()
             .spawn(move |_| async move {
-                crate::background::run(move || entered.send(()).unwrap())
+                crate::background::run(move |_| entered.send(()).unwrap())
                     .await
                     .unwrap();
             })

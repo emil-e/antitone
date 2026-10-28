@@ -67,7 +67,7 @@ impl Services {
         source: Source,
         cancel: Arc<AtomicBool>,
     ) -> Result<Option<Arc<LookAsset>>, String> {
-        crate::background::run(move || {
+        crate::background::run(move |_| {
             look_ui::resolve(
                 source,
                 &cancel,

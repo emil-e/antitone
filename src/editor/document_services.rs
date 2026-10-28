@@ -212,7 +212,7 @@ impl PreparationServices {
         let Candidate {
             mut prepared,
             source,
-        } = crate::background::run(move || {
+        } = crate::background::run(move |_| {
             if retired.is_cancelled() {
                 return Err(Error::UnusableSample("document preparation retired"));
             }
@@ -241,7 +241,7 @@ impl PreparationServices {
             });
         }
         let device = self.0.device.clone();
-        crate::background::run(move || {
+        crate::background::run(move |_| {
             if let Some(exposures) = &exposures {
                 prepared.document.capture_exposure(exposures);
             }
@@ -261,7 +261,7 @@ pub(super) struct Services {
 
 impl Services {
     pub async fn write(self, write: Write) -> Result<Document, String> {
-        crate::background::run(move || write.save(&self.device))
+        crate::background::run(move |_| write.save(&self.device))
             .await
             .map_err(|_| "Document write worker panicked".to_owned())?
             .map_err(|error| error.to_string())

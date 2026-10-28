@@ -17,76 +17,83 @@ fn saved_editor() -> (Editor, tempfile::TempDir) {
 
 #[test]
 fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
-    let (mut e, _directory) = saved_editor();
-    let source = e.document.visit.current_source.unwrap();
-    let baseline = e.document.state.project.clone();
-    e.document.dust.selected.remove(&source);
-    e.select_dust_repair(RepairId(1));
-    assert_eq!(e.selected_dust_repair(), Some(RepairId(1)));
-    assert_eq!(e.document.state.project, baseline);
-    assert!(!e.document.dirty());
+    let (e, _directory) = saved_editor();
+    crate::application::test_support::with_application(e, |app| {
+        let source = app.enter(|e, cx| {
+            let source = e.document.visit.current_source.unwrap();
+            let baseline = e.document.state.project.clone();
+            e.document.dust.selected.remove(&source);
+            e.select_dust_repair(RepairId(1));
+            assert_eq!(e.selected_dust_repair(), Some(RepairId(1)));
+            assert_eq!(e.document.state.project, baseline);
+            assert!(!e.document.dirty());
 
-    e.begin_dust_mask(Some(RepairId(1)));
-    e.document
-        .visit
-        .dust
-        .mask_draft
-        .as_mut()
-        .unwrap()
-        .pixels
-        .insert([54, 50]);
-    assert_eq!(e.document.state.project, baseline);
-    assert!(!e.document.dirty());
+            e.begin_dust_mask(Some(RepairId(1)));
+            e.document
+                .visit
+                .dust
+                .mask_draft
+                .as_mut()
+                .unwrap()
+                .pixels
+                .insert([54, 50]);
+            assert_eq!(e.document.state.project, baseline);
+            assert!(!e.document.dirty());
 
-    e.cancel_dust_mask();
-    e.begin_dust_mask(Some(RepairId(1)));
-    e.commit_dust_mask();
-    assert!(!e.document.dirty(), "an unchanged release must not dirty");
-    e.begin_dust_mask(Some(RepairId(1)));
-    e.document.visit.dust.mask_draft.as_mut().unwrap().rejected = true;
-    e.commit_dust_mask();
-    assert!(!e.document.dirty());
+            e.cancel_dust_mask();
+            e.begin_dust_mask(Some(RepairId(1)));
+            e.commit_dust_mask(cx);
+            assert!(!e.document.dirty(), "an unchanged release must not dirty");
+            e.begin_dust_mask(Some(RepairId(1)));
+            e.document.visit.dust.mask_draft.as_mut().unwrap().rejected = true;
+            e.commit_dust_mask(cx);
+            assert!(!e.document.dirty());
 
-    e.begin_dust_mask(Some(RepairId(1)));
-    e.document
-        .visit
-        .dust
-        .mask_draft
-        .as_mut()
-        .unwrap()
-        .pixels
-        .insert([54, 50]);
-    e.commit_dust_mask();
-    assert!(
-        !e.document.dirty(),
-        "pending search is not an accepted instruction"
-    );
-    finish_searches(&mut e);
-    assert!(e.document.dirty());
-    let changed = e.document.state.project.clone();
-    *e.document = e
-        .document
-        .save(
-            e.document.path.as_deref().unwrap(),
-            crate::project::Save::Replace,
-        )
-        .unwrap();
-    e.dust_repairs_mut(source)
-        .set_enabled(RepairId(1), false)
-        .unwrap();
-    assert!(e.document.dirty());
-    e.dust_repairs_mut(source)
-        .set_enabled(RepairId(1), true)
-        .unwrap();
-    assert!(!e.document.dirty());
+            e.begin_dust_mask(Some(RepairId(1)));
+            e.document
+                .visit
+                .dust
+                .mask_draft
+                .as_mut()
+                .unwrap()
+                .pixels
+                .insert([54, 50]);
+            e.commit_dust_mask(cx);
+            assert!(
+                !e.document.dirty(),
+                "pending search is not an accepted instruction"
+            );
+            source
+        });
+        app.run_until(Duration::from_secs(5), |e| !e.dust_search_pending());
+        app.update(|e| {
+            assert!(e.document.dirty());
+            let changed = e.document.state.project.clone();
+            *e.document = e
+                .document
+                .save(
+                    e.document.path.as_deref().unwrap(),
+                    crate::project::Save::Replace,
+                )
+                .unwrap();
+            e.dust_repairs_mut(source)
+                .set_enabled(RepairId(1), false)
+                .unwrap();
+            assert!(e.document.dirty());
+            e.dust_repairs_mut(source)
+                .set_enabled(RepairId(1), true)
+                .unwrap();
+            assert!(!e.document.dirty());
 
-    e.select_dust_repair(RepairId(1));
-    e.delete_selected_dust_repair();
-    assert!(e.document.dirty());
-    assert!(e.dust_repairs(source).is_none());
-    assert_ne!(e.document.state.project, changed);
-    let set = &e.document.state.project.source(source).unwrap().repairs;
-    assert_eq!(serde_json::to_value(set).unwrap()["last_id"], 1);
+            e.select_dust_repair(RepairId(1));
+            e.delete_selected_dust_repair();
+            assert!(e.document.dirty());
+            assert!(e.dust_repairs(source).is_none());
+            assert_ne!(e.document.state.project, changed);
+            let set = &e.document.state.project.source(source).unwrap().repairs;
+            assert_eq!(serde_json::to_value(set).unwrap()["last_id"], 1);
+        });
+    });
 }
 
 #[test]
@@ -122,7 +129,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
                 e.effective_dust_repair(source, RepairId(1)).unwrap(),
                 request.repair
             );
-            e.commit_dust_mask();
+            e.commit_dust_mask(cx);
 
             assert!(!e.document.dirty());
             assert_eq!(

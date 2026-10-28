@@ -136,7 +136,7 @@ fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operatio
         let current = app.read(|e| e.document_pending.unwrap());
         app.pump();
         drop(hold);
-        pollster::block_on(crate::background::run(|| {})).unwrap();
+        pollster::block_on(crate::background::run(|_| {})).unwrap();
         app.enter(|e, cx| e.save_result(retired, Err("stale write failure".into()), cx));
         app.read(|e| {
             assert_eq!(e.document_pending, Some(current));
