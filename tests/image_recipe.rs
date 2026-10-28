@@ -152,7 +152,7 @@ fn film_emulation_is_captured_immutably_without_changing_neutral_repair_identity
 
 #[test]
 fn emulation_resolves_from_the_captured_crop_not_its_source_bounds_or_orientation() {
-    use antitone::{film_emulation::FilmEmulationSettings, pixel_pipeline::PixelStage};
+    use antitone::film_emulation::FilmEmulationSettings;
     let (mut project, id) = project();
     project.output.film_emulation = FilmEmulationSettings {
         enabled: true,
@@ -172,16 +172,18 @@ fn emulation_resolves_from_the_captured_crop_not_its_source_bounds_or_orientatio
     );
     let check = |recipe: &antitone::image_recipe::ImageRecipe, expected: f64| {
         let pipeline = recipe.pixel_pipeline().unwrap();
-        match pipeline.stages.as_slice() {
-            [
-                PixelStage::Gaussian { sigma },
-                PixelStage::Grain { parameters, .. },
-            ] => {
-                assert!((sigma - expected).abs() < 1e-12);
-                assert!((parameters.grain_size - expected).abs() < 1e-12);
-            }
-            _ => panic!("expected the complete MTF/grain pipeline"),
-        }
+        let mtf = pipeline
+            .stages
+            .iter()
+            .find_map(|stage| stage.get::<antitone::image_mtf::ImageMtfParameters>())
+            .unwrap();
+        let grain = pipeline
+            .stages
+            .iter()
+            .find_map(|stage| stage.get::<antitone::pixel_pipeline::Grain>())
+            .unwrap();
+        assert!((mtf.sigma - expected).abs() < 1e-12);
+        assert!((grain.parameters.grain_size - expected).abs() < 1e-12);
     };
     check(&full, 0.2304);
     check(&cropped, 0.1152);

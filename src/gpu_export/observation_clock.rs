@@ -6,7 +6,7 @@ thread_local! {
     static CLOCK: RefCell<Option<Arc<Timebase>>> = const { RefCell::new(None) };
 }
 
-pub(super) fn timebase() -> Option<Arc<Timebase>> {
+pub(crate) fn timebase() -> Option<Arc<Timebase>> {
     CLOCK.with(|clock| clock.borrow().clone())
 }
 

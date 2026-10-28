@@ -1,7 +1,7 @@
-#[cfg(all(feature = "ui", feature = "render"))]
+#[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
 use super::ProcessingSource;
 use super::{GpuPipeline, ProcessingParameters};
-#[cfg(all(feature = "ui", feature = "render"))]
+#[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
 use crate::Error;
 use crate::film_emulation::FilmEmulationSettings;
 use std::sync::Arc;
@@ -18,8 +18,9 @@ pub struct ProcessingInput {
     look: Option<Arc<crate::looks::LookAsset>>,
     film_emulation: FilmEmulationSettings,
     film_seed: Option<u64>,
+    layers: Option<crate::pixel_pipeline::PixelPipeline>,
     frame_size: [u32; 2],
-    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+    #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
     pub(crate) repairs: super::repairs::Snapshot,
 }
 
@@ -37,7 +38,8 @@ impl From<ProcessingParameters> for ProcessingInput {
             look: None,
             film_emulation: FilmEmulationSettings::default(),
             film_seed: None,
-            #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+            layers: None,
+            #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
             repairs: super::repairs::Snapshot::default(),
         }
     }
@@ -51,7 +53,8 @@ impl From<Arc<GpuPipeline>> for ProcessingInput {
             look: None,
             film_emulation: FilmEmulationSettings::default(),
             film_seed: None,
-            #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+            layers: None,
+            #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
             repairs: super::repairs::Snapshot::default(),
         }
     }
@@ -72,7 +75,13 @@ impl ProcessingInput {
         self.look.as_ref()
     }
 
+    pub fn with_layers(mut self, layers: crate::pixel_pipeline::PixelPipeline) -> Self {
+        self.layers = self.parameters().graded().then_some(layers);
+        self
+    }
+
     pub fn with_film_emulation(mut self, film_emulation: FilmEmulationSettings) -> Self {
+        self.layers = None;
         self.film_emulation = if self.parameters().graded() {
             film_emulation
         } else {
@@ -104,20 +113,18 @@ impl ProcessingInput {
         self.film_emulation
     }
 
-    #[cfg(all(feature = "ui", feature = "render"))]
+    #[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
     pub(crate) fn pixel_pipeline(
         &self,
     ) -> Result<crate::pixel_pipeline::PixelPipeline, crate::Error> {
+        if let Some(layers) = &self.layers {
+            return Ok(layers.clone());
+        }
         crate::pixel_pipeline::PixelPipeline::film(
             self.film_emulation,
             self.frame_size,
             self.film_seed.unwrap_or(0),
         )
-    }
-
-    #[cfg(all(feature = "ui", feature = "render"))]
-    pub(crate) fn has_pixel_stages(&self) -> bool {
-        self.film_emulation.enabled
     }
 
     pub fn signature(&self) -> ProcessingSignature {
@@ -130,14 +137,15 @@ impl ProcessingInput {
             look: self.look.as_ref().map(|look| look.lut().id()),
             film_emulation: self.film_emulation,
             film_seed: self.film_seed,
+            layers: self.layers.clone(),
             frame_size: self.film_emulation.enabled.then_some(self.frame_size),
-            #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+            #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
             repairs: self.repairs.clone(),
         }
     }
 }
 
-#[cfg(all(feature = "ui", feature = "render"))]
+#[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
 impl ProcessingInput {
     pub(crate) fn require_source(&self, source: &ProcessingSource) -> Result<(), Error> {
         if let Processing::Grade(grade) = &self.processing {
@@ -181,7 +189,8 @@ pub struct ProcessingSignature {
     film_emulation: FilmEmulationSettings,
     film_seed: Option<u64>,
     frame_size: Option<[u32; 2]>,
-    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+    layers: Option<crate::pixel_pipeline::PixelPipeline>,
+    #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
     repairs: super::repairs::Snapshot,
 }
 
@@ -192,7 +201,7 @@ impl ProcessingSignature {
 
     /// Look changes rerender, but may reuse an immutable graded AP1 prefix.
     pub(crate) fn same_photographic(&self, other: &Self) -> bool {
-        #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+        #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
         if self.repairs != other.repairs {
             return false;
         }
@@ -200,6 +209,7 @@ impl ProcessingSignature {
             && self.film_emulation == other.film_emulation
             && self.film_seed == other.film_seed
             && self.frame_size == other.frame_size
+            && self.layers == other.layers
             && match (&self.grade, &other.grade) {
                 (None, None) => true,
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a.same_content(b),
@@ -223,6 +233,7 @@ impl std::fmt::Debug for ProcessingSignature {
             .field("look", &self.look)
             .field("film_emulation", &self.film_emulation)
             .field("film_seed", &self.film_seed)
+            .field("layers", &self.layers)
             .field("snapshot", &self.grade.as_ref().map(|g| g.snapshot()))
             .finish_non_exhaustive()
     }

@@ -150,7 +150,14 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
         )
         .unwrap()
         .with_repairs(Default::default());
-        let source = proxy.view_source(&queue, kernels, spec).unwrap();
-        assert_eq!(source.spec.frame.output, [16, 8]);
+        let source = proxy
+            .view_source(
+                &queue,
+                &crate::gpu::SubmissionGate::default(),
+                kernels,
+                spec,
+            )
+            .unwrap();
+        assert_eq!(source.spec.frame().output, [16, 8]);
     });
 }

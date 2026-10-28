@@ -1,6 +1,5 @@
 use super::*;
 use crate::processing::InputPipeline;
-use std::sync::Weak;
 
 /// Resolved working-positive sampling in original source coordinates.
 pub struct ImageSource<'a> {
@@ -12,11 +11,7 @@ pub struct ImageSource<'a> {
 /// Output identity retains source provenance without retaining native pixel ownership.
 #[derive(Clone)]
 pub struct ImageIdentity {
-    native: Weak<FrozenRaw>,
-    capture: crate::source::FileKey,
-    fixed_wb: [f64; 4],
-    lens_correction: bool,
-    dng_interpretation: Option<String>,
+    camera: CameraIdentity,
     input: InputSettings,
     matrix: DMat3,
     correction: Option<Arc<FlatField>>,
@@ -24,15 +19,7 @@ pub struct ImageIdentity {
 
 impl PartialEq for ImageIdentity {
     fn eq(&self, other: &Self) -> bool {
-        let same_capture = if self.capture.revision.is_some() && other.capture.revision.is_some() {
-            self.capture == other.capture
-        } else {
-            self.native.ptr_eq(&other.native)
-        };
-        same_capture
-            && self.fixed_wb == other.fixed_wb
-            && self.lens_correction == other.lens_correction
-            && self.dng_interpretation == other.dng_interpretation
+        self.camera == other.camera
             && self.input == other.input
             && self.matrix == other.matrix
             && self.correction == other.correction
@@ -45,11 +32,7 @@ impl ImageSource<'_> {
         let matrix = scan.positive_matrix(&input)?;
         let pipeline = InputPipeline::new(input, matrix)?;
         let identity = ImageIdentity {
-            native: Arc::downgrade(&scan.source.raw),
-            capture: scan.source.file.clone(),
-            fixed_wb: scan.source.fixed_wb,
-            lens_correction: scan.source.metadata().lens_correction_enabled(),
-            dng_interpretation: scan.source.metadata().dng_identity(),
+            camera: scan.source.identity(),
             input,
             matrix,
             correction: scan.flat_field.clone(),

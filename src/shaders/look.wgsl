@@ -43,8 +43,8 @@ fn reject(i: u32, flags: u32) {
     destination[i] = vec4f(0., 0., 0., -f32(flags));
 }
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) invocation: vec3u) {
-    let i = invocation.x + invocation.y * p.dimensions.z;
+fn main(@builtin(global_invocation_id) invocation: vec3u, @builtin(num_workgroups) groups: vec3u) {
+    let i = invocation.x + invocation.y * groups.x * 64u;
     if i >= p.dimensions.x {
         return;
     }

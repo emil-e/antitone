@@ -5,6 +5,91 @@ use crate::{
 };
 
 #[test]
+fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
+    use crate::{
+        acquisition::Sampling,
+        pixel_pipeline::{PixelPipeline, PixelStage},
+    };
+    let composition = Composition::new(
+        [100, 80, 40, 30].into(),
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let frame = FrameRaster::new(
+        composition,
+        FramePoint([5., 4.]),
+        FramePoint([17., 10.]),
+        [6, 3],
+    )
+    .unwrap();
+    let base =
+        ViewSourceSpec::new(7, frame, InputSettings::Digital, DMat3::IDENTITY, None).unwrap();
+    let small = base
+        .clone()
+        .with_pipeline(PixelPipeline {
+            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+                sigma: 1.,
+            })],
+        })
+        .unwrap();
+    let large = base
+        .clone()
+        .with_pipeline(PixelPipeline {
+            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+                sigma: 2.,
+            })],
+        })
+        .unwrap();
+    assert!(small.same_source(&large));
+    assert!(!small.same_acquisition(&large));
+    assert!(large.satisfies(&small));
+    assert!(!small.satisfies(&large));
+    let moved = large
+        .clone()
+        .with_frame(FrameRaster {
+            min: FramePoint([6., 4.]),
+            max: FramePoint([18., 10.]),
+            ..frame
+        })
+        .unwrap();
+    assert!(large.same_source(&moved));
+    assert!(
+        large.compatible_processing(&moved),
+        "the retained footprint can still be graded as a navigation fallback"
+    );
+    assert!(
+        !large.satisfies(&moved),
+        "fallback coverage is not the newly requested output"
+    );
+    let proxy = large
+        .clone()
+        .with_sampling(Sampling::CameraProxy {
+            region: composition.area(),
+            size: [10, 10],
+        })
+        .unwrap();
+    assert!(large.same_source(&proxy));
+    assert!(
+        !large.compatible_processing(&proxy),
+        "equal source identity does not substitute a different sample representation"
+    );
+    let other = FrameRaster::full(
+        Composition::new(
+            [101, 80, 40, 30].into(),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        base.with_frame(other).is_err(),
+        "changing a layout cannot relabel its captured source grid"
+    );
+}
+
+#[test]
 fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;

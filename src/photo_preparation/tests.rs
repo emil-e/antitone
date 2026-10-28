@@ -4,6 +4,7 @@ use crate::source::SourceCache;
 
 fn flat(width: u32, height: u32) -> CameraPixels {
     CameraPixels {
+        identity: None,
         width,
         height,
         matrix: glam::DMat3::IDENTITY,

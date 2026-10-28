@@ -412,7 +412,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
                 .displayed
                 .as_ref()
                 .unwrap();
-            let frame = rendered.spec.frame;
+            let frame = rendered.spec.frame();
             assert!(
                 frame.bounds().unwrap().width
                     < editor.document.visit.ready.as_ref().unwrap().area.width

@@ -169,9 +169,9 @@ fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
                 .unwrap();
             assert_eq!(
                 [view.image.linear.width(), view.image.linear.height()],
-                view.spec.frame.output
+                view.spec.frame().output
             );
-            assert!(view.spec.frame.output.into_iter().all(|size| size > 0));
+            assert!(view.spec.frame().output.into_iter().all(|size| size > 0));
             assert!(!editor.document.source);
         });
         let timing =

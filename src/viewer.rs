@@ -166,30 +166,6 @@ impl GpuImage {
         .await
     }
 
-    pub(crate) async fn from_source_shared(
-        renderer: &Arc<GpuRenderer>,
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-        source: ProcessingSource,
-        target: OutputTarget,
-    ) -> Result<Self, Error> {
-        if width.checked_mul(height) != Some(source.pixel_count()) {
-            return Err(Error::Gpu(
-                "source dimensions do not match the GPU image".into(),
-            ));
-        }
-        Self::create(
-            device,
-            width,
-            height,
-            Some((renderer.clone(), ImageSource::Owned(Box::new(source)))),
-            renderer.display.clone(),
-            target,
-        )
-        .await
-    }
-
     pub async fn new_rendered(
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
@@ -247,7 +223,7 @@ impl GpuImage {
                 let working = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("processed AP1 preview"),
                     size: u64::from(count) * 16,
-                    usage: wgpu::BufferUsages::STORAGE,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 let aces_group = renderer.render_binding(
@@ -409,15 +385,7 @@ impl GpuImage {
         if let Some(asset) = input.look() {
             crate::gpu::look::Lut::require_limits(&self.device_limits, asset.lut())?;
         }
-        input.require_source(&processing.source)?;
-        if input.has_pixel_stages() {
-            if processing.source.geometry().is_none() {
-                return Err(Error::Gpu(
-                    "pixel processing requires declared raster geometry".into(),
-                ));
-            }
-            input.pixel_pipeline()?;
-        }
+        crate::gpu::execution::raster::resident_plan(&processing.source, input)?;
         Ok(())
     }
 
@@ -473,57 +441,10 @@ impl GpuImage {
             .processing
             .as_ref()
             .expect("validated processing source");
-        let stages = if input.has_pixel_stages() {
-            let geometry = processing
-                .source
-                .geometry()
-                .expect("validated raster geometry");
-            let pipeline = input.pixel_pipeline()?;
-            let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
-            Some((
-                processing.renderer.pixel_kernels(device)?,
-                crate::gpu::pixel_pipeline::Prepared::new(device, &pipeline, raster, None)?,
-            ))
-        } else {
-            None
-        };
-        match input.pipeline() {
-            Some(grade) => processing.renderer.kernel.encode_grade(
-                device,
-                encoder,
-                &processing.source,
-                &processing.working,
-                grade,
-            )?,
-            None => processing.renderer.kernel.encode(
-                device,
-                encoder,
-                &processing.source,
-                &processing.working,
-                input.parameters(),
-            ),
-        }
-        #[cfg(feature = "editor")]
-        if !input.repairs.0.is_empty() {
-            let geometry = processing.source.geometry().ok_or_else(|| {
-                Error::Gpu("repair rendering needs original source geometry".into())
-            })?;
-            if geometry.region().width == geometry.size()[0]
-                && geometry.region().height == geometry.size()[1]
-            {
-                processing.renderer.repairs.original(
-                    device,
-                    encoder,
-                    &processing.renderer.kernel,
-                    &processing.working,
-                    input,
-                    geometry,
-                )?;
-            }
-        }
-        if let Some((kernels, prepared)) = stages {
-            kernels.encode(device, encoder, &prepared, &processing.working)?;
-        }
+        let plan = crate::gpu::execution::raster::resident_plan(&processing.source, input)?;
+        let _prepared =
+            crate::gpu::execution::raster::Request::new(&processing.source, input, plan.as_ref())
+                .encode(&processing.renderer, device, encoder, &processing.working)?;
         let mut binding = processing.aces_group.lock().unwrap();
         let id = input.look().map(|asset| asset.lut().id());
         if binding.0 != id {
@@ -830,7 +751,7 @@ impl ImagePaint {
 
     #[cfg(all(test, feature = "editor"))]
     pub(crate) fn view_frame(&self) -> Option<crate::frame_raster::FrameRaster> {
-        self.rendered.as_ref().map(|(view, _, _)| view.spec.frame)
+        self.rendered.as_ref().map(|(view, _, _)| view.spec.frame())
     }
 
     pub fn with_context(mut self, context: egui::Context) -> Self {

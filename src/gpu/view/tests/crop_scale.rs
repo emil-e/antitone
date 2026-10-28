@@ -20,7 +20,9 @@ fn a_tighter_crop_reduces_the_source_gaussian_instead_of_magnifying_uncropped_bl
             let pixels = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("crop-scale step control"),
                 contents: bytemuck::cast_slice(&values),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
             });
             let plan =
                 crate::pixel_pipeline::PixelPipeline::film(settings, frame_size, 17).unwrap();

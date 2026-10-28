@@ -3,6 +3,7 @@ use crate::{
     crop::Crop,
     geometry::{PhotoOrientation, QuarterTurns, RollOrientation},
 };
+use glam::DVec3;
 
 fn composition(area: SourceRegion, angle: f64) -> Composition {
     Composition::with_crop(
@@ -32,6 +33,24 @@ pub(super) fn reconstructed(
     pixel: impl Fn([u32; 2]) -> [f32; 4],
     invalid_working: Option<[u32; 2]>,
 ) -> Vec<[f32; 4]> {
+    let submission = submit_reconstruction(device, queue, engine, unit, pixel, invalid_working);
+    engine
+        .read(
+            device,
+            submission,
+            [unit.mapping.sizes[2], unit.mapping.sizes[3]],
+        )
+        .unwrap()
+}
+
+fn submit_reconstruction(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    engine: &Reconstructor,
+    unit: &Unit,
+    pixel: impl Fn([u32; 2]) -> [f32; 4],
+    invalid_working: Option<[u32; 2]>,
+) -> wgpu::SubmissionIndex {
     let bounds = unit.bounds;
     let pixels: Vec<_> = (bounds.y..bounds.y + bounds.height)
         .flat_map(|y| (bounds.x..bounds.x + bounds.width).map(move |x| [x, y]))
@@ -74,19 +93,94 @@ pub(super) fn reconstructed(
     engine
         .encode(device, &mut encoder, unit, &texture, &working)
         .unwrap();
-    let submission = SubmissionGate::default().submit(queue, [encoder.finish()]);
-    engine
-        .read(
-            device,
-            submission,
-            [unit.mapping.sizes[2], unit.mapping.sizes[3]],
-        )
-        .unwrap()
+    SubmissionGate::default().submit(queue, [encoder.finish()])
+}
+
+#[test]
+fn unit_admission_rejects_support_before_source_sized_preparation() {
+    use crate::pixel_pipeline::{PixelPipeline, PixelStage};
+    let composition = Composition::new(
+        [0, 0, 100000, 100000].into(),
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let small = PixelPipeline {
+        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+            sigma: 2.,
+        })],
+    };
+    let budget = WorkBudget { source_pixels: 500 };
+    // The clean unit needs 17x17 originals; its eight-cell stage dependency needs 25x25.
+    Unit::plan(composition, [0; 2], [16; 2], &Default::default(), budget).unwrap();
+    assert!(matches!(
+        Unit::plan(composition, [0; 2], [16; 2], &small, budget),
+        Err(Error::InvalidParameter(
+            "processing unit exceeds source work budget"
+        ))
+    ));
+    // This geometry alone is cheap to plan but its source-cell count exceeds u32.
+    // Exercise admission without constructing that mask or acquiring those originals.
+    let huge = PixelPipeline {
+        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+            sigma: 20000.,
+        })],
+    };
+    assert!(matches!(
+        Unit::plan(
+            composition,
+            [0; 2],
+            [16; 2],
+            &huge,
+            WorkBudget {
+                source_pixels: u64::MAX
+            }
+        ),
+        Err(Error::InvalidParameter(
+            "processing unit exceeds source work budget"
+        ))
+    ));
+}
+
+#[test]
+fn delivered_memory_blocks_reject_gpu_failures_before_any_codec_and_allow_reuse_after_errors() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let composition =
+        Composition::new([0, 0, 8, 8].into(), Default::default(), Default::default()).unwrap();
+    for (space, target) in [(0, None), (1, None), (0, Some(OutputTarget::Srgb))] {
+        let engine = Reconstructor::new_test(&device, target).unwrap();
+        let mut unit = Unit::new(composition, [0; 2], [1; 2]).unwrap();
+        unit.mapping.space[0] = space;
+        for (pixel, invalid_working) in [
+            ([f32::NAN, 0.5, 0.75, 0.], None),
+            ([0.25, 0.5, 0.75, -1.], None),
+            ([0.25, 0.5, 0.75, 0.], Some([0, 0])),
+        ] {
+            let submission =
+                submit_reconstruction(&device, &queue, &engine, &unit, |_| pixel, invalid_working);
+            assert!(
+                matches!(
+                    engine.read_output(&device, submission, [1; 2]),
+                    Err(Error::Gpu(_))
+                ),
+                "failed contributing samples cannot become successful memory output: space={space}, target={target:?}"
+            );
+        }
+        let submission = submit_reconstruction(
+            &device,
+            &queue,
+            &engine,
+            &unit,
+            |_| [0.25, 0.5, 0.75, 0.],
+            None,
+        );
+        engine.read_output(&device, submission, [1; 2]).unwrap();
+    }
 }
 
 #[test]
 fn common_area_averages_signed_hdr_samples_without_clipping() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let engine = Reconstructor::new(&device).unwrap();
     let composition =
         Composition::new([0, 0, 4, 4].into(), Default::default(), Default::default()).unwrap();
@@ -141,7 +235,7 @@ fn common_area_averages_signed_hdr_samples_without_clipping() {
 
 #[test]
 fn local_area_preserves_constants_ranges_impulses_and_ramps_against_f64_at_origins_and_seams() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let engine = Reconstructor::new(&device).unwrap();
     let mut worst = 0_f64;
     for base in [[13, 29], [(1 << 25) + 13, (1 << 25) + 29]] {
@@ -220,7 +314,7 @@ fn local_area_preserves_constants_ranges_impulses_and_ramps_against_f64_at_origi
 
 #[test]
 fn native_area_checks_only_contributing_samples_and_rejects_invalid_ap1_or_look_markers() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let engine = Reconstructor::new(&device).unwrap();
     let composition = composition([13, 29, 411, 357].into(), 0.015);
     let unit = Unit::new(composition, [128, 128], [3, 3]).unwrap();
@@ -287,7 +381,7 @@ fn bounded_source_support_covers_fractionally_placed_45_degree_units() {
 
 #[test]
 fn integer_source_edges_are_real_cells_without_blank_or_replicated_borders() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let engine = Reconstructor::new(&device).unwrap();
     let area: SourceRegion = [19, 37, 131, 133].into();
     let composition = Composition::new(area, Default::default(), Default::default()).unwrap();

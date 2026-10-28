@@ -297,8 +297,17 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         let entered = Arc::new(AtomicBool::new(false));
         let resumed = Arc::new(AtomicBool::new(false));
         let worker_resumed = resumed.clone();
+        let ui_thread = std::thread::current().id();
+        let ui_submissions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed_ui = ui_submissions.clone();
         harness.read(|editor| {
             editor.submissions.observe_submissions(Arc::new(move || {
+                // Provisional rendering shares the host gate. Park only the background
+                // acquisition, not the UI submission whose nonblocking behavior we test.
+                if std::thread::current().id() == ui_thread {
+                    observed_ui.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
                 if !entered.swap(true, Ordering::Relaxed) {
                     started.send(()).unwrap();
                     // The timeout only releases a broken implementation for failure/cleanup;
@@ -322,6 +331,10 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         assert!(
             !resumed.load(Ordering::Acquire),
             "painting and zoom must finish before the running acquisition resumes"
+        );
+        assert!(
+            ui_submissions.load(Ordering::Relaxed) > 0,
+            "provisional rendering must use the host gate while acquisition is parked"
         );
         harness.read(|editor| {
             assert_eq!(editor.document.visit.viewport.zoom, Some(1.));
@@ -564,7 +577,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                     .displayed
                     .as_ref()
                     .is_some_and(|v| {
-                        v.spec.frame == e.document.visit.working_view.current_frame().unwrap()
+                        v.spec.frame() == e.document.visit.working_view.current_frame().unwrap()
                             && Some(&v.processing) == e.document.visit.working_view.processing()
                             && v.target == e.document.target
                     })

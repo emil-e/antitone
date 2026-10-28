@@ -225,6 +225,10 @@ impl Editor {
                 .as_ref()
                 .map(|correction| correction.settings.map.clone())
         };
+        let Some(ready) = self.document.visit.ready.as_ref() else {
+            return Ok(None);
+        };
+        let identity = crate::gpu::execution::source::Identity::camera(ready.developed.identity());
         let spec = if input.pipeline().is_none() {
             ViewSourceSpec::inspection(self.id, frame, matrix, field)?
         } else {
@@ -249,7 +253,9 @@ impl Editor {
                 field,
             )?
         }
-        .with_repairs(input.repairs.clone());
+        .with_identity(identity)
+        .with_repairs(input.repairs.clone())
+        .with_pipeline(input.pixel_pipeline()?)?;
         if let Some(rendered) = &self.document.visit.grade.original.rendered
             && Arc::ptr_eq(&rendered.image, image)
             && rendered.matches(&spec, &input.signature(), self.document.target)

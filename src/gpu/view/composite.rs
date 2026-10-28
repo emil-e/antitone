@@ -20,6 +20,7 @@ impl RenderedView {
             || underlay.composite.is_some()
             || detail.graded.is_none()
             || underlay.graded.is_none()
+            || detail.spec.authority != underlay.spec.authority
             || !detail.spec.same_source(&underlay.spec)
             || frame.composition.area() != detail.spec.area
             || detail.processing != underlay.processing
@@ -29,11 +30,11 @@ impl RenderedView {
                 "physical-view underlay and detail identities differ".into(),
             ));
         }
-        if detail.spec.frame == frame {
+        if detail.spec.frame() == frame {
             return Ok(detail);
         }
         if let Some(old) = previous.filter(|p| {
-            p.spec.frame == frame
+            p.spec.frame() == frame
                 && p.composite.as_ref().is_some_and(|c| {
                     Arc::ptr_eq(&c.detail, &detail) && Arc::ptr_eq(&c.underlay, &underlay)
                 })
@@ -60,8 +61,8 @@ impl RenderedView {
             detail.target,
         ))?);
         let maps = [
-            mapping(detail.spec.frame, frame),
-            mapping(underlay.spec.frame, frame),
+            mapping(detail.spec.frame(), frame),
+            mapping(underlay.spec.frame(), frame),
         ];
         let mut bytes = bytemuck::cast_slice(&[frame.output[0], frame.output[1], 0, 0]).to_vec();
         for m in maps {
@@ -97,8 +98,7 @@ impl RenderedView {
                 },
             ],
         });
-        let mut spec = detail.spec.clone();
-        spec.frame = frame;
+        let spec = detail.spec.clone().with_frame(frame)?;
         Ok(Arc::new(Self {
             image,
             spec,
@@ -165,41 +165,7 @@ impl Composite {
     }
 }
 
-pub(super) fn pipeline(
-    device: &wgpu::Device,
-    label: &'static str,
-    shader: &'static str,
-) -> wgpu::RenderPipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(shader.into()),
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: None,
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vertex"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fragment"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba32Float,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: Default::default(),
-        depth_stencil: None,
-        multisample: Default::default(),
-        multiview_mask: None,
-        cache: None,
-    })
-}
+pub(super) use crate::gpu::raster::render_pipeline as pipeline;
 
 pub(super) fn mapping(old: FrameRaster, frame: FrameRaster) -> TextureMapping {
     let origin = old.source_point([0., 0.]).0;

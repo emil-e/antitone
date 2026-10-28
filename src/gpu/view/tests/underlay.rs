@@ -11,7 +11,7 @@ fn source(
 ) -> Arc<ViewSource> {
     assert_eq!(
         pixels.len(),
-        (spec.frame.output[0] * spec.frame.output[1]) as usize
+        (spec.input_frame().unwrap().output[0] * spec.input_frame().unwrap().output[1]) as usize
     );
     Arc::new(ViewSource {
         spec,
@@ -116,7 +116,11 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_f
             .unwrap();
             let spec = ViewSourceSpec::new(7, regional, cal, scan.camera_to_ap1, field).unwrap();
             let mut underlay = spec.underlay().unwrap();
-            underlay.frame.output = [19, 17];
+            let resized_frame = FrameRaster {
+                output: [19, 17],
+                ..underlay.frame()
+            };
+            underlay = underlay.with_frame(resized_frame).unwrap();
             let specs = vec![spec, underlay];
             let paired = ViewSource::acquire_many(
                 &device,
@@ -189,7 +193,11 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
         .unwrap();
         let spec = ViewSourceSpec::new(11, detail_frame, input, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
-        base_spec.frame.output = [8, 8];
+        let resized_frame = FrameRaster {
+            output: [8, 8],
+            ..base_spec.frame()
+        };
+        base_spec = base_spec.with_frame(resized_frame).unwrap();
         let detail_pixels = (0..128)
             .map(|i| {
                 if i % 11 == 0 {
@@ -424,7 +432,8 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                         )
                         .unwrap();
                         assert_eq!(
-                            newest.spec.frame, latest,
+                            newest.spec.frame(),
+                            latest,
                             "completion reaches the latest requested navigation"
                         );
                         newest.ensure_submitted(&device, &queue, &gate, &context);
@@ -481,7 +490,11 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
         .unwrap();
         let spec = ViewSourceSpec::new(13, regional, input, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
-        base_spec.frame.output = [8, 8];
+        let resized_frame = FrameRaster {
+            output: [8, 8],
+            ..base_spec.frame()
+        };
+        base_spec = base_spec.with_frame(resized_frame).unwrap();
         let photo = AdjustmentLayerSettings {
             exposure: 2.,
             contrast: 0.7,
@@ -546,7 +559,11 @@ fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_
         .unwrap();
         let spec = ViewSourceSpec::new(17, regional, cal, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
-        base_spec.frame.output = [8, 8];
+        let resized_frame = FrameRaster {
+            output: [8, 8],
+            ..base_spec.frame()
+        };
+        base_spec = base_spec.with_frame(resized_frame).unwrap();
         let detail_source = source(
             &device,
             &renderer,
@@ -621,7 +638,11 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
         .unwrap();
         let spec = ViewSourceSpec::new(19, regional, cal, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
-        base_spec.frame.output = [8, 8];
+        let resized_frame = FrameRaster {
+            output: [8, 8],
+            ..base_spec.frame()
+        };
+        base_spec = base_spec.with_frame(resized_frame).unwrap();
         let detail_source = source(
             &device,
             &renderer,

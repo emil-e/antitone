@@ -10,16 +10,16 @@ use crate::{
 fn ordered_support_adds_neighbourhoods_and_point_stages_add_none() {
     let stages = PixelPipeline {
         stages: vec![
-            PixelStage::Gaussian { sigma: 1.5 },
-            PixelStage::Grain {
+            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 1.5 }),
+            PixelStage::new(crate::pixel_pipeline::Grain {
                 parameters: GrainParameters {
                     grain_size: 2.,
                     amplitude: 0.055,
                     colour: 0.5,
                 },
                 seed: 17,
-            },
-            PixelStage::Gaussian { sigma: 2.25 },
+            }),
+            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 2.25 }),
         ],
     };
     assert_eq!(stages.support([1., 1.]).unwrap(), Support([15, 15]));

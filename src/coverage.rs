@@ -152,7 +152,7 @@ impl Coverage {
         )
     }
 
-    fn rectangle_weight(self, origin: [f64; 2], size: [f64; 2]) -> f64 {
+    pub(crate) fn rectangle_weight(self, origin: [f64; 2], size: [f64; 2]) -> f64 {
         let mut first = [[0.; 2]; 8];
         let mut second = [[0.; 2]; 8];
         for (dst, point) in first.iter_mut().zip(self.corners) {

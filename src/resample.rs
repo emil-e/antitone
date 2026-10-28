@@ -1,7 +1,7 @@
 use wgpu::util::DeviceExt;
 #[cfg(test)]
 mod look_tests;
-pub(crate) mod windows;
+pub(crate) use crate::acquisition::windows;
 
 const SHADER: &str = r#"
 struct Parameters { source:vec2u, output:vec2u, origin:vec2u, tile:vec2u, output_origin:vec2u, extent:vec2u }

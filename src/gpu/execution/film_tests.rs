@@ -21,6 +21,19 @@ fn processed_with_flags(
     flags: f32,
     frame_size: [u32; 2],
 ) -> Vec<[f32; 4]> {
+    let pipeline =
+        crate::pixel_pipeline::PixelPipeline::film(settings, frame_size, (1 << 60) + 17).unwrap();
+    processed_pipeline(device, queue, kernels, bounds, &pipeline, flags)
+}
+
+fn processed_pipeline(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    kernels: &crate::gpu::pixel_pipeline::Kernels,
+    bounds: SourceRegion,
+    pipeline: &crate::pixel_pipeline::PixelPipeline,
+    flags: f32,
+) -> Vec<[f32; 4]> {
     let values: Vec<_> = (bounds.y..bounds.y + bounds.height)
         .flat_map(|y| {
             (bounds.x..bounds.x + bounds.width).map(move |x| {
@@ -33,10 +46,23 @@ fn processed_with_flags(
             })
         })
         .collect();
+    processed_pixels(device, queue, kernels, bounds, pipeline, &values)
+}
+
+fn processed_pixels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    kernels: &crate::gpu::pixel_pipeline::Kernels,
+    bounds: SourceRegion,
+    pipeline: &crate::pixel_pipeline::PixelPipeline,
+    values: &[[f32; 4]],
+) -> Vec<[f32; 4]> {
     let working = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
-        contents: bytemuck::cast_slice(&values),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        contents: bytemuck::cast_slice(values),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
     });
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -45,11 +71,9 @@ fn processed_with_flags(
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    let plan =
-        crate::pixel_pipeline::PixelPipeline::film(settings, frame_size, (1 << 60) + 17).unwrap();
     let prepared = crate::gpu::pixel_pipeline::Prepared::new(
         device,
-        &plan,
+        pipeline,
         crate::gpu::raster::Raster::native(bounds),
         None,
     )
@@ -74,7 +98,7 @@ fn processed_with_flags(
 
 #[test]
 fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
     let bounds: SourceRegion = [1048, 980, 64, 64].into();
     let settings = FilmEmulationSettings {
@@ -121,7 +145,7 @@ fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf
 
 #[test]
 fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_crop_edges() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
     let area: SourceRegion = [100, 80, 6000, 6000].into();
     let whole: SourceRegion = [1000, 780, 420, 420].into();
@@ -153,13 +177,11 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
     let mut unpadded_defect = false;
     for origin in [[0, 0], [128, 0], [0, 128], [128, 128]] {
         let extent = std::array::from_fn(|i| (composition.size()[i] - origin[i]).min(128));
-        let mut unit = Unit::with_support(
+        let (mut unit, _) = Unit::planned(
             composition,
             origin,
             extent,
-            crate::pixel_pipeline::PixelPipeline::film(settings, composition.crop().size, 17)
-                .unwrap()
-                .support([1., 1.])
+            &crate::pixel_pipeline::PixelPipeline::film(settings, composition.crop().size, 17)
                 .unwrap(),
         )
         .unwrap();
@@ -188,13 +210,7 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
             None,
         );
         let unpadded = (origin == [0, 0]).then(|| {
-            let mut clipped = Unit::with_support(
-                composition,
-                origin,
-                extent,
-                crate::processing_support::Support::NONE,
-            )
-            .unwrap();
+            let mut clipped = Unit::new(composition, origin, extent).unwrap();
             clipped.mapping.space[0] = 1;
             let bounds = clipped.bounds;
             let pixels = processed(
@@ -252,6 +268,106 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
         unpadded_defect,
         "the export fixture must distinguish missing MTF neighbours from a padded tile"
     );
+}
+
+#[test]
+fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolution() {
+    use crate::{
+        grain::GrainParameters,
+        pixel_pipeline::{PixelPipeline, PixelStage},
+    };
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
+    let composition = Composition::with_crop(
+        [100, 80, 6000, 4000].into(),
+        Default::default(),
+        Default::default(),
+        Some(crate::crop::Crop {
+            center: [1080., 1010.],
+            size: [8, 6],
+            angle: 0.,
+        }),
+    )
+    .unwrap();
+    let pipeline = PixelPipeline {
+        stages: vec![
+            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 1.5 }),
+            PixelStage::new(crate::pixel_pipeline::Grain {
+                parameters: GrainParameters {
+                    grain_size: 2.,
+                    amplitude: 0.,
+                    colour: 0.5,
+                },
+                seed: (1 << 60) + 17,
+            }),
+            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 2.25 }),
+        ],
+    };
+    let (mut unit, plan) = Unit::planned(composition, [0, 0], [8, 6], &pipeline).unwrap();
+    unit.mapping.space[0] = 1;
+    // Periodic signed/HDR impulses cross the read boundaries: interior-only structure
+    // can hide under-acquisition when replicated boundary samples happen to be constant.
+    let sample = |x: i32, y: i32| {
+        [
+            if x >= 1080 { 0.4_f32 } else { -0.03_f32 },
+            if y % 5 == 0 { 8. } else { -0.5 },
+            if x % 7 == 0 { 16. } else { -1. },
+            7.,
+        ]
+    };
+    let values: Vec<_> = (unit.bounds.y..unit.bounds.y + unit.bounds.height)
+        .flat_map(|y| {
+            (unit.bounds.x..unit.bounds.x + unit.bounds.width)
+                .map(move |x| sample(x as i32, y as i32))
+        })
+        .collect();
+    let samples = processed_pixels(
+        &device,
+        &queue,
+        &kernels,
+        unit.bounds,
+        plan.pipeline(),
+        &values,
+    );
+    let actual = super::tests::reconstructed(
+        &device,
+        &queue,
+        &Reconstructor::new(&device).unwrap(),
+        &unit,
+        |[x, y]| samples[((y - unit.bounds.y) * unit.bounds.width + x - unit.bounds.x) as usize],
+        None,
+    );
+    // Two independently normalized, sampled Gaussian distributions. The authored RGB
+    // fixture separates x/y dependence, so their 2D convolution reduces to these sums.
+    let weights = |radius: i32, sigma: f64| {
+        let raw: Vec<_> = (-radius..=radius)
+            .map(|i| (-0.5 * f64::from(i * i) / sigma.powi(2)).exp())
+            .collect();
+        let mass: f64 = raw.iter().sum();
+        raw.into_iter().map(|w| w / mass).collect::<Vec<_>>()
+    };
+    let first = weights(6, 1.5);
+    let second = weights(9, 2.25);
+    for y in 0..6 {
+        for x in 0..8 {
+            for (c, &channel) in actual[(y * 8 + x) as usize][..3].iter().enumerate() {
+                let mut expected = 0.;
+                for (a, wa) in first.iter().enumerate() {
+                    for (b, wb) in second.iter().enumerate() {
+                        let shift = a as i32 - 6 + b as i32 - 9;
+                        let sx = 1076 + x + shift;
+                        let sy = 1007 + y + shift;
+                        let value = sample(sx, sy)[c];
+                        expected += wa * wb * f64::from(value);
+                    }
+                }
+                assert!(
+                    (f64::from(channel) - expected).abs() < 0.000003,
+                    "planned convolution at ({x},{y}), channel {c}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

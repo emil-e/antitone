@@ -5,8 +5,8 @@ use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     export::{self, ExrPrecision, ImageSize, Overwrite},
     frame_raster::FrameRaster,
-    geometry::{Composition, SourceRegion},
-    gpu::{GpuFlatField, GpuPipeline, ProcessingSource, SourceGeometry, SubmissionGate},
+    geometry::Composition,
+    gpu::{GpuFlatField, SubmissionGate},
     processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,
     rendering::OutputTarget,
@@ -15,34 +15,28 @@ use crate::{
 use glam::{DVec3, Vec3};
 use std::{path::Path, sync::Arc};
 
+#[cfg(all(test, target_os = "macos", feature = "editor"))]
+use crate::gpu::GpuPipeline;
 #[cfg(all(test, target_os = "macos"))]
 mod film_tests;
 
 mod area;
 #[cfg(feature = "project")]
 pub(crate) mod job;
-mod rgb16;
+#[cfg(all(test, target_os = "macos", feature = "editor"))]
+mod native_resources;
+use crate::gpu::{execution::OutputBlock, rgb16};
 
 #[cfg(all(test, target_os = "macos", feature = "ocio-reference"))]
 mod common_exr_tests;
 #[cfg(all(test, target_os = "macos"))]
-mod observation_clock;
+pub(crate) mod observation_clock;
 #[cfg(all(test, target_os = "macos"))]
 mod production_tests;
 #[cfg(all(test, target_os = "macos", feature = "editor"))]
 mod resource_tests;
 #[cfg(test)]
 mod tests;
-
-const TILE: [u32; 2] = export::BLOCK;
-
-enum OutputBlock {
-    Linear(Vec<[f32; 4]>),
-    Rgb16 {
-        target: OutputTarget,
-        words: Vec<[u32; 2]>,
-    },
-}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Format {

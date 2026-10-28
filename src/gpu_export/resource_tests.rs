@@ -190,7 +190,7 @@ fn exercise(
         let spec = ViewSourceSpec::new(1, frame, adjusted, scan.camera_to_ap1, field)
             .map_err(|e| e.to_string())?;
         let underlay_spec = spec.underlay().map_err(|e| e.to_string())?;
-        let underlay_size = underlay_spec.frame.output;
+        let underlay_size = underlay_spec.frame().output;
         let sources = monitor
             .phase(
                 &format!("acquire-detail-underlay-corrected-{corrected}"),

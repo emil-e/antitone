@@ -342,9 +342,9 @@ impl Editor {
         };
         let rendered = rendered.filter(|rendered| {
             !cropping
-                || (rendered.spec.frame.composition == physical_frame.composition
-                    && rendered.spec.frame.min == physical_frame.min
-                    && rendered.spec.frame.max == physical_frame.max
+                || (rendered.spec.frame().composition == physical_frame.composition
+                    && rendered.spec.frame().min == physical_frame.min
+                    && rendered.spec.frame().max == physical_frame.max
                     && rendered.spec.repairs == parameters.repairs)
         });
         let tool = if purpose == Some(OriginalPurpose::Tool) {
@@ -497,8 +497,11 @@ impl Editor {
         }
         .ok()?
         .with_repairs(parameters.repairs.clone())
-        .with_support(parameters.pixel_pipeline().ok()?.support([1., 1.]).ok()?);
-        let source = proxy.view_source(queue, kernels, spec).ok()?;
+        .with_pipeline(parameters.pixel_pipeline().ok()?)
+        .ok()?;
+        let source = proxy
+            .view_source(queue, &self.submissions, kernels, spec)
+            .ok()?;
         let previous = self
             .document
             .visit

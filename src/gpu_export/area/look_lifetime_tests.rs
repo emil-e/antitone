@@ -94,7 +94,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
     assert_eq!(renderer.look_uploads(), 0);
     let cold = capture(Some(look.clone()));
     assert!(
-        cold.source_allocations > 1,
+        cold.source_layout_changes > 1,
         "exercise source-dimension transitions, not a single binding"
     );
     assert!(cold.look_payload_bytes > 0);

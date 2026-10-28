@@ -25,9 +25,16 @@ fn digital_source_marks_neutral_coverage() {
             .set_flat_field(None, SourceGeometry::new([0, 0, 8, 4], [8, 4]).unwrap())
             .unwrap();
         let spec = ViewSourceSpec::new(1, frame, InputSettings::Digital, matrix, None).unwrap();
-        let source =
-            ViewSource::from_processing(&device, &queue, renderer, kernels, Arc::new(source), spec)
-                .unwrap();
+        let source = ViewSource::from_processing(
+            &device,
+            &queue,
+            &SubmissionGate::default(),
+            renderer,
+            kernels,
+            Arc::new(source),
+            spec,
+        )
+        .unwrap();
         let neutral = read(&device, &queue, &source.pixels);
         assert!(neutral.iter().all(|pixel| (pixel[3] as u32) & 8 != 0));
     });
@@ -181,6 +188,7 @@ fn straightening_preserves_coverage_with_rounded_proxy_dimensions() {
             let composed = ViewSource::from_processing(
                 &device,
                 &queue,
+                &SubmissionGate::default(),
                 renderer.clone(),
                 kernels.clone(),
                 source.clone(),
@@ -249,6 +257,7 @@ fn crops_sample_both_source_halves_with_a_nonzero_active_origin() {
             let composed = ViewSource::from_processing(
                 &device,
                 &queue,
+                &SubmissionGate::default(),
                 renderer.clone(),
                 kernels.clone(),
                 source.clone(),

@@ -198,6 +198,7 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
         document.project.source(id).unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
         Arc::new(Proxy {
+            identity: None,
             width: 8,
             height: 6,
             pixels: vec![[5000., 7000., 9000., 0.]; 48].into(),

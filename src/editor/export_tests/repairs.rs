@@ -84,13 +84,9 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         "source-wide donor witness"
     );
     assert!(
-        crate::repair_source::resolve_output(
-            &scan,
-            &clean,
-            clean.pixel_pipeline().unwrap().support([1., 1.]).unwrap()
-        )
-        .unwrap()
-        .is_empty()
+        crate::repair_source::resolve_output(&scan, &clean)
+            .unwrap()
+            .is_empty()
     );
     editor.document.film_emulation = FilmEmulationSettings {
         enabled: true,
@@ -100,12 +96,7 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
     };
     editor.sync_document();
     let film = editor.document.state.project.image_recipe(id).unwrap();
-    let error = crate::repair_source::resolve_output(
-        &scan,
-        &film,
-        film.pixel_pipeline().unwrap().support([1., 1.]).unwrap(),
-    )
-    .unwrap_err();
+    let error = crate::repair_source::resolve_output(&scan, &film).unwrap_err();
     assert!(error.to_string().contains("repair"), "{error}");
 }
 
@@ -198,12 +189,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             scan.camera_to_ap1,
         )
         .unwrap();
-        let repairs = crate::repair_source::resolve_output(
-            &scan,
-            &recipe,
-            recipe.pixel_pipeline().unwrap().support([1., 1.]).unwrap(),
-        )
-        .unwrap();
+        let repairs = crate::repair_source::resolve_output(&scan, &recipe).unwrap();
         assert_eq!(repairs.len(), 1);
         let expected_exr: Vec<_> = repairs[0]
             .pixels()
@@ -304,14 +290,10 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             "the source-edge border cannot satisfy the biharmonic exterior"
         );
         assert!(
-            crate::repair_source::resolve_output(
-                &scan,
-                &recipe,
-                recipe.pixel_pipeline().unwrap().support([1., 1.]).unwrap()
-            )
-            .unwrap()
-            .is_empty(),
-            "the source-edge support has zero output coverage and is excluded"
+            crate::repair_source::resolve_output(&scan, &recipe)
+                .unwrap()
+                .is_empty(),
+            "zero exact output coverage, including a hole inside a support rectangle, excludes irrelevant repairs"
         );
         let cropped = directory.path().join("outside-failed-repair.tif");
         editor = wait(editor, |editor, cx| {

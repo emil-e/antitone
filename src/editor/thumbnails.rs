@@ -468,7 +468,8 @@ impl Thumbnails {
                     source.development.active_area,
                     [proxy.width, proxy.height],
                 )?,
-            )?,
+            )?
+            .with_identity(crate::gpu::execution::source::Identity::proxy(&proxy))?,
         };
         if !preview.current(request, document, Some(id), correction) {
             return Ok(None);

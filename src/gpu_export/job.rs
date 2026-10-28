@@ -45,14 +45,17 @@ pub(crate) fn write(
     scan.set_flat_field(job.scan.flat_field().cloned())?;
     job.recipe.neutral.require_scan(&scan)?;
     let input = job.recipe.neutral.input;
+    let stages = job.recipe.pixel_pipeline()?;
+    let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
+        output: FrameRaster::full(job.recipe.composition)?,
+        stages: &stages,
+        sampling: crate::acquisition::Sampling::Originals {
+            reconstruction: crate::acquisition::SourceSupport([0; 2]),
+        },
+    })?;
     let repairs = timed!(
         SourcePrepare,
-        crate::repair_source::resolve_output_with(
-            &scan,
-            job.recipe,
-            job.recipe.pixel_pipeline()?.support([1., 1.])?,
-            execution
-        )
+        crate::repair_source::resolve_plan_with(&scan, job.recipe, &plan, execution)
     )?
     .ok_or(Error::Cancelled)?;
     check()?;

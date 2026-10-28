@@ -158,10 +158,12 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
         // Small sources integrate many lattice samples; their actual finite gain is exercised.
         let raster = crate::gpu::raster::Raster::native([1000, 1000, 16, 16].into());
         let plan = crate::pixel_pipeline::PixelPipeline {
-            stages: vec![crate::pixel_pipeline::PixelStage::Grain {
-                parameters: parameters.grain(),
-                seed: 17,
-            }],
+            stages: vec![crate::pixel_pipeline::PixelStage::new(
+                crate::pixel_pipeline::Grain {
+                    parameters: parameters.grain(),
+                    seed: 17,
+                },
+            )],
         };
         let prepared =
             crate::gpu::pixel_pipeline::Prepared::new(&device, &plan, raster, None).unwrap();
@@ -170,7 +172,9 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
             let pixels = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::cast_slice(&values),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
             });
             let mut encoder = device.create_command_encoder(&Default::default());
             kernels
@@ -207,8 +211,8 @@ fn film_emulation_gpu_mtf_preserves_large_signed_hdr_constants() {
         for footprint in [1. / 16., 2. / 0.075, 64.] {
             let raster = crate::gpu::raster::Raster {
                 dimensions: [65, 1, 8, 0],
-                axis_x: [footprint, 0., 0., 0.],
-                axis_y: [0., 1., 0., 0.],
+                axis_x: [footprint, 0., footprint, 0.],
+                axis_y: [0., 1., 1., 0.],
                 ..bytemuck::Zeroable::zeroed()
             };
             let view = crate::gpu::raster::uniform(

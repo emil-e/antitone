@@ -15,10 +15,15 @@ mod crop_scale;
 mod film_emulation;
 mod identity;
 mod inspection;
+mod open_layers;
 mod performance;
+mod publication;
 mod repairs;
+#[cfg(target_os = "macos")]
+mod resource_observation;
 mod source_scale;
 mod stage_acquisition;
+mod stage_pitch;
 mod stage_support;
 mod underlay;
 
@@ -127,14 +132,17 @@ fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Ve
 }
 
 #[test]
-fn acquisition_keys_track_authority_response_correction_and_view_but_not_grading() {
+fn request_keys_separate_publication_from_source_response_correction_and_layout() {
     let scan = scan();
     let frame = frame(&scan);
     let settings = negative(0.6);
-    let spec = ViewSourceSpec::new(7, frame, settings, scan.camera_to_ap1, None).unwrap();
+    let identity = crate::gpu::execution::source::Identity::camera(scan.source().identity());
     let key = |frame, settings: &InputSettings, field| {
-        ViewSourceSpec::new(7, frame, settings, scan.camera_to_ap1, field).unwrap()
+        ViewSourceSpec::new(7, frame, settings, scan.camera_to_ap1, field)
+            .unwrap()
+            .with_identity(identity.clone())
     };
+    let spec = key(frame, &settings, None);
     assert!(spec == key(frame, &settings, None));
     let mut gamma_changed = settings;
     if let InputSettings::Negative { gamma, .. } = &mut gamma_changed {
@@ -152,6 +160,11 @@ fn acquisition_keys_track_authority_response_correction_and_view_but_not_grading
     let mut changed = spec.clone();
     changed.authority += 1;
     assert!(spec != changed);
+    assert!(spec.same_source(&changed));
+    assert!(
+        spec.satisfies(&changed),
+        "a new publication ticket does not change available pixels"
+    );
     let changed = key(
         FrameRaster {
             output: frame.output.map(|v| v * 2),

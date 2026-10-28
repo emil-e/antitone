@@ -73,7 +73,11 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
             dmax: DVec3::new(0.008, 0.004, 0.002),
             input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         };
-        let first = ViewSourceSpec::new(7, frame, cal, scan.camera_to_ap1, None).unwrap();
+        let first = ViewSourceSpec::new(7, frame, cal, scan.camera_to_ap1, None)
+            .unwrap()
+            .with_identity(crate::gpu::execution::source::Identity::camera(
+                input.source.identity(),
+            ));
 
         for retirement in ["basis", "support", "clear", "drop"] {
             let mut sources = ViewSource::acquire_many(
@@ -97,8 +101,10 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
             mailbox.0.lock().unwrap().underlay = Some(underlay);
             working.request(first.clone(), input.clone());
             let mut navigated = first.clone();
-            navigated.frame.min.0[0] += 10.;
-            navigated.frame.max.0[0] += 10.;
+            let mut moved_frame = navigated.frame();
+            moved_frame.min.0[0] += 10.;
+            moved_frame.max.0[0] += 10.;
+            navigated = navigated.with_frame(moved_frame).unwrap();
             working.request(navigated, input.clone());
 
             assert!(working.underlay.is_some());
@@ -124,7 +130,12 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
                 "support" => working.request(
                     first
                         .clone()
-                        .with_support(crate::processing_support::Support([8, 8])),
+                        .with_pipeline(crate::pixel_pipeline::PixelPipeline {
+                            stages: vec![crate::pixel_pipeline::PixelStage::new(
+                                crate::image_mtf::ImageMtfParameters { sigma: 2. },
+                            )],
+                        })
+                        .unwrap(),
                     input.clone(),
                 ),
                 "clear" => working.clear(),
@@ -182,12 +193,16 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
         source: crate::editor::tests::developed_fixture(),
         correction: None,
     };
-    let first = spec(0.);
+    let identity = crate::gpu::execution::source::Identity::camera(input.source.identity());
+    let first = spec(0.).with_identity(identity.clone());
     working.request(first.clone(), input.clone());
     for n in 1..40 {
-        working.request(spec(f64::from(n)), input.clone());
+        working.request(
+            spec(f64::from(n)).with_identity(identity.clone()),
+            input.clone(),
+        );
     }
-    let last = spec(39.);
+    let last = spec(39.).with_identity(identity);
     assert!(working.mailbox.0.lock().unwrap().wanted.as_ref() == Some(&last));
 
     working.acquired(Completion {
@@ -225,7 +240,7 @@ fn reference_admission_respects_budget_inspection_and_explicit_comparison() {
             cpu_bytes: 0,
             gpu_bytes: 0,
         });
-    let frame = spec(0.).frame;
+    let frame = spec(0.).frame();
     let view = ViewRequest {
         area: frame.bounds().unwrap(),
         frame: Some(frame),

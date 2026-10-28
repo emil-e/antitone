@@ -1,6 +1,7 @@
 //! Conservative affine support and bounded submission windows; neither changes sampling quality.
 pub(crate) type Window = ([u32; 2], [u32; 2]);
 
+#[cfg(any(test, all(feature = "gpu", feature = "render")))]
 pub(crate) fn affine_output(
     affine: [[f32; 2]; 3],
     output: [u32; 2],
@@ -62,13 +63,18 @@ pub(crate) fn affine_output_rect(
     )
 }
 
-pub(crate) fn bounded((origin, extent): Window) -> Vec<Window> {
+#[cfg(any(test, all(feature = "gpu", feature = "render")))]
+pub(crate) fn bounded(window: Window) -> Vec<Window> {
+    bounded_by(window, [512, 128])
+}
+
+pub(crate) fn bounded_by((origin, extent): Window, tile: [u32; 2]) -> Vec<Window> {
     let mut result = Vec::new();
-    for y in (0..extent[1]).step_by(128) {
-        for x in (0..extent[0]).step_by(512) {
+    for y in (0..extent[1]).step_by(tile[1] as usize) {
+        for x in (0..extent[0]).step_by(tile[0] as usize) {
             result.push((
                 [origin[0] + x, origin[1] + y],
-                [512.min(extent[0] - x), 128.min(extent[1] - y)],
+                [tile[0].min(extent[0] - x), tile[1].min(extent[1] - y)],
             ));
         }
     }

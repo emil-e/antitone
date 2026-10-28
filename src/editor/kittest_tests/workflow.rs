@@ -446,7 +446,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widget
                 .as_ref()
                 .unwrap()
                 .spec
-                .frame
+                .frame()
         });
         for c in 0..2 {
             assert!(

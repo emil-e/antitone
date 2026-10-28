@@ -196,7 +196,7 @@ fn exercise(
                     device,
                     next.clone(),
                     background.clone(),
-                    detail.spec.frame,
+                    detail.spec.frame(),
                     previous.as_ref().map(|p| &p.2),
                 )?;
                 if case == "target" {

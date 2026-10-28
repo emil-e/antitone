@@ -884,6 +884,7 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         .publish_proxy(
             image_key.source.store_key().unwrap(),
             Arc::new(Proxy {
+                identity: None,
                 width: 8,
                 height: 4,
                 pixels: vec![[1000., 2000., 3000., 0.]; 32].into(),

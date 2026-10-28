@@ -12,6 +12,7 @@ mod reference;
 struct ProbeConfig {
     side: usize,
     scale: f64,
+    reserve_scale: Option<f64>,
     footprint: f64,
     amount: f64,
     colour: f64,
@@ -24,6 +25,7 @@ impl Default for ProbeConfig {
         Self {
             side: N,
             scale: 2.,
+            reserve_scale: None,
             footprint: 1.,
             amount: 0.055,
             colour: 0.,
@@ -83,13 +85,34 @@ fn configured_probe(
         [config.side as u32; 2],
     )
     .unwrap();
-    let mut values = vec![[0.18_f32, 0.18, 0.18, 8.]; config.side * config.side];
+    let settings = FilmEmulationSettings {
+        enabled: config.enabled,
+        size: config.scale * (100. / 6000.),
+        amount: config.amount,
+        colour: config.colour,
+    };
+    let acquisition = FilmEmulationSettings {
+        size: config.reserve_scale.unwrap_or(config.scale) * (100. / 6000.),
+        ..settings
+    };
+    let spec = ViewSourceSpec::new(seed, frame, InputSettings::Digital, DMat3::IDENTITY, None)
+        .unwrap()
+        .with_pipeline(
+            crate::pixel_pipeline::PixelPipeline::film(acquisition, [6000; 2], seed).unwrap(),
+        )
+        .unwrap();
+    let size = spec.input_frame().unwrap().output;
+    let offset = spec.plan.output_offset().unwrap();
+    let mut values = vec![[0.18_f32, 0.18, 0.18, 8.]; (size[0] * size[1]) as usize];
     if config.impulse {
-        values[(config.side / 2) * config.side + config.side / 2][1] += 0.18;
+        let point = [
+            config.side as u32 / 2 + offset[0],
+            config.side as u32 / 2 + offset[1],
+        ];
+        values[(point[1] * size[0] + point[0]) as usize][1] += 0.18;
     }
     let source = Arc::new(ViewSource {
-        spec: ViewSourceSpec::new(seed, frame, InputSettings::Digital, DMat3::IDENTITY, None)
-            .unwrap(),
+        spec,
         renderer: renderer.clone(),
         kernels: kernels.clone(),
         pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -111,12 +134,7 @@ fn configured_probe(
         .unwrap(),
     );
     let input = ProcessingInput::from(grade)
-        .with_film_emulation(FilmEmulationSettings {
-            enabled: config.enabled,
-            size: config.scale * (100. / 6000.),
-            amount: config.amount,
-            colour: config.colour,
-        })
+        .with_film_emulation(settings)
         .with_frame_size(composition.crop().size)
         .with_film_seed(seed);
     RenderedView::new(device, source, &input, OutputTarget::Srgb, None).unwrap()

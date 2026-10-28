@@ -1,14 +1,18 @@
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::gpu::SourceGeometry;
 use crate::processing::Calibration;
+use crate::processing::RollSettings;
 use crate::{
     adjustment_layers::AdjustmentLayerSettings,
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
 };
 use glam::DMat3;
+use glam::DVec3;
 
 #[test]
 fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_untouched_samples() {
-    let (device, queue, renderer) = super::super::tests::context();
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let gate = SubmissionGate::default();
     let start = 1 << 25;
     let area: SourceRegion = [start, start, 256, 128].into();

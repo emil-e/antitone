@@ -34,6 +34,22 @@ pub enum OutputTarget {
     DisplayP3 = 1,
 }
 
+/// Processing reference, independent of file codec, transfer encoding and sample storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputReference {
+    SceneReferred,
+    DisplayReferred(OutputTarget),
+}
+
+impl OutputReference {
+    pub fn display_target(self) -> Option<OutputTarget> {
+        match self {
+            Self::SceneReferred => None,
+            Self::DisplayReferred(target) => Some(target),
+        }
+    }
+}
+
 impl OutputTarget {
     pub fn parameters(self) -> [f64; 9] {
         // Pinned target definitions; reference builds independently check the native parameters.

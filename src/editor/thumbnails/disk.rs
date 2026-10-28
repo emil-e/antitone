@@ -110,6 +110,7 @@ impl DiskCache {
         // Disposable LRU access time; failure here doesn't invalidate verified cached pixels.
         let _ = file.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
         Ok(Some(Arc::new(Proxy {
+            identity: None,
             width: header.width,
             height: header.height,
             pixels: std::sync::Arc::new(pixels),
@@ -210,6 +211,7 @@ mod tests {
             },
         };
         let proxy = Proxy {
+            identity: None,
             width: 2,
             height: 1,
             pixels: vec![

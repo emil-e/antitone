@@ -109,7 +109,7 @@ impl WorkingView {
                 .is_some_and(|(authority, frame, processing, target)| {
                     self.displayed.as_ref().is_some_and(|rendered| {
                         rendered.spec.authority == *authority
-                            && rendered.spec.frame == *frame
+                            && rendered.spec.frame() == *frame
                             && rendered.processing == *processing
                             && rendered.target == *target
                             && !rendered.in_flight()
@@ -146,7 +146,7 @@ impl WorkingView {
             .wanted
             .as_ref()
             .and_then(|wanted| {
-                self.present(wanted.frame, self.displayed.as_ref())
+                self.present(wanted.frame(), self.displayed.as_ref())
                     .ok()
                     .flatten()
             })
@@ -199,14 +199,17 @@ impl WorkingView {
         self.source
             .as_ref()
             .zip(self.wanted.as_ref())
-            .is_some_and(|(source, wanted)| source.spec == *wanted)
+            .is_some_and(|(source, wanted)| source.spec.satisfies(wanted))
     }
 
     pub(super) fn current_frame(&self) -> Option<FrameRaster> {
-        self.wanted.as_ref().map(|wanted| wanted.frame)
+        self.wanted.as_ref().map(|wanted| wanted.frame())
     }
 
     pub(super) fn request(&mut self, spec: ViewSourceSpec, input: source::Context) {
+        let spec = spec.with_identity(crate::gpu::execution::source::Identity::camera(
+            input.source.identity(),
+        ));
         if self
             .wanted
             .as_ref()
@@ -222,12 +225,23 @@ impl WorkingView {
         }
 
         if mailbox.underlay.as_ref().is_some_and(|underlay| {
-            !underlay.spec.same_source(&spec)
-                || underlay.spec.frame.composition != spec.frame.composition
+            !underlay.spec.compatible_processing(&spec)
+                || underlay.spec.frame().composition != spec.frame().composition
         }) {
             mailbox.underlay = None;
         }
+        mailbox.underlay = mailbox
+            .underlay
+            .take()
+            .map(|source| source.published(spec.authority));
         self.underlay = mailbox.underlay.clone();
+        if let Some(source) = self
+            .source
+            .as_ref()
+            .filter(|source| source.spec.compatible_processing(&spec))
+        {
+            self.source = Some(source.published(spec.authority));
+        }
         let retired = mailbox.input.replace(input);
         mailbox.wanted = Some(spec.clone());
 
@@ -244,7 +258,7 @@ impl WorkingView {
             && self
                 .source
                 .as_ref()
-                .is_none_or(|source| source.spec != *wanted)
+                .is_none_or(|source| !source.spec.satisfies(wanted))
             && self.failed.as_ref() != Some(wanted))
         .then(|| Acquisition {
             mailbox: self.mailbox.clone(),
@@ -260,10 +274,14 @@ impl WorkingView {
             return;
         }
         match result {
-            Ok(source) => {
-                self.source = Some(source);
+            Ok(source) if source.spec.satisfies(&spec) => {
+                self.source = Some(source.published(spec.authority));
                 self.failed = None;
                 self.error = None;
+            }
+            Ok(_) => {
+                self.failed = Some(spec);
+                self.error = Some("acquired view does not satisfy requested source/layout".into());
             }
             Err(error) => {
                 self.failed = Some(spec);
@@ -279,7 +297,16 @@ impl WorkingView {
     }
 
     pub(super) fn refresh_support(&mut self) {
-        self.underlay = self.mailbox.0.lock().unwrap().underlay.clone();
+        let state = self.mailbox.0.lock().unwrap();
+        self.underlay = state.underlay.as_ref().and_then(|source| {
+            self.wanted
+                .as_ref()
+                .filter(|wanted| {
+                    source.spec.compatible_processing(wanted)
+                        && source.spec.frame().composition == wanted.frame().composition
+                })
+                .map(|wanted| source.published(wanted.authority))
+        });
     }
 
     fn render(
@@ -337,11 +364,11 @@ impl WorkingView {
         let detail = self
             .source
             .as_ref()
-            .filter(|source| source.spec.same_source(wanted));
+            .filter(|source| source.spec.compatible_processing(wanted));
         let coverage = self
             .underlay
             .as_ref()
-            .filter(|source| source.spec.same_source(wanted));
+            .filter(|source| source.spec.compatible_processing(wanted));
         let source = detail
             .filter(|source| source.spec.repairs == wanted.repairs)
             .or(coverage.filter(|source| source.spec.repairs == wanted.repairs))
@@ -357,7 +384,8 @@ impl WorkingView {
         };
 
         let underlay = self.underlay.as_ref().filter(|underlay| {
-            underlay.spec.same_source(wanted) && underlay.spec.repairs == source.spec.repairs
+            underlay.spec.compatible_processing(wanted)
+                && underlay.spec.repairs == source.spec.repairs
         });
         if self
             .rendered
@@ -399,7 +427,7 @@ impl WorkingView {
             self.underlay_rendered = rendered_underlay;
         }
 
-        self.updating = source.spec != *wanted;
+        self.updating = !source.spec.satisfies(wanted);
         if self.failed.is_none() {
             self.error = None;
         }
@@ -426,7 +454,7 @@ impl WorkingView {
             && let Some(reference) = self
                 .reference
                 .as_ref()
-                .filter(|rendered| rendered.spec.frame == frame)
+                .filter(|rendered| rendered.spec.frame() == frame)
         {
             return Ok(Some(reference.clone()));
         }
@@ -515,29 +543,10 @@ pub(super) fn acquire(
             .underlay
             .as_ref()
             .is_none_or(|underlay| {
-                !underlay.spec.same_source(&spec)
-                    || underlay.spec.frame.composition != spec.frame.composition
+                !underlay.spec.compatible_processing(&spec)
+                    || underlay.spec.frame().composition != spec.frame().composition
                     || underlay.spec.repairs != spec.repairs
             });
-        let cancelled = || {
-            retired.load(Ordering::Relaxed)
-                || source_epoch.load(std::sync::atomic::Ordering::Relaxed) != spec.authority
-                || mailbox
-                    .0
-                    .lock()
-                    .unwrap()
-                    .wanted
-                    .as_ref()
-                    .is_none_or(|wanted| {
-                        if needs_underlay {
-                            !wanted.same_source(&spec)
-                                || wanted.frame.composition != spec.frame.composition
-                                || wanted.repairs != spec.repairs
-                        } else {
-                            wanted != &spec
-                        }
-                    })
-        };
 
         let result =
             (|| {
@@ -556,6 +565,27 @@ pub(super) fn acquire(
                 } else {
                     vec![spec.clone()]
                 };
+                let cancelled = || {
+                    retired.load(Ordering::Relaxed)
+                        || source_epoch.load(Ordering::Relaxed) != spec.authority
+                        || mailbox
+                            .0
+                            .lock()
+                            .unwrap()
+                            .wanted
+                            .as_ref()
+                            .is_none_or(|wanted| {
+                                if needs_underlay {
+                                    !specs
+                                        .iter()
+                                        .all(|pending| pending.compatible_processing(wanted))
+                                        || wanted.frame().composition != spec.frame().composition
+                                        || wanted.repairs != spec.repairs
+                                } else {
+                                    wanted != &spec
+                                }
+                            })
+                };
                 let mut neutral_sources = Vec::new();
                 let mut missing_specs = Vec::new();
                 {
@@ -565,8 +595,8 @@ pub(super) fn acquire(
                         let cached = [&state.neutral_detail, &state.neutral_underlay]
                             .into_iter()
                             .flatten()
-                            .find(|source| source.spec == neutral)
-                            .cloned();
+                            .find(|source| source.spec.satisfies(&neutral))
+                            .map(|source| source.published(wanted.authority));
                         if cached.is_none() {
                             missing_specs.push(neutral);
                         }
@@ -591,9 +621,10 @@ pub(super) fn acquire(
                                         != spec.authority
                                     || mailbox.0.lock().unwrap().wanted.as_ref().is_none_or(
                                         |wanted| {
-                                            !wanted.same_source(&spec)
-                                                || wanted.frame.composition
-                                                    != spec.frame.composition
+                                            !specs.iter().all(|pending| {
+                                                pending.compatible_processing(wanted)
+                                            }) || wanted.frame().composition
+                                                != spec.frame().composition
                                         },
                                     )
                             },
@@ -612,8 +643,10 @@ pub(super) fn acquire(
                     let mut state = mailbox.0.lock().unwrap();
                     if !retired.load(Ordering::Relaxed)
                         && state.wanted.as_ref().is_some_and(|wanted| {
-                            wanted.same_source(&spec)
-                                && wanted.frame.composition == spec.frame.composition
+                            specs
+                                .iter()
+                                .all(|pending| pending.compatible_processing(wanted))
+                                && wanted.frame().composition == spec.frame().composition
                         })
                     {
                         state.neutral_detail = neutral_sources[0].clone();
@@ -625,7 +658,7 @@ pub(super) fn acquire(
 
                 let mut views = Vec::new();
                 for (index, (wanted, neutral_source)) in
-                    specs.into_iter().zip(neutral_sources).enumerate()
+                    specs.iter().cloned().zip(neutral_sources).enumerate()
                 {
                     let previous = {
                         let state = mailbox.0.lock().unwrap();
@@ -642,7 +675,7 @@ pub(super) fn acquire(
                         &scan,
                         correction.map(|correction| correction.gpu.clone()),
                         neutral_source.expect("acquired neutral physical view"),
-                        wanted.repairs,
+                        wanted.request.repairs,
                         previous,
                         cancelled,
                     )?
@@ -663,8 +696,10 @@ pub(super) fn acquire(
             views.map(|mut views| {
                 if needs_underlay
                     && state.wanted.as_ref().is_some_and(|wanted| {
-                        wanted.same_source(&spec)
-                            && wanted.frame.composition == spec.frame.composition
+                        views
+                            .last()
+                            .is_some_and(|view| view.spec.compatible_processing(wanted))
+                            && wanted.frame().composition == spec.frame().composition
                             && wanted.repairs == spec.repairs
                     })
                 {
@@ -674,7 +709,7 @@ pub(super) fn acquire(
                 if state
                     .wanted
                     .as_ref()
-                    .is_some_and(|wanted| wanted.same_source(&spec))
+                    .is_some_and(|wanted| detail.spec.compatible_processing(wanted))
                 {
                     state.repaired_detail = Some(detail.clone());
                 }
@@ -795,7 +830,8 @@ impl Editor {
                         .displayed
                         .as_ref()
                         .is_none_or(|rendered| {
-                            rendered.spec.frame != frame || rendered.processing != input.signature()
+                            rendered.spec.frame() != frame
+                                || rendered.processing != input.signature()
                         });
             return Ok(self.document.visit.working_view.displayed.clone());
         }
@@ -897,7 +933,7 @@ impl Editor {
                 .map(|correction| correction.gpu.field().clone()),
         )?
         .with_repairs(input.repairs.clone())
-        .with_support(input.pixel_pipeline()?.support([1., 1.])?);
+        .with_pipeline(input.pixel_pipeline()?)?;
         self.request_working(spec, source_input, cx);
         self.document
             .visit
@@ -906,7 +942,7 @@ impl Editor {
 
         self.document.visit.working_view.reference = self
             .original_rendered(OriginalPurpose::Reference, input, matrix)?
-            .filter(|rendered| rendered.spec.frame == frame);
+            .filter(|rendered| rendered.spec.frame() == frame);
 
         self.document.visit.working_view.displayed = self
             .document

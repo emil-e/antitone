@@ -107,7 +107,8 @@ fn field(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) grou
         return;
     }
     let raster = parameters.raster;
-    let footprint = max(length(raster.axis_x.xy), length(raster.axis_y.xy));
+    let pitch = raster_pitch(raster);
+    let footprint = max(pitch.x, pitch.y);
     grain_pixels[index] = vec4f(
             grain_field(
                 raster_point(raster, index),
