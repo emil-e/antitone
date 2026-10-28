@@ -5,23 +5,41 @@ use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage};
 fn film_seed_routing_uses_source_identity_not_visit_identity() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
-        let source = editor.current_source.unwrap();
+        let source = editor.document.visit.current_source.unwrap();
         let first = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         assert_eq!(first.film_seed(), Some(source.0));
         editor.id = editor.id.wrapping_add(123);
         let reacquired = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         assert_eq!(first.film_seed(), reacquired.film_seed());
-        let mut other = editor.document.project.source(source).unwrap().clone();
+        let mut other = editor
+            .document
+            .state
+            .project
+            .source(source)
+            .unwrap()
+            .clone();
         other.id = SourceId(0);
         other.path = "another-film-seed.ARW".into();
-        let other = editor.document.project.add_source(other).unwrap();
-        editor.current_source = Some(other);
+        let other = editor.document.state.project.add_source(other).unwrap();
+        editor.document.visit.current_source = Some(other);
         let changed = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         assert_eq!(changed.film_seed(), Some(other.0));
         assert_ne!(first.film_seed(), changed.film_seed());
@@ -31,8 +49,9 @@ fn film_seed_routing_uses_source_identity_not_visit_identity() {
 fn ids(editor: &Editor) -> Vec<AdjustmentLayerId> {
     editor
         .document
+        .state
         .project
-        .source(editor.current_source.unwrap())
+        .source(editor.document.visit.current_source.unwrap())
         .unwrap()
         .adjustment_layers
         .as_ref()
@@ -47,23 +66,31 @@ fn ids(editor: &Editor) -> Vec<AdjustmentLayerId> {
 fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_resources() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
-        let id = editor.current_source.unwrap();
+        let id = editor.document.visit.current_source.unwrap();
         let order = ids(&editor);
         editor.reveal_adjustment_layers();
         editor.apply_adjustment_layer_action(Action::Select(Target::Layer(order[0])));
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         let accepted = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
-        let revision = editor.original.revision();
+        let revision = editor.document.visit.grade.original.revision();
         editor.apply_adjustment_layer_action(Action::Rename(order[0], "Sky".into()));
         assert_eq!(
-            editor.original.revision(),
+            editor.document.visit.grade.original.revision(),
             revision,
             "metadata must not invalidate processing"
         );
         let renamed = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         assert!(std::ptr::eq(
             accepted.pipeline().unwrap(),
@@ -77,20 +104,24 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         assert_ne!(
             editor
-                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+                .positive_processing(
+                    editor.document.input,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings
+                )
                 .unwrap()
                 .signature(),
             accepted.signature()
         );
         editor.apply_adjustment_layer_action(Action::Enable(order[0], false));
-        let source = editor.document.project.source(id).unwrap();
+        let source = editor.document.state.project.source(id).unwrap();
         assert!(
             !source.adjustment_layers.as_ref().unwrap().layers[1]
                 .adjustment
                 .enabled
         );
-        let before = editor.document.project.clone();
-        let revision = editor.original.revision();
+        let before = editor.document.state.project.clone();
+        let revision = editor.document.visit.grade.original.revision();
         assert!(
             editor
                 .edit_adjustment_layers(|layers| {
@@ -99,21 +130,21 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
                 })
                 .is_err()
         );
-        assert_eq!(editor.document.project, before);
-        assert_eq!(editor.original.revision(), revision);
+        assert_eq!(editor.document.state.project, before);
+        assert_eq!(editor.document.visit.grade.original.revision(), revision);
         editor.apply_adjustment_layer_action(Action::Rename(order[0], "  ".into()));
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         editor.apply_adjustment_layer_action(Action::Reorder(
             editor.order_drag(order[0]).unwrap(),
             3,
         ));
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         editor.busy = true;
         editor.apply_adjustment_layer_action(Action::Select(Target::None));
         editor.apply_adjustment_layer_action(Action::Enable(order[0], true));
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
-        editor.current_source = None;
+        editor.document.visit.current_source = None;
         assert_eq!(editor.adjustment_layer_target(), Target::None);
     });
 }
@@ -126,7 +157,7 @@ fn deferred_drag_captures_locals_after_an_outgoing_rename_commits() {
         let order = ids(&editor);
         let key = OrderKey {
             loaded: editor.id,
-            source: editor.current_source.unwrap(),
+            source: editor.document.visit.current_source.unwrap(),
             id: order[0],
         };
         editor.begin_control_history("Photo settings");
@@ -150,6 +181,7 @@ fn deferred_drag_captures_locals_after_an_outgoing_rename_commits() {
         assert_eq!(ids(&editor), vec![order[1], order[0]]);
         let layers = editor
             .document
+            .state
             .project
             .source(key.source)
             .unwrap()
@@ -176,13 +208,18 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
         let order = ids(&editor);
         editor.select_adjustment_layer(Target::Layer(order[0]));
         let input = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         let snapshot = input.pipeline().unwrap().snapshot().clone();
         let next_id = editor
             .document
+            .state
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers
             .as_ref()
@@ -200,8 +237,9 @@ fn drop_positions_insert_without_swapping_neighbours_or_consuming_ids() {
         assert_eq!(
             editor
                 .document
+                .state
                 .project
-                .source(editor.current_source.unwrap())
+                .source(editor.document.visit.current_source.unwrap())
                 .unwrap()
                 .adjustment_layers
                 .as_ref()
@@ -231,17 +269,25 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
             } else {
                 editor.id += 1;
             }
-            let before = editor.document.project.clone();
-            let revision = editor.original.revision();
+            let before = editor.document.state.project.clone();
+            let revision = editor.document.visit.grade.original.revision();
             let input = editor
-                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+                .positive_processing(
+                    editor.document.input,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
+                )
                 .unwrap();
             assert!(editor.reorder_adjustment(drag, 2).is_err());
-            assert_eq!(editor.document.project, before);
-            assert_eq!(editor.original.revision(), revision);
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.document.visit.grade.original.revision(), revision);
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
             let current = editor
-                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+                .positive_processing(
+                    editor.document.input,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
+                )
                 .unwrap();
             assert!(std::ptr::eq(
                 input.pipeline().unwrap(),
@@ -258,17 +304,25 @@ fn finishing_canvas_interaction_preserves_the_selected_layer_and_accepted_grade(
 
         let order = ids(&editor);
         editor.select_adjustment_layer(Target::Layer(order[1]));
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         let processing = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         editor.finish_adjustment_layer_interaction();
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[1]));
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         assert_eq!(
             processing.signature(),
             editor
-                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+                .positive_processing(
+                    editor.document.input,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings
+                )
                 .unwrap()
                 .signature()
         );
@@ -277,7 +331,7 @@ fn finishing_canvas_interaction_preserves_the_selected_layer_and_accepted_grade(
             .unwrap();
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[0]));
         assert_eq!(
-            editor.adjustment_layer_settings,
+            editor.document.visit.adjustment_layer_settings,
             editor.selected_adjustment_layer_settings().unwrap()
         );
         editor
@@ -298,7 +352,7 @@ fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
                 editor.select_adjustment_layer(Target::Layer(id));
                 editor.document.visit.adjustment_layers.show_coverage = true;
                 editor.sync_document();
-                let accepted = editor.document.project.clone();
+                let accepted = editor.document.state.project.clone();
                 let visit = editor.document.visit.view;
                 editor.start_document(Preparation::Open("unavailable.antitone".into()), cx);
                 let request = editor.document_pending.unwrap();
@@ -307,7 +361,7 @@ fn failed_document_candidate_preserves_the_visit_and_its_local_tool_context() {
                 assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
                 assert!((editor.tab == 1));
                 assert!(editor.document.visit.adjustment_layers.show_coverage);
-                assert_eq!(editor.document.project, accepted);
+                assert_eq!(editor.document.state.project, accepted);
             });
         });
     });
@@ -322,14 +376,14 @@ fn deferred_layer_actions_cannot_mutate_the_stack_after_leaving_the_photo_stage(
         let drag = editor.order_drag(id).unwrap();
         editor.tab = 0;
         editor.finish_adjustment_layer_interaction();
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         editor.apply_adjustment_layer_action(Action::Enable(id, false));
         editor.apply_adjustment_layer_action(Action::Reorder(drag, 2));
         editor.apply_adjustment_layer_action(Action::Delete(id));
         editor.apply_adjustment_layer_action(Action::Select(Target::Layer(id)));
         assert!(!editor.document.visit.adjustment_layers.confirming());
         assert!(!(editor.tab == 1));
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
     });
 }
@@ -341,13 +395,13 @@ fn cancelling_layer_interaction_during_a_roll_pick_preserves_its_selected_target
         let id = ids(&editor)[0];
         editor.select_adjustment_layer(Target::Layer(id));
         editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
-        assert!(editor.document.pick_return.is_some());
-        let before = editor.document.project.clone();
+        assert!(editor.document.picking.return_to.is_some());
+        let before = editor.document.state.project.clone();
         editor.finish_adjustment_layer_interaction();
         editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
         assert_eq!(editor.tab, 1);
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
     });
 }
 
@@ -356,11 +410,15 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let accepted = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
-        let before = editor.document.project.clone();
-        let revision = editor.original.revision();
-        let viewport = editor.viewport;
+        let before = editor.document.state.project.clone();
+        let revision = editor.document.visit.grade.original.revision();
+        let viewport = editor.document.visit.viewport;
         let result = editor.edit_adjustment_layers(|layers| {
             let mut adjustment = layers.layers[0].adjustment;
             adjustment.photo.exposure = 16.;
@@ -372,11 +430,15 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
             Ok(())
         });
         assert!(result.is_err());
-        assert_eq!(editor.document.project, before);
-        assert_eq!(editor.original.revision(), revision);
-        assert_eq!(editor.viewport, viewport);
+        assert_eq!(editor.document.state.project, before);
+        assert_eq!(editor.document.visit.grade.original.revision(), revision);
+        assert_eq!(editor.document.visit.viewport, viewport);
         let current = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         assert!(std::ptr::eq(
             accepted.pipeline().unwrap(),
@@ -390,13 +452,14 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
     pollster::block_on(async {
         for reorder in [false, true] {
             let (mut editor, _, _) = processing::tests::fixture().await;
-            editor.roll = RollSettings::default();
-            editor.adjustment_layer_settings = AdjustmentLayerSettings::default();
+            editor.document.roll = RollSettings::default();
+            editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings::default();
             assert_eq!(editor.gamma(), 0.6);
             let source = editor
                 .document
+                .state
                 .project
-                .source_mut(editor.current_source.unwrap())
+                .source_mut(editor.document.visit.current_source.unwrap())
                 .unwrap();
             let base = source.adjustment_layers.as_ref().unwrap().layers[0].adjustment;
             let photos = if reorder {
@@ -440,15 +503,20 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
             }
             let subject = layers.layers[last].id;
             source.adjustment_layers = Some(layers);
-            editor.adjustment_layer_settings = editor.selected_adjustment_layer_settings().unwrap();
+            editor.document.visit.adjustment_layer_settings =
+                editor.selected_adjustment_layer_settings().unwrap();
             editor.sync_document();
             editor.select_adjustment_layer(Target::Layer(subject));
             let accepted = editor
-                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+                .positive_processing(
+                    editor.document.input,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
+                )
                 .unwrap_or_else(|error| panic!("accepted fixture reorder={reorder}: {error}"));
-            let before = editor.document.project.clone();
-            let revision = editor.original.revision();
-            let viewport = editor.viewport;
+            let before = editor.document.state.project.clone();
+            let revision = editor.document.visit.grade.original.revision();
+            let viewport = editor.document.visit.viewport;
             editor.apply_adjustment_layer_action(if reorder {
                 Action::Reorder(editor.order_drag(subject).unwrap(), 0)
             } else {
@@ -459,12 +527,16 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 "reorder={reorder}: {}",
                 editor.status
             );
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(subject));
-            assert_eq!(editor.original.revision(), revision);
-            assert_eq!(editor.viewport, viewport);
+            assert_eq!(editor.document.visit.grade.original.revision(), revision);
+            assert_eq!(editor.document.visit.viewport, viewport);
             let current = editor
-                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+                .positive_processing(
+                    editor.document.input,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
+                )
                 .unwrap();
             assert!(std::ptr::eq(
                 accepted.pipeline().unwrap(),
@@ -478,12 +550,13 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
 fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
-        editor.roll = RollSettings::default();
-        editor.adjustment_layer_settings = AdjustmentLayerSettings::default();
+        editor.document.roll = RollSettings::default();
+        editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings::default();
         let source = editor
             .document
+            .state
             .project
-            .source_mut(editor.current_source.unwrap())
+            .source_mut(editor.document.visit.current_source.unwrap())
             .unwrap();
         let base = source.adjustment_layers.as_ref().unwrap().layers[0].adjustment;
         let mut layers = AdjustmentLayers::default();
@@ -510,14 +583,19 @@ fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
         editor.sync_document();
         editor.select_adjustment_layer(Target::Layer(subject));
         let before = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
-        let viewport = editor.viewport;
+        let viewport = editor.document.visit.viewport;
         editor.apply_adjustment_layer_action(Action::Enable(subject, true));
         let layers = editor
             .document
+            .state
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers
             .as_ref()
@@ -531,9 +609,13 @@ fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
         );
         assert_eq!(layers.next_id, allocator);
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(subject));
-        assert_eq!(editor.viewport, viewport);
+        assert_eq!(editor.document.visit.viewport, viewport);
         let current = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         assert_ne!(before.signature(), current.signature());
     });
@@ -546,18 +628,24 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
             let (editor, _, _) = processing::tests::fixture().await;
             crate::application::test_support::with_application(editor, |app| {
                 app.enter(|editor, cx| {
-                    let original = editor.current_source.unwrap();
+                    let original = editor.document.visit.current_source.unwrap();
                     let target = ids(editor)[0];
-                    let mut other = editor.document.project.source(original).unwrap().clone();
+                    let mut other = editor
+                        .document
+                        .state
+                        .project
+                        .source(original)
+                        .unwrap()
+                        .clone();
                     other.id = SourceId(0);
                     other.path = "other-fixture.ARW".into();
-                    let other = editor.document.project.add_source(other).unwrap();
+                    let other = editor.document.state.project.add_source(other).unwrap();
                     editor.sync_document();
                     editor.select_adjustment_layer(Target::Layer(target));
                     editor.begin_pick(Pick::Dmin, cx);
                     let mut ready = editor.document.visit.ready.take().unwrap();
                     editor.pick_roll_source(other, cx);
-                    assert_eq!(editor.current_source, Some(other));
+                    assert_eq!(editor.document.visit.current_source, Some(other));
                     assert_eq!(
                         editor.adjustment_layer_target(),
                         Target::Layer(ids(editor)[1])
@@ -565,7 +653,7 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
                     assert!(editor.document.visit.source.pending());
                     // Both fixture sources use identical pixels/metadata; deliver the other owner's Ready.
                     ready.path = editor.document.source_path(other).unwrap();
-                    ready.record = editor.document.project.source(other).unwrap().clone();
+                    ready.record = editor.document.state.project.source(other).unwrap().clone();
                     ready.record.id = SourceId(0);
                     ready.record.path = ready.path.clone();
                     editor.source_result(editor.id, Ok(Box::new(ready)));
@@ -577,6 +665,7 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
                     if removed {
                         editor
                             .document
+                            .state
                             .project
                             .source_mut(original)
                             .unwrap()
@@ -587,8 +676,8 @@ fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
                             .clear();
                     }
                     editor.finish_pick(cx);
-                    assert_eq!(editor.current_source, Some(original));
-                    assert!(editor.document.pick_return.is_none());
+                    assert_eq!(editor.document.visit.current_source, Some(original));
+                    assert!(editor.document.picking.return_to.is_none());
                     assert_eq!(
                         editor.adjustment_layer_target(),
                         if removed {
@@ -611,8 +700,9 @@ fn disabling_and_editing_an_inactive_record_does_not_drop_its_mask_or_controls()
         let id = ids(&editor)[0];
         let mask = editor
             .document
+            .state
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers
             .as_ref()
@@ -630,8 +720,9 @@ fn disabling_and_editing_an_inactive_record_does_not_drop_its_mask_or_controls()
             .unwrap();
         let adjustment = editor
             .document
+            .state
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers
             .as_ref()
@@ -646,8 +737,9 @@ fn disabling_and_editing_an_inactive_record_does_not_drop_its_mask_or_controls()
         assert!(
             editor
                 .document
+                .state
                 .project
-                .source(editor.current_source.unwrap())
+                .source(editor.document.visit.current_source.unwrap())
                 .unwrap()
                 .adjustment_layers
                 .as_ref()

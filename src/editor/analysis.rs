@@ -172,7 +172,7 @@ pub(super) fn develop_scan(
         path: path.to_owned(),
         wb: Some(wb),
         expected: Some(expected.clone()),
-        cache: Some(cache.clone()),
+        sources: Some(developments.provider(Some(cache.clone()))),
         file: document.file_key(path),
         correction: None,
     };
@@ -187,7 +187,8 @@ pub(super) fn develop_scan(
 
 impl Editor {
     fn analysis_support(&self) -> Option<Rect> {
-        self.correction
+        self.document
+            .correction
             .as_ref()
             .map(|c| rect(c.settings.map.area()))
             .or_else(|| {
@@ -201,6 +202,7 @@ impl Editor {
 
     pub(super) fn analysis_picture(&self) -> Option<Rect> {
         self.document
+            .state
             .project
             .analysis_area
             .map(rect)
@@ -222,7 +224,7 @@ impl Editor {
             .map(|pending| (pending.id, pending.loaded))
             != Some((request, loaded))
             || loaded != self.id
-            || self.pick != Some(Pick::Analysis)
+            || self.document.picking.kind != Some(Pick::Analysis)
             || self.document_pending.is_some()
         {
             return;
@@ -235,8 +237,9 @@ impl Editor {
             Ok(support) => {
                 ready.analysis_support = Some(support);
                 // A delayed suggestion must never overwrite a rectangle already drawn.
-                if self.region.is_none() && self.pick_drag.is_none() {
-                    self.region = support.map(suggest).map(Coverage::rectangle);
+                if self.document.picking.region.is_none() && self.document.visit.pick_drag.is_none()
+                {
+                    self.document.picking.region = support.map(suggest).map(Coverage::rectangle);
                 }
             }
             Err(error) => self.status = error,
@@ -246,13 +249,13 @@ impl Editor {
     pub(super) fn apply_roll_orientation(&mut self, action: Orientation) {
         let before = self.history_snapshot();
         match action {
-            Orientation::Left => self.roll_orientation.turn_counterclockwise(),
-            Orientation::Right => self.roll_orientation.turn_clockwise(),
-            Orientation::Horizontal => self.roll_orientation.horizontal ^= true,
-            Orientation::Vertical => self.roll_orientation.vertical ^= true,
-            Orientation::Reset => self.roll_orientation = RollOrientation::default(),
+            Orientation::Left => self.document.roll_orientation.turn_counterclockwise(),
+            Orientation::Right => self.document.roll_orientation.turn_clockwise(),
+            Orientation::Horizontal => self.document.roll_orientation.horizontal ^= true,
+            Orientation::Vertical => self.document.roll_orientation.vertical ^= true,
+            Orientation::Reset => self.document.roll_orientation = RollOrientation::default(),
         }
-        self.viewport.fit();
+        self.document.visit.viewport.fit();
         self.record_edit(before, "Roll orientation", None);
     }
 
@@ -260,17 +263,17 @@ impl Editor {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
         let reviewing = self.document.analysis_review.is_some();
-        let capabilities = self.input.capabilities();
+        let capabilities = self.document.input.capabilities();
         let commands = !self.busy
             && self.document.visit.ready.is_some()
-            && self.pick.is_none()
+            && self.document.picking.kind.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
-            && self.flat_edit.is_none()
+            && self.document.flat_edit.is_none()
             && self.document.visit.mask_edit.is_none()
             && !self.document.visit.adjustment_layers.confirming()
             && !reviewing
-            && self.removal_pending.is_none();
+            && self.document.removal_pending.is_none();
         let mut analyze = false;
 
         ToolShelf::show(ui, |ui| {
@@ -310,7 +313,7 @@ impl Editor {
                     .enabled(
                         commands
                             && (!matches!(action, Orientation::Reset)
-                                || !self.roll_orientation.is_identity()),
+                                || !self.document.roll_orientation.is_identity()),
                     )
                     .show(ui)
                     .clicked()
@@ -352,7 +355,7 @@ impl Editor {
                     if cropping {
                         self.finish_auto_crop(false);
                     } else {
-                        self.auto_crop_requested = Some(auto_crop::Target::Roll);
+                        self.document.auto_crop_requested = Some(auto_crop::Target::Roll);
                     }
                 }
             }
@@ -362,13 +365,13 @@ impl Editor {
 
     pub(super) fn analysis_request(&mut self) -> Option<Request> {
         if self.busy
-            || self.pick.is_some()
+            || self.document.picking.kind.is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
             || self.document.visit.adjustment_layers.confirming()
             || self.document.visit.ready.is_none()
-            || self.document.project.order.is_empty()
+            || self.document.state.project.order.is_empty()
         {
             return None;
         }
@@ -377,7 +380,7 @@ impl Editor {
             loaded: self.id,
             revision: self.document.analysis_generation.load(Ordering::Relaxed),
             document: self.document.capture(),
-            selected: self.current_source?,
+            selected: self.document.visit.current_source?,
             film: self.analysis_support(),
             local_support: self
                 .document
@@ -385,7 +388,7 @@ impl Editor {
                 .ready
                 .as_ref()
                 .is_some_and(|ready| ready.analysis_support.is_none()),
-            picture: self.document.project.analysis_area.map(rect),
+            picture: self.document.state.project.analysis_area.map(rect),
             areas: None,
         })
     }
@@ -463,9 +466,9 @@ impl Editor {
             return;
         }
         if self.id != snapshot.loaded
-            || self.current_source != Some(snapshot.selected)
+            || self.document.visit.current_source != Some(snapshot.selected)
             || self.document.path != snapshot.document.path
-            || self.document.project != snapshot.document.project
+            || self.document.state.project != snapshot.document.project
         {
             self.status = "Analysis discarded: document or settings changed".into();
             self.end_analysis_review(cx);
@@ -504,12 +507,11 @@ impl Editor {
                 let before = self.history_snapshot();
                 self.document.install(outcome.document);
                 self.document.visit.adjustment_layers = AdjustmentLayerEditor::default();
-                self.grades.clear();
-                self.load_input(self.document.project.input);
-                self.roll = self.document.project.roll;
-                self.adjustment_layer_settings = photo;
-                self.source = false;
-                self.working.clear();
+                self.load_input(self.document.state.project.input);
+                self.document.roll = self.document.state.project.roll;
+                self.document.visit.adjustment_layer_settings = photo;
+                self.document.source = false;
+                self.document.visit.working_view.clear();
                 self.invalidate_original();
                 self.record_edit(before, "Analyze roll", None);
                 self.status = format!(
@@ -524,12 +526,14 @@ impl Editor {
     }
 
     pub(super) fn apply_analysis_area(&mut self, cx: &UiContext<'_, Self>) {
-        let Some(coverage) = self.region else {
+        let Some(coverage) = self.document.picking.region else {
             return;
         };
         let Some(area) = self
+            .document
+            .visit
             .current_source
-            .and_then(|id| self.document.project.source(id).ok())
+            .and_then(|id| self.document.state.project.source(id).ok())
             .and_then(|source| coverage.exact_rectangle(source.development.active_area.into()))
         else {
             self.status = "Picture area must be a source-aligned rectangle".into();

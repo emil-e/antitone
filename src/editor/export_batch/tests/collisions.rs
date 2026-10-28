@@ -11,7 +11,7 @@ fn competing_destination_at_gpu_submission_is_preserved_for_skip_and_keep_both()
         let mut editor = authored_fixture(&["patches.dng"]);
         editor.set_dmin(Some(glam::DVec3::splat(0.8)));
         editor.set_dmax(Some(glam::DVec3::splat(0.02)));
-        editor.crop = Some(crate::crop::Crop {
+        editor.document.visit.crop = Some(crate::crop::Crop {
             center: [120., 100.],
             size: [16, 16],
             angle: 0.,
@@ -146,14 +146,20 @@ fn protected_destinations_are_never_replaced_or_followed_through_symlinks() {
 fn filesystem_equivalent_unicode_names_never_replace_an_earlier_batch_output() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
-    let ids = editor.document.project.order.clone();
+    let ids = editor.document.state.project.order.clone();
     for (index, stem) in ["Café", "Cafe\u{301}"].into_iter().enumerate() {
         let folder = directory.path().join(format!("source-{index}"));
         std::fs::create_dir(&folder).unwrap();
         let original = editor.document.source_path(ids[index]).unwrap();
         let copy = folder.join(format!("{stem}.dng"));
         std::fs::copy(original, &copy).unwrap();
-        editor.document.project.source_mut(ids[index]).unwrap().path = copy;
+        editor
+            .document
+            .state
+            .project
+            .source_mut(ids[index])
+            .unwrap()
+            .path = copy;
     }
     let mut settings = draft(directory.path());
     settings.collision = Collision::Replace;
@@ -180,7 +186,7 @@ fn filesystem_equivalent_unicode_names_never_replace_an_earlier_batch_output() {
 fn duplicate_basenames_are_disambiguated_even_when_replace_is_confirmed() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
-    let ids = editor.document.project.order.clone();
+    let ids = editor.document.state.project.order.clone();
     // Distinct sources retain their interpretation/grades but have equal basenames.
     for (index, id) in ids.iter().enumerate() {
         let folder = directory.path().join(format!("input-{index}"));
@@ -188,7 +194,7 @@ fn duplicate_basenames_are_disambiguated_even_when_replace_is_confirmed() {
         let original = editor.document.source_path(*id).unwrap();
         let copy = folder.join("frame.dng");
         std::fs::copy(original, &copy).unwrap();
-        editor.document.project.source_mut(*id).unwrap().path = copy;
+        editor.document.state.project.source_mut(*id).unwrap().path = copy;
     }
     let mut settings = draft(directory.path());
     settings.collision = Collision::Replace;

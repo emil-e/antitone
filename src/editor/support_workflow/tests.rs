@@ -17,7 +17,7 @@ fn editor() -> Editor {
             .unwrap()
     });
     let mut e = Editor::new(&device, &queue);
-    e.thumbnails = Thumbnails::default();
+    e.document.thumbnails = (Thumbnails::default()).with_sources(e.document.cache.clone());
     e
 }
 
@@ -72,7 +72,7 @@ fn lazy_support_progresses_without_paint_and_does_not_accept_a_picture_or_change
                 e.document.visit.ready.as_ref().unwrap().analysis_support,
                 Some(expected)
             );
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert!(!e.busy);
         });
         app.enter(|e, access| {
@@ -114,7 +114,7 @@ fn queued_support_respects_drawn_geometry_and_reopened_picker_identity() {
                     e.finish_pick(access);
                     e.begin_pick(Pick::Analysis, access);
                 }
-                e.region = Some(drawn);
+                e.document.picking.region = Some(drawn);
             });
             if reopen {
                 app.read(|e| {
@@ -127,7 +127,7 @@ fn queued_support_respects_drawn_geometry_and_reopened_picker_identity() {
             });
             app.update(|e| e.analysis_support_result(old, e.id, Err("stale".into())));
             app.read(|e| {
-                assert_eq!(e.region, Some(drawn));
+                assert_eq!(e.document.picking.region, Some(drawn));
                 assert!(
                     e.document
                         .visit
@@ -176,12 +176,12 @@ fn document_replacement_retires_support_without_waiting_for_a_paint_or_accepting
         });
         app.read(|e| {
             assert!(e.document.visit.support.pending.is_none());
-            assert!(e.region.is_none());
+            assert!(e.document.picking.region.is_none());
         });
         drop(hold);
         app.run_until(Duration::from_secs(20), |e| !e.busy);
         app.read(|e| {
-            assert!(e.document.project.order.is_empty() && e.document.visit.ready.is_none())
+            assert!(e.document.state.project.order.is_empty() && e.document.visit.ready.is_none())
         });
     });
     scheduler.close_and_wait().unwrap();

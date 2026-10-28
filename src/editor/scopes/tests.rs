@@ -271,16 +271,16 @@ fn scope_divider_drag_release_reset_and_width_scaling_are_stable_at_both_dpis() 
 fn source_and_reference_views_suspend_scopes_without_dirtying_projects() {
     let mut editor = super::super::tests::fixture();
     editor.sync_document();
-    let project = editor.document.project.clone();
+    let project = editor.document.state.project.clone();
     for source in [true, false] {
-        editor.source = source;
+        editor.document.source = source;
         editor.source_exposure = 2.;
         editor.scopes.vector = true;
         editor.scopes.amplification = 8;
         editor.scopes.height_ratio = 1.2;
         editor.scopes.visible = false;
         editor.sync_document();
-        assert_eq!(editor.document.project, project);
+        assert_eq!(editor.document.state.project, project);
         if source {
             assert_eq!(editor.scope_input().err(), Some("Positive grade only"));
         }
@@ -530,10 +530,10 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
         let mut editor = super::super::tests::fixture();
         editor.initialize_viewer(&device, &queue);
         let id = editor.document.register(ready.record.clone()).unwrap();
-        ready.record = editor.document.project.source(id).unwrap().clone();
-        editor.current_source = Some(id);
+        ready.record = editor.document.state.project.source(id).unwrap().clone();
+        editor.document.visit.current_source = Some(id);
         editor.document.visit.ready = Some(ready);
-        editor.source = false;
+        editor.document.source = false;
         editor.scopes = Scopes::new(&device);
         let gpu = editor.scopes.gpu.as_ref().unwrap().clone();
         let context = egui::Context::default();
@@ -610,12 +610,12 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                     .as_ref()
                     .unwrap()
                     .proxy
-                    .image(editor.target)
+                    .image(editor.document.target)
                     .unwrap()
             ));
             prepare(with, size);
             let reductions = gpu.reduction_count();
-            editor.viewport.zoom = Some(2.);
+            editor.document.visit.viewport.zoom = Some(2.);
             prepare(frame(&mut editor, size), size);
             let zoom_frame = editor.scope_input().unwrap().2;
             assert_ne!(zoom_frame, fit_frame);
@@ -626,14 +626,18 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             let reductions = gpu.reduction_count();
             prepare(frame(&mut editor, size), size);
             assert_eq!(gpu.reduction_count(), reductions, "idle view reuses bins");
-            let (layout, ppp) = editor.last_layout.unwrap();
-            editor.viewport.pan(layout, ppp, egui::vec2(100., -60.));
+            let (layout, ppp) = editor.document.visit.last_layout.unwrap();
+            editor
+                .document
+                .visit
+                .viewport
+                .pan(layout, ppp, egui::vec2(100., -60.));
             prepare(frame(&mut editor, size), size);
             let pan_frame = editor.scope_input().unwrap().2;
             assert_ne!(pan_frame, zoom_frame);
             assert_eq!(pan_frame.output, zoom_frame.output);
             assert_eq!(gpu.reduction_count(), reductions + 1);
-            editor.viewport.fit();
+            editor.document.visit.viewport.fit();
         }
         prepare(
             frame(&mut editor, egui::vec2(1100., 800.)),
@@ -641,15 +645,18 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
         );
         let (image, input, scope_frame) = editor.scope_input().unwrap();
         let parameters = input.parameters();
-        let expected =
-            ProcessingParameters::positive(editor.calibration().unwrap(), editor.roll, matrix)
-                .unwrap();
+        let expected = ProcessingParameters::positive(
+            editor.calibration().unwrap(),
+            editor.document.roll,
+            matrix,
+        )
+        .unwrap();
         assert_eq!(
             bytemuck::bytes_of(&parameters),
             bytemuck::bytes_of(&expected)
         );
         let settings = Settings {
-            target: editor.target,
+            target: editor.document.target,
             plot: Plot::Vector,
             ..Default::default()
         };
@@ -660,9 +667,9 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 .valid,
             21
         );
-        editor.roll_orientation.turn_clockwise();
-        editor.photo_orientation.flips.horizontal = true;
-        editor.crop = Some(
+        editor.document.roll_orientation.turn_clockwise();
+        editor.document.visit.photo_orientation.flips.horizontal = true;
+        editor.document.visit.crop = Some(
             Crop {
                 center: [3512., 1534.],
                 size: [5000, 1000],
@@ -682,9 +689,9 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             composed_frame.composition,
             Composition::with_crop(
                 area,
-                editor.roll_orientation,
-                editor.photo_orientation,
-                editor.crop
+                editor.document.roll_orientation,
+                editor.document.visit.photo_orientation,
+                editor.document.visit.crop
             )
             .unwrap()
         );
@@ -714,7 +721,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 .unwrap(),
             "geometry must not rerender ACES"
         );
-        editor.viewport.zoom = Some(3.);
+        editor.document.visit.viewport.zoom = Some(3.);
         let zoomed_composed = editor.scope_input().unwrap().2;
         assert_ne!(zoomed_composed, composed_frame);
         assert_eq!(zoomed_composed.composition, composed_frame.composition);
@@ -735,13 +742,13 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             frame(&mut editor, egui::vec2(1100., 800.)),
             egui::vec2(1100., 800.),
         );
-        let before = editor.document.project.clone();
-        editor.source = true;
+        let before = editor.document.state.project.clone();
+        editor.document.source = true;
         frame(&mut editor, egui::vec2(800., 600.));
         assert!(
             gpu.status_processing(&image, &input, composed_frame, settings)
                 .is_none()
         );
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
     });
 }

@@ -15,6 +15,15 @@ mod cache;
 pub use cache::{Charges, SourceCache};
 
 #[cfg(feature = "editor")]
+mod preview;
+#[cfg(feature = "editor")]
+pub(crate) use preview::PreviewLoader;
+
+#[cfg(all(feature = "raw", feature = "project"))]
+pub(crate) type PreviewResult =
+    Result<Option<std::sync::Arc<crate::embedded_preview::Preview>>, String>;
+
+#[cfg(feature = "editor")]
 mod loader;
 #[cfg(all(test, feature = "editor"))]
 pub(crate) use loader::{NativePhase, Request};
@@ -30,12 +39,37 @@ pub(crate) use metadata::{
 /// Acquires an owning source lease. Dropping the future retires that request;
 /// a native call already in progress keeps its inputs until it finishes.
 #[cfg(feature = "editor")]
-pub trait SourceProvider: Send + Sync {
-    fn load_source(
+pub(crate) trait SourceProvider: Send + Sync {
+    fn load_source(&self, key: SourceKey, priority: Priority) -> SourceFuture<'_>;
+
+    fn available_proxy(
+        &self,
+        _key: &SourceKey,
+    ) -> Option<std::sync::Arc<crate::scan::CameraPixels>> {
+        None
+    }
+
+    fn load_proxy(
         &self,
         key: SourceKey,
         priority: Priority,
-    ) -> impl std::future::Future<
-        Output = Result<std::sync::Arc<crate::scan::DevelopedSource>, crate::Error>,
-    > + Send;
+    ) -> Acquisition<'_, std::sync::Arc<crate::scan::CameraPixels>> {
+        Box::pin(provider::proxy(self, None, key, priority))
+    }
+
+    fn load_preview(&self, key: SourceKey) -> PreviewFuture<'_> {
+        Box::pin(async move { provider::preview(&PreviewLoader::default(), key).await })
+    }
 }
+
+#[cfg(feature = "editor")]
+pub(crate) type Acquisition<'a, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, crate::Error>> + Send + 'a>>;
+#[cfg(feature = "editor")]
+pub(crate) type SourceFuture<'a> = Acquisition<'a, std::sync::Arc<crate::scan::DevelopedSource>>;
+#[cfg(feature = "editor")]
+pub(crate) type PreviewFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = PreviewResult> + Send + 'a>>;
+
+#[cfg(feature = "editor")]
+mod provider;

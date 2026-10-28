@@ -64,22 +64,22 @@ impl Request {
 
 impl Editor {
     pub(super) fn invalidate_original(&mut self) {
-        self.original.invalidate();
+        self.document.visit.grade.original.invalidate();
         self.document.visit.grade.task = None;
     }
 
     pub(super) fn discard_original(&mut self) {
-        self.original.discard();
+        self.document.visit.grade.original.discard();
         self.document.visit.grade.task = None;
     }
 
     pub(super) fn cancel_original_pending(&mut self) {
-        self.original.cancel_pending();
+        self.document.visit.grade.original.cancel_pending();
         self.document.visit.grade.task = None;
     }
 
     pub(super) fn leave_original(&mut self) {
-        self.original.leave();
+        self.document.visit.grade.original.leave();
         self.document.visit.grade.task = None;
     }
 
@@ -89,10 +89,15 @@ impl Editor {
         signature: Signature,
     ) {
         match purpose {
-            Some(purpose) => self.original.observe(purpose, signature),
+            Some(purpose) => self
+                .document
+                .visit
+                .grade
+                .original
+                .observe(purpose, signature),
             None => self.leave_original(),
         }
-        if self.original.refining.is_none() {
+        if self.document.visit.grade.original.refining.is_none() {
             self.document.visit.grade.task = None;
         }
     }
@@ -105,10 +110,16 @@ impl Editor {
         source: source::Context,
         cx: &UiContext<'_, Self>,
     ) {
-        if let Some(request) = self.original.request(input, target, source) {
+        if let Some(request) = self
+            .document
+            .visit
+            .grade
+            .original
+            .request(input, target, source)
+        {
             let revision = request.revision;
             let generation = request.generation.clone();
-            self.original.refining = Some((revision, request.view));
+            self.document.visit.grade.original.refining = Some((revision, request.view));
             let Some(services) = self.source_services.clone() else {
                 self.original_result(
                     revision,
@@ -129,7 +140,10 @@ impl Editor {
                 retire.armed = false;
                 cx.update(|editor| {
                     if editor.document.visit.view == visit
-                        && Arc::ptr_eq(&editor.original.generation, &generation)
+                        && Arc::ptr_eq(
+                            &editor.document.visit.grade.original.generation,
+                            &generation,
+                        )
                     {
                         editor.original_result(revision, result);
                     }
@@ -140,9 +154,10 @@ impl Editor {
             };
             self.document.visit.grade.task = Some(task);
         }
-        if self.original.refining.is_some()
-            || self.original.settled.is_none()
-                && self.original.refinement_error != Some(self.original.revision())
+        if self.document.visit.grade.original.refining.is_some()
+            || self.document.visit.grade.original.settled.is_none()
+                && self.document.visit.grade.original.refinement_error
+                    != Some(self.document.visit.grade.original.revision())
         {
             context.request_repaint_after(std::time::Duration::from_millis(50));
         }
@@ -154,13 +169,16 @@ impl Editor {
         result: Result<Option<Arc<crate::viewer::GpuImage>>, String>,
     ) {
         if self
+            .document
+            .visit
+            .grade
             .original
             .refining
             .is_some_and(|(running, _)| running == revision)
         {
             self.document.visit.grade.task = None;
         }
-        if let Some(error) = self.original.receive(revision, result) {
+        if let Some(error) = self.document.visit.grade.original.receive(revision, result) {
             self.status = error;
         }
     }

@@ -5,7 +5,7 @@ use crate::{
     Error,
     project::Source,
     scan::{DevelopedSource, Scan},
-    source::{SourceCache, SourceKey, SourceProvider},
+    source::SourceKey,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -20,14 +20,25 @@ pub(super) struct Context {
 }
 
 impl Editor {
+    pub(super) fn source_provider(&self) -> Option<Arc<dyn crate::source::SourceProvider>> {
+        self.source_services
+            .as_ref()
+            .map(|services| services.provider(Some(self.document.cache.clone())))
+            .or_else(|| {
+                self.developments
+                    .as_ref()
+                    .map(|loader| loader.provider(Some(self.document.cache.clone())))
+            })
+    }
+
     pub(super) fn source_context(&self) -> Option<Context> {
         Some(Context {
             source: self.document.visit.ready.as_ref()?.developed.clone(),
             reference: self.document.visit.ready.as_ref()?.reference.clone(),
-            correction: if self.flat_edit.is_some() {
+            correction: if self.document.flat_edit.is_some() {
                 None
             } else {
-                self.correction.clone()
+                self.document.correction.clone()
             },
         })
     }
@@ -59,7 +70,7 @@ pub(super) struct Request {
     pub path: PathBuf,
     pub wb: Option<[f64; 4]>,
     pub expected: Option<Source>,
-    pub cache: Option<Arc<SourceCache>>,
+    pub sources: Option<Arc<dyn crate::source::SourceProvider>>,
     // New sources resolve identity alongside header inspection, off the UI thread.
     pub file: thumbnails::FileKey,
     pub correction: Option<Arc<Correction>>,
@@ -70,8 +81,6 @@ pub(super) struct Developed {
     pub record: Source,
     file: thumbnails::FileKey,
     path: PathBuf,
-    cache: Option<Arc<SourceCache>>,
-    key: Option<SourceKey>,
     timing: Timing,
     camera_proxy: Option<Arc<crate::scan::CameraPixels>>,
 }
@@ -85,12 +94,42 @@ pub(super) struct Services {
 }
 
 impl Services {
+    pub fn provider(
+        &self,
+        cache: Option<Arc<crate::source::SourceCache>>,
+    ) -> Arc<dyn crate::source::SourceProvider> {
+        self.developments.provider(cache)
+    }
+
     pub async fn prepare(
         self,
         request: Request,
         cancelled: crate::cancellation::Cancellation,
     ) -> Result<Ready, String> {
-        let developed = self.clone().develop(request, cancelled.clone()).await?;
+        let sources = request
+            .sources
+            .clone()
+            .unwrap_or_else(|| self.provider(None));
+        let mut developed = self.clone().develop(request, cancelled.clone()).await?;
+        if developed.camera_proxy.is_none() {
+            let key = SourceKey::for_load(
+                &developed.path,
+                developed.file.clone(),
+                &developed.record.development,
+            );
+            let proxy = sources.load_proxy(key, source_loading::Priority::Foreground);
+            developed.camera_proxy = Some(
+                futures_lite::future::or(
+                    async {
+                        cancelled.wait().await;
+                        Err(Error::Cancelled)
+                    },
+                    proxy,
+                )
+                .await
+                .map_err(|error| error.to_string())?,
+            );
+        }
         crate::background::run(move || {
             developed.prepare_gpu(&self.renderers, &self.device, &self.queue, &|| {
                 cancelled.is_cancelled()
@@ -101,7 +140,7 @@ impl Services {
         .map_err(|error| error.to_string())
     }
 
-    /// Export demand owns its lifetime; document caches supply optional reuse only.
+    /// Acquire captured inputs without preparing viewer resources.
     pub async fn acquire(
         self,
         request: Request,
@@ -114,12 +153,15 @@ impl Services {
 
     async fn develop(
         self,
-        request: Request,
+        mut request: Request,
         cancelled: crate::cancellation::Cancellation,
     ) -> Result<Developed, String> {
         let started = std::time::Instant::now();
         let retired = cancelled.clone();
-
+        let sources = request
+            .sources
+            .take()
+            .unwrap_or_else(|| self.provider(None));
         let needs_header = request.expected.is_none();
         let capture = move || {
             request.require_live(&|| retired.is_cancelled())?;
@@ -134,42 +176,34 @@ impl Services {
             capture()
         };
         let (request, key) = captured.map_err(|error| error.to_string())?;
-        let cache = request.cache.clone();
-        let loader = self.developments.clone();
-        let load = async {
-            match cache {
-                Some(cache) => {
-                    cache
-                        .load_source(&loader, key.clone(), source_loading::Priority::Foreground)
-                        .await
-                }
-                None => {
-                    loader
-                        .load_source(key.clone(), source_loading::Priority::Foreground)
-                        .await
-                }
-            }
-        };
-        let stop = async {
-            cancelled.wait().await;
-            Err(Error::Cancelled)
-        };
-        let source = futures_lite::future::or(stop, load)
-            .await
-            .map_err(|error| error.to_string())?;
+        let file = key.file().clone();
+        let load = crate::photo_preparation::acquire(
+            sources.as_ref(),
+            key,
+            source_loading::Priority::Foreground,
+            request.input,
+            request.reference.clone(),
+        );
+        let prepared = futures_lite::future::or(
+            async {
+                cancelled.wait().await;
+                Err(Error::Cancelled)
+            },
+            load,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
         let timing = Timing {
             started,
             development_seconds: started.elapsed().as_secs_f64(),
             registration_seconds: 0.,
             verification_seconds: 0.,
         };
-        let file = key.file().clone();
-
         crate::background::run(move || {
-            request.accept(source, file, &|| cancelled.is_cancelled(), timing)
+            request.accept(prepared, file, &|| cancelled.is_cancelled(), timing)
         })
         .await
-        .map_err(|_| "Source preparation worker panicked".to_owned())?
+        .map_err(|_| "Source acceptance worker panicked".to_owned())?
         .map_err(|error| error.to_string())
     }
 }
@@ -216,7 +250,7 @@ impl Request {
     /// Synchronous fixtures drive the same provider, observing their poll-only stop signal.
     #[cfg(test)]
     pub fn load(
-        self,
+        mut self,
         developments: &source_loading::SourceLoader,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Developed, Error> {
@@ -224,22 +258,18 @@ impl Request {
         let key = self.load_key()?;
         let file = key.file().clone();
         let started = std::time::Instant::now();
-        let loader = developments.clone();
-        let mut load = Box::pin(async {
-            match &self.cache {
-                Some(cache) => {
-                    cache
-                        .load_source(&loader, key, source_loading::Priority::Foreground)
-                        .await
-                }
-                None => {
-                    loader
-                        .load_source(key, source_loading::Priority::Foreground)
-                        .await
-                }
-            }
-        });
-        let source = loop {
+        let provider = self
+            .sources
+            .take()
+            .unwrap_or_else(|| developments.provider(None));
+        let mut load = Box::pin(crate::photo_preparation::acquire(
+            provider.as_ref(),
+            key,
+            source_loading::Priority::Foreground,
+            self.input,
+            self.reference.clone(),
+        ));
+        let prepared = loop {
             self.require_live(cancelled)?;
             if let Some(result) =
                 futures_lite::future::block_on(futures_lite::future::poll_once(&mut load))
@@ -255,12 +285,12 @@ impl Request {
             registration_seconds: 0.,
             verification_seconds: 0.,
         };
-        self.accept(source, file, cancelled, timing)
+        self.accept(prepared, file, cancelled, timing)
     }
 
     fn accept(
         self,
-        source: Arc<DevelopedSource>,
+        prepared: crate::photo_preparation::PreparedSource,
         file: thumbnails::FileKey,
 
         cancelled: &dyn Fn() -> bool,
@@ -268,6 +298,7 @@ impl Request {
     ) -> Result<Developed, Error> {
         self.require_live(cancelled)?;
         let tick = std::time::Instant::now();
+        let source = prepared.source.clone();
         let record = document::source_metadata(&self.path, &source.metadata(), source.fixed_wb())?;
         timing.registration_seconds = tick.elapsed().as_secs_f64();
         if let Some(expected) = &self.expected {
@@ -277,16 +308,9 @@ impl Request {
         let mut scan = Scan::from_source(source);
         document::verify_scan(&record, &scan)?;
         timing.verification_seconds = tick.elapsed().as_secs_f64();
-        let prepared = crate::photo_preparation::native(
-            self.cache.as_deref(),
-            &self.reference,
-            self.input,
-            scan.source(),
-        )?;
         let camera_proxy = prepared.proxy;
         scan = Scan::with_reference(prepared.source, prepared.reference);
         self.require_live(cancelled)?;
-        let key = SourceKey::from_revision(&self.path, file.clone(), &record.development);
         if let Some(correction) = &self.correction {
             correction.settings.require_source(&record.development)?;
         }
@@ -301,8 +325,6 @@ impl Request {
             record,
             file,
             path: self.path,
-            cache: self.cache,
-            key,
             timing,
             camera_proxy,
         })
@@ -325,17 +347,7 @@ impl Developed {
         let (width, height, pixels) = scan.preview_source(1024)?;
         let proxy = self
             .camera_proxy
-            .or_else(|| {
-                self.cache
-                    .as_ref()
-                    .and_then(|cache| self.key.as_ref().and_then(|key| cache.get_proxy(key)))
-            })
             .map_or_else(|| thumbnails::Proxy::from_scan(&scan).map(Arc::new), Ok)?;
-        if let Some(cache) = &self.cache
-            && let Some(key) = &self.key
-        {
-            cache.publish_proxy(key.clone(), proxy.clone())?;
-        }
         let thumbnail = Some((self.file.clone(), proxy));
         let proxy_seconds = tick.elapsed().as_secs_f64();
         let tick = std::time::Instant::now();

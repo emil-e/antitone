@@ -16,10 +16,10 @@ impl Drop for Dropped {
 }
 
 #[test]
-fn document_retirement_cancels_child_continuations_and_closes_cache_despite_captured_snapshots() {
+fn document_retirement_drops_child_continuations_and_cache_despite_captured_snapshots() {
     let scope = DocumentScope::from(Document::default());
     let snapshot = scope.capture();
-    let store = scope.cache.clone();
+    let store = Arc::downgrade(&scope.cache);
     let dropped = Rc::new(Cell::new(false));
     let resumed = Rc::new(Cell::new(false));
     with_application(scope, |app| {
@@ -45,8 +45,7 @@ fn document_retirement_cancels_child_continuations_and_closes_cache_despite_capt
         });
         app.pump();
         app.update(|scope| *scope = Document::default().into());
-        assert!(store.is_closed());
-        assert!(!app.read(|scope| scope.cache.is_closed()));
+        assert!(store.upgrade().is_none());
         drop(snapshot);
         app.pump();
         assert!(dropped.get());
@@ -60,9 +59,9 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     let before = editor.history_snapshot();
-    editor.roll.exposure = 0.25;
+    editor.document.roll.exposure = 0.25;
     editor.record_edit(before, "Exposure", None);
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     let source = editor
         .document
         .visit
@@ -88,7 +87,7 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
                 &editor.document.visit.ready.as_ref().unwrap().developed,
                 &source
             ));
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),
                 Some("Exposure")
@@ -105,9 +104,9 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
         add_ready_fixture(&mut editor);
         editor.sync_document();
         let view = editor.document.visit.view;
-        let store = editor.document.cache.clone();
+        let store = Arc::downgrade(&editor.document.cache);
         let ready = editor.document.visit.ready.as_ref().unwrap().clone();
-        let selected = editor.current_source;
+        let selected = editor.document.visit.current_source;
         let candidate = editor.document.capture();
         let work = if replace {
             Preparation::Open("same-data.antitone".into())
@@ -136,10 +135,12 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
                     assert_eq!(editor.document.visit.view, view);
                 }
                 assert!(editor.document.visit.ready.is_some());
-                assert_eq!(store.is_closed(), replace);
-                assert_eq!(Arc::ptr_eq(&store, &editor.document.cache), !replace);
-                assert!(!editor.document.cache.is_closed());
-                assert_eq!(editor.current_source, selected);
+                assert_eq!(store.upgrade().is_none(), replace);
+                assert_eq!(
+                    store.ptr_eq(&Arc::downgrade(&editor.document.cache)),
+                    !replace
+                );
+                assert_eq!(editor.document.visit.current_source, selected);
             });
             app.pump();
         });
@@ -150,7 +151,7 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
 fn successful_save_keeps_visit_history_and_later_edits_while_rebasing_the_written_baseline() {
     let mut editor = fixture();
     let before = editor.history_snapshot();
-    editor.roll.exposure = 0.25;
+    editor.document.roll.exposure = 0.25;
     editor.record_edit(before, "First exposure", None);
     let directory = tempfile::tempdir().unwrap();
     let saved = editor
@@ -162,12 +163,12 @@ fn successful_save_keeps_visit_history_and_later_edits_while_rebasing_the_writte
         )
         .unwrap();
     let before = editor.history_snapshot();
-    editor.roll.exposure = 0.5;
+    editor.document.roll.exposure = 0.5;
     editor.record_edit(before, "Later exposure", None);
     let view = editor.document.visit.view;
     let store = editor.document.cache.clone();
     editor.document.accept_save(saved);
-    assert_eq!(editor.document.project.roll.exposure, 0.5);
+    assert_eq!(editor.document.state.project.roll.exposure, 0.5);
     assert!(editor.document.dirty());
     assert_eq!(
         editor.history_label(crate::editor::history::Direction::Undo),
@@ -175,5 +176,4 @@ fn successful_save_keeps_visit_history_and_later_edits_while_rebasing_the_writte
     );
     assert_eq!(editor.document.visit.view, view);
     assert!(Arc::ptr_eq(&editor.document.cache, &store));
-    assert!(!store.is_closed());
 }

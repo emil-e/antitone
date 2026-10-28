@@ -44,6 +44,7 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
     document.import(&[path()]).unwrap();
     editor.document.install(document);
     editor
+        .document
         .thumbnails
         .set_limits(super::super::cache_limits::CacheLimits {
             cpu_bytes: 0,
@@ -364,7 +365,8 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
-        let (view, accepted) = app.read(|e| (e.document.visit.view, e.document.project.clone()));
+        let (view, accepted) =
+            app.read(|e| (e.document.visit.view, e.document.state.project.clone()));
         app.enter(|e, cx| {
             e.start_document(
                 Preparation::Open(directory.path().join("missing.antitone")),
@@ -379,7 +381,7 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
         app.read(|e| {
             assert_eq!(e.document.visit.view, view);
             assert!(e.document.visit.ready.is_some());
-            assert_eq!(e.document.project, accepted);
+            assert_eq!(e.document.state.project, accepted);
             assert!(e.tasks.view().is_none());
         });
     });
@@ -392,7 +394,7 @@ fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
         let editor = super::super::tests::authored_fixture(&["patches.dng"]);
         let ready = editor.document.visit.ready.as_ref().unwrap().clone();
         let path = ready.path.clone();
-        let accepted = editor.document.project.clone();
+        let accepted = editor.document.state.project.clone();
         with_application(editor, |app| {
             app.enter(|e, cx| {
                 e.load(path, cx);
@@ -412,7 +414,7 @@ fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
                 }
                 assert_eq!(e.document.visit.view, view);
                 assert!(e.document.visit.ready.is_some() && e.tasks.view().is_none());
-                assert_eq!(e.document.project, accepted);
+                assert_eq!(e.document.state.project, accepted);
                 assert!(e.status.contains("candidate rejected"));
             });
             app.pump();
@@ -439,7 +441,7 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
                 e.save_project(path.clone(), crate::project::Save::New, None, cx);
                 let operation = e.document_pending.unwrap();
                 let saved = snapshot.save(&path, crate::project::Save::New).unwrap();
-                e.roll.exposure = 0.5;
+                e.document.roll.exposure = 0.5;
                 e.sync_document();
                 if complete_first {
                     e.source_result(view, Ok(Box::new(ready.clone())));
@@ -454,7 +456,7 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
                 assert_eq!(e.document.visit.view, view);
                 assert!(e.document.visit.ready.is_some() && e.tasks.view().is_none());
                 assert!(e.document.dirty());
-                assert_eq!(e.document.project.roll.exposure, 0.5);
+                assert_eq!(e.document.state.project.roll.exposure, 0.5);
                 assert_eq!(e.document.path.as_deref(), Some(path.as_path()));
             });
             app.pump();
@@ -475,7 +477,7 @@ fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product()
         assert!(app.read(|e| e.document.visit.source.pending()));
         app.enter(|e, cx| {
             e.start_document(
-                Preparation::Correction(e.document.capture(), e.current_source),
+                Preparation::Correction(e.document.capture(), e.document.visit.current_source),
                 cx,
             )
         });
@@ -499,7 +501,6 @@ fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product()
             // development is unchanged and the visit continues into the installed document.
             // A correction that changes the gains changes the key and replaces the scope.
             assert_eq!(e.document.visit.view, view);
-            assert!(!e.document.cache.is_closed());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -512,7 +513,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
-        let store = app.read(|e| e.document.cache.clone());
+        let store = app.read(|e| Arc::downgrade(&e.document.cache));
         app.enter(|e, cx| e.start_document(Preparation::New, cx));
         let operation = app.read(|e| e.document_pending.unwrap());
         assert!(app.read(|e| e.busy && e.document_pending.is_some()));
@@ -530,7 +531,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
             )
         });
         app.pump();
-        assert!(store.is_closed());
+        assert!(store.upgrade().is_none());
         assert_eq!(scheduler.waiter_count(), 0);
         let (entered, observed) = mpsc::channel();
         let probe = app
@@ -545,7 +546,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         release.send(()).unwrap();
         drop(probe);
         app.read(|e| {
-            assert!(e.document.project.sources.is_empty());
+            assert!(e.document.state.project.sources.is_empty());
             assert!(e.document.visit.ready.is_none());
             assert!(!e.busy && e.tasks.view().is_none());
         });

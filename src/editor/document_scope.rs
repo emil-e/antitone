@@ -13,6 +13,25 @@ mod spatial_tests;
 /// Accepted document authority, cross-photo tool context and the dependent visit.
 /// Captured documents are data snapshots, not histories or continuation owners.
 pub(super) struct DocumentScope {
+    pub thumbnails: super::Thumbnails,
+    pub grades: super::Grades,
+    pub input: super::InputSettings,
+    pub input_switch: Option<super::InputSettings>,
+    pub roll: super::RollSettings,
+    pub film_emulation: super::FilmEmulationSettings,
+    pub roll_orientation: super::RollOrientation,
+    pub auto_crop_requested: Option<super::auto_crop::Target>,
+    pub target: super::OutputTarget,
+    pub source: bool,
+    pub picking: super::picking::Session,
+    pub selected: usize,
+    pub roll_selection: super::RollSelection,
+    pub removal_pending: Option<Vec<super::SourceId>>,
+    pub export_operation: super::export_workflow::State,
+    pub export_dialog: Option<super::export_batch::Draft>,
+    pub export_summary: Option<super::export_batch::Summary>,
+    pub correction: Option<Arc<super::Correction>>,
+    pub flat_edit: Option<super::FlatEdit>,
     pub state: Document,
     pub cache: Arc<crate::source::SourceCache>,
     pub exposures: Arc<crate::exposure_metadata::Store>,
@@ -30,12 +49,18 @@ pub(super) struct DocumentScope {
     pub analysis_preparing: Option<super::analysis_workflow::Pending>,
     pub analysis_pending: Option<super::analysis_workflow::Pending>,
     pub analysis_review: Option<super::analysis_review::Review>,
-    pub pick_return: Option<super::PickReturn>,
-    pub pick_view: Option<super::PickView>,
     pub analysis_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl DocumentScope {
+    pub fn replacement(&self, state: Document) -> Self {
+        let mut next: Self = state.into();
+        next.thumbnails = self.thumbnails.for_document(next.cache.clone());
+        next.grades = self.grades.for_document();
+        next.visit.working_view = self.visit.working_view.for_visit();
+        next
+    }
+
     pub fn capture(&self) -> Document {
         let mut document = self.state.clone();
         document.spatial_metadata = self.spatial.ready();
@@ -124,12 +149,32 @@ impl DocumentScope {
 
 impl From<Document> for DocumentScope {
     fn from(state: Document) -> Self {
+        let input = state.project.input;
         let cache = Arc::new(crate::source::SourceCache::new(0));
         let exposures = Arc::new(crate::exposure_metadata::Store::restored(
             &state.exposure_metadata,
             |id| state.exposure_origin(id),
         ));
         Self {
+            thumbnails: super::Thumbnails::for_sources(cache.clone()),
+            grades: super::Grades::default(),
+            correction: None,
+            flat_edit: None,
+            selected: 0,
+            roll_selection: super::RollSelection::default(),
+            removal_pending: None,
+            export_operation: Default::default(),
+            export_dialog: None,
+            export_summary: None,
+            picking: Default::default(),
+            input,
+            input_switch: None,
+            roll: super::RollSettings::default(),
+            film_emulation: super::FilmEmulationSettings::default(),
+            roll_orientation: super::RollOrientation::default(),
+            target: super::OutputTarget::DisplayP3,
+            source: true,
+            auto_crop_requested: None,
             spatial: crate::spatial_metadata::Store::restored((*state.spatial_metadata).clone()),
             spatial_preparing: None,
             spatial_consumer: None,
@@ -147,8 +192,6 @@ impl From<Document> for DocumentScope {
             analysis_preparing: None,
             analysis_pending: None,
             analysis_review: None,
-            pick_return: None,
-            pick_view: None,
             analysis_generation: Arc::default(),
         }
     }
@@ -164,23 +207,5 @@ impl Deref for DocumentScope {
 impl DerefMut for DocumentScope {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.state
-    }
-}
-
-impl Drop for DocumentScope {
-    fn drop(&mut self) {
-        self.spatial.close();
-        drop(self.spatial_preparing.take());
-        drop(self.spatial_consumer.take());
-        drop(self.look.take());
-        drop(self.embedded_preview.take());
-        drop(std::mem::take(&mut self.thumbnail_work));
-        drop(std::mem::take(&mut self.dust));
-        drop(self.analysis_preparing.take());
-        drop(self.analysis_pending.take());
-        drop(self.analysis_review.take());
-        drop(std::mem::take(&mut self.visit));
-        drop(std::mem::take(&mut self.write));
-        self.cache.close();
     }
 }

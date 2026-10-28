@@ -20,14 +20,19 @@ fn mapping(app: &TestApplication<'_, Editor>) -> (TextureMapping, FrameRaster, b
                 egui::Pos2::ZERO,
                 egui::vec2(size[0] as f32, size[1] as f32),
             );
-            let geometry = editor.viewport.layout_composition(canvas, composition, 1.);
+            let geometry =
+                editor
+                    .document
+                    .visit
+                    .viewport
+                    .layout_composition(canvas, composition, 1.);
             let (_, paint) = editor
                 .canvas_image(ui, geometry, proxy, false, false, cx)
                 .unwrap();
             result = Some((
                 paint.texture_mapping(),
                 paint.view_frame().expect("canvas presents a RenderedView"),
-                editor.working.displayed.is_some(),
+                editor.document.visit.working_view.displayed.is_some(),
             ));
         });
     });
@@ -65,7 +70,7 @@ fn assert_source_corners(uv: TextureMapping, frame: FrameRaster, crop: Crop) {
 }
 
 fn provisional_then_physical(app: &mut TestApplication<'_, Editor>) {
-    let crop = app.read(|editor| editor.crop.unwrap());
+    let crop = app.read(|editor| editor.document.visit.crop.unwrap());
     let admission = crate::background::testing::pause();
     let (uv, frame, physical) = mapping(app);
     assert!(
@@ -77,7 +82,7 @@ fn provisional_then_physical(app: &mut TestApplication<'_, Editor>) {
     assert!(app.read(|editor| editor.document.visit.working.task.is_some()));
     drop(admission);
     app.run_until(Duration::from_secs(20), |editor| {
-        editor.working.support_ready()
+        editor.document.visit.working_view.support_ready()
     });
     let (uv, frame, physical) = mapping(app);
     assert!(
@@ -93,10 +98,10 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
         let mut editor = super::super::tests::authored_fixture(&["roll-0.dng", "roll-1.dng"]);
         editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
         editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
-        editor.source = inspection;
+        editor.document.source = inspection;
         editor.auto_crop_margin = 0.;
         // Declared frame measurements isolate the displayed geometry from detector discovery.
-        editor.document.project.analysis_regions = editor
+        editor.document.state.project.analysis_regions = editor
             .document
             .project
             .order
@@ -135,14 +140,14 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
             "{}",
             editor.status
         );
-        assert!(editor.crop.is_some());
+        assert!(editor.document.visit.crop.is_some());
         let first = editor
             .document
-            .source_path(editor.document.project.order[0])
+            .source_path(editor.document.state.project.order[0])
             .unwrap();
         let second = editor
             .document
-            .source_path(editor.document.project.order[1])
+            .source_path(editor.document.state.project.order[1])
             .unwrap();
         with_application(editor, |app| {
             provisional_then_physical(app);

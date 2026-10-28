@@ -18,23 +18,24 @@ fn saved_editor() -> (Editor, tempfile::TempDir) {
 #[test]
 fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
     let (mut e, _directory) = saved_editor();
-    let source = e.current_source.unwrap();
-    let baseline = e.document.project.clone();
+    let source = e.document.visit.current_source.unwrap();
+    let baseline = e.document.state.project.clone();
     e.document.dust.selected.remove(&source);
     e.select_dust_repair(RepairId(1));
     assert_eq!(e.selected_dust_repair(), Some(RepairId(1)));
-    assert_eq!(e.document.project, baseline);
+    assert_eq!(e.document.state.project, baseline);
     assert!(!e.document.dirty());
 
     e.begin_dust_mask(Some(RepairId(1)));
     e.document
+        .visit
         .dust
         .mask_draft
         .as_mut()
         .unwrap()
         .pixels
         .insert([54, 50]);
-    assert_eq!(e.document.project, baseline);
+    assert_eq!(e.document.state.project, baseline);
     assert!(!e.document.dirty());
 
     e.cancel_dust_mask();
@@ -42,12 +43,13 @@ fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
     e.commit_dust_mask();
     assert!(!e.document.dirty(), "an unchanged release must not dirty");
     e.begin_dust_mask(Some(RepairId(1)));
-    e.document.dust.mask_draft.as_mut().unwrap().rejected = true;
+    e.document.visit.dust.mask_draft.as_mut().unwrap().rejected = true;
     e.commit_dust_mask();
     assert!(!e.document.dirty());
 
     e.begin_dust_mask(Some(RepairId(1)));
     e.document
+        .visit
         .dust
         .mask_draft
         .as_mut()
@@ -61,7 +63,7 @@ fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
     );
     finish_searches(&mut e);
     assert!(e.document.dirty());
-    let changed = e.document.project.clone();
+    let changed = e.document.state.project.clone();
     *e.document = e
         .document
         .save(
@@ -82,8 +84,8 @@ fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
     e.delete_selected_dust_repair();
     assert!(e.document.dirty());
     assert!(e.dust_repairs(source).is_none());
-    assert_ne!(e.document.project, changed);
-    let set = &e.document.project.source(source).unwrap().repairs;
+    assert_ne!(e.document.state.project, changed);
+    let set = &e.document.state.project.source(source).unwrap().repairs;
     assert_eq!(serde_json::to_value(set).unwrap()["last_id"], 1);
 }
 
@@ -92,7 +94,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
     let (e, directory) = saved_editor();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
-            let source = e.current_source.unwrap();
+            let source = e.document.visit.current_source.unwrap();
             let mut bits = vec![false; 7 * 7];
             for y in 2..5 {
                 for x in 2..5 {
@@ -105,7 +107,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
                 .unwrap();
             let path = directory.path().join("margins.antitone");
             *e.document = e.document.save(&path, crate::project::Save::New).unwrap();
-            e.document.project = crate::project::Project::load(&path).unwrap();
+            e.document.state.project = crate::project::Project::load(&path).unwrap();
 
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             let request = captured_request(e);
@@ -114,7 +116,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
             let evaluation = e.document.dust.cached[&(source, RepairId(1))]
                 .evaluated
                 .clone();
-            let reference_revision = e.original.revision();
+            let reference_revision = e.document.visit.grade.original.revision();
             e.begin_dust_mask(Some(RepairId(1)));
             assert_eq!(
                 e.effective_dust_repair(source, RepairId(1)).unwrap(),
@@ -123,7 +125,10 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
             e.commit_dust_mask();
 
             assert!(!e.document.dirty());
-            assert_eq!(e.original.revision(), reference_revision);
+            assert_eq!(
+                e.document.visit.grade.original.revision(),
+                reference_revision
+            );
             assert_eq!(
                 e.dust_repairs(source).unwrap().repairs()[0].support,
                 support
@@ -134,7 +139,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
             ));
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             assert!(
-                e.document.dust.pending_request().is_none(),
+                e.document.visit.dust.pending_request().is_none(),
                 "unchanged masks must reuse compatible evaluations"
             );
         });
@@ -146,7 +151,7 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
     let (e, directory) = saved_editor();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
-            let source = e.current_source.unwrap();
+            let source = e.document.visit.current_source.unwrap();
             let path = directory.path().join("pending.antitone");
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             let request = captured_request(e);
@@ -167,9 +172,12 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
             assert_eq!(e.document_pending, Some(save_request));
             e.save_result(save_request, Ok(Box::new(saved)), cx);
             assert!(!e.document.dirty());
-            assert_eq!(e.document.dust.pending_request(), Some(request.request));
             assert_eq!(
-                e.document.project.source(source).unwrap().repairs,
+                e.document.visit.dust.pending_request(),
+                Some(request.request)
+            );
+            assert_eq!(
+                e.document.state.project.source(source).unwrap().repairs,
                 captured.project.source(source).unwrap().repairs
             );
 
@@ -212,7 +220,7 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
     let (e, directory) = saved_editor();
     crate::application::test_support::with_application(e, |app| {
         app.enter(|e, cx| {
-            let source = e.current_source.unwrap();
+            let source = e.document.visit.current_source.unwrap();
             let path = directory.path().join("save-as.antitone");
             let captured = e.document.capture();
             e.start_save(
@@ -241,7 +249,7 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
             assert!(!e.document.dirty());
 
             e.reset_dust_repairs(source);
-            let before = e.document.project.clone();
+            let before = e.document.state.project.clone();
             e.start_save(
                 crate::editor::document_services::Write {
                     document: e.document.capture(),
@@ -254,7 +262,7 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
             assert!(e.busy && e.document_pending.is_some());
             assert!(e.document.save(&path, crate::project::Save::New).is_err());
             e.save_result(request, Err("destination exists".into()), cx);
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert!(e.document.dirty());
             assert_eq!(std::fs::read(&path).unwrap(), bytes);
         });

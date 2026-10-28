@@ -22,7 +22,6 @@ struct Entry {
 }
 
 pub(super) struct Draft {
-    document: std::sync::Weak<crate::source::SourceCache>,
     order: Vec<SourceId>,
     target: Target,
     attempted: usize,
@@ -39,10 +38,7 @@ pub(super) struct Draft {
 
 impl Draft {
     fn belongs_to(&self, editor: &Editor) -> bool {
-        self.document
-            .upgrade()
-            .is_some_and(|s| !s.is_closed() && Arc::ptr_eq(&s, &editor.document.cache))
-            && self.order == editor.document.project.order
+        self.order == editor.document.state.project.order
             && self
                 .entries
                 .iter()
@@ -50,9 +46,14 @@ impl Draft {
                 .is_none_or(|metadata| {
                     metadata.groups.iter().all(|group| {
                         group.sources.first().is_some_and(|row| {
-                            editor.document.project.scan_basis().is_some_and(|basis| {
-                                basis.require_source(&row.input.development).is_ok()
-                            })
+                            editor
+                                .document
+                                .state
+                                .project
+                                .scan_basis()
+                                .is_some_and(|basis| {
+                                    basis.require_source(&row.input.development).is_ok()
+                                })
                         }) && group.sources.iter().all(|row| {
                             editor
                                 .document
@@ -67,7 +68,7 @@ impl Draft {
 
 impl Entry {
     fn current(&self, editor: &Editor) -> bool {
-        let Ok(source) = editor.document.project.source(self.source) else {
+        let Ok(source) = editor.document.state.project.source(self.source) else {
             return false;
         };
         editor
@@ -75,7 +76,8 @@ impl Entry {
             .source_path(self.source)
             .is_ok_and(|path| editor.document.file_key(&path) == self.file)
             && source.crop == self.before
-            && (editor.current_source != Some(self.source) || editor.crop == self.before)
+            && (editor.document.visit.current_source != Some(self.source)
+                || editor.document.visit.crop == self.before)
             && source.development == self.development
             && if let Some(metadata) = &self.spatial {
                 Arc::ptr_eq(metadata, &editor.document.spatial.ready())
@@ -114,9 +116,9 @@ impl Editor {
             && !self.busy
             && self.document.visit.ready.is_some()
             && self.roll_edit_available()
-            && !self.document.dust.cleanup
+            && !self.document.visit.dust.cleanup
             && self.document.analysis_review.is_none()
-            && self.removal_pending.is_none()
+            && self.document.removal_pending.is_none()
     }
 
     pub(super) fn auto_crop_valid(&self) -> bool {
@@ -132,10 +134,10 @@ impl Editor {
     pub(super) fn auto_crop_editable(&self) -> bool {
         !self.busy
             && self.fullscreen.is_none()
-            && self.pick.is_none()
+            && self.document.picking.kind.is_none()
             && self.document.visit.crop_edit.is_none()
-            && self.flat_edit.is_none()
-            && !self.document.dust.cleanup
+            && self.document.flat_edit.is_none()
+            && !self.document.visit.dust.cleanup
             && self.auto_crop_valid()
     }
 
@@ -152,12 +154,12 @@ impl Editor {
             .show(ui)
             .clicked()
         {
-            self.auto_crop_requested = Some(target);
+            self.document.auto_crop_requested = Some(target);
         }
     }
 
     pub(super) fn auto_crop_controls(&mut self, ui: &mut egui::Ui) {
-        if !self.input.capabilities().auto_crop {
+        if !self.document.input.capabilities().auto_crop {
             return;
         }
         let Some(edit) = &mut self.document.auto_crop_edit else {
@@ -246,7 +248,7 @@ impl Editor {
                 return Some("Crop proposal is out of date");
             }
             if !self.busy
-                && self.current_source == Some(id)
+                && self.document.visit.current_source == Some(id)
                 && !self.loaded_crop_source_current(id, &entry.file)
             {
                 return Some("Loaded photo no longer matches the crop proposal");
@@ -256,11 +258,11 @@ impl Editor {
     }
 
     fn loaded_crop_source_current(&self, id: SourceId, file: &thumbnails::FileKey) -> bool {
-        if self.current_source != Some(id) {
+        if self.document.visit.current_source != Some(id) {
             return true;
         }
         self.document.visit.ready.as_ref().is_some_and(|r| {
-            self.document.project.source(id).is_ok_and(|s| {
+            self.document.state.project.source(id).is_ok_and(|s| {
                 r.record.development == s.development
                     && r.area == Rect::from(s.development.active_area)
                     && &r.file == file
@@ -273,7 +275,7 @@ impl Editor {
     }
 
     fn crop_proposal(&self, id: SourceId) -> Result<Entry, Error> {
-        let source = self.document.project.source(id)?;
+        let source = self.document.state.project.source(id)?;
         let path = self.document.source_path(id)?;
         let file = self.document.file_key(&path);
         if !self.loaded_crop_source_current(id, &file) {
@@ -338,7 +340,7 @@ impl Editor {
         if self.busy || self.fullscreen.is_some() || self.document.visit.crop_edit.is_none() {
             return;
         }
-        let Some(id) = self.current_source else {
+        let Some(id) = self.document.visit.current_source else {
             return;
         };
         self.sync_document();
@@ -372,26 +374,20 @@ impl Editor {
             return;
         }
         let sources = self.auto_crop_source_ids(target);
-        self.request_spatial(
-            spatial::Consumer::AutoCrop {
-                target,
-                sources,
-                visit: self.document.visit.view,
-            },
-            cx,
-        );
+        self.request_spatial(spatial::Consumer::AutoCrop { target, sources }, cx);
     }
 
     fn auto_crop_source_ids(&self, target: Target) -> Vec<SourceId> {
         self.document
+            .state
             .project
             .order
             .iter()
             .copied()
             .filter(|id| match target {
-                Target::Photo => Some(*id) == self.current_source,
+                Target::Photo => Some(*id) == self.document.visit.current_source,
                 Target::Roll => true,
-                Target::Selected => self.roll_selection.contains(*id),
+                Target::Selected => self.document.roll_selection.contains(*id),
             })
             .collect()
     }
@@ -428,22 +424,21 @@ impl Editor {
         if attempted > 0 {
             self.finish_adjustment_layer_interaction();
             self.document.auto_crop_edit = Some(Draft {
-                document: Arc::downgrade(&self.document.cache),
-                order: self.document.project.order.clone(),
+                order: self.document.state.project.order.clone(),
                 target,
                 attempted,
                 summary: String::new(),
                 entries,
                 problems,
-                origin: self.current_source,
-                viewport: self.viewport,
-                source_view: self.source,
+                origin: self.document.visit.current_source,
+                viewport: self.document.visit.viewport,
+                source_view: self.document.source,
                 reveal_controls: true,
                 show_outline: true,
                 drag: None,
             });
-            self.viewport.fit();
-            self.last_layout = None;
+            self.document.visit.viewport.fit();
+            self.document.visit.last_layout = None;
             self.invalidate_original();
         }
         self.status = format!("Auto-crop: {count} proposed, {skipped} skipped");
@@ -548,7 +543,7 @@ impl Editor {
                         "shared region dependencies changed since the proposal",
                     ));
                 }
-                let mut candidate = self.document.project.clone();
+                let mut candidate = self.document.state.project.clone();
                 for entry in &edit.entries {
                     failed_source = Some(entry.source);
                     if !self.loaded_crop_source_current(entry.source, &entry.file) {
@@ -567,9 +562,9 @@ impl Editor {
                 Ok(candidate) => {
                     let count = edit.entries.len();
                     let before = self.history_snapshot();
-                    self.document.project = candidate;
-                    if let Some(id) = self.current_source {
-                        self.crop = self
+                    self.document.state.project = candidate;
+                    if let Some(id) = self.document.visit.current_source {
+                        self.document.visit.crop = self
                             .document
                             .project
                             .source(id)
@@ -593,13 +588,13 @@ impl Editor {
             self.status = "Auto-crop cancelled; previous crops unchanged".into();
         }
         let edit = self.document.auto_crop_edit.take().unwrap();
-        self.source = edit.source_view;
-        if !apply && self.current_source == edit.origin {
-            self.viewport = edit.viewport;
+        self.document.source = edit.source_view;
+        if !apply && self.document.visit.current_source == edit.origin {
+            self.document.visit.viewport = edit.viewport;
         } else {
-            self.viewport.fit();
+            self.document.visit.viewport.fit();
         }
-        self.last_layout = None;
+        self.document.visit.last_layout = None;
         self.invalidate_original();
     }
 }

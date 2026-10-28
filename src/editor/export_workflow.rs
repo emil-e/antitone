@@ -19,7 +19,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-/// Accepted file operations own execution independently of document/photo visits.
+/// Document-owned export continuation; physical calls keep their captured inputs.
 #[derive(Default)]
 pub(super) struct State {
     pub pending: Option<u64>,
@@ -51,11 +51,13 @@ impl Editor {
         let Some(ready) = &self.document.visit.ready else {
             return Ok(None);
         };
-        if !self.input.ready() {
+        if !self.document.input.ready() {
             return Ok(None);
         }
         self.validate_document_candidate(&self.document)?;
         let id = self
+            .document
+            .visit
             .current_source
             .ok_or_else(|| Error::Project("no accepted source for export".into()))?;
         let recipe = self.document.image_recipe(id)?;
@@ -139,15 +141,15 @@ impl Editor {
     ) {
         let id = self.request_id();
         let cancelled = Cancellation::default();
-        self.export_operation = State {
+        self.document.export_operation = State {
             pending: Some(id),
             cancelled: Some(cancelled.clone()),
             task: None,
         };
-        self.thumbnails.cancel();
+        self.document.thumbnails.cancel();
         self.busy = true;
         self.status = "Exporting…".into();
-        self.export_summary = None;
+        self.document.export_summary = None;
         self.tasks.begin(Task::Export(id));
         let total = request.photos.len();
         log::info!(
@@ -189,11 +191,11 @@ impl Editor {
             );
             return;
         };
-        self.export_operation.task = Some(task);
+        self.document.export_operation.task = Some(task);
     }
 
     pub(super) fn export_progress(&mut self, id: u64, completed: usize, total: usize) {
-        if self.export_operation.pending != Some(id) {
+        if self.document.export_operation.pending != Some(id) {
             return;
         }
         self.tasks.report(
@@ -203,10 +205,10 @@ impl Editor {
     }
 
     pub(super) fn cancel_export(&mut self, id: u64) {
-        if self.export_operation.pending != Some(id) {
+        if self.document.export_operation.pending != Some(id) {
             return;
         }
-        if let Some(cancelled) = &self.export_operation.cancelled {
+        if let Some(cancelled) = &self.document.export_operation.cancelled {
             cancelled.cancel();
         }
         log::info!(request = id; "export_cancellation_requested");
@@ -232,7 +234,7 @@ impl Editor {
     }
 
     pub(super) fn batch_result(&mut self, id: u64, summary: Summary) {
-        if self.export_operation.pending != Some(id) {
+        if self.document.export_operation.pending != Some(id) {
             return;
         }
         log::info!(
@@ -253,11 +255,14 @@ impl Editor {
                 );
             }
         }
-        self.export_operation = State::default();
+        self.document.export_operation = State::default();
         if !self.tasks.finish(TaskRequest::Export(id)) {
             // A captured batch cannot finish a newer foreground operation.
-            if summary.failed() > 0 && self.failure.is_none() && self.export_summary.is_none() {
-                self.export_summary = Some(summary);
+            if summary.failed() > 0
+                && self.failure.is_none()
+                && self.document.export_summary.is_none()
+            {
+                self.document.export_summary = Some(summary);
             }
             return;
         }
@@ -267,7 +272,7 @@ impl Editor {
                 self.status = format!("Exported {}", path.display());
             }
             self.resolve_failure(FailureKind::Export);
-            self.export_summary = Some(summary);
+            self.document.export_summary = Some(summary);
         } else if summary.total == 1 && summary.failed() == 1 {
             if let Outcome::Failed { error, .. } = &summary.outcomes[0] {
                 self.status = error.clone();
@@ -277,7 +282,7 @@ impl Editor {
             self.status = "Export cancelled".into();
         } else {
             self.status = summary.text();
-            self.export_summary = Some(summary);
+            self.document.export_summary = Some(summary);
         }
     }
 }

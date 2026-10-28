@@ -4,16 +4,29 @@ use super::*;
 fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_and_global_edits() {
     calibrated_workflow(|mut harness, _, _directory| {
         wait_settled(&mut harness);
-        harness.update(|editor| editor.viewport.zoom = Some(4.));
+        harness.update(|editor| editor.document.visit.viewport.zoom = Some(4.));
         harness.step();
-        wait_for(&mut harness, |e| e.working.support_ready());
+        wait_for(&mut harness, |e| {
+            e.document.visit.working_view.support_ready()
+        });
         harness.render().unwrap();
-        let retained = harness.read(|editor| editor.working.regional().unwrap().clone());
+        let retained = harness.read(|editor| {
+            editor
+                .document
+                .visit
+                .working_view
+                .regional()
+                .unwrap()
+                .clone()
+        });
         harness.update(|editor| {
-            editor.thumbnails.set_limits(cache_limits::CacheLimits {
-                cpu_bytes: 0,
-                gpu_bytes: 0,
-            })
+            editor
+                .document
+                .thumbnails
+                .set_limits(cache_limits::CacheLimits {
+                    cpu_bytes: 0,
+                    gpu_bytes: 0,
+                })
         });
         // Hold physical acquisition, not the UI executor or frame-bound colour work.
         let hold = crate::background::testing::pause();
@@ -25,8 +38,8 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
         .into_iter()
         .enumerate()
         {
-            let layout = harness.read(|editor| editor.last_layout.unwrap().0);
-            harness.update(|editor| editor.viewport.pan(layout, 1., delta));
+            let layout = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            harness.update(|editor| editor.document.visit.viewport.pan(layout, 1., delta));
             harness.step();
             if index == 1 {
                 stage(&mut harness, "Rendering");
@@ -52,38 +65,69 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
             });
             harness.step();
             wait_for(&mut harness, |e| {
-                e.working.displayed.as_ref().is_some_and(|r| {
-                    Some(&r.processing) == e.working.processing() && r.target == e.target
-                })
+                e.document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .is_some_and(|r| {
+                        Some(&r.processing) == e.document.visit.working_view.processing()
+                            && r.target == e.document.target
+                    })
             });
             harness.render().unwrap();
-            harness.read(|editor| assert!(!editor.working.support_ready()));
-            harness.read(|editor| assert!(!editor.working.reference_ready()));
+            harness.read(|editor| assert!(!editor.document.visit.working_view.support_ready()));
+            harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
             harness.read(|editor| {
-                assert!(editor.working.regional().unwrap().same_source_as(&retained))
+                assert!(
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .regional()
+                        .unwrap()
+                        .same_source_as(&retained)
+                )
             });
             harness.read(|editor| {
                 assert_eq!(
-                    editor.working.displayed.as_ref().unwrap().spec.frame,
-                    editor.working.current_frame().unwrap()
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .displayed
+                        .as_ref()
+                        .unwrap()
+                        .spec
+                        .frame,
+                    editor.document.visit.working_view.current_frame().unwrap()
                 )
             });
             harness.read(|editor| {
                 assert!(!Arc::ptr_eq(
-                    editor.working.displayed.as_ref().unwrap(),
-                    editor.working.regional().unwrap()
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .displayed
+                        .as_ref()
+                        .unwrap(),
+                    editor.document.visit.working_view.regional().unwrap()
                 ))
             });
             wait_for(&mut harness, |e| {
                 let input = e.scope_request().unwrap();
                 match &input {
                     scopes::ScopeInput::Rendered(view, _) => {
-                        assert!(Arc::ptr_eq(view, e.working.displayed.as_ref().unwrap()))
+                        assert!(Arc::ptr_eq(
+                            view,
+                            e.document.visit.working_view.displayed.as_ref().unwrap()
+                        ))
                     }
                     _ => panic!("scopes must share the accepted coverage composite"),
                 }
                 let settings = crate::scopes::Settings {
-                    target: e.target,
+                    target: e.document.target,
                     plot: if e.scopes.vector {
                         crate::scopes::Plot::Vector
                     } else {
@@ -106,13 +150,24 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
             harness.read(|editor| assert!(editor.document.visit.working.task.is_some()));
         }
         drop(hold);
-        wait_for(&mut harness, |e| e.working.support_ready());
+        wait_for(&mut harness, |e| {
+            e.document.visit.working_view.support_ready()
+        });
         harness.render().unwrap();
         harness.read(|editor| {
-            let acquired = editor.working.displayed.as_ref().unwrap();
+            let acquired = editor
+                .document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .unwrap();
             assert!(!acquired.same_source_as(&retained));
             assert!(
-                Arc::ptr_eq(acquired, editor.working.regional().unwrap()),
+                Arc::ptr_eq(
+                    acquired,
+                    editor.document.visit.working_view.regional().unwrap()
+                ),
                 "matching detail returns to the no-composition path"
             );
         });

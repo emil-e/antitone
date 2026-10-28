@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(feature = "ocio-reference")]
+use crate::source::SourceCache;
 
 fn flat(width: u32, height: u32) -> CameraPixels {
     CameraPixels {
@@ -41,16 +43,13 @@ fn unsupported_geometry_and_tiny_or_dark_references_abstain_instead_of_inventing
 #[test]
 fn negative_preparation_does_not_require_a_file_preview_or_an_exposure_memo() {
     let proxy_data = Arc::new(flat(96, 64));
-    let file = FileKey::new(std::path::Path::new("nonexistent-reference-source.raw"));
     let development = development();
     let prepared = proxy(
-        Some(&SourceCache::new(0)),
         &OnceLock::new(),
-        &file.path,
-        &file,
         &development,
         InputSettings::default(),
         &proxy_data,
+        Ok(None),
     );
     assert!(prepared.reference.is_none());
 }
@@ -153,21 +152,19 @@ fn source_exposure_survives_pixel_eviction_and_does_not_re_meter_a_later_proxy()
         b"not a RAW: repeated extraction must not occur",
     );
     let file = FileKey::new(path.path());
-    let store = SourceCache::new(1 << 20);
+    let store = Arc::new(SourceCache::new(1 << 20));
     let (data, reference) = control(0.7);
     store
-        .preview(&file, || Ok(Some(Arc::new(reference))))
+        .publish_preview(file.clone(), Arc::new(reference))
         .unwrap();
     let data = Arc::new(data);
     let memo = OnceLock::new();
     let prepared = proxy(
-        Some(&store),
         &memo,
-        path.path(),
-        &file,
         &development(),
         InputSettings::Digital,
         &data,
+        Ok(store.get_preview(&file)),
     );
     let initial = prepared.reference.unwrap();
     assert!((initial.ev() - 0.7).abs() < 0.025);
@@ -175,13 +172,11 @@ fn source_exposure_survives_pixel_eviction_and_does_not_re_meter_a_later_proxy()
     assert_eq!(store.charges().retained, 0);
     let changed = Arc::new(flat(96, 64));
     let prepared = proxy(
-        Some(&store),
         &memo,
-        path.path(),
-        &file,
         &development(),
         InputSettings::Digital,
         &changed,
+        Err("recorded exposure must not be recalculated".into()),
     );
     assert_eq!(prepared.reference.as_ref(), Some(&initial));
     assert_eq!(

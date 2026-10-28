@@ -62,6 +62,14 @@ impl WorkingView {
         state
     }
 
+    pub(super) fn for_visit(&self) -> Self {
+        let mut next = Self::default();
+        next.gpu = self.gpu.clone();
+        next.kernels = self.kernels.clone();
+        next.compare = self.compare;
+        next
+    }
+
     pub(super) fn observe(
         &mut self,
         authority: u64,
@@ -700,29 +708,31 @@ impl Editor {
         let pixels = frame.output.iter().fold(16usize, |bytes, dimension| {
             bytes.saturating_mul(*dimension as usize)
         });
-        if self.source {
+        if self.document.source {
             self.discard_original();
-            self.thumbnails.reserve_view(0);
+            self.document.thumbnails.reserve_view(0);
             return false;
         }
 
-        let reservation = if self.original.refining.is_some() || self.original.settled.is_none() {
+        let reservation = if self.document.visit.grade.original.refining.is_some()
+            || self.document.visit.grade.original.settled.is_none()
+        {
             pixels.saturating_mul(2).saturating_add(3 << 20)
         } else {
             pixels
         };
-        let allowed = if self.working.compare {
-            self.thumbnails.reserve_view(0);
+        let allowed = if self.document.visit.working_view.compare {
+            self.document.thumbnails.reserve_view(0);
             true
-        } else if self.original.settled.is_some() {
-            self.thumbnails.reserve_view(reservation)
+        } else if self.document.visit.grade.original.settled.is_some() {
+            self.document.thumbnails.reserve_view(reservation)
         } else {
-            self.thumbnails.reserve_view(0);
+            self.document.thumbnails.reserve_view(0);
             false
         };
         if !allowed {
             self.discard_original();
-            self.working.reference = None;
+            self.document.visit.working_view.reference = None;
         }
 
         allowed
@@ -735,102 +745,136 @@ impl Editor {
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
-        let previous = self.working.displayed.take();
+        let previous = self.document.visit.working_view.displayed.take();
         if self
-            .working
+            .document
+            .visit
+            .working_view
             .wanted
             .as_ref()
-            .is_some_and(|wanted| wanted.is_inspection() != self.source)
+            .is_some_and(|wanted| wanted.is_inspection() != self.document.source)
         {
-            self.working.retire_support();
+            self.document.visit.working_view.retire_support();
         }
-        if !self.working.enabled() {
+        if !self.document.visit.working_view.enabled() {
             return Ok(None);
         }
 
         if self.busy
             && self.document_pending.is_none()
-            && self.pick.is_none()
+            && self.document.picking.kind.is_none()
             && self.document.visit.crop_edit.is_none()
-            && self.flat_edit.is_none()
+            && self.document.flat_edit.is_none()
         {
-            let mut mailbox = self.working.mailbox.0.lock().unwrap();
+            let mut mailbox = self.document.visit.working_view.mailbox.0.lock().unwrap();
             mailbox.wanted = None;
             drop(mailbox);
 
-            if self.source && self.working.wanted.is_some() {
-                self.working
-                    .render_inspection(input, self.target, context)?;
+            if self.document.source && self.document.visit.working_view.wanted.is_some() {
+                self.document.visit.working_view.render_inspection(
+                    input,
+                    self.document.target,
+                    context,
+                )?;
             }
 
-            self.working.displayed =
-                self.working
-                    .present(frame, previous.as_ref())?
-                    .filter(|rendered| {
-                        rendered.spec.authority == self.id && rendered.target == self.target
-                    });
-            self.working.updating = !self.working.support_ready()
-                || self.working.displayed.as_ref().is_none_or(|rendered| {
-                    rendered.spec.frame != frame || rendered.processing != input.signature()
+            self.document.visit.working_view.displayed = self
+                .document
+                .visit
+                .working_view
+                .present(frame, previous.as_ref())?
+                .filter(|rendered| {
+                    rendered.spec.authority == self.id && rendered.target == self.document.target
                 });
-            return Ok(self.working.displayed.clone());
+            self.document.visit.working_view.updating =
+                !self.document.visit.working_view.support_ready()
+                    || self
+                        .document
+                        .visit
+                        .working_view
+                        .displayed
+                        .as_ref()
+                        .is_none_or(|rendered| {
+                            rendered.spec.frame != frame || rendered.processing != input.signature()
+                        });
+            return Ok(self.document.visit.working_view.displayed.clone());
         }
 
         if self.document_pending.is_some() {
             // Candidate preparation must not retire the accepted view before replacement succeeds.
-            self.working.displayed = previous;
-            return Ok(self.working.hold(self.id, self.target));
+            self.document.visit.working_view.displayed = previous;
+            return Ok(self
+                .document
+                .visit
+                .working_view
+                .hold(self.id, self.document.target));
         }
 
         if input.repairs.0.is_empty()
-            && (self.pick.is_some()
-                || self.document.pick_return.is_some()
+            && (self.document.picking.kind.is_some()
+                || self.document.picking.return_to.is_some()
                 || self.document.visit.crop_edit.is_some()
-                || self.flat_edit.is_some())
+                || self.document.flat_edit.is_some())
         {
-            self.working.clear();
+            self.document.visit.working_view.clear();
             return Ok(None);
         }
 
         let Some(ready) = &self.document.visit.ready else {
-            self.working.clear();
+            self.document.visit.working_view.clear();
             return Ok(None);
         };
 
         let source_input = self.source_context().expect("ready working source");
-        if self.source {
+        if self.document.source {
             let matrix = glam::DMat3::from_cols_array_2d(&ready.record.development.camera_to_ap1);
             let spec = ViewSourceSpec::inspection(
                 self.id,
                 frame,
                 matrix,
-                self.correction
+                self.document
+                    .correction
                     .as_ref()
                     .map(|correction| correction.gpu.field().clone()),
             )?;
             self.request_working(spec, source_input, cx);
-            self.working
-                .render_inspection(input, self.target, context)?;
-            self.working.reference = None;
+            self.document.visit.working_view.render_inspection(
+                input,
+                self.document.target,
+                context,
+            )?;
+            self.document.visit.working_view.reference = None;
 
-            self.working.displayed =
-                self.working
-                    .present(frame, previous.as_ref())?
-                    .filter(|rendered| {
-                        rendered.spec.authority == self.id && rendered.target == self.target
-                    });
-            self.working.updating |= self.working.displayed.as_ref().is_none_or(|rendered| {
-                self.working
-                    .wanted
-                    .as_ref()
-                    .is_none_or(|wanted| !rendered.matches(wanted, &input.signature(), self.target))
-            });
-            return Ok(self.working.displayed.clone());
+            self.document.visit.working_view.displayed = self
+                .document
+                .visit
+                .working_view
+                .present(frame, previous.as_ref())?
+                .filter(|rendered| {
+                    rendered.spec.authority == self.id && rendered.target == self.document.target
+                });
+            self.document.visit.working_view.updating |= self
+                .document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .is_none_or(|rendered| {
+                    self.document
+                        .visit
+                        .working_view
+                        .wanted
+                        .as_ref()
+                        .is_none_or(|wanted| {
+                            !rendered.matches(wanted, &input.signature(), self.document.target)
+                        })
+                });
+            return Ok(self.document.visit.working_view.displayed.clone());
         }
 
         let base_input = self.input();
         if base_input.is_negative() && base_input.calibration().is_none() {
-            self.working.clear();
+            self.document.visit.working_view.clear();
             return Ok(None);
         }
         let settings = match base_input.calibration() {
@@ -847,35 +891,53 @@ impl Editor {
             frame,
             settings,
             matrix,
-            self.correction
+            self.document
+                .correction
                 .as_ref()
                 .map(|correction| correction.gpu.field().clone()),
         )?
         .with_repairs(input.repairs.clone())
         .with_support(input.pixel_pipeline()?.support([1., 1.])?);
         self.request_working(spec, source_input, cx);
-        self.working.render(input, self.target, context)?;
+        self.document
+            .visit
+            .working_view
+            .render(input, self.document.target, context)?;
 
-        self.working.reference = self
+        self.document.visit.working_view.reference = self
             .original_rendered(OriginalPurpose::Reference, input, matrix)?
             .filter(|rendered| rendered.spec.frame == frame);
 
-        self.working.displayed =
-            self.working
-                .present(frame, previous.as_ref())?
-                .filter(|rendered| {
-                    rendered.spec.authority == self.id && rendered.target == self.target
-                });
-        self.working.updating |= self.working.displayed.as_ref().is_none_or(|rendered| {
-            self.working
-                .wanted
-                .as_ref()
-                .is_none_or(|wanted| !rendered.matches(wanted, &input.signature(), self.target))
-        });
-        if self.working.displayed.is_none() && self.working.error.is_none() {
+        self.document.visit.working_view.displayed = self
+            .document
+            .visit
+            .working_view
+            .present(frame, previous.as_ref())?
+            .filter(|rendered| {
+                rendered.spec.authority == self.id && rendered.target == self.document.target
+            });
+        self.document.visit.working_view.updating |= self
+            .document
+            .visit
+            .working_view
+            .displayed
+            .as_ref()
+            .is_none_or(|rendered| {
+                self.document
+                    .visit
+                    .working_view
+                    .wanted
+                    .as_ref()
+                    .is_none_or(|wanted| {
+                        !rendered.matches(wanted, &input.signature(), self.document.target)
+                    })
+            });
+        if self.document.visit.working_view.displayed.is_none()
+            && self.document.visit.working_view.error.is_none()
+        {
             context.request_repaint_after(Duration::from_millis(16));
         }
 
-        Ok(self.working.displayed.clone())
+        Ok(self.document.visit.working_view.displayed.clone())
     }
 }

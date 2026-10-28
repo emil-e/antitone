@@ -60,7 +60,7 @@ fn demand(
             composition,
         ),
     );
-    e.original.last_edit = Instant::now() - Duration::from_secs(1);
+    e.document.visit.grade.original.last_edit = Instant::now() - Duration::from_secs(1);
     e.request_original(
         &input,
         OutputTarget::Srgb,
@@ -78,13 +78,15 @@ fn original_reconstruction_finishes_without_backend_or_another_paint() {
         app.enter(|e, access| {
             demand(e, 0., access);
         });
-        app.run_until(Duration::from_secs(15), |e| e.original.settled.is_some());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.grade.original.settled.is_some()
+        });
         app.read(|e| {
-            let (revision, view, image) = e.original.settled.as_ref().unwrap();
-            assert_eq!(*revision, e.original.revision());
+            let (revision, view, image) = e.document.visit.grade.original.settled.as_ref().unwrap();
+            assert_eq!(*revision, e.document.visit.grade.original.revision());
             assert_eq!(view.output, [16, 12]);
             assert_eq!(image.processing_byte_len(), (0, 0));
-            assert!(e.original.refining.is_none());
+            assert!(e.document.visit.grade.original.refining.is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -108,13 +110,15 @@ fn rapid_output_demand_drops_queued_inputs_and_only_latest_reconstruction_can_pu
                 .all(|source| source.upgrade().is_none()),
             "queued physical jobs must not retain every slider snapshot"
         );
-        app.read(|e| assert!(e.original.settled.is_none()));
+        app.read(|e| assert!(e.document.visit.grade.original.settled.is_none()));
         drop(hold);
-        app.run_until(Duration::from_secs(15), |e| e.original.settled.is_some());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.grade.original.settled.is_some()
+        });
         app.read(|e| {
             assert_eq!(
-                e.original.settled.as_ref().unwrap().0,
-                e.original.revision()
+                e.document.visit.grade.original.settled.as_ref().unwrap().0,
+                e.document.visit.grade.original.revision()
             )
         });
     });
@@ -128,7 +132,7 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
     with_application(e, |app| {
         let (old, resource) = app.enter(|e, access| {
             let resource = demand(e, 0., access);
-            (e.original.revision(), resource)
+            (e.document.visit.grade.original.revision(), resource)
         });
         app.pump();
         app.update(|e| e.replace_photo_scope(8));
@@ -138,13 +142,28 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
         app.enter(|e, access| {
             demand(e, 0.2, access);
         });
-        app.run_until(Duration::from_secs(15), |e| e.original.settled.is_some());
-        let image = app.read(|e| e.original.settled.as_ref().unwrap().2.clone());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.grade.original.settled.is_some()
+        });
+        let image = app.read(|e| {
+            e.document
+                .visit
+                .grade
+                .original
+                .settled
+                .as_ref()
+                .unwrap()
+                .2
+                .clone()
+        });
         app.update(|e| e.original_result(old, Err("retired".into())));
         app.read(|e| {
             assert_eq!(e.document.visit.view, 8);
-            assert!(Arc::ptr_eq(&image, &e.original.settled.as_ref().unwrap().2));
-            assert!(e.original.refinement_error.is_none());
+            assert!(Arc::ptr_eq(
+                &image,
+                &e.document.visit.grade.original.settled.as_ref().unwrap().2
+            ));
+            assert!(e.document.visit.grade.original.refinement_error.is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -161,7 +180,7 @@ fn leaving_a_purpose_releases_input_before_worker_dispatch() {
         app.pump();
         assert!(source.upgrade().is_none());
         app.read(|e| {
-            assert!(e.original.refining.is_none());
+            assert!(e.document.visit.grade.original.refining.is_none());
             assert!(e.document.visit.grade.task.is_none());
         });
         drop(hold);
@@ -206,12 +225,14 @@ fn retired_running_original_keeps_its_source_until_the_submitted_unit_returns() 
             "the replacement cannot submit while the retired physical unit is held"
         );
         release.send(()).unwrap();
-        app.run_until(Duration::from_secs(15), |e| e.original.settled.is_some());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.grade.original.settled.is_some()
+        });
         assert!(source.upgrade().is_none());
         app.read(|e| {
             assert_eq!(
-                e.original.settled.as_ref().unwrap().0,
-                e.original.revision()
+                e.document.visit.grade.original.settled.as_ref().unwrap().0,
+                e.document.visit.grade.original.revision()
             );
         });
     });
@@ -248,7 +269,7 @@ fn malformed_original_request_latches_error_and_retires_its_demand() {
                     composition,
                 ),
             );
-            e.original.last_edit = Instant::now() - Duration::from_secs(1);
+            e.document.visit.grade.original.last_edit = Instant::now() - Duration::from_secs(1);
             e.request_original(
                 &input,
                 OutputTarget::Srgb,
@@ -258,11 +279,11 @@ fn malformed_original_request_latches_error_and_retires_its_demand() {
             );
         });
         app.run_until(Duration::from_secs(15), |e| {
-            e.original.refinement_error.is_some()
+            e.document.visit.grade.original.refinement_error.is_some()
         });
         app.read(|e| {
-            assert!(e.original.settled.is_none());
-            assert!(e.original.refining.is_none());
+            assert!(e.document.visit.grade.original.settled.is_none());
+            assert!(e.document.visit.grade.original.refining.is_none());
             assert!(e.status.starts_with("Original view failed:"));
         });
     });

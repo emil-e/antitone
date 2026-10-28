@@ -53,11 +53,11 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
     let context = egui::Context::default();
     frame(&mut editor, &context, Some(false), vec![]);
     frame(&mut editor, &context, Some(false), vec![]);
-    let viewport = editor.viewport;
+    let viewport = editor.document.visit.viewport;
     let preferences = editor.preferences.clone();
-    let project = editor.document.project.clone();
+    let project = editor.document.state.project.clone();
     let before = (
-        editor.source,
+        editor.document.source,
         editor.source_exposure,
         editor.source_white_balance,
         editor.tab,
@@ -84,8 +84,8 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
     assert!(labels.iter().any(|(label, _)| label == "Exit fullscreen"));
     let fullscreen_size = egui::vec2(1920., 1080.);
     frame_with_size(&mut editor, &context, Some(false), fullscreen_size, vec![]);
-    editor.viewport.fit();
-    editor.source = !editor.source;
+    editor.document.visit.viewport.fit();
+    editor.document.source = !editor.document.source;
     editor.source_exposure = 2.;
     editor.source_white_balance = crate::raw::SourceWhiteBalance::AsShot;
     frame_with_size(
@@ -103,10 +103,10 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
     editor.fullscreen_changed(false);
     frame(&mut editor, &context, Some(false), vec![]);
     assert!(editor.fullscreen.is_none());
-    assert_eq!(editor.viewport, viewport);
+    assert_eq!(editor.document.visit.viewport, viewport);
     assert_eq!(
         (
-            editor.source,
+            editor.document.source,
             editor.source_exposure,
             editor.source_white_balance,
             editor.tab
@@ -114,7 +114,7 @@ fn fullscreen_hides_workspace_and_restores_view_after_window_return() {
         before
     );
     assert_eq!(editor.preferences, preferences);
-    assert_eq!(editor.document.project, project);
+    assert_eq!(editor.document.state.project, project);
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn requested_exit_waits_for_host_acknowledgement_and_accepts_os_adjusted_bounds(
     let mut editor = ready();
     let context = egui::Context::default();
     frame(&mut editor, &context, Some(false), vec![]);
-    let viewport = editor.viewport;
+    let viewport = editor.document.visit.viewport;
     frame(&mut editor, &context, Some(false), key(egui::Key::F));
     let fullscreen_size = egui::vec2(1920., 1080.);
     frame_with_size(&mut editor, &context, Some(true), fullscreen_size, vec![]);
@@ -154,7 +154,7 @@ fn requested_exit_waits_for_host_acknowledgement_and_accepts_os_adjusted_bounds(
         vec![],
     );
     assert!(editor.fullscreen.is_none());
-    assert_eq!(editor.viewport, viewport);
+    assert_eq!(editor.document.visit.viewport, viewport);
     assert_eq!(editor.source_exposure, 0.);
 }
 
@@ -170,15 +170,15 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
             editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
         }
         frame(&mut editor, &context, Some(false), vec![]);
-        let viewport = editor.viewport;
-        let project = editor.document.project.clone();
+        let viewport = editor.document.visit.viewport;
+        let project = editor.document.state.project.clone();
         let draft = editor
             .document
             .visit
             .crop_edit
             .as_ref()
             .map(|edit| edit.draft);
-        let pick = editor.pick;
+        let pick = editor.document.picking.kind;
         frame(&mut editor, &context, Some(false), key(egui::Key::F));
         frame(&mut editor, &context, Some(true), vec![]);
         frame(&mut editor, &context, Some(true), key(egui::Key::Enter));
@@ -191,12 +191,12 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
                 .map(|edit| edit.draft),
             draft
         );
-        assert_eq!(editor.pick, pick);
+        assert_eq!(editor.document.picking.kind, pick);
         frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
         editor.fullscreen_changed(false);
         frame(&mut editor, &context, Some(false), vec![]);
         assert!(editor.fullscreen.is_none());
-        assert_eq!(editor.viewport, viewport);
+        assert_eq!(editor.document.visit.viewport, viewport);
         assert_eq!(
             editor
                 .document
@@ -206,8 +206,8 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
                 .map(|edit| edit.draft),
             draft
         );
-        assert_eq!(editor.pick, pick);
-        assert_eq!(editor.document.project, project);
+        assert_eq!(editor.document.picking.kind, pick);
+        assert_eq!(editor.document.state.project, project);
     }
 }
 
@@ -217,7 +217,7 @@ fn preexisting_native_fullscreen_is_not_changed_by_photo_only_viewing() {
         let mut editor = ready();
         let context = egui::Context::default();
         frame(&mut editor, &context, Some(native_before), vec![]);
-        let viewport = editor.viewport;
+        let viewport = editor.document.visit.viewport;
         frame(
             &mut editor,
             &context,
@@ -240,7 +240,7 @@ fn preexisting_native_fullscreen_is_not_changed_by_photo_only_viewing() {
         editor.fullscreen_changed(false);
         frame(&mut editor, &context, Some(native_before), vec![]);
         assert!(editor.fullscreen.is_none());
-        assert_eq!(editor.viewport, viewport);
+        assert_eq!(editor.document.visit.viewport, viewport);
     }
 }
 
@@ -251,12 +251,12 @@ fn a_changed_source_retires_fullscreen_without_restoring_the_old_source_view() {
     frame(&mut editor, &context, Some(false), vec![]);
     frame(&mut editor, &context, Some(false), key(egui::Key::F));
     editor.id += 1;
-    editor.viewport.zoom = Some(3.);
+    editor.document.visit.viewport.zoom = Some(3.);
     editor.source_exposure = 5.;
     frame(&mut editor, &context, Some(false), vec![]);
     assert!(editor.fullscreen.is_none());
     assert!(!editor.fullscreen_requested());
-    assert_eq!(editor.viewport.zoom, Some(3.));
+    assert_eq!(editor.document.visit.viewport.zoom, Some(3.));
     assert_eq!(editor.source_exposure, 5.);
 }
 

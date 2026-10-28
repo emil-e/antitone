@@ -158,101 +158,60 @@ impl MaskDraft {
     }
 }
 
-pub(super) struct State {
-    selected: HashMap<SourceId, RepairId>,
-    cached: HashMap<(SourceId, RepairId), Cached>,
-    preview_cached: HashMap<(SourceId, RepairId), Cached>,
-    failed: HashMap<(SourceId, RepairId), Failed>,
-    pending: Option<Pending>,
+pub(super) struct Interaction {
     mask_draft: Option<MaskDraft>,
     pub brush_size: u32,
     brush_source: Option<SourceId>,
     pub cleanup: bool,
+    pending: Option<Pending>,
     reveal_controls: bool,
     pub show_masks: bool,
     pub donor_draft: Option<DonorDraft>,
     pub render_error: Option<String>,
-    searches: search::State,
     gpu: HashMap<RepairId, Arc<crate::gpu::repairs::Patch>>,
 }
 
-impl Default for State {
+impl Default for Interaction {
     fn default() -> Self {
         Self {
-            selected: HashMap::new(),
-            cached: HashMap::new(),
-            preview_cached: HashMap::new(),
-            failed: HashMap::new(),
-            pending: None,
             mask_draft: None,
             brush_size: 12,
             brush_source: None,
             cleanup: false,
+            pending: None,
             reveal_controls: false,
-            show_masks: true,
+            show_masks: false,
             donor_draft: None,
             render_error: None,
-            searches: search::State::default(),
             gpu: HashMap::new(),
         }
     }
 }
 
-impl Drop for State {
+#[derive(Default)]
+pub(super) struct State {
+    selected: HashMap<SourceId, RepairId>,
+    cached: HashMap<(SourceId, RepairId), Cached>,
+    preview_cached: HashMap<(SourceId, RepairId), Cached>,
+    failed: HashMap<(SourceId, RepairId), Failed>,
+    searches: search::State,
+}
+
+impl Drop for Pending {
     fn drop(&mut self) {
-        if let Some(pending) = &self.pending {
-            pending
-                .evaluation
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
+        self.evaluation
+            .cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
-impl State {
-    pub(super) fn attach_task(&mut self, request: u64, task: async_executor::Task<()>) {
-        if let Some(pending) = self
-            .pending
-            .as_mut()
-            .filter(|p| p.evaluation.request == request)
-        {
-            pending.task = Some(task);
-        }
-    }
-
-    pub(super) fn history_draft(&self) -> bool {
-        self.mask_draft.is_some() || self.donor_draft.is_some() || !self.searches.is_empty()
-    }
-
-    #[cfg(test)]
-    pub(super) fn pending_request(&self) -> Option<u64> {
-        self.pending
-            .as_ref()
-            .map(|pending| pending.evaluation.request)
-    }
-
-    #[cfg(test)]
-    pub(super) fn has_evaluation(&self, source: SourceId, repair: RepairId) -> bool {
-        self.cached.contains_key(&(source, repair))
-    }
-
-    #[cfg(all(test, feature = "ui-tests"))]
-    pub(super) fn has_failed_evaluation(&self, source: SourceId, repair: RepairId) -> bool {
-        self.failed.contains_key(&(source, repair))
-    }
-
-    pub(super) fn release_gpu(&mut self) {
+impl Interaction {
+    fn reset_repairs(&mut self) {
+        self.pending = None;
+        self.mask_draft = None;
+        self.donor_draft = None;
         self.gpu.clear();
         self.render_error = None;
-    }
-
-    fn repair_changed(&mut self, source: SourceId, repair: RepairId, accepted: &RepairSet) {
-        self.failed.remove(&(source, repair));
-        if let Some(preview) = self.preview_cached.remove(&(source, repair))
-            && accepted.repairs().contains(&preview.repair)
-        {
-            self.cached.insert((source, repair), preview);
-        }
     }
 
     fn removed(&mut self, source: SourceId, repair: RepairId) {
@@ -265,11 +224,137 @@ impl State {
                 .cancelled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
+        self.gpu.remove(&repair);
+    }
+
+    pub(super) fn attach_task(&mut self, request: u64, task: async_executor::Task<()>) {
+        if let Some(pending) = self
+            .pending
+            .as_mut()
+            .filter(|p| p.evaluation.request == request)
+        {
+            pending.task = Some(task);
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_request(&self) -> Option<u64> {
+        self.pending
+            .as_ref()
+            .map(|pending| pending.evaluation.request)
+    }
+
+    fn start(&mut self, request: &Request) {
+        if let Some(pending) = &self.pending {
+            pending
+                .evaluation
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.pending = Some(Pending {
+            evaluation: request.clone(),
+            task: None,
+        });
+    }
+
+    fn accept(
+        &mut self,
+        response: Response,
+        expected: Option<&Repair>,
+        accepted: bool,
+        retained: &mut State,
+    ) -> bool {
+        let Some(pending) = self
+            .pending
+            .take_if(|p| p.evaluation.request == response.request)
+        else {
+            return false;
+        };
+        if pending
+            .evaluation
+            .cancelled
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || pending.evaluation.request != response.request
+            || pending.evaluation.loaded != response.loaded
+            || pending.evaluation.source != response.source
+            || pending.evaluation.signature != response.signature
+            || pending.evaluation.repair != response.repair
+            || expected != Some(&pending.evaluation.repair)
+        {
+            return false;
+        }
+        retained
+            .failed
+            .remove(&(response.source, response.repair.id));
+        let cache = if accepted {
+            &mut retained.cached
+        } else {
+            &mut retained.preview_cached
+        };
+        cache.insert(
+            (response.source, response.repair.id),
+            Cached {
+                loaded: response.loaded,
+                signature: response.signature,
+                repair: response.repair,
+                bound: repair_bound(&response.evaluated),
+                evaluated: response.evaluated,
+            },
+        );
+        true
+    }
+
+    fn fail(&mut self, request: u64, retained: &mut State) -> bool {
+        let Some(pending) = self
+            .pending
+            .take_if(|pending| pending.evaluation.request == request)
+        else {
+            return false;
+        };
+        if pending
+            .evaluation
+            .cancelled
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return false;
+        }
+        retained.failed.insert(
+            (pending.evaluation.source, pending.evaluation.repair.id),
+            Failed {
+                loaded: pending.evaluation.loaded,
+                signature: pending.evaluation.signature,
+                repair: pending.evaluation.repair.clone(),
+            },
+        );
+        true
+    }
+}
+
+impl State {
+    #[cfg(test)]
+    pub(super) fn has_evaluation(&self, source: SourceId, repair: RepairId) -> bool {
+        self.cached.contains_key(&(source, repair))
+    }
+
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn has_failed_evaluation(&self, source: SourceId, repair: RepairId) -> bool {
+        self.failed.contains_key(&(source, repair))
+    }
+
+    fn repair_changed(&mut self, source: SourceId, repair: RepairId, accepted: &RepairSet) {
+        self.failed.remove(&(source, repair));
+        if let Some(preview) = self.preview_cached.remove(&(source, repair))
+            && accepted.repairs().contains(&preview.repair)
+        {
+            self.cached.insert((source, repair), preview);
+        }
+    }
+
+    fn removed(&mut self, source: SourceId, repair: RepairId) {
         if self.selected.get(&source) == Some(&repair) {
             self.selected.remove(&source);
         }
         self.cached.remove(&(source, repair));
-        self.gpu.remove(&repair);
         self.preview_cached.remove(&(source, repair));
         self.failed.remove(&(source, repair));
         self.searches.cancel_target(source, repair);
@@ -282,19 +367,6 @@ impl State {
             .retain(|(candidate, _), _| *candidate != source);
         self.failed.retain(|(candidate, _), _| *candidate != source);
         self.searches.cancel_source(source);
-        if let Some(pending) = self
-            .pending
-            .take_if(|pending| pending.evaluation.source == source)
-        {
-            pending
-                .evaluation
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        self.mask_draft = None;
-        self.donor_draft = None;
-        self.gpu.clear();
-        self.render_error = None;
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
@@ -330,9 +402,6 @@ impl State {
         signature: Signature,
         repairs: &[Repair],
     ) -> Option<Repair> {
-        if self.pending.is_some() {
-            return None;
-        }
         let repair = repairs
             .iter()
             .filter(|repair| repair.enabled)
@@ -356,83 +425,6 @@ impl State {
             })?
             .clone();
         Some(repair)
-    }
-
-    fn start(&mut self, request: &Request) {
-        if let Some(pending) = &self.pending {
-            pending
-                .evaluation
-                .cancelled
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        self.pending = Some(Pending {
-            evaluation: request.clone(),
-            task: None,
-        });
-    }
-
-    fn accept(&mut self, response: Response, expected: Option<&Repair>, accepted: bool) -> bool {
-        let Some(pending) = self
-            .pending
-            .take_if(|p| p.evaluation.request == response.request)
-        else {
-            return false;
-        };
-        if pending
-            .evaluation
-            .cancelled
-            .load(std::sync::atomic::Ordering::Relaxed)
-            || pending.evaluation.request != response.request
-            || pending.evaluation.loaded != response.loaded
-            || pending.evaluation.source != response.source
-            || pending.evaluation.signature != response.signature
-            || pending.evaluation.repair != response.repair
-            || expected != Some(&pending.evaluation.repair)
-        {
-            return false;
-        }
-        self.failed.remove(&(response.source, response.repair.id));
-        let cache = if accepted {
-            &mut self.cached
-        } else {
-            &mut self.preview_cached
-        };
-        cache.insert(
-            (response.source, response.repair.id),
-            Cached {
-                loaded: response.loaded,
-                signature: response.signature,
-                repair: response.repair,
-                bound: repair_bound(&response.evaluated),
-                evaluated: response.evaluated,
-            },
-        );
-        true
-    }
-
-    fn fail(&mut self, request: u64) -> bool {
-        let Some(pending) = self
-            .pending
-            .take_if(|pending| pending.evaluation.request == request)
-        else {
-            return false;
-        };
-        if pending
-            .evaluation
-            .cancelled
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            return false;
-        }
-        self.failed.insert(
-            (pending.evaluation.source, pending.evaluation.repair.id),
-            Failed {
-                loaded: pending.evaluation.loaded,
-                signature: pending.evaluation.signature,
-                repair: pending.evaluation.repair,
-            },
-        );
-        true
     }
 }
 
@@ -747,8 +739,15 @@ fn repair_outline_hit(
 }
 
 impl Editor {
+    pub(super) fn dust_history_draft(&self) -> bool {
+        self.document.visit.dust.mask_draft.is_some()
+            || self.document.visit.dust.donor_draft.is_some()
+            || !self.document.dust.searches.is_empty()
+    }
+
     pub(super) fn dust_repairs(&self, source: SourceId) -> Option<&RepairSet> {
         self.document
+            .state
             .project
             .source(source)
             .ok()
@@ -766,14 +765,14 @@ impl Editor {
     }
 
     pub(super) fn dust_render_state(&self) -> &'static str {
-        if self.source {
+        if self.document.source {
             return "Repairs hidden";
         }
-        if self.document.dust.render_error.is_some() {
+        if self.document.visit.dust.render_error.is_some() {
             return "Repair unavailable";
         }
 
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return "Repairs pending";
         };
         let Some(signature) = self.dust_signature() else {
@@ -849,18 +848,21 @@ impl Editor {
         let before = self.history_snapshot();
         self.dust_repairs_mut(source).clear();
         self.document.dust.clear_repairs(source);
+        if self.document.visit.current_source == Some(source) {
+            self.document.visit.dust.reset_repairs();
+        }
         self.record_edit(before, "Reset Dust repairs", Some(source));
     }
 
     pub(super) fn dust_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         use presentation::ToolIdentity;
-        if !self.document.dust.cleanup {
+        if !self.document.visit.dust.cleanup {
             return;
         }
-        if std::mem::take(&mut self.document.dust.reveal_controls) {
+        if std::mem::take(&mut self.document.visit.dust.reveal_controls) {
             ui.scroll_to_cursor(Some(egui::Align::Min));
         }
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return;
         };
         let repair_count = self
@@ -875,8 +877,8 @@ impl Editor {
             .is_some();
         let available = !self.busy
             && self.document.visit.ready.is_some()
-            && self.pick.is_none()
-            && self.document.dust.donor_draft.is_none();
+            && self.document.picking.kind.is_none()
+            && self.document.visit.dust.donor_draft.is_none();
         let mut reset_repairs = false;
         ToolIdentity {
             icon: icons::Icon::Dust,
@@ -901,25 +903,25 @@ impl Editor {
                     ui.label("Brush size")
                         .on_hover_text("Diameter in source pixels.");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.weak(format!("{} px", self.document.dust.brush_size));
+                        ui.weak(format!("{} px", self.document.visit.dust.brush_size));
                     });
                 });
                 ui.scope(|ui| {
                     ui.spacing_mut().slider_width = ui.available_width();
                     ui.add(
-                        egui::Slider::new(&mut self.document.dust.brush_size, 1..=128)
+                        egui::Slider::new(&mut self.document.visit.dust.brush_size, 1..=128)
                             .show_value(false)
                             .step_by(1.),
                     );
                 });
-                if let Some(error) = &self.document.dust.render_error {
+                if let Some(error) = &self.document.visit.dust.render_error {
                     ui.small("A repair is outside the current grade's GPU range.")
                         .on_hover_text(error);
                 }
-                ui.checkbox(&mut self.document.dust.show_masks, "Show repair outlines")
+                ui.checkbox(&mut self.document.visit.dust.show_masks, "Show repair outlines")
                     .on_hover_text("Hold H for a momentary unobstructed preview.");
                 let rejected = self.document
-                    .dust
+                    .visit.dust
                     .mask_draft
                     .as_ref()
                     .is_some_and(|draft| draft.rejected);
@@ -963,7 +965,10 @@ impl Editor {
         canvas_input: bool,
         panning: bool,
     ) {
-        if !self.document.dust.cleanup || self.tab != 1 || self.fullscreen.is_some() || self.source
+        if !self.document.visit.dust.cleanup
+            || self.tab != 1
+            || self.fullscreen.is_some()
+            || self.document.source
         {
             return;
         }
@@ -985,9 +990,9 @@ impl Editor {
         let allowed = canvas_input
             && !panning
             && !self.busy
-            && self.pick.is_none()
+            && self.document.picking.kind.is_none()
             && self.document.visit.crop_edit.is_none()
-            && self.flat_edit.is_none()
+            && self.document.flat_edit.is_none()
             && self.document.analysis_review.is_none()
             && ui.is_enabled()
             && !ui.input(|i| i.key_down(egui::Key::Space));
@@ -999,7 +1004,7 @@ impl Editor {
                 .flatten()
                 .or_else(|| response.interact_pointer_pos());
             if (started || clicked)
-                && self.document.dust.mask_draft.is_none()
+                && self.document.visit.dust.mask_draft.is_none()
                 && !self.dust_donor_dragging()
                 && let Some(point) = start.filter(|p| geometry.image.contains(*p))
             {
@@ -1016,7 +1021,7 @@ impl Editor {
                 } else {
                     self.begin_dust_mask(None);
                 }
-                if self.document.dust.mask_draft.is_some() {
+                if self.document.visit.dust.mask_draft.is_some() {
                     self.begin_dust_stroke();
                     self.paint_dust_stroke(geometry, point, modifies.alt);
                 }
@@ -1026,7 +1031,7 @@ impl Editor {
             {
                 if self.dust_donor_dragging() {
                     self.drag_dust_donor(geometry, point);
-                } else if self.document.dust.mask_draft.is_some() {
+                } else if self.document.visit.dust.mask_draft.is_some() {
                     self.paint_dust_stroke(geometry, point, modifies.alt);
                 }
             }
@@ -1046,55 +1051,55 @@ impl Editor {
             return;
         }
         self.finish_adjustment_layer_interaction();
-        if self.document.dust.brush_source != self.current_source
+        if self.document.visit.dust.brush_source != self.document.visit.current_source
             && let (Some(source), Some(active)) = (
-                self.current_source,
+                self.document.visit.current_source,
                 self.document.visit.ready.as_ref().map(|ready| ready.area),
             )
         {
-            self.document.dust.brush_size = initial_brush_size(active);
-            self.document.dust.brush_source = Some(source);
+            self.document.visit.dust.brush_size = initial_brush_size(active);
+            self.document.visit.dust.brush_source = Some(source);
         }
-        self.document.dust.cleanup = true;
-        self.document.dust.reveal_controls = true;
-        self.document.dust.show_masks = true;
+        self.document.visit.dust.cleanup = true;
+        self.document.visit.dust.reveal_controls = true;
+        self.document.visit.dust.show_masks = true;
     }
 
     pub(super) fn finish_dust_cleanup(&mut self) {
         self.cancel_dust_mask();
-        self.document.dust.cleanup = false;
-        self.document.dust.show_masks = false;
-        self.document.dust.donor_draft = None;
+        self.document.visit.dust.cleanup = false;
+        self.document.visit.dust.show_masks = false;
+        self.document.visit.dust.donor_draft = None;
     }
 
     pub(super) fn begin_dust_mask(&mut self, target: Option<RepairId>) {
-        if let (Some(source), Some(repair)) = (self.current_source, target)
+        if let (Some(source), Some(repair)) = (self.document.visit.current_source, target)
             && self.document.dust.searches.has_target(source, repair)
         {
             self.status = "Wait for this repair's donor search before editing its mask".into();
             return;
         }
-        self.document.dust.cleanup = true;
-        self.document.dust.show_masks = true;
-        self.document.dust.donor_draft = None;
+        self.document.visit.dust.cleanup = true;
+        self.document.visit.dust.show_masks = true;
+        self.document.visit.dust.donor_draft = None;
         let support = target.and_then(|id| {
-            let source = self.current_source?;
+            let source = self.document.visit.current_source?;
             self.dust_repairs(source)?
                 .repairs()
                 .iter()
                 .find(|repair| repair.id == id)
                 .map(|repair| repair.support.clone())
         });
-        self.document.dust.mask_draft = Some(MaskDraft::new(target, support.as_ref()));
+        self.document.visit.dust.mask_draft = Some(MaskDraft::new(target, support.as_ref()));
     }
 
     pub(super) fn cancel_dust_mask(&mut self) {
-        self.document.dust.mask_draft = None;
-        self.document.dust.donor_draft = None;
+        self.document.visit.dust.mask_draft = None;
+        self.document.visit.dust.donor_draft = None;
     }
 
     pub(super) fn selected_dust_repair(&self) -> Option<RepairId> {
-        let source = self.current_source?;
+        let source = self.document.visit.current_source?;
         self.document
             .dust
             .selected
@@ -1107,7 +1112,7 @@ impl Editor {
     }
 
     pub(super) fn commit_dust_mask(&mut self) {
-        let Some(draft) = self.document.dust.mask_draft.as_ref() else {
+        let Some(draft) = self.document.visit.dust.mask_draft.as_ref() else {
             return;
         };
         let target = draft.target;
@@ -1126,7 +1131,7 @@ impl Editor {
         ui: &egui::Ui,
         geometry: crate::viewport::CanvasLayout,
     ) {
-        if !self.document.dust.cleanup || self.source {
+        if !self.document.visit.dust.cleanup || self.document.source {
             return;
         }
         let delta = ui.input_mut(|input| {
@@ -1157,19 +1162,29 @@ impl Editor {
             return;
         }
         let step = ((delta.abs() / 12.).round() as u32).max(1);
-        self.document.dust.brush_size = if delta > 0. {
-            self.document.dust.brush_size.saturating_add(step).min(128)
+        self.document.visit.dust.brush_size = if delta > 0. {
+            self.document
+                .visit
+                .dust
+                .brush_size
+                .saturating_add(step)
+                .min(128)
         } else {
-            self.document.dust.brush_size.saturating_sub(step).max(1)
+            self.document
+                .visit
+                .dust
+                .brush_size
+                .saturating_sub(step)
+                .max(1)
         };
     }
 
     pub(super) fn apply_dust_mask(&mut self) {
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             self.cancel_dust_mask();
             return;
         };
-        let Some(draft) = &self.document.dust.mask_draft else {
+        let Some(draft) = &self.document.visit.dust.mask_draft else {
             return;
         };
         if draft.rejected {
@@ -1230,7 +1245,7 @@ impl Editor {
     }
 
     pub(super) fn begin_dust_stroke(&mut self) {
-        if let Some(draft) = &mut self.document.dust.mask_draft {
+        if let Some(draft) = &mut self.document.visit.dust.mask_draft {
             draft.clear_stroke();
         }
     }
@@ -1245,11 +1260,12 @@ impl Editor {
             self.end_dust_stroke();
             return;
         };
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return;
         };
         if self
             .document
+            .visit
             .dust
             .mask_draft
             .as_ref()
@@ -1259,6 +1275,7 @@ impl Editor {
         }
         let Some(target) = self
             .document
+            .visit
             .dust
             .mask_draft
             .as_ref()
@@ -1277,9 +1294,9 @@ impl Editor {
         let active = self.document.visit.ready.as_ref().unwrap().area;
         let erase = temporary_erase;
         let result = brush_stroke(
-            self.document.dust.mask_draft.as_mut().unwrap(),
+            self.document.visit.dust.mask_draft.as_mut().unwrap(),
             position,
-            self.document.dust.brush_size,
+            self.document.visit.dust.brush_size,
             erase,
             active,
             &blocked,
@@ -1288,14 +1305,20 @@ impl Editor {
             Ok((_, true)) => self.status = "Dust masks cannot overlap another repair".into(),
             Ok(_) => {}
             Err(_) => {
-                self.document.dust.mask_draft.as_mut().unwrap().rejected = true;
+                self.document
+                    .visit
+                    .dust
+                    .mask_draft
+                    .as_mut()
+                    .unwrap()
+                    .rejected = true;
                 self.status = "Dust stroke too large; release to discard it".into();
             }
         }
     }
 
     pub(super) fn end_dust_stroke(&mut self) {
-        if let Some(draft) = &mut self.document.dust.mask_draft {
+        if let Some(draft) = &mut self.document.visit.dust.mask_draft {
             draft.clear_stroke();
         }
     }
@@ -1308,7 +1331,7 @@ impl Editor {
     ) -> egui::CursorIcon {
         if self.dust_donor_dragging() {
             egui::CursorIcon::Grabbing
-        } else if modifying || self.document.dust.mask_draft.is_some() {
+        } else if modifying || self.document.visit.dust.mask_draft.is_some() {
             egui::CursorIcon::Crosshair
         } else if point.is_some_and(|p| self.dust_repair_at(geometry, p).is_some()) {
             egui::CursorIcon::PointingHand
@@ -1326,10 +1349,10 @@ impl Editor {
     ) -> Option<RepairId> {
         if self.busy
             || self.tab != 1
-            || self.source
-            || !self.document.dust.show_masks
-            || self.pick.is_some()
-            || self.document.dust.donor_draft.is_some()
+            || self.document.source
+            || !self.document.visit.dust.show_masks
+            || self.document.picking.kind.is_some()
+            || self.document.visit.dust.donor_draft.is_some()
         {
             return None;
         }
@@ -1338,7 +1361,7 @@ impl Editor {
             source_point[0].floor() as u32,
             source_point[1].floor() as u32,
         ];
-        let source = self.current_source?;
+        let source = self.document.visit.current_source?;
         let set = self.dust_repairs(source)?;
         let selected = self.selected_dust_repair();
         set.repairs()
@@ -1358,7 +1381,7 @@ impl Editor {
     }
 
     pub(super) fn select_dust_repair(&mut self, id: RepairId) {
-        if let Some(source) = self.current_source
+        if let Some(source) = self.document.visit.current_source
             && self
                 .dust_repairs(source)
                 .is_some_and(|set| set.repairs().iter().any(|repair| repair.id == id))
@@ -1369,7 +1392,7 @@ impl Editor {
     }
 
     pub(super) fn delete_selected_dust_repair(&mut self) {
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return;
         };
         let Some(id) = self.selected_dust_repair() else {
@@ -1380,6 +1403,7 @@ impl Editor {
         if self.dust_repairs_mut(source).remove(id).is_ok() {
             self.record_edit(before, "Delete Dust repair", Some(source));
             self.document.dust.removed(source, id);
+            self.document.visit.dust.removed(source, id);
             self.status = "Dust repair deleted".into();
             self.invalidate_settled();
         }
@@ -1390,21 +1414,23 @@ impl Editor {
     }
 
     fn dust_donor_regions_inner(&self) -> Option<Vec<DonorRegion>> {
-        let source = self.current_source?;
+        let source = self.document.visit.current_source?;
         let repair_id = self
             .document
+            .visit
             .dust
             .donor_draft
             .map(|draft| draft.repair)
             .or_else(|| {
                 self.document
+                    .visit
                     .dust
                     .mask_draft
                     .as_ref()
                     .and_then(|draft| draft.target)
             })
             .or_else(|| {
-                (self.document.dust.cleanup && self.document.dust.mask_draft.is_none())
+                (self.document.visit.dust.cleanup && self.document.visit.dust.mask_draft.is_none())
                     .then(|| self.selected_dust_repair())
                     .flatten()
             })?;
@@ -1440,7 +1466,7 @@ impl Editor {
         geometry: crate::viewport::CanvasLayout,
         point: egui::Pos2,
     ) -> Option<DonorRegion> {
-        if !self.document.dust.show_masks {
+        if !self.document.visit.dust.show_masks {
             return None;
         }
         let position = self.dust_source_position(geometry, point)?;
@@ -1474,7 +1500,7 @@ impl Editor {
         let Some(source_point) = self.dust_source_position(geometry, point) else {
             return;
         };
-        if self.document.dust.donor_draft.is_none() {
+        if self.document.visit.dust.donor_draft.is_none() {
             let Some(repair) = self.selected_dust_repair() else {
                 return;
             };
@@ -1486,13 +1512,13 @@ impl Editor {
                 return;
             };
             let offset = [offset_x, offset_y];
-            self.document.dust.donor_draft = Some(DonorDraft {
+            self.document.visit.dust.donor_draft = Some(DonorDraft {
                 repair,
                 offset,
                 drag: None,
             });
         }
-        if let Some(draft) = &mut self.document.dust.donor_draft {
+        if let Some(draft) = &mut self.document.visit.dust.donor_draft {
             draft.drag = Some(DonorDrag {
                 source: source_point,
                 offset: draft.offset,
@@ -1512,6 +1538,8 @@ impl Editor {
             return;
         };
         let Some(support) = self
+            .document
+            .visit
             .current_source
             .and_then(|source| {
                 self.selected_dust_repair()
@@ -1524,7 +1552,7 @@ impl Editor {
         let Ok(target) = donor_target(&support, active) else {
             return;
         };
-        let Some(draft) = &mut self.document.dust.donor_draft else {
+        let Some(draft) = &mut self.document.visit.dust.donor_draft else {
             return;
         };
         let Some(drag) = draft.drag else {
@@ -1554,19 +1582,20 @@ impl Editor {
 
     pub(super) fn dust_donor_dragging(&self) -> bool {
         self.document
+            .visit
             .dust
             .donor_draft
             .is_some_and(|draft| draft.drag.is_some())
     }
 
     pub(super) fn end_dust_donor_drag(&mut self) {
-        let Some(draft) = self.document.dust.donor_draft.take() else {
+        let Some(draft) = self.document.visit.dust.donor_draft.take() else {
             return;
         };
         if draft.drag.is_none() {
             return;
         }
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return;
         };
         let Some((support, accepted_offset)) = self
@@ -1612,6 +1641,7 @@ impl Editor {
     fn effective_dust_repairs(&self, source: SourceId) -> Vec<Repair> {
         let target = self
             .document
+            .visit
             .dust
             .mask_draft
             .as_ref()
@@ -1619,6 +1649,7 @@ impl Editor {
             .and_then(|draft| draft.target);
         let support = self
             .document
+            .visit
             .dust
             .mask_draft
             .as_ref()
@@ -1634,6 +1665,7 @@ impl Editor {
                 }
                 if let Some(donor) = self
                     .document
+                    .visit
                     .dust
                     .donor_draft
                     .filter(|donor| donor.repair == repair.id)
@@ -1672,10 +1704,10 @@ impl Editor {
         snapshot: &AdjustmentLayerSnapshot,
     ) -> Result<(), Error> {
         let input = input.into();
-        if self.document.dust.gpu.is_empty() {
+        if self.document.visit.dust.gpu.is_empty() {
             return Ok(());
         }
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return Ok(());
         };
         let signature = self.neutral_source_signature(&input)?;
@@ -1703,6 +1735,7 @@ impl Editor {
                 })
                 && self
                     .document
+                    .visit
                     .dust
                     .gpu
                     .get(&repair.id)
@@ -1718,8 +1751,10 @@ impl Editor {
         &self,
         photo: AdjustmentLayerSettings,
     ) -> Result<AdjustmentLayerSnapshot, Error> {
-        match self.current_source {
-            Some(id) => self.adjustment_layer_snapshot(self.document.project.source(id)?, photo),
+        match self.document.visit.current_source {
+            Some(id) => {
+                self.adjustment_layer_snapshot(self.document.state.project.source(id)?, photo)
+            }
             None => AdjustmentLayerSnapshot::new(Vec::new()),
         }
     }
@@ -1731,17 +1766,17 @@ impl Editor {
         let Some(signature) = self.dust_signature() else {
             return Ok(Default::default());
         };
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return Ok(Default::default());
         };
-        let Some(device) = self.working.device().cloned() else {
+        let Some(device) = self.document.visit.working_view.device().cloned() else {
             return Ok(Default::default());
         };
-        self.document.dust.render_error = None;
+        self.document.visit.dust.render_error = None;
         let input = self.input();
         let snapshot = match grade {
             Some(grade) => grade.clone(),
-            None => self.dust_grade_snapshot(self.adjustment_layer_settings)?,
+            None => self.dust_grade_snapshot(self.document.visit.adjustment_layer_settings)?,
         };
         let repairs = self.effective_dust_repairs(source);
         let candidates = repairs
@@ -1770,7 +1805,7 @@ impl Editor {
             .iter()
             .fold(DVec3::ZERO, |bound, (_, c)| bound.max(c.bound));
         let all_valid = self
-            .validate_repaired_source(&input, self.roll, &snapshot, bound)
+            .validate_repaired_source(&input, self.document.roll, &snapshot, bound)
             .is_ok();
         let mut admitted_bound = DVec3::ZERO;
         let mut patches = Vec::new();
@@ -1778,13 +1813,14 @@ impl Editor {
             let bound = admitted_bound.max(cached.bound);
             if !all_valid
                 && let Err(error) =
-                    self.validate_repaired_source(&input, self.roll, &snapshot, bound)
+                    self.validate_repaired_source(&input, self.document.roll, &snapshot, bound)
             {
-                self.document.dust.render_error = Some(error.to_string());
+                self.document.visit.dust.render_error = Some(error.to_string());
                 continue;
             }
             let patch = match self
                 .document
+                .visit
                 .dust
                 .gpu
                 .get(&id)
@@ -1793,7 +1829,7 @@ impl Editor {
                 Some(patch) => patch.clone(),
                 None => {
                     let patch = crate::gpu::repairs::Patch::new(&device, cached.evaluated.clone())?;
-                    self.document.dust.gpu.insert(id, patch.clone());
+                    self.document.visit.dust.gpu.insert(id, patch.clone());
                     patch
                 }
             };
@@ -1801,6 +1837,7 @@ impl Editor {
             patches.push(patch);
         }
         self.document
+            .visit
             .dust
             .gpu
             .retain(|_, patch| patches.iter().any(|p| Arc::ptr_eq(p, patch)));
@@ -1815,11 +1852,11 @@ impl Editor {
         {
             return;
         }
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return;
         };
         let repairs = self.effective_dust_repairs(source);
-        if let Some(pending) = &self.document.dust.pending
+        if let Some(pending) = &self.document.visit.dust.pending
             && (pending.evaluation.source != source
                 || pending.evaluation.loaded != self.id
                 || pending.evaluation.signature != signature
@@ -1830,6 +1867,9 @@ impl Editor {
                 .evaluation
                 .cancelled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        if self.document.visit.dust.pending.is_some() {
+            return;
         }
         let Some(repair) = self
             .document
@@ -1850,7 +1890,7 @@ impl Editor {
             input: self.input(),
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
-        self.document.dust.start(&request);
+        self.document.visit.dust.start(&request);
         self.status = "Evaluating full-resolution dust repair…".into();
         let id = request.request;
         let retire = EvaluationRetire(request.cancelled.clone());
@@ -1872,7 +1912,7 @@ impl Editor {
             self.receive_dust(id, Err("Application stopped".into()));
             return;
         };
-        self.document.dust.attach_task(id, task);
+        self.document.visit.dust.attach_task(id, task);
     }
 
     pub(super) fn receive_dust(&mut self, request: u64, result: Result<Option<Response>, String>) {
@@ -1881,10 +1921,11 @@ impl Editor {
                 let current = response.loaded == self.id
                     && self.source_epoch.load(std::sync::atomic::Ordering::Relaxed)
                         == response.loaded
-                    && Some(response.source) == self.current_source
+                    && Some(response.source) == self.document.visit.current_source
                     && Some(response.signature) == self.dust_signature();
                 if !current {
                     self.document
+                        .visit
                         .dust
                         .pending
                         .take_if(|p| p.evaluation.request == request);
@@ -1895,23 +1936,30 @@ impl Editor {
                     self.dust_repairs(response.source)
                         .is_some_and(|set| set.repairs().contains(repair))
                 });
-                if self
-                    .document
-                    .dust
-                    .accept(response, expected.as_ref(), accepted)
-                {
+                if self.document.visit.dust.accept(
+                    response,
+                    expected.as_ref(),
+                    accepted,
+                    &mut self.document.dust,
+                ) {
                     self.status = "Dust repair ready".into();
                     self.invalidate_settled();
                 }
             }
             Ok(None) => {
                 self.document
+                    .visit
                     .dust
                     .pending
                     .take_if(|p| p.evaluation.request == request);
             }
             Err(error) => {
-                if self.document.dust.fail(request) {
+                if self
+                    .document
+                    .visit
+                    .dust
+                    .fail(request, &mut self.document.dust)
+                {
                     self.status = format!("Dust repair failed: {error}");
                 }
             }
@@ -1920,19 +1968,22 @@ impl Editor {
 
     #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn dust_evaluations(&self, signature: Signature) -> Vec<Arc<EvaluatedRepair>> {
-        self.current_source.map_or_else(Vec::new, |source| {
-            let repairs = self.effective_dust_repairs(source);
-            self.document
-                .dust
-                .evaluations(source, self.id, signature, &repairs)
-        })
+        self.document
+            .visit
+            .current_source
+            .map_or_else(Vec::new, |source| {
+                let repairs = self.effective_dust_repairs(source);
+                self.document
+                    .dust
+                    .evaluations(source, self.id, signature, &repairs)
+            })
     }
 
     pub(super) fn paint_dust(&self, ui: &egui::Ui, geometry: crate::viewport::CanvasLayout) {
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return;
         };
-        if self.tab != 1 || self.fullscreen.is_some() || self.source {
+        if self.tab != 1 || self.fullscreen.is_some() || self.document.source {
             return;
         }
         let set = self.dust_repairs(source);
@@ -1940,25 +1991,32 @@ impl Editor {
         let signature = self.dust_signature();
         let mask_target = self
             .document
+            .visit
             .dust
             .mask_draft
             .as_ref()
             .and_then(|draft| draft.target);
         let painter = ui.painter().with_clip_rect(geometry.canvas);
         let overlays_hidden = ui.ctx().input(|input| input.key_down(egui::Key::H));
-        if self.document.dust.show_masks && !overlays_hidden {
+        if self.document.visit.dust.show_masks && !overlays_hidden {
             for repair in set.into_iter().flat_map(RepairSet::repairs) {
                 if mask_target == Some(repair.id)
                     || self.document.dust.searches.has_target(source, repair.id)
                 {
                     continue;
                 }
-                let pending = self.document.dust.pending.as_ref().is_some_and(|pending| {
-                    pending.evaluation.loaded == self.id
-                        && pending.evaluation.source == source
-                        && Some(pending.evaluation.signature) == signature
-                        && pending.evaluation.repair == *repair
-                });
+                let pending = self
+                    .document
+                    .visit
+                    .dust
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| {
+                        pending.evaluation.loaded == self.id
+                            && pending.evaluation.source == source
+                            && Some(pending.evaluation.signature) == signature
+                            && pending.evaluation.repair == *repair
+                    });
                 let failed = self
                     .document
                     .dust
@@ -1993,7 +2051,7 @@ impl Editor {
                 );
             }
         }
-        if self.document.dust.show_masks && !overlays_hidden {
+        if self.document.visit.dust.show_masks && !overlays_hidden {
             for support in self.document.dust.searches.supports(source) {
                 paint_support_outline(
                     &painter,
@@ -2008,6 +2066,7 @@ impl Editor {
         if !overlays_hidden
             && let Some(mask) = self
                 .document
+                .visit
                 .dust
                 .mask_draft
                 .as_ref()
@@ -2020,6 +2079,7 @@ impl Editor {
                 [0., 0.],
                 if self
                     .document
+                    .visit
                     .dust
                     .mask_draft
                     .as_ref()
@@ -2040,8 +2100,8 @@ impl Editor {
                 input.key_down(egui::Key::H) || input.key_down(egui::Key::Space),
             )
         });
-        if self.document.dust.cleanup
-            && !self.source
+        if self.document.visit.dust.cleanup
+            && !self.document.source
             && !self.dust_donor_dragging()
             && !hide_cursor
             && let Some(point) = point
@@ -2050,7 +2110,8 @@ impl Editor {
             && let Some(source_point) = self.dust_source_position(geometry, point)
         {
             let center = screen_source_point(geometry, source_point);
-            let radius = (self.document.dust.brush_size as f32 * 0.5 * geometry.scale).max(2.);
+            let radius =
+                (self.document.visit.dust.brush_size as f32 * 0.5 * geometry.scale).max(2.);
             painter.circle_stroke(
                 center,
                 radius + 0.5,
@@ -2063,6 +2124,7 @@ impl Editor {
                     1.5,
                     if self
                         .document
+                        .visit
                         .dust
                         .mask_draft
                         .as_ref()
@@ -2079,7 +2141,7 @@ impl Editor {
                 ),
             );
         }
-        if overlays_hidden || !self.document.dust.show_masks {
+        if overlays_hidden || !self.document.visit.dust.show_masks {
             return;
         }
         for region in self.dust_donor_regions() {
@@ -2194,7 +2256,7 @@ mod tests {
     fn committed_repair_sets_are_independent_per_source() {
         let mut editor = super::super::tests::fixture();
         super::super::tests::add_ready_fixture(&mut editor);
-        let first_source = editor.current_source.unwrap();
+        let first_source = editor.document.visit.current_source.unwrap();
         let mut second_record = editor
             .document
             .project
@@ -2202,7 +2264,12 @@ mod tests {
             .unwrap()
             .clone();
         second_record.path = "second.ARW".into();
-        let second_source = editor.document.project.add_source(second_record).unwrap();
+        let second_source = editor
+            .document
+            .state
+            .project
+            .add_source(second_record)
+            .unwrap();
         let mask = || SupportMask::new([20, 20], [3, 3], vec![true; 9]).unwrap();
         let first = editor
             .dust_repairs_mut(first_source)
@@ -2237,7 +2304,8 @@ mod tests {
                 .unwrap();
         }
         let first = committed.repairs()[0].clone();
-        state.start(&Request {
+        let mut interaction = Interaction::default();
+        interaction.start(&Request {
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             request: 4,
             loaded: 8,
@@ -2251,7 +2319,7 @@ mod tests {
             }
             .into(),
         });
-        assert!(state.fail(4));
+        assert!(interaction.fail(4, &mut state));
         let repairs = committed.repairs().to_vec();
         assert_eq!(
             state

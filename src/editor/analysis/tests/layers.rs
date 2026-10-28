@@ -60,9 +60,10 @@ fn proposal(document: &Document) -> roll_analysis::Proposal {
 #[test]
 fn photo_initialization_replaces_only_analyzed_layers_and_retains_id_history() {
     let mut editor = state();
-    let first = editor.current_source.unwrap();
+    let first = editor.document.visit.current_source.unwrap();
     editor
         .document
+        .state
         .project
         .source_mut(first)
         .unwrap()
@@ -72,20 +73,25 @@ fn photo_initialization_replaces_only_analyzed_layers_and_retains_id_history() {
         ("retired.ARW", false),
         ("reference.ARW", false),
     ] {
-        let mut source = editor.document.project.source(first).unwrap().clone();
+        let mut source = editor.document.state.project.source(first).unwrap().clone();
         source.id = SourceId(0);
         source.path = name.into();
         source.reference_only = name == "reference.ARW";
-        let id = editor.document.project.add_source(source).unwrap();
+        let id = editor.document.state.project.add_source(source).unwrap();
         if !ordered {
-            editor.document.project.order.retain(|source| *source != id);
+            editor
+                .document
+                .state
+                .project
+                .order
+                .retain(|source| *source != id);
         }
     }
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let picture = rect([52, 42, 720, 540]);
     let candidate =
         proposed_document(&editor.document, proposal(&editor.document), Some(picture)).unwrap();
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.state.project, before);
     for prior in &before.sources {
         let mut source = candidate.project.source(prior.id).unwrap().clone();
         if before.order.contains(&prior.id) {
@@ -129,7 +135,7 @@ fn photo_initialization_replaces_only_analyzed_layers_and_retains_id_history() {
     let mut malformed = proposal(&editor.document);
     malformed.photos.pop();
     assert!(proposed_document(&editor.document, malformed, Some(picture)).is_err());
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.state.project, before);
 }
 
 #[test]
@@ -140,14 +146,15 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
             app.enter(|editor, cx| {
                 let source = editor
                     .document
+                    .state
                     .project
-                    .source_mut(editor.current_source.unwrap())
+                    .source_mut(editor.document.visit.current_source.unwrap())
                     .unwrap();
                 let mut layers = local_records();
                 layers.layers = vec![layers.layers[index].clone()];
                 source.adjustment_layers = Some(layers);
                 editor.sync_document();
-                let before = editor.document.project.clone();
+                let before = editor.document.state.project.clone();
                 review_tests::start_area_preparation(editor, cx);
                 review_tests::prepared(editor);
                 assert!(
@@ -164,7 +171,7 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
                 let labels = super::super::super::tests::app_frame(editor, &ctx, vec![]);
                 assert!(labels.iter().any(|(label, _)| label == "Tool warning"));
                 editor.end_analysis_review(cx);
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.state.project, before);
                 assert!(editor.document.analysis_pending.is_none());
             });
         });
@@ -176,17 +183,22 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            let mut retired = editor.document.project.sources[0].clone();
+            let mut retired = editor.document.state.project.sources[0].clone();
             retired.id = SourceId(0);
             retired.path = "retired.ARW".into();
             retired.adjustment_layers = Some(local_records());
-            let id = editor.document.project.add_source(retired).unwrap();
-            editor.document.project.order.retain(|source| *source != id);
+            let id = editor.document.state.project.add_source(retired).unwrap();
+            editor
+                .document
+                .state
+                .project
+                .order
+                .retain(|source| *source != id);
             let mut empty = local_records();
             empty.layers.clear();
-            editor.document.project.sources[0].adjustment_layers = Some(empty);
+            editor.document.state.project.sources[0].adjustment_layers = Some(empty);
             editor.sync_document();
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             review_tests::start_area_preparation(editor, cx);
             review_tests::prepared(editor);
             assert!(
@@ -198,7 +210,7 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
                     .replaces_photos
             );
             editor.end_analysis_review(cx);
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
         });
     });
 }
@@ -209,13 +221,14 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
         let mut editor = state();
         editor
             .document
+            .state
             .project
-            .source_mut(editor.current_source.unwrap())
+            .source_mut(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers = Some(local_records());
         editor.refresh_adjustment_layer_selection();
-        let settings_before = editor.adjustment_layer_settings;
-        let before = editor.document.project.clone();
+        let settings_before = editor.document.visit.adjustment_layer_settings;
+        let before = editor.document.state.project.clone();
         let id = pending(&mut editor);
         let mut candidate = proposed_document(
             &editor.document,
@@ -243,8 +256,9 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
         if mode == 3 {
             let source = editor
                 .document
+                .state
                 .project
-                .source(editor.current_source.unwrap())
+                .source(editor.document.visit.current_source.unwrap())
                 .unwrap();
             let layers = source.adjustment_layers.as_ref().unwrap();
             assert_eq!(layers.layers.len(), 1);
@@ -259,8 +273,11 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
                 adjustment_layers::Target::Layer(crate::project::AdjustmentLayerId(50))
             );
         } else {
-            assert_eq!(editor.document.project, before);
-            assert_eq!(editor.adjustment_layer_settings, settings_before);
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(
+                editor.document.visit.adjustment_layer_settings,
+                settings_before
+            );
         }
     }
 }

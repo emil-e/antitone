@@ -170,30 +170,34 @@ fn shared_outline_shades_outside_but_not_inside_rotated_and_reflected_frames() {
 #[test]
 fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_authority() {
     let (mut editor, _directory) = super::super::tests::fixture();
-    let project = editor.document.project.clone();
+    let project = editor.document.state.project.clone();
     editor.auto_crop(Target::Roll);
     assert!(editor.auto_crop_context());
     let area = editor.document.visit.ready.as_ref().unwrap().area;
-    let composition =
-        Composition::new(area, editor.roll_orientation, editor.photo_orientation).unwrap();
-    let layout = editor.viewport.layout_composition(
+    let composition = Composition::new(
+        area,
+        editor.document.roll_orientation,
+        editor.document.visit.photo_orientation,
+    )
+    .unwrap();
+    let layout = editor.document.visit.viewport.layout_composition(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
         composition,
         1.,
     );
-    editor.last_layout = Some((layout, 1.));
-    let viewport = editor.viewport;
-    let revision = editor.original.revision();
+    editor.document.visit.last_layout = Some((layout, 1.));
+    let viewport = editor.document.visit.viewport;
+    let revision = editor.document.visit.grade.original.revision();
     let outline = editor.auto_crop_outline(layout).unwrap();
     editor.adjust_auto_crop_margin(2.);
     assert_ne!(editor.auto_crop_outline(layout).unwrap(), outline);
-    assert_eq!(editor.viewport, viewport);
+    assert_eq!(editor.document.visit.viewport, viewport);
     assert_eq!(
-        editor.original.revision(),
+        editor.document.visit.grade.original.revision(),
         revision,
         "the full-scan reference remains valid when only an overlay moves"
     );
-    assert!(editor.last_layout.is_some());
+    assert!(editor.document.visit.last_layout.is_some());
     editor
         .document
         .auto_crop_edit
@@ -204,19 +208,19 @@ fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_au
         editor.auto_crop_context(),
         "artwork visibility is not a second tool lifecycle"
     );
-    assert_eq!(editor.original.revision(), revision);
+    assert_eq!(editor.document.visit.grade.original.revision(), revision);
     editor.begin_crop();
     assert!(editor.document.visit.crop_edit.is_none() && editor.auto_crop_context());
     editor.finish_auto_crop(false);
     assert!(!editor.auto_crop_context());
-    assert_eq!(editor.document.project, project);
+    assert_eq!(editor.document.state.project, project);
     assert_ne!(
-        editor.original.revision(),
+        editor.document.visit.grade.original.revision(),
         revision,
         "leaving the tool changes the view domain"
     );
     editor.begin_crop();
     assert!(editor.document.visit.crop_edit.is_some());
     editor.finish_crop(false);
-    assert_eq!(editor.document.project, project);
+    assert_eq!(editor.document.state.project, project);
 }

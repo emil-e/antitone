@@ -61,8 +61,8 @@ impl Editor {
     pub(in crate::editor) fn auto_crop_context(&self) -> bool {
         self.fullscreen.is_none()
             && self.document.visit.crop_edit.is_none()
-            && self.pick.is_none()
-            && self.flat_edit.is_none()
+            && self.document.picking.kind.is_none()
+            && self.document.flat_edit.is_none()
             && self
                 .document
                 .auto_crop_edit
@@ -71,7 +71,7 @@ impl Editor {
     }
 
     pub(super) fn auto_crop_margin_entry(&self) -> Option<&Entry> {
-        let id = self.current_source?;
+        let id = self.document.visit.current_source?;
         self.document
             .auto_crop_edit
             .as_ref()?
@@ -166,7 +166,7 @@ impl Editor {
             .as_ref()
             .and_then(|d| d.drag)
             .filter(|d| {
-                self.current_source == Some(d.source)
+                self.document.visit.current_source == Some(d.source)
                     && self
                         .auto_crop_margin_entry()
                         .is_some_and(|e| e.proposal == d.proposal)

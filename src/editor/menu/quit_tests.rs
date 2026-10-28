@@ -62,7 +62,7 @@ fn click(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Cont
 #[test]
 fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation() {
     let (mut editor, context) = initialized();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     assert!(editor.document.dirty());
     for _ in 0..3 {
         host::App::request_quit(&mut editor);
@@ -93,8 +93,10 @@ fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation()
         Some(host::QuitState::Running)
     );
     assert!(!editor.allow_close);
-    assert_eq!(editor.document.project, before);
-    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+    assert_eq!(editor.document.state.project, before);
+    assert!(
+        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+    );
 }
 
 #[test]
@@ -124,12 +126,12 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
         let (mut editor, context) = initialized();
         match gate {
             0 => editor.busy = true,
-            1 => editor.pick = Some(Pick::Dmin),
+            1 => editor.document.picking.kind = Some(Pick::Dmin),
             2 => editor.transition = Some(Transition::New),
             3 => editor.report_failure(FailureKind::Save, "fixture failure".into()),
             _ => unreachable!(),
         }
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         host::App::request_quit(&mut editor);
         frame(&mut editor, &context, vec![]);
         assert_eq!(
@@ -137,10 +139,15 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
             Some(host::QuitState::Running)
         );
         assert!(!editor.allow_close && editor.menus.pending.is_empty());
-        assert_eq!(editor.document.project, before);
-        assert_eq!(editor.pick, (gate == 1).then_some(Pick::Dmin));
+        assert_eq!(editor.document.state.project, before);
+        assert_eq!(
+            editor.document.picking.kind,
+            (gate == 1).then_some(Pick::Dmin)
+        );
         assert_eq!(editor.transition, (gate == 2).then_some(Transition::New));
-        assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+        assert!(
+            editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+        );
     }
 }
 
@@ -159,9 +166,9 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
             std::fs::remove_file(&path).unwrap();
             std::fs::create_dir(&path).unwrap();
         }
-        editor.roll.exposure = 0.25;
+        editor.document.roll.exposure = 0.25;
         editor.sync_document();
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         crate::application::test_support::with_application(editor, |app| {
             app.update(host::App::request_quit);
             frame(app, &context, vec![]);
@@ -194,7 +201,7 @@ fn system_quit_waits_for_save_success_and_cannot_approve_a_failed_or_stale_save(
                 app.read(|e| {
                     assert_eq!(host::App::quit_state(e), Some(host::QuitState::Running));
                     assert!(!e.allow_close && e.document.dirty());
-                    assert_eq!(e.document.project, before);
+                    assert_eq!(e.document.state.project, before);
                     assert!(e.failure.is_some());
                 });
                 assert!(path.is_dir());
@@ -221,5 +228,7 @@ fn cancelling_project_replacement_retires_the_native_close_continuation() {
     );
     assert!(!editor.allow_close);
     assert_eq!(std::fs::read(destination).unwrap(), b"existing project");
-    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+    assert!(
+        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+    );
 }

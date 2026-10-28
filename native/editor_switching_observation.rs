@@ -183,7 +183,7 @@ fn workload(
     let epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let mut editor = Editor::state();
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
-    editor.thumbnails = thumbnails::Thumbnails::with_developments(
+    editor.document.thumbnails = (thumbnails::Thumbnails::with_developments(
         device.clone(),
         queue.clone(),
         renderers.clone(),
@@ -191,18 +191,19 @@ fn workload(
             directory.path().join("thumbnails"),
         )),
         scheduler.clone(),
-    );
-    editor.thumbnails.pressure_override = None;
+    ))
+    .with_sources(editor.document.cache.clone());
+    editor.document.thumbnails.pressure_override = None;
     *editor.document = document;
     editor.developments = Some(scheduler.clone());
     editor.source_epoch = epoch.clone();
-    editor.thumbnails.set_limits(cache_limits::CacheLimits {
-        cpu_bytes: 1100 * cache_limits::MIB,
-        gpu_bytes: 16 * cache_limits::MIB,
-    });
     editor
+        .document
         .thumbnails
-        .bind_sources(editor.document.cache.clone(), &editor.document);
+        .set_limits(cache_limits::CacheLimits {
+            cpu_bytes: 1100 * cache_limits::MIB,
+            gpu_bytes: 16 * cache_limits::MIB,
+        });
     editor.set_dmin(Some(DVec3::new(0.28, 0.20, 0.14)));
     editor.set_dmax(Some(DVec3::new(0.028, 0.020, 0.014)));
     editor.sync_document();
@@ -225,10 +226,10 @@ fn workload(
         let exercise = (|| -> Result<()> {
             let mut paint = Paint::new(device);
             app.enter(|editor, access| {
-                editor.selected = 0;
+                editor.document.selected = 0;
                 let path = editor
                     .document
-                    .source_path(editor.document.project.order[0])
+                    .source_path(editor.document.state.project.order[0])
                     .map_err(|e| e.to_string())?;
                 editor.load(path, access);
                 Ok::<_, String>(())
@@ -260,7 +261,7 @@ fn workload(
                     let (_, ui, total) = paint.frame(app, device, queue, pointer(point, false))?;
                     all_ui.push(ui);
                     all_frame.push(total);
-                    if app.read(|e| e.selected != selected || !e.busy) {
+                    if app.read(|e| e.document.selected != selected || !e.busy) {
                         return Err("actual source-card input did not start selection".into());
                     }
                 }
@@ -268,7 +269,7 @@ fn workload(
                 let mut blocked_probe = false;
                 let mut per_ui = Vec::new();
                 let mut per_frame = Vec::new();
-                while app.read(|e| e.busy || !e.working.idle()) {
+                while app.read(|e| e.busy || !e.document.visit.working_view.idle()) {
                     monitor.check()?;
                     if start.elapsed() > Duration::from_secs(90) {
                         return Err("bounded switching exercise deadline".into());
@@ -297,7 +298,8 @@ fn workload(
                         all_ui.push(ui);
                         all_frame.push(total);
                         let replaced = app.read(|e| e.id);
-                        if disabled || replaced == request || app.read(|e| e.selected != 1) {
+                        if disabled || replaced == request || app.read(|e| e.document.selected != 1)
+                        {
                             return Err("pending selection did not accept replacement".into());
                         }
                         let (point, disabled) = Paint::card(&output, "DSC04378.ARW")?;
@@ -312,7 +314,7 @@ fn workload(
                             paint.frame(app, device, queue, pointer(point, false))?;
                         all_ui.push(ui);
                         all_frame.push(total);
-                        if app.read(|e| e.id == replaced || e.selected != 0) {
+                        if app.read(|e| e.id == replaced || e.document.selected != 0) {
                             return Err("latest selection did not replace pending work".into());
                         }
                         println!(
@@ -331,7 +333,8 @@ fn workload(
                         );
                     }
                     if app.read(|e| {
-                        e.original.refinement_error.is_some() || e.working.error.is_some()
+                        e.document.visit.grade.original.refinement_error.is_some()
+                            || e.document.visit.working_view.error.is_some()
                     }) {
                         return Err(app.read(|e| format!("refinement failed: {}", e.status)));
                     }
@@ -345,7 +348,10 @@ fn workload(
                     per_ui.iter().copied().fold(0., f64::max) * 1000.,
                     per_frame.iter().copied().fold(0., f64::max) * 1000.,
                     app.read(|e| e.document.cache.charges().retained),
-                    app.read(|e| e.thumbnails.ready_count(&e.document, e.target))
+                    app.read(|e| e
+                        .document
+                        .thumbnails
+                        .ready_count(&e.document, e.document.target))
                 );
             }
             if count.load(Ordering::Relaxed) != 2 {
@@ -366,12 +372,12 @@ fn workload(
             Ok(())
         })();
         app.update(|editor| {
-            editor.original.invalidate();
-            editor.working.clear();
+            editor.document.visit.grade.original.invalidate();
+            editor.document.visit.working_view.clear();
             editor.source_epoch.fetch_add(1, Ordering::Relaxed);
-            editor.document.cache.close();
-            editor.thumbnails.cancel();
-            editor.thumbnails.services.take();
+            editor.document = super::document::Document::default().into();
+            editor.document.thumbnails.cancel();
+            editor.document.thumbnails.services.take();
         });
         scheduler.close();
         app.close_execution();

@@ -31,7 +31,8 @@ pub(super) fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
         device,
         queue,
     });
-    editor.thumbnails = Thumbnails::default();
+    editor.document.thumbnails =
+        (Thumbnails::default()).with_sources(editor.document.cache.clone());
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
     let paths = [root.join("roll-0.dng"), root.join("roll-1.dng")];
     let mut document = Document::default();
@@ -107,7 +108,7 @@ pub(super) fn await_native(app: &mut TestApplication<'_, Editor>, starts: &mpsc:
 fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
     let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         start(app);
         app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
@@ -119,8 +120,8 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
                 .expect("prepared review");
             assert_eq!(review.approved.entries.len(), 2);
             assert!(review.approved.entries.iter().all(|e| e.areas.ready()));
-            assert_eq!(e.document.project, before);
-            assert_eq!(e.pick, Some(crate::editor::Pick::Analysis));
+            assert_eq!(e.document.state.project, before);
+            assert_eq!(e.document.picking.kind, Some(crate::editor::Pick::Analysis));
             assert!(!e.busy);
             assert!(e.tasks.view().is_none());
             assert_eq!(e.document.cache.charges().retained, 0);
@@ -133,7 +134,7 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
 fn queued_user_cancel_acknowledges_without_starting_native_work() {
     let scheduler = source_loading::SourceLoader::new();
     let editor = fixture(scheduler.clone());
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         start(app);
@@ -143,7 +144,7 @@ fn queued_user_cancel_acknowledges_without_starting_native_work() {
         app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
         app.read(|e| {
             assert!(!e.busy && e.document.analysis_review.is_none());
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert!(e.tasks.view().is_none());
         });
         assert_eq!(scheduler.waiter_count(), 0);
@@ -155,7 +156,7 @@ fn queued_user_cancel_acknowledges_without_starting_native_work() {
 fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work() {
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -163,7 +164,7 @@ fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work()
         app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
         app.read(|e| {
             assert!(!e.busy && e.document.analysis_review.is_none());
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
         });
         assert_eq!(scheduler.waiter_count(), 0);
         let (entered, observed) = mpsc::channel();
@@ -178,7 +179,7 @@ fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work()
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());
         release.send(()).unwrap();
         drop(probe);
-        app.read(|e| assert_eq!(e.document.project, before));
+        app.read(|e| assert_eq!(e.document.state.project, before));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -218,7 +219,7 @@ fn document_drop_and_application_close_retire_preparation_before_native_completi
 fn document_transition_retires_areas_and_waits_for_native_work_before_promotion() {
     let (scheduler, starts, release) = paused();
     let editor = fixture(scheduler.clone());
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
@@ -229,12 +230,12 @@ fn document_transition_retires_areas_and_waits_for_native_work_before_promotion(
         app.read(|e| {
             assert!(e.document_pending.is_some());
             assert!(e.document.analysis_preparing.is_none());
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
         });
         release.send(()).unwrap();
         app.run_until(LIMIT, |e| e.document_pending.is_none());
         app.read(|e| {
-            assert!(e.document.project.order.is_empty());
+            assert!(e.document.state.project.order.is_empty());
             assert!(e.document.analysis_review.is_none());
             assert!(e.document.analysis_preparing.is_none());
             assert!(!e.busy);
@@ -256,11 +257,11 @@ fn live_edits_while_native_preparation_runs_discard_the_draft() {
             e.set_gamma(0.8);
             e.sync_document();
         });
-        let edited = app.read(|e| e.document.project.clone());
+        let edited = app.read(|e| e.document.state.project.clone());
         release.send(()).unwrap();
         app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
         app.read(|e| {
-            assert_eq!(e.document.project, edited);
+            assert_eq!(e.document.state.project, edited);
             assert!(e.document.analysis_review.is_none());
             assert!(!e.busy);
             assert!(e.status.contains("discarded"), "{}", e.status);
@@ -273,7 +274,7 @@ fn live_edits_while_native_preparation_runs_discard_the_draft() {
 fn unavailable_services_finish_the_activity_without_opening_review() {
     let scheduler = source_loading::SourceLoader::new();
     let mut editor = fixture(scheduler.clone());
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     editor.source_services = None;
     with_application(editor, |app| {
         start(app);
@@ -282,7 +283,7 @@ fn unavailable_services_finish_the_activity_without_opening_review() {
         app.read(|e| {
             assert!(e.document.analysis_preparing.is_none());
             assert!(e.document.analysis_review.is_none());
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert!(!e.busy);
             assert!(e.tasks.view().is_none());
             assert!(e.status.contains("unavailable"));

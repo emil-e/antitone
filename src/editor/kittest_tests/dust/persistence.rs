@@ -14,22 +14,22 @@ fn pending_stroke_shows_no_donor_and_accepts_one_result_after_real_search() {
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
             .click();
         h.step();
-        wait_for(&mut h, |e| e.working.idle());
-        let before = h.read(|e| e.document.project.clone());
+        wait_for(&mut h, |e| e.document.visit.working_view.idle());
+        let before = h.read(|e| e.document.state.project.clone());
         let dirty = h.read(|e| e.document.dirty());
         let admission = crate::background::testing::pause();
-        h.update(|e| e.document.dust.brush_size = 12);
+        h.update(|e| e.document.visit.dust.brush_size = 12);
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         h.step();
         h.read(|e| {
             assert!(e.dust_search_pending());
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert_eq!(e.document.dirty(), dirty);
             assert!(e.dust_donor_regions().is_empty());
             assert!(!e.file_available());
         });
         let (canvas, marked) = h.read(|e| {
-            let geometry = e.last_layout.unwrap().0;
+            let geometry = e.document.visit.last_layout.unwrap().0;
             let request = &e.dust_search_requests()[0];
             let [x, y] = request.support.origin();
             let [width, height] = request.support.size();
@@ -63,7 +63,7 @@ fn pending_stroke_shows_no_donor_and_accepts_one_result_after_real_search() {
         ready(&mut h, 1);
         h.read(|e| {
             assert!(!e.dust_search_pending());
-            let source = e.current_source.unwrap();
+            let source = e.document.visit.current_source.unwrap();
             assert_eq!(e.dust_repairs(source).unwrap().repairs().len(), 1);
             assert!(!e.dust_donor_regions().is_empty());
             assert_eq!(
@@ -81,41 +81,48 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
             .click();
         h.step();
-        h.update(|e| e.document.dust.brush_size = 12);
+        h.update(|e| e.document.visit.dust.brush_size = 12);
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         ready(&mut h, 1);
-        wait_for(&mut h, |e| e.working.idle());
+        wait_for(&mut h, |e| e.document.visit.working_view.idle());
         // Recreate the source-ready / detailed-acquisition-pending boundary,
         // keeping current evaluated repairs. Hold physical admission so the
         // placeholder must paint rather than winning a worker timing race.
         let admission = crate::background::testing::pause();
         let timing = h.update(|e| {
             e.seed_thumbnail();
-            let source = e.current_source.unwrap();
-            let composition = e.last_layout.unwrap().0.composition;
-            e.pending_preview = Some(
-                e.thumbnails
+            let source = e.document.visit.current_source.unwrap();
+            let composition = e.document.visit.last_layout.unwrap().0.composition;
+            e.document.visit.pending_preview = Some(
+                e.document
+                    .thumbnails
                     .selected_preview(
                         e.id,
-                        &e.document,
+                        &e.document.state,
                         source,
                         composition,
-                        e.correction.as_ref(),
+                        e.document.correction.as_ref(),
                     )
                     .unwrap()
                     .expect("selected camera preview is cached"),
             );
-            e.working.clear();
-            e.preview_rendered = None;
+            e.document.visit.working_view.clear();
+            e.document.visit.preview_rendered = None;
             let timing = Arc::new(SelectionTiming::new(e.id, Instant::now()));
-            e.selection_timing = Some(timing.clone());
+            e.document.visit.selection_timing = Some(timing.clone());
             timing
         });
         h.step();
         h.read(|e| {
-            assert!(e.pending_preview.is_some());
-            assert!(e.working.displayed.is_none());
-            let preview = &e.preview_rendered.as_ref().expect("usable placeholder").4;
+            assert!(e.document.visit.pending_preview.is_some());
+            assert!(e.document.visit.working_view.displayed.is_none());
+            let preview = &e
+                .document
+                .visit
+                .preview_rendered
+                .as_ref()
+                .expect("usable placeholder")
+                .4;
             assert!(
                 preview.spec.repairs.0.is_empty(),
                 "reduced proxy cannot acquire sparse repairs"
@@ -127,7 +134,9 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
         assert!(!timing.ready_was_painted());
         drop(admission);
         wait_for(&mut h, |e| {
-            e.working
+            e.document
+                .visit
+                .working_view
                 .displayed
                 .as_ref()
                 .is_some_and(|view| view.spec.repairs.0.len() == 1)
@@ -136,9 +145,18 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
         h.render().unwrap();
         assert!(timing.ready_was_painted());
         h.read(|e| {
-            assert!(e.pending_preview.is_none());
+            assert!(e.document.visit.pending_preview.is_none());
             assert_eq!(
-                e.working.displayed.as_ref().unwrap().spec.repairs.0.len(),
+                e.document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .spec
+                    .repairs
+                    .0
+                    .len(),
                 1
             );
         });
@@ -150,11 +168,12 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
     tools::calibrated_harness_with_thumbnails(true, |mut h| {
         wait_for(&mut h, |editor| {
             editor
+                .document
                 .thumbnails
-                .ready_count(&editor.document, editor.target)
+                .ready_count(&editor.document, editor.document.target)
                 == 1
         });
-        let source = h.read(|editor| editor.current_source.unwrap());
+        let source = h.read(|editor| editor.document.visit.current_source.unwrap());
         let area = h.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
         // A support touching the source edge cannot satisfy the biharmonic
         // exterior, so this is an evaluation failure rather than mask rejection.
@@ -218,7 +237,7 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
 fn assert_navigation_preview(h: &Harness<'_, Editor>) {
     let name = h.read(|e| {
         e.document
-            .source_path(e.current_source.unwrap())
+            .source_path(e.document.visit.current_source.unwrap())
             .unwrap()
             .file_name()
             .unwrap()
@@ -256,7 +275,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             )
             .unwrap(),
         );
-        h.update(|editor| editor.document.project.output.look = Some(look.clone()));
+        h.update(|editor| editor.document.state.project.output.look = Some(look.clone()));
         h.step();
         stage(&mut h, "Photo");
         let directory = tempfile::tempdir().unwrap();
@@ -273,13 +292,13 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
             .click();
         h.step();
-        h.update(|editor| editor.document.dust.brush_size = 32);
+        h.update(|editor| editor.document.visit.dust.brush_size = 32);
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         ready(&mut h, 1);
         click(&mut h, egui::pos2(32., 96.), egui::Modifiers::NONE);
         ready(&mut h, 2);
 
-        let source = h.read(|editor| editor.current_source.unwrap());
+        let source = h.read(|editor| editor.document.visit.current_source.unwrap());
         let first_offset =
             h.read(|editor| editor.dust_repairs(source).unwrap().repairs()[0].offset);
         let region = h.read(|editor| editor.dust_donor_regions().remove(0));
@@ -292,7 +311,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             point[0] as f32 + offset[0] as f32 + 0.5,
             point[1] as f32 + offset[1] as f32 + 0.5,
         );
-        let layout = h.read(|editor| editor.last_layout.unwrap().0);
+        let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
         drag(
             &mut h,
             layout.screen_point(start),
@@ -316,7 +335,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
 
         let signature = h.read(|editor| editor.dust_signature().unwrap());
         let evaluated = h.read(|editor| editor.dust_evaluations(signature));
-        let expected = h.read(|editor| editor.document.project.clone());
+        let expected = h.read(|editor| editor.document.state.project.clone());
         native_file_action(&mut h, crate::platform::menu::Action::New);
         h.run();
         h.read(|editor| {
@@ -328,7 +347,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.get_by_label("Cancel").click();
         h.run();
         h.read(|editor| assert!(editor.transition.is_none()));
-        h.read(|editor| assert_eq!(editor.document.project, expected));
+        h.read(|editor| assert_eq!(editor.document.state.project, expected));
         save_existing_project(&mut h);
         h.read(|editor| {
             assert!(Arc::ptr_eq(
@@ -339,15 +358,18 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
 
         native_file_action(&mut h, crate::platform::menu::Action::New);
         wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
-        h.read(|editor| assert!(editor.document.project.sources.is_empty()));
+        h.read(|editor| assert!(editor.document.state.project.sources.is_empty()));
         open_project(&mut h, path.clone());
         wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
-        h.read(|editor| assert_eq!(editor.document.project, expected));
+        h.read(|editor| assert_eq!(editor.document.state.project, expected));
         h.read(|editor| assert!(!editor.document.dirty()));
         h.read(|editor| assert_eq!(editor.selected_dust_repair(), None));
         ready(&mut h, 2);
         wait_for(&mut h, |e| {
-            e.thumbnails.ready_count(&e.document, e.target) == 1
+            e.document
+                .thumbnails
+                .ready_count(&e.document, e.document.target)
+                == 1
         });
         let restored = h.read(|editor| editor.dust_evaluations(signature));
         for (before, after) in evaluated.iter().zip(&restored) {
@@ -356,7 +378,16 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             assert_eq!(exact_values(before), exact_values(after));
         }
 
-        let view = h.read(|editor| editor.working.displayed.as_ref().unwrap().clone());
+        let view = h.read(|editor| {
+            editor
+                .document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .unwrap()
+                .clone()
+        });
         assert_eq!(view.processing.look_id(), Some(look.lut().id()));
         let scopes::ScopeInput::Rendered(scope, _) =
             h.read(|editor| editor.scope_request().unwrap())
@@ -368,26 +399,50 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.step();
         // The reference must match the complete processing intent, including admitted repairs.
         wait_for(&mut h, |e| {
-            assert!(e.original.refinement_error.is_none(), "{}", e.status);
-            !e.working.updating
-                && e.working.reference_ready()
-                && e.working.displayed.as_ref().is_some_and(|view| {
-                    Some(&view.processing) == e.working.processing() && view.target == e.target
-                })
+            assert!(
+                e.document.visit.grade.original.refinement_error.is_none(),
+                "{}",
+                e.status
+            );
+            !e.document.visit.working_view.updating
+                && e.document.visit.working_view.reference_ready()
+                && e.document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .is_some_and(|view| {
+                        Some(&view.processing) == e.document.visit.working_view.processing()
+                            && view.target == e.document.target
+                    })
         });
         h.render().unwrap();
         h.read(|editor| {
-            let reference = editor.working.displayed.as_ref().unwrap();
+            let reference = editor
+                .document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .unwrap();
             assert_eq!(reference.processing.look_id(), Some(look.lut().id()));
             assert!(Arc::ptr_eq(
                 &reference.image,
-                &editor.original.settled.as_ref().unwrap().2
+                &editor
+                    .document
+                    .visit
+                    .grade
+                    .original
+                    .settled
+                    .as_ref()
+                    .unwrap()
+                    .2
             ));
             let scopes::ScopeInput::Rendered(scope, _) = editor.scope_request().unwrap() else {
                 panic!("scopes did not follow the restored original reference")
             };
             assert!(Arc::ptr_eq(&scope, reference));
-            assert_eq!(editor.document.project, expected);
+            assert_eq!(editor.document.state.project, expected);
         });
         h.get_by_label("Original-resolution reference").click();
         h.step();
@@ -428,13 +483,19 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             h.read(|editor| {
                 assert!(Arc::ptr_eq(
                     &view,
-                    editor.working.displayed.as_ref().unwrap()
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .displayed
+                        .as_ref()
+                        .unwrap()
                 ))
             });
         }
         drop(hold);
         wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
-        h.read(|editor| assert_eq!(editor.document.project, expected));
+        h.read(|editor| assert_eq!(editor.document.state.project, expected));
         h.read(|editor| {
             assert!(Arc::ptr_eq(
                 &restored[0],
@@ -444,7 +505,13 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.read(|editor| {
             assert!(Arc::ptr_eq(
                 &view,
-                editor.working.displayed.as_ref().unwrap()
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .unwrap()
             ))
         });
         stage(&mut h, "Photo");

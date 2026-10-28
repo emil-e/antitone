@@ -18,7 +18,7 @@ fn retiring_a_visit_discards_its_manual_crop_without_accepting_or_recording_it()
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.sync_document();
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     let before = editor
         .history_label(crate::editor::history::Direction::Undo)
         .map(str::to_owned);
@@ -28,7 +28,7 @@ fn retiring_a_visit_discards_its_manual_crop_without_accepting_or_recording_it()
     editor.replace_photo_scope(next);
     assert!(editor.document.visit.crop_edit.is_none());
     editor.finish_crop(true);
-    assert_eq!(editor.document.project, accepted);
+    assert_eq!(editor.document.state.project, accepted);
     assert_eq!(
         editor.history_label(crate::editor::history::Direction::Undo),
         before.as_deref()
@@ -41,7 +41,7 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
         for radial in [false, true] {
             let (mut editor, _, _) = crate::editor::processing::tests::fixture().await;
             editor.tab = 1;
-            let source = editor.current_source.unwrap();
+            let source = editor.document.visit.current_source.unwrap();
             let id = editor
                 .document
                 .project
@@ -60,7 +60,7 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
                 editor.begin_linear_mask(None);
             }
             assert!(editor.document.visit.mask_edit.is_some());
-            let accepted = editor.document.project.clone();
+            let accepted = editor.document.state.project.clone();
             let before = editor
                 .history_label(crate::editor::history::Direction::Undo)
                 .map(str::to_owned);
@@ -74,7 +74,7 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
                 crate::editor::adjustment_layers::Target::Layer(id)
             );
             editor.finish_mask(true);
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),
                 before.as_deref()
@@ -91,10 +91,10 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
     with_application(editor, |app| {
         app.enter(|editor, access| {
             editor.begin_pick(Pick::Dmin, access);
-            editor.region = Some(Coverage::rectangle(
+            editor.document.picking.region = Some(Coverage::rectangle(
                 editor.document.visit.ready.as_ref().unwrap().area,
             ));
-            editor.start_measurement(Pick::Dmin, editor.region.unwrap(), access);
+            editor.start_measurement(Pick::Dmin, editor.document.picking.region.unwrap(), access);
         });
         app.pump();
         let (view, path) = app.read(|editor| {
@@ -126,10 +126,10 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
     with_application(editor, |app| {
         app.enter(|editor, access| {
             editor.begin_pick(Pick::Dmin, access);
-            editor.region = Some(Coverage::rectangle(
+            editor.document.picking.region = Some(Coverage::rectangle(
                 editor.document.visit.ready.as_ref().unwrap().area,
             ));
-            editor.start_measurement(Pick::Dmin, editor.region.unwrap(), access);
+            editor.start_measurement(Pick::Dmin, editor.document.picking.region.unwrap(), access);
         });
         app.pump();
         app.update(Editor::sync_document);
@@ -137,7 +137,7 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
             (
                 editor.document.visit.view,
                 editor.document.visit.ready.as_ref().unwrap().path.clone(),
-                editor.document.project.clone(),
+                editor.document.state.project.clone(),
             )
         });
         app.enter(|editor, cx| editor.load("next.dng".into(), cx));
@@ -148,7 +148,7 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
         app.read(|editor| {
             assert_ne!(editor.document.visit.view, view);
             assert!(editor.document.visit.measurement.is_none());
-            assert_eq!(editor.document.project, project);
+            assert_eq!(editor.document.state.project, project);
             assert!(editor.busy, "the new visit still owns its source load");
         });
     });

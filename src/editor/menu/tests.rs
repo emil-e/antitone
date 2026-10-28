@@ -21,7 +21,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
     frame(&mut editor, &context);
     frame(&mut editor, &context);
     let before = editor.history_snapshot();
-    editor.roll.exposure = 0.5;
+    editor.document.roll.exposure = 0.5;
     editor.record_edit(before.clone(), "Roll exposure", None);
     let state = editor.application_menu_state();
     assert_eq!(state.label(Action::Undo), "Undo Roll exposure");
@@ -34,15 +34,15 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
         app.read(|e| {
             assert!(e.document_pending.is_some());
             assert_eq!(
-                e.roll.exposure, 0.5,
+                e.document.roll.exposure, 0.5,
                 "preparation must not replace accepted state"
             );
             assert!(!e.application_menu_state().enabled(Action::Undo));
         });
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| {
-            assert_eq!(e.document.project, before, "{}", e.status);
-            assert_eq!(e.roll.exposure, 0.);
+            assert_eq!(e.document.state.project, before, "{}", e.status);
+            assert_eq!(e.document.roll.exposure, 0.);
             let state = e.application_menu_state();
             assert_eq!(state.label(Action::Undo), "Undo");
             assert_eq!(state.label(Action::Redo), "Redo Roll exposure");
@@ -50,7 +50,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
             assert!(state.enabled(Action::Redo));
         });
         app.update(|e| {
-            e.pick = Some(Pick::Dmin);
+            e.document.picking.kind = Some(Pick::Dmin);
             host::App::menu_action(e, Action::Redo);
         });
         frame(app, &context);
@@ -59,7 +59,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
                 e.document_pending.is_none(),
                 "a queued native command must not bypass a draft"
             );
-            assert_eq!(e.roll.exposure, 0.);
+            assert_eq!(e.document.roll.exposure, 0.);
         });
     });
 }
@@ -71,7 +71,7 @@ fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catc
     frame(&mut editor, &context);
     frame(&mut editor, &context);
     let before = editor.history_snapshot();
-    editor.roll.exposure = 0.5;
+    editor.document.roll.exposure = 0.5;
     editor.record_edit(before, "Roll exposure", None);
     host::App::native_menu_installed(&mut editor);
     assert!(editor.application_menu_state().enabled(Action::Undo));
@@ -87,7 +87,7 @@ fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catc
         }],
     );
     assert!(editor.document_pending.is_none());
-    assert_eq!(editor.roll.exposure, 0.5);
+    assert_eq!(editor.document.roll.exposure, 0.5);
     assert!(!editor.application_menu_state().enabled(Action::Undo));
 }
 
@@ -95,9 +95,9 @@ fn queued_native_history_checks_current_pointer_input_before_the_menu_state_catc
 fn native_undo_and_redo_target_text_without_surrendering_document_history() {
     let mut editor = super::super::tests::fixture();
     let before = editor.history_snapshot();
-    editor.roll.exposure = 0.5;
+    editor.document.roll.exposure = 0.5;
     editor.record_edit(before, "Roll exposure", None);
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     editor.menus.text_focused = true;
     let state = editor.application_menu_state();
     assert_eq!(state.label(Action::Undo), "Undo");
@@ -110,7 +110,7 @@ fn native_undo_and_redo_target_text_without_surrendering_document_history() {
             matches!(events.as_slice(), [egui::Event::Key { key: egui::Key::Z, pressed: true, modifiers, .. }]
             if modifiers.command && modifiers.shift == (action == Action::Redo))
         );
-        assert_eq!(editor.document.project, accepted);
+        assert_eq!(editor.document.state.project, accepted);
         assert!(editor.document_pending.is_none());
     }
     editor.menus.text_focused = false;
@@ -131,7 +131,9 @@ fn native_quit_and_close_wait_for_the_document_decision() {
         frame(&mut editor, &context);
         assert_eq!(editor.transition, Some(Transition::Close));
         assert!(!editor.allow_close);
-        assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+        assert!(
+            editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+        );
     }
 }
 
@@ -140,7 +142,7 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
     let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
-    editor.pick = Some(Pick::Dmin);
+    editor.document.picking.kind = Some(Pick::Dmin);
     for action in [
         Action::New,
         Action::Open,
@@ -151,11 +153,13 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         assert!(!editor.application_menu_state().enabled(action));
         host::App::menu_action(&mut editor, action);
         frame(&mut editor, &context);
-        assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+        assert!(
+            editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+        );
         assert!(editor.transition.is_none());
     }
-    assert_eq!(editor.pick, Some(Pick::Dmin));
-    editor.pick = None;
+    assert_eq!(editor.document.picking.kind, Some(Pick::Dmin));
+    editor.document.picking.kind = None;
     editor.transition = Some(Transition::New);
     host::App::menu_action(&mut editor, Action::Settings);
     frame(&mut editor, &context);
@@ -169,7 +173,7 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
     let context = egui::Context::default();
     frame(&mut editor, &context);
     frame(&mut editor, &context);
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     for action in [Action::Settings, Action::Close] {
         host::App::menu_action(&mut editor, action);
         frame(&mut editor, &context);
@@ -177,7 +181,7 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
     assert!(editor.menus.panel.is_none());
     assert!(!editor.allow_close);
     assert!(editor.transition.is_none());
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.state.project, before);
     host::App::menu_action(&mut editor, Action::Settings);
     frame(&mut editor, &context);
     host::App::menu_action(&mut editor, Action::Quit);
@@ -186,7 +190,9 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
     assert!(editor.menus.panel.is_none());
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+    assert!(
+        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+    );
 }
 
 #[test]
@@ -195,7 +201,7 @@ fn scopes_menu_updates_the_same_preference_without_dirtying_the_project() {
     let context = egui::Context::default();
     frame(&mut editor, &context);
     frame(&mut editor, &context);
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("preferences.json");
     editor.preference_store = Some(preferences::Store::open(path.clone()).unwrap().0);
@@ -211,5 +217,5 @@ fn scopes_menu_updates_the_same_preference_without_dirtying_the_project() {
         preferences::Store::open(path).unwrap().1.scopes_visible,
         !visible
     );
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.state.project, before);
 }

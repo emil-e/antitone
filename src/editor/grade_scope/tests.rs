@@ -21,7 +21,7 @@ impl Drop for Dropped {
 fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_content() {
     let mut e = fixture();
     crate::editor::tests::add_ready_fixture(&mut e);
-    let device = e.working.device().unwrap().clone();
+    let device = e.document.visit.working_view.device().unwrap().clone();
     let parameters = |ev| {
         ProcessingInput::from(
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
@@ -48,7 +48,7 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
     let preview = parameters(0.2);
     let dropped = Arc::new(AtomicBool::new(false));
     with_application(e, |app| {
-        let before = app.read(|e| e.document.project.clone());
+        let before = app.read(|e| e.document.state.project.clone());
         app.enter(|e, access| {
             e.observe_grade(&accepted);
             let guard = Dropped(dropped.clone());
@@ -59,7 +59,7 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
         });
         app.pump();
         app.update(|e| {
-            e.target = OutputTarget::Srgb;
+            e.document.target = OutputTarget::Srgb;
             e.tab = 2;
             e.source_exposure = 1.;
             e.observe_grade(&accepted);
@@ -72,7 +72,7 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
         app.read(|e| {
             assert!(e.document.visit.grade.matches(&preview));
             assert_eq!(
-                e.document.project, before,
+                e.document.state.project, before,
                 "an admitted visual snapshot is not a persisted edit"
             );
         });

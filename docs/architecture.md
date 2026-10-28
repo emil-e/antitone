@@ -26,13 +26,13 @@ Editor state is nested scopes rather than one flat struct ([`editor_document_sco
 
 | Scope | Owns |
 | --- | --- |
-| [`DocumentScope`](../src/editor/document_scope.rs) | Accepted document data, history, [derived spatial metadata](spatial-metadata.md), cache lifetime and the dependent photo visit |
-| [`PhotoScope`](../src/editor/photo_scope.rs) | One visit: source demand/readiness, measurement and working-source tasks, manual Crop drafts, local mask gestures, the adjustment-layer selection |
-| [`GradeScope`](../src/editor/grade_scope.rs) | The effective processing identity and the purpose-bound original-reconstruction task |
+| [`DocumentScope`](../src/editor/document_scope.rs) | Accepted data/history, [spatial metadata](spatial-metadata.md), source/thumbnail/grade retention, correction, cross-visit tool sessions and the dependent photo visit |
+| [`PhotoScope`](../src/editor/photo_scope.rs) | Source readiness, working images/tasks, measurement, Crop/gradient/Dust interaction, repair evaluation and visit-bound region consumers |
+| [`GradeScope`](../src/editor/grade_scope.rs) | Effective photographic content and original-reconstruction demand, continuation and results |
 
-Navigation creates fresh visits. Retiring one discards its transient tools without accepting geometry or changing source-owned adjustments; a rejected navigation or failed candidate preserves the current visit. A captured document is a data snapshot, not a cloned owner or history: retiring the owner closes publication even while snapshots and pixel leases stay alive. Accepted state, drafts and durable preferences are separated in [editor](editor.md#accepted-state-and-drafts).
+Navigation creates fresh visits, dropping their transient tools and image ownership without accepting geometry or changing source-owned adjustments. Picker/reference sessions, batch tools and released donor searches can span visits under the document owner. Rejected navigation or failed candidates preserve the current visit. Document replacement drops its RAM retention; captured documents contain data, while physical jobs retain their required pixel leases through cleanup. Accepted state, drafts and durable preferences are separated in [editor](editor.md#accepted-state-and-drafts).
 
-Export instead owns an application-level batch: fixed recipes, resolved paths, correction and service handles. It acquires one original at a time without preparing viewer resources. Document caches supply optional reuse, not execution authority; closing one cannot retire the batch. Blocking workspace interaction during export is a separate UI choice.
+Document-owned export captures a batch of fixed recipes, resolved paths, correction and service handles. It acquires originals directly from the shared backend, one at a time, without preparing viewer resources or retaining a document cache. The current UI blocks document replacement and closing during export.
 
 ## Services and workers
 
@@ -40,7 +40,7 @@ Workflows never block; services run the work off the UI thread and workflows awa
 
 - **Synchronous work** runs on the shared blocking pool through [`background.rs`](../src/background.rs), with worker panics returned as errors. Each job owns its captured inputs; unrelated features can proceed concurrently.
 - **Two native owners at most** ([`source/loader.rs`](../src/source/loader.rs)) serve foreground, visible and eager development; each runs one non-interruptible call with worker-local mutable RAW handles, and background work yields to foreground demand. [Scheduling rationale](native-development.md#editor-scheduling) describes the tradeoff.
-- **Thumbnail and embedded-preview processing** ([`editor_thumbnail_worker.rs`](../src/editor/thumbnails/production_worker.rs)) is a background path, not another RAW development pool: it never borrows the selected `Scan` from foreground operations, GPU processing is serial, and obsolete tickets never install images.
+- **Thumbnail processing** ([`production_worker.rs`](../src/editor/thumbnails/production_worker.rs)) awaits source acquisition, runs disk/CPU work on the shared blocking pool, and serializes ready processing by priority. GPU waits stay off the UI thread; obsolete tickets never install images.
 - **Lazy photo preparation** ([`photo_preparation`](../src/photo_preparation.rs)) resolves Digital starting exposure before processed-positive publication. The document owns recorded values and per-photo initialization through [`exposure_metadata`](../src/exposure_metadata.rs); operations capture the completed value separately from shared native/proxy pixels. Camera preview display and metering share decoded leases and in-flight extraction. AP1 production folds the captured gain into its source transform.
 - **The source cache** is a byte-bounded, oldest-unprotected LRU for native data, proxies and decoded camera references: active leases survive eviction, selected/visible proxies are protected separately, and native cache ownership is always optional. Retention settings and pressure behavior: [editor](editor.md#retention-settings-and-pressure).
 
@@ -48,23 +48,27 @@ Presentation follows the same separation: [`editor_activity.rs`](../src/editor/a
 
 ## Source acquisition and retention
 
-The [`source` module](../src/source/mod.rs) contains cache storage and native execution. `SourceProvider` is the async backend contract returning an `Arc<DevelopedSource>` lease. Selected views, analysis, thumbnails and export acquire the same immutable pixels:
+The [`source` module](../src/source/mod.rs) separates retention from execution. `SourceProvider` acquires immutable native pixels, camera proxies and embedded previews through one object-safe interface. Cache-backed and cacheless implementations serve the same consumers:
 
 ```mermaid
 flowchart LR
-    Consumer[Consumers] -->|await key and priority| Cache[SourceCache]
-    Cache -->|miss| Loader[SourceLoader]
+    Consumer[Scoped acquisition] -->|await key and priority| Provider[SourceProvider]
+    Document[DocumentScope] -->|owns retention| Cache[SourceCache]
+    Provider -->|optional reuse| Cache
+    Provider -->|miss| Loader[SourceLoader]
     Loader --> Native[Native owners]
-    Cache -->|owning source lease| Consumer
+    Provider -->|owning pixel lease| Worker[Physical work]
 ```
 
 [`SourceLoader`](../src/source/loader.rs) owns native execution and joining, independently of document stores. Cache misses forward the request's priority; joined work uses the highest active priority, so selecting a queued thumbnail promotes its existing load. Weak discovery of completed live results covers the handoff before cache publication. Waiting occupies no blocking-pool thread.
 
 RAWs are treated as immutable while open. Import/Open captures file identity for persisted-cache validity; acquisitions reuse it. Cache lookup/publication and request joining are in-memory operations.
 
-Each `DocumentScope` owns one [`SourceCache`](../src/source/cache.rs) and its photo exposure initialization, shared across same-document preparation, Save As and Undo. Captured documents carry data and recorded exposure values; services capture optional pixel reuse separately. New/Open prepares independently and publishes its initial pixels into the new scope after acceptance. The cache receives the shared provider on acquisition; native workers outlive document scopes.
+Each `DocumentScope` owns one [`SourceCache`](../src/source/cache.rs) and photo exposure initialization across same-document preparation, Save As and Undo. The owner binds [`providers`](../src/source/provider.rs); feature workflows receive acquisition capabilities. [Photo preparation](../src/photo_preparation.rs) resolves captured exposure separately from pixel compatibility. Blocking jobs receive pixel leases and captured inputs; optional retention stays with providers or the scope's continuation. New/Open prepares independently and seeds the accepted scope.
 
-`SourceCache` owns weak live lookup and optional strong ownership under an LRU byte budget. Eviction preserves consumer leases; zero retention still permits live reuse. Scope retirement drops document-owned task handles and cancellation guards, retiring their demand while export keeps its own owner. Closing the cache ends optional lookup/publication, not operation authority. After every strong reference disappears, reacquisition can develop again. Selected/visible protection applies to proxies, not full-resolution sources. [Retention settings](editor.md#retention-settings-and-pressure) govern optional ownership.
+`SourceCache` owns weak live lookup and optional strong ownership under an LRU byte budget. Eviction preserves consumer leases; zero retention still permits live reuse. Retiring document-owned continuations releases their demand and retention references; running physical calls finish with their captured inputs. After every strong pixel reference disappears, reacquisition can develop again. Selected/visible protection applies to proxies, not full-resolution sources. [Retention settings](editor.md#retention-settings-and-pressure) govern optional ownership.
+
+Camera display and exposure preparation share [`preview acquisition`](../src/source/preview.rs): one background extraction/decode serves async joiners. The worker owns decode inputs through completion; departing waiters leave other consumers intact. Decoded pixels use the same optional byte LRU as native/proxy data.
 
 Analysis owns measured samples through fitting rather than a full-roll set of source leases.
 

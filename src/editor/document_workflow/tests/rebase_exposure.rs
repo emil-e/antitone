@@ -136,7 +136,7 @@ fn reopening_keeps_the_recorded_baseline_when_legacy_fingerprints_differ() {
                     .as_ref(),
                 Some(&baseline)
             );
-            assert_eq!(e.document.project.roll.exposure, 0.);
+            assert_eq!(e.document.state.project.roll.exposure, 0.);
             e.document
                 .capture()
                 .save(&saved_again, crate::project::Save::New)
@@ -192,7 +192,7 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
     range_stack(&mut document, offscreen);
     document.validate_with_device(None).unwrap();
     editor.document.install(document);
-    let historical = editor.document.project.clone();
+    let historical = editor.document.state.project.clone();
 
     editor
         .document
@@ -219,7 +219,13 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
                 ),
                 source: None,
                 correction: None,
-                cache: Some(cache),
+                sources: Some(
+                    editor
+                        .source_services
+                        .as_ref()
+                        .unwrap()
+                        .provider(Some(cache)),
+                ),
             },
             device,
             |_, _| {},
@@ -229,11 +235,11 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
         prepare(Arc::new(crate::source::SourceCache::new(0))).is_ok(),
         "unresolved domains remain lazily admitted"
     );
-    let removed = editor.document.project.clone();
+    let removed = editor.document.state.project.clone();
 
-    editor.input = InputSettings::Digital;
-    editor.roll = removed.roll;
-    editor.current_source = Some(selected);
+    editor.document.input = InputSettings::Digital;
+    editor.document.roll = removed.roll;
+    editor.document.visit.current_source = Some(selected);
     editor.document.history = Default::default();
     editor.record_edit(target.project.clone(), "Remove photo", None);
     with_application(editor, |app| {
@@ -241,7 +247,7 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
             assert_eq!(
-                e.document.project, removed,
+                e.document.state.project, removed,
                 "known offscreen normalization must reject the unsafe restored project"
             );
             assert_eq!(
@@ -260,14 +266,14 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
     let replacement = crate::exposure_fixture::neutral_dng(2.3);
     let loader = source_loading::SourceLoader::new();
     let mut editor = editor(loader.clone());
-    editor.input = InputSettings::Digital;
-    editor.document.project.input = InputSettings::Digital;
+    editor.document.input = InputSettings::Digital;
+    editor.document.state.project.input = InputSettings::Digital;
     with_application(editor, |app| {
         for path in [first.path(), removed.path()] {
             app.enter(|e, cx| e.add_raws(vec![path.to_owned()], cx));
             app.run_until(Duration::from_secs(15), |e| !e.busy);
         }
-        let removed_id = app.read(|e| e.document.project.order[1]);
+        let removed_id = app.read(|e| e.document.state.project.order[1]);
         app.enter(|e, cx| e.load_source(removed.path().to_owned(), true, cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
@@ -288,12 +294,12 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
         });
         app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
-        app.read(|e| assert_eq!(e.document.project.order.len(), 1));
+        app.read(|e| assert_eq!(e.document.state.project.order.len(), 1));
         app.enter(|e, cx| e.add_raws(vec![replacement.path().to_owned()], cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
             assert_eq!(
-                e.document.project.order[1], removed_id,
+                e.document.state.project.order[1], removed_id,
                 "exercise actual numeric ID reuse"
             )
         });

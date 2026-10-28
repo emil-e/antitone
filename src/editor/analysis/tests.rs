@@ -67,7 +67,8 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);
         // Thumbnail scheduling is separate; this worker test must not touch the user's disk cache.
-        editor.thumbnails = Thumbnails::default();
+        editor.document.thumbnails =
+            (Thumbnails::default()).with_sources(editor.document.cache.clone());
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(60),
@@ -76,29 +77,39 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             },
         );
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
-        assert_eq!(editor.document.project.order.len(), 2);
-        let selected = editor.current_source;
+        assert_eq!(editor.document.state.project.order.len(), 2);
+        let selected = editor.document.visit.current_source;
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
         editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
-        editor.document.project.analysis_area = Some([96, 96, 320, 320]);
+        editor.document.state.project.analysis_area = Some([96, 96, 320, 320]);
         editor.set_gamma(0.7);
-        editor.roll_orientation.turn_clockwise();
-        editor.photo_orientation.flips.horizontal = true;
-        editor.crop = Some(crate::crop::Crop {
+        editor.document.roll_orientation.turn_clockwise();
+        editor.document.visit.photo_orientation.flips.horizontal = true;
+        editor.document.visit.crop = Some(crate::crop::Crop {
             center: [256., 256.],
             size: [288, 288],
             angle: 0.05,
         });
         editor.sync_document();
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         editor = click_analyze(editor, Duration::from_secs(60));
         assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status);
-        assert_eq!(editor.current_source, selected);
+        assert_eq!(editor.document.visit.current_source, selected);
         assert_eq!(editor.gamma(), 0.7);
         assert_eq!(Some(editor.response()), Editor::response_of(before.input));
-        assert_eq!(editor.document.project.orientation, before.orientation);
-        for (source, prior) in editor.document.project.sources.iter().zip(&before.sources) {
+        assert_eq!(
+            editor.document.state.project.orientation,
+            before.orientation
+        );
+        for (source, prior) in editor
+            .document
+            .state
+            .project
+            .sources
+            .iter()
+            .zip(&before.sources)
+        {
             assert_eq!(source.orientation, prior.orientation);
             assert_eq!(source.crop, prior.crop);
             assert_eq!(
@@ -119,7 +130,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
                 .iter()
                 .all(|v| (v - expected).abs() <= 2. / 65535.)
         );
-        let ids = &editor.document.project.order;
+        let ids = &editor.document.state.project.order;
         assert!(
             editor
                 .document
@@ -146,7 +157,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
                     .photo
                     .exposure
         );
-        let accepted = editor.document.project.clone();
+        let accepted = editor.document.state.project.clone();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("authored-roll.antitone.json");
         editor = crate::editor::tests::complete_document_operation(
@@ -160,9 +171,9 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             Duration::from_secs(60),
             |editor, cx| editor.start_document(Preparation::Open(path), cx),
         );
-        assert_eq!(editor.document.project, accepted);
-        editor.document.project.analysis_area = Some([96, 96, 8, 8]);
-        let sparse = editor.document.project.clone();
+        assert_eq!(editor.document.state.project, accepted);
+        editor.document.state.project.analysis_area = Some([96, 96, 8, 8]);
+        let sparse = editor.document.state.project.clone();
         editor = wait_with_limit(editor, Duration::from_secs(60), |editor, cx| {
             editor.begin_analysis(cx)
         });
@@ -171,9 +182,9 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             "{}",
             editor.status
         );
-        assert_eq!(editor.document.project, sparse);
-        editor.document.project.analysis_area = accepted.analysis_area;
-        let unvisited = editor.document.project.order[1];
+        assert_eq!(editor.document.state.project, sparse);
+        editor.document.state.project.analysis_area = accepted.analysis_area;
+        let unvisited = editor.document.state.project.order[1];
         let camera = editor
             .document
             .project
@@ -189,13 +200,13 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             .unwrap()
             .development
             .camera_model = "incompatible-camera".into();
-        let incompatible = editor.document.project.clone();
+        let incompatible = editor.document.state.project.clone();
         editor = wait_with_limit(editor, Duration::from_secs(60), |e, cx| {
             e.begin_analysis(cx);
             assert!(e.busy && e.document.analysis_pending.is_some());
         });
         assert!(editor.status.contains("failed"), "{}", editor.status);
-        assert_eq!(editor.document.project, incompatible);
+        assert_eq!(editor.document.state.project, incompatible);
         editor
             .document
             .project
@@ -203,7 +214,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
             .unwrap()
             .development
             .camera_model = camera;
-        let before_cancel = editor.document.project.clone();
+        let before_cancel = editor.document.state.project.clone();
         editor = wait_with_limit(editor, Duration::from_secs(60), |e, cx| {
             e.begin_analysis(cx);
             assert!(e.document.analysis_pending.is_some() && e.busy);
@@ -212,7 +223,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         assert!(editor.document.analysis_pending.is_none());
         assert!(!editor.busy);
         assert_eq!(editor.status, "Analysis cancelled");
-        assert_eq!(editor.document.project, before_cancel);
+        assert_eq!(editor.document.state.project, before_cancel);
         assert!(editor.document.visit.ready.is_some());
     });
 }
@@ -248,27 +259,35 @@ fn state() -> Editor {
         .unwrap();
     editor.id = 5;
     editor.next_request = 5;
-    editor.current_source = Some(id);
+    editor.document.visit.current_source = Some(id);
     editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     editor.set_gamma(0.9);
-    editor.roll.exposure = 0.;
-    editor.adjustment_layer_settings.exposure = 1.23456789;
-    editor.adjustment_layer_settings.wb = Balance {
+    editor.document.roll.exposure = 0.;
+    editor.document.visit.adjustment_layer_settings.exposure = 1.23456789;
+    editor.document.visit.adjustment_layer_settings.wb = Balance {
         warmth: 0.3,
         tint: -0.2,
     };
-    editor.adjustment_layer_settings.contrast = 0.8;
-    editor.adjustment_layer_settings.pivot = 0.3;
-    editor.adjustment_layer_settings.contrast_colour_mix = 0.4;
-    editor.adjustment_layer_settings.saturation = 1.2;
-    editor.adjustment_layer_settings.saturation_density = 0.6;
-    editor.roll.wb = Balance {
+    editor.document.visit.adjustment_layer_settings.contrast = 0.8;
+    editor.document.visit.adjustment_layer_settings.pivot = 0.3;
+    editor
+        .document
+        .visit
+        .adjustment_layer_settings
+        .contrast_colour_mix = 0.4;
+    editor.document.visit.adjustment_layer_settings.saturation = 1.2;
+    editor
+        .document
+        .visit
+        .adjustment_layer_settings
+        .saturation_density = 0.6;
+    editor.document.roll.wb = Balance {
         warmth: 0.2,
         tint: -0.1,
     };
-    editor.roll_orientation.turn_clockwise();
-    editor.photo_orientation.flips.horizontal = true;
-    editor.crop = Some(crate::crop::Crop {
+    editor.document.roll_orientation.turn_clockwise();
+    editor.document.visit.photo_orientation.flips.horizontal = true;
+    editor.document.visit.crop = Some(crate::crop::Crop {
         center: [412., 312.],
         size: [600, 400],
         angle: 0.1,
@@ -290,7 +309,7 @@ fn pending(editor: &mut Editor) -> u64 {
             loaded: editor.id,
             revision,
             document: editor.document.capture(),
-            selected: editor.current_source.unwrap(),
+            selected: editor.document.visit.current_source.unwrap(),
             film: Some(rect([12, 12, 800, 600])),
             local_support: false,
             picture: Some(rect([52, 42, 720, 540])),
@@ -350,38 +369,46 @@ fn outcome(editor: &Editor) -> Outcome {
 #[test]
 fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preserving_geometry() {
     let mut editor = state();
-    let mut second = editor.document.project.sources[0].clone();
+    let mut second = editor.document.state.project.sources[0].clone();
     second.id = SourceId(0);
     second.path = "second.ARW".into();
     second.adjustment_layers.as_mut().unwrap().layers[0]
         .adjustment
         .photo
         .exposure = 0.;
-    editor.document.project.add_source(second).unwrap();
-    let before = editor.document.project.clone();
-    editor.viewport.zoom = Some(1.7);
+    editor.document.state.project.add_source(second).unwrap();
+    let before = editor.document.state.project.clone();
+    editor.document.visit.viewport.zoom = Some(1.7);
     let area = rect([12, 12, 800, 600]);
     let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
     let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
     let input = ProcessingInput::from(ProcessingParameters::source());
-    editor
-        .working
-        .observe(editor.id, frame, input.signature(), editor.target);
-    assert!(editor.working.revision().is_some());
+    editor.document.visit.working_view.observe(
+        editor.id,
+        frame,
+        input.signature(),
+        editor.document.target,
+    );
+    assert!(editor.document.visit.working_view.revision().is_some());
     let view = ViewRequest {
         area,
         output: [32, 24],
         frame: None,
     };
-    editor.original.observe(
+    editor.document.visit.grade.original.observe(
         OriginalPurpose::Reference,
-        (input.signature(), editor.target, Some(view), composition),
+        (
+            input.signature(),
+            editor.document.target,
+            Some(view),
+            composition,
+        ),
     );
-    let original_revision = editor.original.revision();
-    editor.original.refining = Some((original_revision, view));
+    let original_revision = editor.document.visit.grade.original.revision();
+    editor.document.visit.grade.original.refining = Some((original_revision, view));
     let id = pending(&mut editor);
     editor.analysis_progress(id, 1, 1);
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.state.project, before);
     assert!(editor.busy);
     let result = outcome(&editor);
     let expected = result.document.project.clone();
@@ -393,12 +420,12 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert!(!editor.busy && editor.document.analysis_pending.is_none());
     assert_eq!(editor.dmin().unwrap(), DVec3::new(0.8, 0.4, 0.2));
     assert_eq!(editor.dmax().unwrap(), DVec3::new(0.04, 0.02, 0.01));
-    assert_eq!(editor.roll.exposure, 2.1);
+    assert_eq!(editor.document.roll.exposure, 2.1);
     assert_eq!(editor.gamma(), before.input.gamma());
     assert_eq!(Some(editor.response()), Editor::response_of(before.input));
-    assert_eq!(editor.roll.wb, expected.roll.wb);
+    assert_eq!(editor.document.roll.wb, expected.roll.wb);
     assert_eq!(
-        editor.adjustment_layer_settings,
+        editor.document.visit.adjustment_layer_settings,
         expected.sources[0]
             .adjustment_layers
             .as_ref()
@@ -408,13 +435,13 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
             .photo
     );
     assert_ne!(
-        editor.adjustment_layer_settings,
+        editor.document.visit.adjustment_layer_settings,
         before.sources[0].adjustment_layers.as_ref().unwrap().layers[0]
             .adjustment
             .photo
     );
     assert_eq!(
-        editor.document.project.sources[1]
+        editor.document.state.project.sources[1]
             .adjustment_layers
             .as_ref()
             .unwrap()
@@ -451,38 +478,50 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
             .photo;
         assert_eq!(&after, prior);
     }
-    assert_eq!(editor.document.project.development(), before.development());
     assert_eq!(
-        editor.document.project.camera_basis(),
+        editor.document.state.project.development(),
+        before.development()
+    );
+    assert_eq!(
+        editor.document.state.project.camera_basis(),
         before.camera_basis()
     );
-    assert_eq!(editor.viewport.zoom, Some(1.7));
-    assert!(!editor.source);
-    assert!(editor.working.revision().is_none());
-    assert!(editor.working.displayed.is_none());
-    assert!(editor.original.signature.is_none() && editor.original.settled.is_none());
-    assert!(editor.original.revision() > original_revision);
-    assert!(editor.original.refining.is_none());
+    assert_eq!(editor.document.visit.viewport.zoom, Some(1.7));
+    assert!(!editor.document.source);
+    assert!(editor.document.visit.working_view.revision().is_none());
+    assert!(editor.document.visit.working_view.displayed.is_none());
+    assert!(
+        editor.document.visit.grade.original.signature.is_none()
+            && editor.document.visit.grade.original.settled.is_none()
+    );
+    assert!(editor.document.visit.grade.original.revision() > original_revision);
+    assert!(editor.document.visit.grade.original.refining.is_none());
     editor.original_result(original_revision, Ok(None));
-    assert!(editor.original.refining.is_none() && editor.original.settled.is_none());
+    assert!(
+        editor.document.visit.grade.original.refining.is_none()
+            && editor.document.visit.grade.original.settled.is_none()
+    );
     assert!(editor.document.dirty());
-    editor.roll.exposure = 0.;
-    editor.adjustment_layer_settings.exposure = 0.;
-    editor.adjustment_layer_settings.wb = Balance {
+    editor.document.roll.exposure = 0.;
+    editor.document.visit.adjustment_layer_settings.exposure = 0.;
+    editor.document.visit.adjustment_layer_settings.wb = Balance {
         warmth: 0.25,
         tint: -0.15,
     };
-    let manual_photo = editor.adjustment_layer_settings;
+    let manual_photo = editor.document.visit.adjustment_layer_settings;
     editor.sync_document();
-    assert_eq!(editor.roll.exposure, 0.); // Manual zero is not an auto-placement trigger.
-    assert_eq!(editor.adjustment_layer_settings, manual_photo);
+    assert_eq!(editor.document.roll.exposure, 0.); // Manual zero is not an auto-placement trigger.
+    assert_eq!(
+        editor.document.visit.adjustment_layer_settings,
+        manual_photo
+    );
 }
 
 #[test]
 fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
     for mode in 0..3 {
         let mut editor = state();
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         let id = pending(&mut editor);
         let mut result = outcome(&editor);
         if mode == 1 {
@@ -511,10 +550,10 @@ fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
             },
             &crate::application::UiContext::render_only(),
         );
-        assert_eq!(editor.document.project, before);
-        assert_eq!(editor.roll, before.roll);
+        assert_eq!(editor.document.state.project, before);
+        assert_eq!(editor.document.roll, before.roll);
         assert_eq!(
-            editor.adjustment_layer_settings,
+            editor.document.visit.adjustment_layer_settings,
             before.sources[0].adjustment_layers.as_ref().unwrap().layers[0]
                 .adjustment
                 .photo
@@ -544,10 +583,10 @@ fn stale_request_generation_source_document_and_controls_cannot_install() {
                 editor.sync_document();
             }
             _ => {
-                editor.document.project.sources[0].path = "replacement.ARW".into();
+                editor.document.state.project.sources[0].path = "replacement.ARW".into();
             }
         }
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         editor.analysis_result(
             id + 1,
             Ok(None),
@@ -559,39 +598,39 @@ fn stale_request_generation_source_document_and_controls_cannot_install() {
             Ok(Some(Box::new(result))),
             &crate::application::UiContext::render_only(),
         );
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
     }
 }
 
 #[test]
 fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() {
     let mut editor = state();
-    let original = editor.document.project.clone();
+    let original = editor.document.state.project.clone();
     editor.begin_pick(
         Pick::Analysis,
         &crate::application::UiContext::render_only(),
     );
-    editor.region = Some(Coverage::rectangle(rect([52, 42, 720, 540])));
+    editor.document.picking.region = Some(Coverage::rectangle(rect([52, 42, 720, 540])));
     editor.finish_pick(&crate::application::UiContext::render_only());
-    assert_eq!(editor.document.project, original);
+    assert_eq!(editor.document.state.project, original);
     editor.begin_pick(
         Pick::Analysis,
         &crate::application::UiContext::render_only(),
     );
-    editor.region = Some(Coverage::rectangle(rect([0, 0, 900, 700])));
+    editor.document.picking.region = Some(Coverage::rectangle(rect([0, 0, 900, 700])));
     editor.apply_analysis_area(&crate::application::UiContext::render_only());
-    assert_eq!(editor.document.project, original);
-    assert_eq!(editor.pick, Some(Pick::Analysis));
-    editor.region = Some(Coverage::rectangle(rect([52, 42, 720, 540])));
+    assert_eq!(editor.document.state.project, original);
+    assert_eq!(editor.document.picking.kind, Some(Pick::Analysis));
+    editor.document.picking.region = Some(Coverage::rectangle(rect([52, 42, 720, 540])));
     editor.apply_analysis_area(&crate::application::UiContext::render_only());
-    assert!(editor.pick.is_none());
+    assert!(editor.document.picking.kind.is_none());
     assert_eq!(
-        editor.document.project.analysis_area,
+        editor.document.state.project.analysis_area,
         Some([52, 42, 720, 540])
     );
-    assert_eq!(editor.roll, original.roll);
-    assert_eq!(editor.document.project.dmin(), original.dmin());
-    assert_eq!(editor.document.project.dmax(), original.dmax());
+    assert_eq!(editor.document.roll, original.roll);
+    assert_eq!(editor.document.state.project.dmin(), original.dmin());
+    assert_eq!(editor.document.state.project.dmax(), original.dmax());
 }
 
 #[test]
@@ -599,9 +638,9 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
     for (settled, outstanding) in [(false, true), (true, true), (true, false)] {
         for cancel in [false, true] {
             let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
-            editor.input = super::super::tests::fixture().input;
-            editor.source = false;
-            editor.working.compare = true;
+            editor.document.input = super::super::tests::fixture().document.input;
+            editor.document.source = false;
+            editor.document.visit.working_view.compare = true;
             editor.sync_document();
             crate::application::test_support::with_application(editor, |app| {
                 let ctx = egui::Context::default();
@@ -621,7 +660,7 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                     }
                 });
                 app.run_until(Duration::from_secs(15), |editor| {
-                    editor.working.support_ready()
+                    editor.document.visit.working_view.support_ready()
                 });
                 app.enter(|editor, cx| {
                     let frame = |editor: &mut Editor| {
@@ -638,10 +677,11 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         output.textures_delta.clear();
                     };
                     frame(editor);
-                    editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+                    editor.document.visit.grade.original.last_edit =
+                        std::time::Instant::now() - Duration::from_secs(1);
                     frame(editor);
-                    let revision = editor.original.revision();
-                    let signature = editor.original.signature.clone();
+                    let revision = editor.document.visit.grade.original.revision();
+                    let signature = editor.document.visit.grade.original.signature.clone();
                     let view = signature.as_ref().unwrap().2.unwrap();
                     let image = editor
                         .document
@@ -652,23 +692,30 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         .proxy
                         .image(OutputTarget::Srgb)
                         .unwrap();
-                    assert!(editor.original.refining.is_some());
+                    assert!(editor.document.visit.grade.original.refining.is_some());
                     if !outstanding {
                         editor.original_result(revision, Ok(Some(image.clone())));
                     } else if settled {
-                        editor.original.settled = Some((revision, view, image.clone()));
+                        editor.document.visit.grade.original.settled =
+                            Some((revision, view, image.clone()));
                     }
-                    let before = editor.document.project.clone();
+                    let before = editor.document.state.project.clone();
                     editor.begin_analysis(cx);
-                    assert_eq!(editor.original.signature, signature);
-                    assert_eq!(editor.original.settled.is_some(), settled);
+                    assert_eq!(editor.document.visit.grade.original.signature, signature);
+                    assert_eq!(
+                        editor.document.visit.grade.original.settled.is_some(),
+                        settled
+                    );
                     if outstanding {
                         // A late completion from cancelled work cannot replace the accepted image.
                         editor.original_result(revision, Ok(Some(image.clone())));
                     } else {
-                        assert_eq!(editor.original.revision(), revision);
+                        assert_eq!(editor.document.visit.grade.original.revision(), revision);
                     }
-                    assert_eq!(editor.original.settled.is_some(), settled);
+                    assert_eq!(
+                        editor.document.visit.grade.original.settled.is_some(),
+                        settled
+                    );
                     let pending = editor.document.analysis_pending.as_ref().unwrap().id;
                     if cancel {
                         editor.cancel_analysis();
@@ -682,18 +729,27 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         },
                         cx,
                     );
-                    assert_eq!(editor.document.project, before);
+                    assert_eq!(editor.document.state.project, before);
                     frame(editor);
                     if settled {
-                        let (current_revision, current_view, retained) =
-                            editor.original.settled.as_ref().unwrap();
-                        assert_eq!(*current_revision, editor.original.revision());
+                        let (current_revision, current_view, retained) = editor
+                            .document
+                            .visit
+                            .grade
+                            .original
+                            .settled
+                            .as_ref()
+                            .unwrap();
+                        assert_eq!(
+                            *current_revision,
+                            editor.document.visit.grade.original.revision()
+                        );
                         assert_eq!(*current_view, view);
                         assert!(Arc::ptr_eq(retained, &image));
-                        assert!(editor.original.refining.is_none());
+                        assert!(editor.document.visit.grade.original.refining.is_none());
                         assert!(editor.document.visit.grade.task.is_none());
                     } else {
-                        assert!(editor.original.refining.is_some());
+                        assert!(editor.document.visit.grade.original.refining.is_some());
                         assert!(editor.document.visit.grade.task.is_some());
                     }
                 });
@@ -707,19 +763,19 @@ fn statistics_edit_bypasses_composition_and_crop_drafts_cannot_start_analysis() 
     let editor = super::super::tests::fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.roll_orientation.turn_clockwise();
-            editor.photo_orientation.flips.horizontal = true;
-            editor.crop = Some(crate::crop::Crop {
+            editor.document.roll_orientation.turn_clockwise();
+            editor.document.visit.photo_orientation.flips.horizontal = true;
+            editor.document.visit.crop = Some(crate::crop::Crop {
                 center: [444., 300.],
                 size: [360, 240],
                 angle: 0.1,
             });
             super::super::tests::add_ready_fixture(editor);
-            editor.source = false;
+            editor.document.source = false;
             editor.sync_document();
-            let before = editor.document.project.clone();
-            editor.viewport.zoom = Some(1.7);
-            let view = editor.viewport;
+            let before = editor.document.state.project.clone();
+            editor.document.visit.viewport.zoom = Some(1.7);
+            let view = editor.document.visit.viewport;
             editor.begin_pick(Pick::Analysis, cx);
             let area = editor.document.visit.ready.as_ref().unwrap().area;
             let ctx = egui::Context::default();
@@ -734,9 +790,9 @@ fn statistics_edit_bypasses_composition_and_crop_drafts_cannot_start_analysis() 
                 |ui| crate::editor::tests::paint_controller(editor, ui),
             );
             output.textures_delta.clear();
-            assert!(editor.source);
+            assert!(editor.document.source);
             assert_eq!(
-                editor.last_layout.unwrap().0.composition,
+                editor.document.visit.last_layout.unwrap().0.composition,
                 Composition::new(
                     area,
                     RollOrientation::default(),
@@ -744,18 +800,21 @@ fn statistics_edit_bypasses_composition_and_crop_drafts_cannot_start_analysis() 
                 )
                 .unwrap()
             );
-            editor.region = Some(Coverage::rectangle(rect([52, 42, 720, 480])));
+            editor.document.picking.region = Some(Coverage::rectangle(rect([52, 42, 720, 480])));
             editor.apply_analysis_area(cx);
-            assert!(editor.pick.is_none());
+            assert!(editor.document.picking.kind.is_none());
             assert_eq!(
-                editor.document.project.analysis_area,
+                editor.document.state.project.analysis_area,
                 Some([52, 42, 720, 480])
             );
-            assert_eq!(editor.document.project.sources, before.sources);
-            assert_eq!(editor.document.project.orientation, before.orientation);
-            assert_eq!(editor.roll, before.roll);
-            assert_eq!(editor.viewport, view);
-            assert!(!editor.source);
+            assert_eq!(editor.document.state.project.sources, before.sources);
+            assert_eq!(
+                editor.document.state.project.orientation,
+                before.orientation
+            );
+            assert_eq!(editor.document.roll, before.roll);
+            assert_eq!(editor.document.visit.viewport, view);
+            assert!(!editor.document.source);
             editor.begin_crop();
             assert!(editor.document.visit.crop_edit.is_some());
             editor.begin_analysis(&UiContext::render_only());
@@ -782,7 +841,7 @@ fn missing_local_support_never_becomes_whole_camera_picture_statistics() {
 #[test]
 fn sparse_eligibility_is_rejected_before_any_grade_installation() {
     let mut editor = state();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let id = pending(&mut editor);
     let samples = crate::scan::AnalysisSamples {
         pixels: vec![DVec3::splat(0.1)],
@@ -796,7 +855,7 @@ fn sparse_eligibility_is_rejected_before_any_grade_installation() {
         Err(error.to_string()),
         &crate::application::UiContext::render_only(),
     );
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.state.project, before);
     let enough = roll_analysis::FrameStatistics {
         film_samples: 0,
         picture_samples: 512,
@@ -861,7 +920,7 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
             None
         );
         assert_eq!(editor.analysis_picture(), None);
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         editor = click_analyze(editor, Duration::from_secs(180));
         assert!(
             editor.status.starts_with("Analyzed 12"),
@@ -892,7 +951,7 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
                 .photo;
             assert_eq!(&after, prior);
         }
-        let [x, y, w, h] = editor.document.project.analysis_area.unwrap();
+        let [x, y, w, h] = editor.document.state.project.analysis_area.unwrap();
         assert!(x > 1600 && y > 300 && w < 5500 && h < 5200);
         let dmax = editor.dmax().unwrap();
         assert!(
@@ -900,15 +959,15 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
             "holder tails returned: {dmax:?}"
         );
         assert!(
-            editor.roll.exposure < 3.,
+            editor.document.roll.exposure < 3.,
             "holder-driven placement returned"
         );
         println!(
             "Feedback roll: shared opening recovered from later frame, area={:?}, Dmin={:?} Dmax={dmax:?} balance={:?} EV={}",
-            editor.document.project.analysis_area,
+            editor.document.state.project.analysis_area,
             editor.dmin(),
             editor.balance(),
-            editor.roll.exposure
+            editor.document.roll.exposure
         );
     });
 }
@@ -1026,11 +1085,14 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
             "numeric point {point:?}, labels {labels:?}"
         );
         super::super::tests::app_frame(app, &ctx, vec![egui::Event::Text("0.7654321".into())]);
-        assert_eq!(app.read(|e| e.adjustment_layer_settings.exposure), 0.);
+        assert_eq!(
+            app.read(|e| e.document.visit.adjustment_layer_settings.exposure),
+            0.
+        );
         click_label(app, &ctx, "Roll");
         app.read(|e| {
             assert_eq!(
-                e.adjustment_layer_settings.exposure, 0.7654321,
+                e.document.visit.adjustment_layer_settings.exposure, 0.7654321,
                 "tab={} status={}",
                 e.tab, e.status
             )
@@ -1053,7 +1115,7 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
             assert_eq!(
                 snapshot
                     .project
-                    .source(e.current_source.unwrap())
+                    .source(e.document.visit.current_source.unwrap())
                     .unwrap()
                     .adjustment_layers
                     .as_ref()
@@ -1074,15 +1136,15 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.adjustment_layer_settings.contrast = 1.2;
-            editor.source = false;
-            editor.working.compare = true;
+            editor.document.visit.adjustment_layer_settings.contrast = 1.2;
+            editor.document.source = false;
+            editor.document.visit.working_view.compare = true;
             let ctx = egui::Context::default();
             for _ in 0..4 {
                 super::super::tests::app_frame(editor, &ctx, vec![]);
             }
-            let signature = editor.original.signature.clone();
-            let revision = editor.original.revision();
+            let signature = editor.document.visit.grade.original.signature.clone();
+            let revision = editor.document.visit.grade.original.revision();
             let view = signature.as_ref().unwrap().2.unwrap();
             let image = editor
                 .document
@@ -1093,9 +1155,9 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
                 .proxy
                 .image(OutputTarget::Srgb)
                 .unwrap();
-            editor.original.settled = Some((revision, view, image.clone()));
+            editor.document.visit.grade.original.settled = Some((revision, view, image.clone()));
             editor.request_analysis(cx);
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     events: vec![egui::Event::Key {
@@ -1114,11 +1176,19 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             assert!(editor.document.spatial_preparing.is_none());
             assert!(editor.document.analysis_preparing.is_none());
             assert!(editor.tasks.view().is_none());
-            assert_eq!(editor.document.project, before);
-            assert_eq!(editor.original.signature, signature);
-            assert_eq!(editor.original.revision(), revision);
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.document.visit.grade.original.signature, signature);
+            assert_eq!(editor.document.visit.grade.original.revision(), revision);
             assert!(Arc::ptr_eq(
-                &editor.original.settled.as_ref().unwrap().2,
+                &editor
+                    .document
+                    .visit
+                    .grade
+                    .original
+                    .settled
+                    .as_ref()
+                    .unwrap()
+                    .2,
                 &image
             ));
         });

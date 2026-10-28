@@ -20,11 +20,9 @@ use crate::{
     viewport::{PickDrag, Viewport},
 };
 use glam::DVec3;
-use std::{
-    path::PathBuf,
-    sync::{Arc, mpsc},
-    time::Duration,
-};
+#[cfg(test)]
+use std::sync::mpsc;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod cache_limits;
 mod controls;
@@ -110,6 +108,7 @@ mod kittest_tests;
 mod measurement;
 mod memory;
 mod photo_scope;
+mod picking;
 mod save;
 mod source_workflow;
 #[cfg(test)]
@@ -240,7 +239,7 @@ fn prepare_source_scheduled(
         file: cache
             .as_ref()
             .map_or_else(|| thumbnails::FileKey::new(&path), |(_, file)| file.clone()),
-        cache: cache.map(|(cache, _)| cache.clone()),
+        sources: Some(developments.provider(cache.map(|(cache, _)| cache.clone()))),
     }
     .load(developments, cancelled)?;
     let scan = developed.context.scan()?;
@@ -252,26 +251,12 @@ pub struct Editor {
     started: bool,
     menus: menu::Menus,
     submissions: crate::platform::SubmissionGate,
-    thumbnails: Thumbnails,
     scopes: Scopes,
-    grades: Grades,
-    working: WorkingView,
-    original: OriginalView,
     dust_services: Option<dust_workflow::Services>,
     reset_repairs_pending: bool,
-    viewport: Viewport,
     fullscreen: Option<FullscreenView>,
     // Running physical work outlives logical cancellation.
     id: u64,
-    pending_preview: Option<thumbnails::SelectedPreview>,
-    preview_rendered: Option<(
-        u64,
-        crate::gpu::ProcessingSignature,
-        crate::frame_raster::FrameRaster,
-        OutputTarget,
-        Arc<crate::gpu::view::RenderedView>,
-    )>,
-    selection_timing: Option<Arc<SelectionTiming>>,
     busy: bool,
     look_services: Option<look_workflow::Services>,
     loaded_looks: Vec<Arc<crate::looks::LookAsset>>,
@@ -279,28 +264,11 @@ pub struct Editor {
     tasks: TaskActivity,
     failure: Option<Failure>,
     document_failure: Option<FailureKind>,
-    return_notice: Option<String>,
-    input: InputSettings,
-    input_switch: Option<InputSettings>,
-    roll: RollSettings,
-    adjustment_layer_settings: AdjustmentLayerSettings,
-    film_emulation: FilmEmulationSettings,
 
-    roll_orientation: RollOrientation,
-    photo_orientation: PhotoOrientation,
-    crop: Option<Crop>,
-
-    auto_crop_requested: Option<auto_crop::Target>,
     auto_crop_margin: f64,
 
-    last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
-    target: OutputTarget,
-    source: bool,
     source_exposure: f64,
     source_white_balance: crate::raw::SourceWhiteBalance,
-    pick: Option<Pick>,
-    region: Option<Coverage>,
-    pick_drag: Option<PickDrag>,
     tab: usize,
     preferences: preferences::Preferences,
     preference_store: Option<preferences::Store>,
@@ -312,22 +280,13 @@ pub struct Editor {
     #[cfg(test)]
     history_snapshot_clones: usize,
     control_commands: Vec<editing::Command>,
-    current_source: Option<SourceId>,
     next_request: u64,
     document_pending: Option<u64>,
-    export_operation: export_workflow::State,
     export_services: Option<export_services::Services>,
     transition: Option<Transition>,
     after_save: Option<Transition>,
     project_overwrite: Option<(PathBuf, Option<Transition>)>,
     allow_close: bool,
-    selected: usize,
-    roll_selection: RollSelection,
-    removal_pending: Option<Vec<SourceId>>,
-    export_dialog: Option<export_batch::Draft>,
-    export_summary: Option<export_batch::Summary>,
-    correction: Option<Arc<Correction>>,
-    flat_edit: Option<FlatEdit>,
     developments: Option<source_loading::SourceLoader>,
     source_services: Option<source::Services>,
     source_epoch: Arc<std::sync::atomic::AtomicU64>,
@@ -350,7 +309,7 @@ impl Editor {
         let device = device.clone();
         let queue = queue.clone();
         let mut editor = Self::state();
-        editor.input = editor.document.project.input;
+        editor.document.input = editor.document.state.project.input;
         editor.submissions = submissions.clone();
         editor.initialize_viewer(&device, &queue);
         editor.look_services = Some(look_workflow::Services::new(
@@ -378,22 +337,20 @@ impl Editor {
         ));
         editor.developments = Some(developments);
         editor.source_epoch = source_epoch;
-        editor.thumbnails = thumbnails;
-        editor
-            .thumbnails
-            .bind_sources(editor.document.cache.clone(), &editor.document);
-        editor.preferences.cache_limits = Some(editor.thumbnails.limits);
+        editor.document.cache = thumbnails.sources.clone();
+        editor.document.thumbnails = thumbnails;
+        editor.preferences.cache_limits = Some(editor.document.thumbnails.limits);
         editor.scopes = scopes;
         editor
     }
 
     fn initialize_viewer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.grades = Grades::new(device.clone());
-        self.working = WorkingView::new(device.clone(), queue.clone());
+        self.document.grades = Grades::new(device.clone());
+        self.document.visit.working_view = WorkingView::new(device.clone(), queue.clone());
         // Preview, thumbnail and viewport rendering share one lazy kernel set; initialising it
         // here avoids a shader-compilation pause when the first provisional view is selected.
         if let Ok(kernels) = pollster::block_on(crate::gpu::view::ViewKernels::new(device)) {
-            let _ = self.working.kernels.set(kernels);
+            let _ = self.document.visit.working_view.kernels.set(kernels);
         }
     }
 
@@ -416,29 +373,20 @@ impl Editor {
             gamma: crate::processing::DEFAULT_GAMMA,
             balance: Balance::default(),
         };
-        let document: document_scope::DocumentScope = document.into();
-        let mut thumbnails = Thumbnails::default();
-        thumbnails.bind_sources(document.cache.clone(), &document);
+        let mut document: document_scope::DocumentScope = document.into();
+        document.input = input;
         Self {
             submissions: crate::platform::SubmissionGate::default(),
             developments: None,
             source_services: None,
             source_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            thumbnails,
             scopes: Scopes::default(),
-            grades: Grades::default(),
-            working: WorkingView::default(),
-            original: OriginalView::new(Arc::default()),
             dust_services: None,
             reset_repairs_pending: false,
-            viewport: Viewport::default(),
             fullscreen: None,
             started: false,
             menus: menu::Menus::default(),
             id: 0,
-            pending_preview: None,
-            preview_rendered: None,
-            selection_timing: None,
             busy: false,
             look_services: None,
             loaded_looks: Vec::new(),
@@ -446,28 +394,11 @@ impl Editor {
             tasks: TaskActivity::default(),
             failure: None,
             document_failure: None,
-            return_notice: None,
-            input,
-            input_switch: None,
-            roll: RollSettings::default(),
-            adjustment_layer_settings: AdjustmentLayerSettings::default(),
-            film_emulation: FilmEmulationSettings::default(),
 
-            roll_orientation: RollOrientation::default(),
-            photo_orientation: PhotoOrientation::default(),
-            crop: None,
-
-            auto_crop_requested: None,
             auto_crop_margin: crate::auto_crop::DEFAULT_MARGIN_PERCENT,
 
-            last_layout: None,
-            target: OutputTarget::DisplayP3,
-            source: true,
             source_exposure: 0.,
             source_white_balance: Default::default(),
-            pick: None,
-            region: None,
-            pick_drag: None,
             tab: 0,
             preferences: preferences::Preferences::default(),
             preference_store: None,
@@ -479,22 +410,13 @@ impl Editor {
             control_commands: Vec::new(),
             document,
             candidate_operation: document_workflow::State::default(),
-            current_source: None,
             next_request: 0,
             document_pending: None,
-            export_operation: export_workflow::State::default(),
             export_services: None,
             transition: None,
             after_save: None,
             project_overwrite: None,
             allow_close: false,
-            selected: 0,
-            roll_selection: RollSelection::default(),
-            removal_pending: None,
-            export_dialog: None,
-            export_summary: None,
-            correction: None,
-            flat_edit: None,
         }
     }
 
@@ -515,7 +437,7 @@ impl Editor {
     }
 
     fn film_emulation_controls(&mut self, ui: &mut egui::Ui) {
-        let settings = &mut self.film_emulation;
+        let settings = &mut self.document.film_emulation;
         let changed = *settings != FilmEmulationSettings::default();
         let summary = if settings.enabled {
             format!("{:.3}% · a {:.3}", settings.size, settings.amount)
@@ -560,8 +482,8 @@ impl Editor {
     fn apply_preferences(&mut self, mut preferences: preferences::Preferences) {
         let limits = *preferences
             .cache_limits
-            .get_or_insert(self.thumbnails.limits);
-        self.thumbnails.set_limits(limits);
+            .get_or_insert(self.document.thumbnails.limits);
+        self.document.thumbnails.set_limits(limits);
         self.scopes.visible = preferences.scopes_visible;
         self.scopes.height_ratio = preferences.scope_height_ratio;
         self.preferences = preferences;
@@ -579,7 +501,7 @@ impl Editor {
     fn cache_preferences(&mut self, ui: &mut egui::Ui) {
         use cache_limits::{MAX_MIB, MIB};
         ui.set_min_width(330.);
-        let mut limits = self.thumbnails.limits;
+        let mut limits = self.document.thumbnails.limits;
         let mut changed = false;
         for (label, bytes) in [
             ("CPU cache", &mut limits.cpu_bytes),
@@ -616,14 +538,14 @@ impl Editor {
             .show(ui)
             .clicked()
         {
-            limits = self.thumbnails.default_limits();
+            limits = self.document.thumbnails.default_limits();
             changed = true;
         }
         ui.label(
             "0 disables optional retention. Selected and visible work may exceed these limits.",
         );
         if changed {
-            self.thumbnails.set_limits(limits);
+            self.document.thumbnails.set_limits(limits);
             self.preferences.cache_limits = Some(limits);
             self.persist_preferences();
         }
@@ -631,7 +553,7 @@ impl Editor {
 
     #[cfg(test)]
     fn dmin(&self) -> Option<DVec3> {
-        match self.input {
+        match self.document.input {
             InputSettings::Negative { dmin, .. } => dmin,
             InputSettings::Digital => None,
         }
@@ -642,12 +564,12 @@ impl Editor {
         if let InputSettings::Negative { dmin, .. } = self.negative_mut() {
             *dmin = value;
         }
-        self.document.project.input = self.input;
+        self.document.state.project.input = self.document.input;
     }
 
     #[cfg(test)]
     fn dmax(&self) -> Option<DVec3> {
-        match self.input {
+        match self.document.input {
             InputSettings::Negative { dmax, .. } => dmax,
             InputSettings::Digital => None,
         }
@@ -658,12 +580,12 @@ impl Editor {
         if let InputSettings::Negative { dmax, .. } = self.negative_mut() {
             *dmax = value;
         }
-        self.document.project.input = self.input;
+        self.document.state.project.input = self.document.input;
     }
 
     #[cfg(test)]
     fn floor(&self) -> f64 {
-        match self.input {
+        match self.document.input {
             InputSettings::Negative { input_floor, .. } => input_floor,
             InputSettings::Digital => 0.,
         }
@@ -674,12 +596,12 @@ impl Editor {
         if let InputSettings::Negative { input_floor, .. } = self.negative_mut() {
             *input_floor = value;
         }
-        self.document.project.input = self.input;
+        self.document.state.project.input = self.document.input;
     }
 
     #[cfg(test)]
     fn balance(&self) -> Balance {
-        match self.input {
+        match self.document.input {
             InputSettings::Negative { balance, .. } => balance,
             InputSettings::Digital => Balance::default(),
         }
@@ -690,7 +612,7 @@ impl Editor {
         if let InputSettings::Negative { balance, .. } = self.negative_mut() {
             *balance = value;
         }
-        self.document.project.input = self.input;
+        self.document.state.project.input = self.document.input;
     }
 
     #[cfg(test)]
@@ -698,7 +620,7 @@ impl Editor {
         if let InputSettings::Negative { gamma, .. } = self.negative_mut() {
             *gamma = value;
         }
-        self.document.project.input = self.input;
+        self.document.state.project.input = self.document.input;
     }
 
     #[cfg(test)]
@@ -706,13 +628,13 @@ impl Editor {
         if let InputSettings::Negative { response, .. } = self.negative_mut() {
             *response = value;
         }
-        self.document.project.input = self.input;
+        self.document.state.project.input = self.document.input;
     }
 
     #[cfg(test)]
     fn negative_mut(&mut self) -> &mut InputSettings {
-        if !self.input.is_negative() {
-            self.input = InputSettings::Negative {
+        if !self.document.input.is_negative() {
+            self.document.input = InputSettings::Negative {
                 dmin: None,
                 dmax: None,
                 input_floor: crate::processing::CAMERA_INPUT_FLOOR,
@@ -721,12 +643,13 @@ impl Editor {
                 balance: Balance::default(),
             };
         }
-        &mut self.input
+        &mut self.document.input
     }
 
     #[cfg(test)]
     fn response(&self) -> crate::processing::Response {
-        Self::response_of(self.input).expect("negative fixture has an interpretation response")
+        Self::response_of(self.document.input)
+            .expect("negative fixture has an interpretation response")
     }
 
     #[cfg(test)]
@@ -739,7 +662,7 @@ impl Editor {
 
     #[cfg(test)]
     fn gamma(&self) -> f64 {
-        match self.input {
+        match self.document.input {
             InputSettings::Negative { gamma, .. } => gamma,
             InputSettings::Digital => crate::processing::DEFAULT_GAMMA,
         }
@@ -747,21 +670,20 @@ impl Editor {
 
     #[allow(dead_code)]
     fn calibration(&self) -> Option<Calibration> {
-        self.input
+        self.document
+            .input
             .calibration()
             .and_then(|calibration| calibration.validate().ok())
     }
 
     fn seed_thumbnail(&mut self) {
-        self.thumbnails
-            .bind_sources(self.document.cache.clone(), &self.document);
         let Some(ready) = &mut self.document.visit.ready else {
             return;
         };
         let Some((file, proxy)) = ready.thumbnail.take() else {
             return;
         };
-        let Some(id) = self.current_source else {
+        let Some(id) = self.document.visit.current_source else {
             return;
         };
         let source = self
@@ -779,17 +701,18 @@ impl Editor {
         if document::same_path(&path, &ready.record.path)
             && source.development == ready.record.development
         {
-            self.thumbnails
+            self.document
+                .thumbnails
                 .seed_at_path(source, &ready.path, file, proxy);
         }
     }
 
     fn input(&self) -> InputSettings {
-        self.input
+        self.document.input
     }
 
     fn load_input(&mut self, input: InputSettings) {
-        self.input = input;
+        self.document.input = input;
     }
 
     fn negative_input(&self) -> InputSettings {
@@ -804,39 +727,45 @@ impl Editor {
     }
 
     fn request_input(&mut self, target: InputSettings, cx: &UiContext<'_, Self>) {
-        if target.is_negative() == self.input.is_negative() {
+        if target.is_negative() == self.document.input.is_negative() {
             return;
         }
-        if self.input.has_stage_settings() && !target.is_negative() {
-            self.input_switch = Some(target);
+        if self.document.input.has_stage_settings() && !target.is_negative() {
+            self.document.input_switch = Some(target);
         } else {
             self.apply_input(target, cx);
         }
     }
 
     fn apply_input(&mut self, target: InputSettings, cx: &UiContext<'_, Self>) {
-        if self.input.is_negative() != target.is_negative()
-            && !self.document.project.sources.is_empty()
+        if self.document.input.is_negative() != target.is_negative()
+            && !self.document.state.project.sources.is_empty()
         {
             // Crossing stages changes every active source's decode WB, so it is an atomic
             // document operation rather than an input-only edit.
             self.sync_document();
             let mut candidate = self.document.capture();
             candidate.project.input = target;
-            self.start_document(Preparation::Input(candidate, self.current_source), cx);
+            self.start_document(
+                Preparation::Input(candidate, self.document.visit.current_source),
+                cx,
+            );
             return;
         }
         if target.ready()
-            && !self.document.project.sources.is_empty()
-            && let Err(error) =
-                self.validate_processing(target, self.roll, self.adjustment_layer_settings)
+            && !self.document.state.project.sources.is_empty()
+            && let Err(error) = self.validate_processing(
+                target,
+                self.document.roll,
+                self.document.visit.adjustment_layer_settings,
+            )
         {
             self.status = error.to_string();
             return;
         }
         let before = self.history_snapshot();
-        self.input = target;
-        self.source = !target.ready();
+        self.document.input = target;
+        self.document.source = !target.ready();
         self.record_edit(before, "Input stage", None);
     }
 
@@ -846,7 +775,7 @@ impl Editor {
         escape_available: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        let Some(target) = self.input_switch else {
+        let Some(target) = self.document.input_switch else {
             return;
         };
         let choice = presentation::DecisionDialog::new(
@@ -862,30 +791,30 @@ impl Editor {
         );
         match choice {
             Some(presentation::DialogChoice::Confirm) => {
-                self.input_switch = None;
+                self.document.input_switch = None;
                 self.apply_input(target, cx);
             }
             Some(presentation::DialogChoice::Cancel)
             | Some(presentation::DialogChoice::Alternative) => {
-                self.input_switch = None;
+                self.document.input_switch = None;
             }
             None => {}
         }
     }
 
     fn sync_document(&mut self) {
-        let input = self.input;
+        let input = self.document.input;
         let adjustment_layer_target = self.adjustment_layer_target();
-        let project = &mut self.document.project;
+        let project = &mut self.document.state.project;
         project.input = input;
-        project.roll = self.roll;
-        project.orientation = self.roll_orientation;
-        project.output.film_emulation = self.film_emulation;
-        project.output.tiff = match self.target {
+        project.roll = self.document.roll;
+        project.orientation = self.document.roll_orientation;
+        project.output.film_emulation = self.document.film_emulation;
+        project.output.tiff = match self.document.target {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
             OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
         };
-        if let Some(id) = self.current_source {
+        if let Some(id) = self.document.visit.current_source {
             let source = project
                 .source_mut(id)
                 .expect("active source belongs to document");
@@ -895,10 +824,10 @@ impl Editor {
                     .as_mut()
                     .and_then(|layers| layers.layers.iter_mut().find(|record| record.id == layer))
             {
-                record.adjustment.photo = self.adjustment_layer_settings;
+                record.adjustment.photo = self.document.visit.adjustment_layer_settings;
             }
-            source.orientation = self.photo_orientation;
-            source.crop = self.crop;
+            source.orientation = self.document.visit.photo_orientation;
+            source.crop = self.document.visit.crop;
         }
     }
 
@@ -910,7 +839,7 @@ impl Editor {
     pub(super) fn begin_document_operation(&mut self, replacement: bool) -> u64 {
         self.document.write = save::State::default();
         self.candidate_operation = document_workflow::State::default();
-        if let Some(session) = &mut self.flat_edit {
+        if let Some(session) = &mut self.document.flat_edit {
             session.task = None;
         }
         self.retire_look();
@@ -923,19 +852,19 @@ impl Editor {
         if let Some(review) = self.document.analysis_review.take() {
             self.tab = review.return_tab;
             self.scopes.visible = review.return_scopes_visible;
-            self.pick = None;
-            self.region = None;
-            self.document.pick_return = None;
-            self.document.pick_view = None;
+            self.document.picking.kind = None;
+            self.document.picking.region = None;
+            self.document.picking.return_to = None;
+            self.document.picking.view = None;
         }
         self.document.visit.support = Default::default();
-        self.pending_preview = None;
-        self.preview_rendered = None;
-        self.selection_timing = None;
+        self.document.visit.pending_preview = None;
+        self.document.visit.preview_rendered = None;
+        self.document.visit.selection_timing = None;
         if self.document.analysis_pending.take().is_some() {
             self.cancel_analysis();
         }
-        self.thumbnails.cancel();
+        self.document.thumbnails.cancel();
         let id = self.request_id();
         self.source_epoch
             .store(id, std::sync::atomic::Ordering::Relaxed);
@@ -953,7 +882,7 @@ impl Editor {
             .visit
             .ready
             .as_ref()
-            .and(self.current_source)
+            .and(self.document.visit.current_source)
             .map(|source| (self.id, source));
         self.start_document(
             Preparation::Import(self.document.capture(), paths, reuse),
@@ -973,17 +902,17 @@ impl Editor {
             return;
         }
         self.document.visit.support = Default::default();
-        if self.flat_edit.is_some() {
+        if self.document.flat_edit.is_some() {
             self.finish_flat_edit();
             return;
         }
-        let view = self.document.pick_view.take();
-        let source = view.map_or(!self.input.ready(), |view| view.source);
-        let returning = self.document.pick_return.is_some();
-        self.pick = None;
-        self.region = None;
-        self.pick_drag = None;
-        if let Some(context) = self.document.pick_return.take() {
+        let view = self.document.picking.view.take();
+        let source = view.map_or(!self.document.input.ready(), |view| view.source);
+        let returning = self.document.picking.return_to.is_some();
+        self.document.picking.kind = None;
+        self.document.picking.region = None;
+        self.document.visit.pick_drag = None;
+        if let Some(context) = self.document.picking.return_to.take() {
             if self
                 .document
                 .visit
@@ -993,30 +922,32 @@ impl Editor {
             {
                 let notice = self.status.clone();
                 self.load(context.path, cx);
-                self.return_notice = Some(notice);
+                self.document.visit.return_notice = Some(notice);
             }
-            self.selected = context.selected;
+            self.document.selected = context.selected;
             if let Some((source, target)) = context.adjustment
-                && self.current_source == Some(source)
+                && self.document.visit.current_source == Some(source)
                 && self.adjustment_layer_target() != target
             {
                 self.select_adjustment_layer(target);
             }
         }
         if let Some(view) = view {
-            if returning || self.viewport == view.anchored {
-                self.viewport = view.viewport;
-            } else if let Some((layout, pixels_per_point)) = self.last_layout {
-                self.viewport
+            if returning || self.document.visit.viewport == view.anchored {
+                self.document.visit.viewport = view.viewport;
+            } else if let Some((layout, pixels_per_point)) = self.document.visit.last_layout {
+                self.document
+                    .visit
+                    .viewport
                     .reframe(layout, layout.composition, pixels_per_point);
             }
         }
-        self.source = !self.input.ready() || source;
+        self.document.source = !self.document.input.ready() || source;
     }
 
     fn begin_pick(&mut self, kind: Pick, cx: &UiContext<'_, Self>) {
         self.finish_dust_cleanup();
-        if self.pick.is_some() {
+        if self.document.picking.kind.is_some() {
             self.finish_pick(cx);
         }
         if self.busy
@@ -1026,25 +957,27 @@ impl Editor {
         {
             return;
         }
-        self.thumbnails.cancel();
-        let viewport = self.viewport;
+        self.document.thumbnails.cancel();
+        let viewport = self.document.visit.viewport;
         // Missing calibration forces source display, not an explicit inspection choice.
-        let source = self.input.ready() && self.source;
-        self.pick = Some(kind);
-        self.region = None;
-        self.pick_drag = None;
-        self.source = matches!(kind, Pick::Dmin | Pick::Dmax | Pick::Analysis);
-        if self.source {
-            self.document.pick_return =
+        let source = self.document.input.ready() && self.document.source;
+        self.document.picking.kind = Some(kind);
+        self.document.picking.region = None;
+        self.document.visit.pick_drag = None;
+        self.document.source = matches!(kind, Pick::Dmin | Pick::Dmax | Pick::Analysis);
+        if self.document.source {
+            self.document.picking.return_to =
                 self.document.visit.ready.as_ref().map(|ready| PickReturn {
                     path: ready.path.clone(),
-                    selected: self.selected,
+                    selected: self.document.selected,
                     adjustment: self
+                        .document
+                        .visit
                         .current_source
                         .map(|source| (source, self.adjustment_layer_target())),
                 });
         }
-        if let Some((layout, pixels_per_point)) = self.last_layout {
+        if let Some((layout, pixels_per_point)) = self.document.visit.last_layout {
             let next = if kind == Pick::Analysis {
                 Composition::new(
                     layout.composition.area(),
@@ -1052,24 +985,27 @@ impl Editor {
                     PhotoOrientation::default(),
                 )
                 .expect("loaded source has a valid active area")
-            } else if self.source {
+            } else if self.document.source {
                 Composition::new(
                     layout.composition.area(),
-                    self.roll_orientation,
-                    self.photo_orientation,
+                    self.document.roll_orientation,
+                    self.document.visit.photo_orientation,
                 )
                 .expect("loaded source has a valid active area")
             } else {
                 layout.composition
             };
             if next != layout.composition {
-                self.viewport.reframe(layout, next, pixels_per_point);
+                self.document
+                    .visit
+                    .viewport
+                    .reframe(layout, next, pixels_per_point);
             }
         }
-        self.document.pick_view = Some(PickView {
+        self.document.picking.view = Some(PickView {
             source,
             viewport,
-            anchored: self.viewport,
+            anchored: self.document.visit.viewport,
         });
         if kind == Pick::Analysis {
             if self.document.analysis_review.is_some() {
@@ -1091,9 +1027,7 @@ impl Editor {
             return;
         };
         let path = self.document.source_path(id).expect("selected roll source");
-        let kind = self.pick;
-        let context = self.document.pick_return.take();
-        let view = self.document.pick_view;
+        let mut picking = std::mem::take(&mut self.document.picking);
         if self
             .document
             .visit
@@ -1101,14 +1035,12 @@ impl Editor {
             .as_ref()
             .is_none_or(|ready| ready.path != path)
         {
-            self.load(path, cx);
+            self.load_source(path, false, cx);
         }
-        self.selected = index;
-        self.pick = kind;
-        self.document.pick_return = context;
-        self.document.pick_view = view;
-        self.region = None;
-        self.source = true;
+        self.document.selected = index;
+        picking.region = None;
+        self.document.picking = picking;
+        self.document.source = true;
     }
 
     fn apply_pick(&mut self, cx: &UiContext<'_, Self>) {
@@ -1116,15 +1048,17 @@ impl Editor {
             self.confirm_analysis_review(cx);
             return;
         }
-        if self.pick == Some(Pick::Analysis) {
+        if self.document.picking.kind == Some(Pick::Analysis) {
             self.apply_analysis_area(cx);
             return;
         }
-        if self.pick == Some(Pick::Flat) {
+        if self.document.picking.kind == Some(Pick::Flat) {
             self.apply_flat_edit(cx);
             return;
         }
-        if let (Some(kind), Some(region)) = (self.pick, self.region) {
+        if let (Some(kind), Some(region)) =
+            (self.document.picking.kind, self.document.picking.region)
+        {
             self.start_measurement(kind, region, cx);
         }
     }
@@ -1138,8 +1072,11 @@ impl Editor {
         use presentation::SectionHeader;
 
         let reviewing = self.document.analysis_review.is_some();
-        let initial_input = self.input;
-        let previous_orientation = (self.roll_orientation, self.photo_orientation);
+        let initial_input = self.document.input;
+        let previous_orientation = (
+            self.document.roll_orientation,
+            self.document.visit.photo_orientation,
+        );
         presentation::inspector_spacing(ui);
         // The inspector column width is authoritative; content must not widen the panel.
         let inspector_width = ui.available_width();
@@ -1171,14 +1108,14 @@ impl Editor {
             && self.document.auto_crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
             && self.document.visit.crop_edit.is_none()
-            && self.flat_edit.is_none()
-            && self.input.ready();
+            && self.document.flat_edit.is_none()
+            && self.document.input.ready();
         let can_pick = !self.busy
             && !reviewing
             && self.document.auto_crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
             && self.document.visit.crop_edit.is_none()
-            && self.flat_edit.is_none()
+            && self.document.flat_edit.is_none()
             && self.document.visit.ready.is_some();
         let mut start_pick = None;
 
@@ -1187,11 +1124,11 @@ impl Editor {
             .show(ui, |ui| {
                 self.auto_crop_controls(ui);
                 if self.tab == 0 {
-                    let mut input = self.input;
+                    let mut input = self.document.input;
                     let mut stage_target = None;
                     ui.push_id("roll", |ui| {
                         let capabilities = input.capabilities();
-                        let scan = self.document.project.require_scan_sources();
+                        let scan = self.document.state.project.require_scan_sources();
                         let scan_reason = scan
                             .as_ref()
                             .err()
@@ -1359,7 +1296,7 @@ impl Editor {
                             if controls::white_balance(
                                 ui,
                                 "roll-white-balance",
-                                &mut self.roll.wb,
+                                &mut self.document.roll.wb,
                                 can_pick,
                             ) {
                                 start_pick = Some(Pick::RollWb);
@@ -1369,9 +1306,9 @@ impl Editor {
                                 "roll-exposure",
                                 "Exposure",
                                 SectionHeader {
-                                    summary: &format!("{:+.2} EV", self.roll.exposure),
-                                    changed: self.roll.exposure != 0.,
-                                    reset: Some(self.roll.exposure != 0.),
+                                    summary: &format!("{:+.2} EV", self.document.roll.exposure),
+                                    changed: self.document.roll.exposure != 0.,
+                                    reset: Some(self.document.roll.exposure != 0.),
                                     tool: None,
                                     default_open: Some(false),
                                 },
@@ -1379,19 +1316,19 @@ impl Editor {
                                     controls::parameter(
                                         ui,
                                         Parameter::Exposure,
-                                        &mut self.roll.exposure,
+                                        &mut self.document.roll.exposure,
                                     );
                                 },
                             );
                             if action.reset && !controls::defer_reset(ui, controls::Reset::Exposure)
                             {
-                                self.roll.exposure = 0.;
+                                self.document.roll.exposure = 0.;
                             }
                         });
                     });
                     // A reset command may already have replaced the staged input for this frame.
-                    if self.input == initial_input {
-                        self.input = input;
+                    if self.document.input == initial_input {
+                        self.document.input = input;
                     }
                     if let Some(target) = stage_target {
                         self.request_input(target, cx);
@@ -1405,12 +1342,12 @@ impl Editor {
                         start_pick = Some(Pick::Wb);
                     }
                 } else {
-                    if self.input.capabilities().film_emulation {
+                    if self.document.input.capabilities().film_emulation {
                         let allowed = !self.busy
                             && !reviewing
                             && self.document.visit.crop_edit.is_none()
                             && self.document.auto_crop_edit.is_none()
-                            && self.flat_edit.is_none()
+                            && self.document.flat_edit.is_none()
                             && self.document.visit.mask_edit.is_none();
                         ui.add_enabled_ui(allowed, |ui| self.film_emulation_controls(ui));
                     }
@@ -1419,16 +1356,16 @@ impl Editor {
                         !reviewing
                             && self.document.visit.crop_edit.is_none()
                             && self.document.auto_crop_edit.is_none()
-                            && self.flat_edit.is_none()
+                            && self.document.flat_edit.is_none()
                             && self.document.visit.mask_edit.is_none(),
                         |ui| {
-                            let changed = self.target != OutputTarget::DisplayP3;
+                            let changed = self.document.target != OutputTarget::DisplayP3;
                             let (_, action) = presentation::section(
                                 ui,
                                 "rendering-target",
                                 "Target",
                                 SectionHeader {
-                                    summary: if self.target == OutputTarget::DisplayP3 {
+                                    summary: if self.document.target == OutputTarget::DisplayP3 {
                                         "Display P3 · 100 nit"
                                     } else {
                                         "sRGB · 100 nit"
@@ -1443,19 +1380,19 @@ impl Editor {
                                         ui,
                                         "rendering-target",
                                         "Target",
-                                        if self.target == OutputTarget::DisplayP3 {
+                                        if self.document.target == OutputTarget::DisplayP3 {
                                             "Display P3"
                                         } else {
                                             "sRGB"
                                         },
                                         |ui| {
                                             ui.selectable_value(
-                                                &mut self.target,
+                                                &mut self.document.target,
                                                 OutputTarget::DisplayP3,
                                                 "Display P3",
                                             );
                                             ui.selectable_value(
-                                                &mut self.target,
+                                                &mut self.document.target,
                                                 OutputTarget::Srgb,
                                                 "sRGB",
                                             );
@@ -1466,7 +1403,7 @@ impl Editor {
                                 },
                             );
                             if action.reset && !controls::defer_reset(ui, controls::Reset::Target) {
-                                self.target = OutputTarget::DisplayP3;
+                                self.document.target = OutputTarget::DisplayP3;
                             }
                         },
                     );
@@ -1478,8 +1415,13 @@ impl Editor {
             self.preferences.scopes_visible = self.scopes.visible;
         }
         self.preferences.scope_height_ratio = self.scopes.height_ratio;
-        if previous_orientation != (self.roll_orientation, self.photo_orientation) {
-            self.viewport.fit();
+        if previous_orientation
+            != (
+                self.document.roll_orientation,
+                self.document.visit.photo_orientation,
+            )
+        {
+            self.document.visit.viewport.fit();
         }
         if let Some(kind) = start_pick {
             self.control_command(editing::Command::Pick(kind), cx);
@@ -1542,19 +1484,20 @@ impl host::App for Editor {
     fn processing_revision(&self) -> Option<(u64, u64)> {
         Some((
             self.id,
-            self.working
+            self.document
+                .visit
+                .working_view
                 .revision()
-                .unwrap_or_else(|| self.original.revision()),
+                .unwrap_or_else(|| self.document.visit.grade.original.revision()),
         ))
     }
 
     fn on_exit(&mut self) {
-        self.working.clear();
+        self.document.visit.working_view.clear();
         if let Some(developments) = &self.developments {
             developments.close();
         }
-        self.document.cache.close();
-        self.thumbnails.cancel();
+        self.document.thumbnails.cancel();
         if let Some(store) = &mut self.preference_store
             && let Err(error) = store.save(&self.preferences)
         {

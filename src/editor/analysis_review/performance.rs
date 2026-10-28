@@ -305,7 +305,7 @@ fn profile_complete_roll_area_preparation() {
                         path,
                         wb: Some(wb),
                         expected: Some(expected.clone()),
-                        cache: Some(cache.clone()),
+                        sources: Some(scheduler.provider(Some(cache.clone()))),
                         file,
                         correction: None,
                     }

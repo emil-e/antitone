@@ -65,14 +65,14 @@ fn captured_look_finishes_without_backend_or_paint_and_records_only_accepted_con
     let (e, scheduler) = editor();
     let selected = asset(0.4);
     with_application(e, |app| {
-        let mut expected = app.read(|e| e.document.project.clone());
+        let mut expected = app.read(|e| e.document.state.project.clone());
         app.enter(|e, access| {
             e.begin_look(Source::Loaded(selected.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         expected.output.look = Some(selected.clone());
         app.read(|e| {
-            assert_eq!(e.document.project, expected);
+            assert_eq!(e.document.state.project, expected);
             assert_eq!(e.loaded_looks, vec![selected]);
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
@@ -101,20 +101,21 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         let accepted = app.read(|e| {
             e.document
+                .state
                 .project
                 .output
                 .look
                 .clone()
                 .expect("valid imported LUT")
         });
-        let before = app.read(|e| e.document.project.clone());
+        let before = app.read(|e| e.document.state.project.clone());
         std::fs::write(&path, "LUT_1D_SIZE 2\n0 0 0\n1 1 1\n").unwrap();
         app.enter(|e, access| {
             e.begin_look(Source::Imported(path.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert_eq!(e.loaded_looks, vec![accepted.clone()]);
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
         });
@@ -126,7 +127,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         app.read(|e| {
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
             assert!(Arc::ptr_eq(
-                e.document.project.output.look.as_ref().unwrap(),
+                e.document.state.project.output.look.as_ref().unwrap(),
                 &accepted
             ));
         });
@@ -136,7 +137,10 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
-            assert_eq!(e.document.project.output.look.as_ref().unwrap(), &accepted);
+            assert_eq!(
+                e.document.state.project.output.look.as_ref().unwrap(),
+                &accepted
+            );
             assert_eq!(e.loaded_looks.len(), 1);
             assert!(e.failure.is_none());
         });
@@ -147,8 +151,8 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
 #[test]
 fn user_cancel_waits_for_acknowledgement_and_never_replaces_the_accepted_look() {
     let (mut e, scheduler) = editor();
-    e.document.project.output.look = Some(asset(0.2));
-    let before = e.document.project.clone();
+    e.document.state.project.output.look = Some(asset(0.2));
+    let before = e.document.state.project.clone();
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
         let id = app.enter(|e, access| {
@@ -168,12 +172,12 @@ fn user_cancel_waits_for_acknowledgement_and_never_replaces_the_accepted_look() 
                         .cancel
                         .load(Ordering::Relaxed)
             );
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
         });
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert!(!e.busy && e.tasks.view().is_none());
             assert!(e.loaded_looks.is_empty());
         });
@@ -208,7 +212,7 @@ fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_r
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
-            assert_eq!(e.document.project.output.look, Some(chosen.clone()));
+            assert_eq!(e.document.state.project.output.look, Some(chosen.clone()));
             assert_eq!(e.loaded_looks, vec![chosen]);
             assert!(e.failure.is_none());
         });
@@ -220,7 +224,7 @@ fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_r
 fn document_transition_retires_look_but_keeps_session_comparison_assets() {
     let (mut e, scheduler) = editor();
     let previous = asset(0.2);
-    e.document.project.output.look = Some(previous.clone());
+    e.document.state.project.output.look = Some(previous.clone());
     e.remember_current_look();
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
@@ -238,12 +242,12 @@ fn document_transition_retires_look_but_keeps_session_comparison_assets() {
         app.read(|e| {
             assert_eq!(e.document_pending, operation);
             assert!(e.busy);
-            assert_eq!(e.document.project.output.look, Some(previous.clone()));
+            assert_eq!(e.document.state.project.output.look, Some(previous.clone()));
         });
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
-            assert!(e.document.project.output.look.is_none());
+            assert!(e.document.state.project.output.look.is_none());
             assert_eq!(e.loaded_looks, vec![previous]);
         });
     });
@@ -273,7 +277,7 @@ fn owner_and_application_retirement_cancel_queued_work_even_if_editor_data_is_st
             if !application {
                 app.update(|e| e.receive_look(id, Ok(Some(asset(0.8)))));
             }
-            app.read(|e| assert!(e.document.project.output.look.is_none()));
+            app.read(|e| assert!(e.document.state.project.output.look.is_none()));
             drop(hold);
         });
         scheduler.close_and_wait().unwrap();
@@ -328,7 +332,7 @@ fn retired_running_bake_keeps_inputs_without_blocking_an_independent_look() {
         });
         app.run_until(Duration::from_secs(20), |e| e.document.look.is_none());
         assert!(cache.upgrade().is_some() && directory.exists());
-        app.read(|e| assert_eq!(e.document.project.output.look, Some(selected.clone())));
+        app.read(|e| assert_eq!(e.document.state.project.output.look, Some(selected.clone())));
         release.send(()).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         while cache.upgrade().is_some() || directory.exists() {
@@ -340,7 +344,7 @@ fn retired_running_bake_keeps_inputs_without_blocking_an_independent_look() {
             std::thread::sleep(Duration::from_millis(1));
         }
         app.read(|e| {
-            assert_eq!(e.document.project.output.look, Some(selected));
+            assert_eq!(e.document.state.project.output.look, Some(selected));
             assert!(e.failure.is_none());
         });
     });
@@ -372,7 +376,7 @@ fn builtin_workflow_reuses_service_cache_across_documents_without_reinitializing
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         let fresh = app.update(|e| {
-            assert!(e.document.project.output.look.is_none());
+            assert!(e.document.state.project.output.look.is_none());
             let fresh = Arc::new(crate::renderer::RendererCache::new(e.submissions.clone()));
             e.look_services.as_mut().unwrap().renderers = fresh.clone();
             fresh
@@ -382,7 +386,7 @@ fn builtin_workflow_reuses_service_cache_across_documents_without_reinitializing
             e.begin_look(Source::Builtin(Builtin::Kodak2383), access);
         });
         app.run_until(Duration::from_secs(30), |e| e.document.look.is_none());
-        app.read(|e| assert_eq!(e.document.project.output.look, Some(accepted)));
+        app.read(|e| assert_eq!(e.document.state.project.output.look, Some(accepted)));
         assert!(
             !fresh.is_initialized(),
             "the retained service cache must satisfy the exact builtin bake specification"
@@ -395,7 +399,7 @@ fn builtin_workflow_reuses_service_cache_across_documents_without_reinitializing
 fn unavailable_look_service_restores_idle_feedback_without_changing_the_project() {
     let mut e = fixture();
     e.sync_document();
-    let before = e.document.project.clone();
+    let before = e.document.state.project.clone();
     with_application(e, |app| {
         app.enter(|e, access| {
             e.begin_look(Source::Loaded(asset(0.4)), access);
@@ -403,7 +407,7 @@ fn unavailable_look_service_restores_idle_feedback_without_changing_the_project(
         });
         app.run_until(Duration::from_secs(5), |e| !e.busy);
         app.read(|e| {
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert!(!e.busy && e.tasks.view().is_none());
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
         });

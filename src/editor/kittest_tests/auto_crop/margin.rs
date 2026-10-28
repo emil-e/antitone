@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) fn expected_crop(h: &Harness<'_, Editor>, source: SourceId, percent: f64) -> Crop {
     h.read(|e| {
-        let p = &e.document.project;
+        let p = &e.document.state.project;
         let active = p.source(source).unwrap().development.active_area.into();
         // This is the UI/adaptor consistency oracle, not independent border truth. Pure
         // geometry tests separately check source conversion, containment and rounding.
@@ -33,14 +33,22 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
             stage(&mut h, "Roll");
             click_action(&mut h, "Auto-crop roll");
             overlay::wait_context(&mut h);
-            let source = h.read(|editor| editor.current_source.unwrap());
-            let before = h.read(|editor| editor.document.project.clone());
+            let source = h.read(|editor| editor.document.visit.current_source.unwrap());
+            let before = h.read(|editor| editor.document.state.project.clone());
             h.get_by_label("100%").click();
             h.step();
             overlay::wait_context(&mut h);
-            let layout = h.read(|editor| editor.last_layout.unwrap().0);
-            let viewport = h.read(|editor| editor.viewport);
-            let image = h.read(|editor| editor.working.displayed.clone().unwrap());
+            let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            let viewport = h.read(|editor| editor.document.visit.viewport);
+            let image = h.read(|editor| {
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .displayed
+                    .clone()
+                    .unwrap()
+            });
             h.get_by_role_and_label(egui::accesskit::Role::Slider, "Margin")
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
@@ -68,8 +76,8 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
                         "drag previews before release, never accepts"
                     )
                 });
-                h.read(|editor| assert_eq!(editor.document.project, before));
-                h.read(|editor| assert_eq!(editor.crop, None));
+                h.read(|editor| assert_eq!(editor.document.state.project, before));
+                h.read(|editor| assert_eq!(editor.document.visit.crop, None));
                 h.read(|editor| assert!(!editor.document.dirty()));
                 seen.push(crop);
             }
@@ -102,15 +110,27 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
                 )
             });
             overlay::wait_context(&mut h);
-            h.read(|editor| assert_eq!(editor.last_layout.unwrap().0.image, layout.image));
-            h.read(|editor| assert_eq!(editor.viewport, viewport));
+            h.read(|editor| {
+                assert_eq!(
+                    editor.document.visit.last_layout.unwrap().0.image,
+                    layout.image
+                )
+            });
+            h.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
             h.read(|editor| {
                 assert!(Arc::ptr_eq(
                     &image.image,
-                    &editor.working.displayed.as_ref().unwrap().image
+                    &editor
+                        .document
+                        .visit
+                        .working_view
+                        .displayed
+                        .as_ref()
+                        .unwrap()
+                        .image
                 ))
             });
-            h.read(|editor| assert_eq!(editor.document.project, before));
+            h.read(|editor| assert_eq!(editor.document.state.project, before));
             save_capture(
                 &h.render().unwrap(),
                 &format!("auto-crop-margin-draft-{name}-offscreen"),
@@ -122,7 +142,7 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
                     "clicking the active shelf tool cancels its draft"
                 )
             });
-            h.read(|editor| assert_eq!(editor.document.project, before));
+            h.read(|editor| assert_eq!(editor.document.state.project, before));
             assert!(
                 h.query_by_role_and_label(egui::accesskit::Role::Slider, "Margin")
                     .is_none()

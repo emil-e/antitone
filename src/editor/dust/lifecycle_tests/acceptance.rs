@@ -2,7 +2,7 @@ use super::*;
 use crate::dust_repair::SearchOutcome;
 
 fn request(e: &mut Editor) -> Request {
-    let source = e.current_source.unwrap();
+    let source = e.document.visit.current_source.unwrap();
     Request {
         request: e.request_id(),
         loaded: e.id,
@@ -21,7 +21,7 @@ fn chosen_response(request: &Request, active: SourceRegion, offset: [i32; 2]) ->
 }
 
 fn layout(e: &mut Editor) -> crate::viewport::CanvasLayout {
-    e.viewport.layout_composition(
+    e.document.visit.viewport.layout_composition(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(864., 576.)),
         Composition::new(
             e.document.visit.ready.as_ref().unwrap().area,
@@ -35,7 +35,7 @@ fn layout(e: &mut Editor) -> crate::viewport::CanvasLayout {
 
 fn queue(e: &mut Editor, origin: [u32; 2]) -> SearchRequest {
     e.begin_dust_mask(None);
-    e.document.dust.mask_draft.as_mut().unwrap().pixels = (origin[1]..origin[1] + 3)
+    e.document.visit.dust.mask_draft.as_mut().unwrap().pixels = (origin[1]..origin[1] + 3)
         .flat_map(|y| (origin[0]..origin[0] + 3).map(move |x| [x, y]))
         .collect();
     e.commit_dust_mask();
@@ -45,7 +45,7 @@ fn queue(e: &mut Editor, origin: [u32; 2]) -> SearchRequest {
 #[test]
 fn held_drag_completion_is_preview_only_and_release_records_the_accepted_edit() {
     let mut e = editor();
-    let source = e.current_source.unwrap();
+    let source = e.document.visit.current_source.unwrap();
     e.begin_dust_cleanup();
     let original = e.dust_repairs(source).unwrap().clone();
     let geometry = layout(&mut e);
@@ -53,7 +53,7 @@ fn held_drag_completion_is_preview_only_and_release_records_the_accepted_edit() 
     e.drag_dust_donor(geometry, screen_source_point(geometry, [91., 56.]));
     let request = request(&mut e);
     assert_eq!(request.repair.offset, [40, 5]);
-    e.document.dust.start(&request);
+    e.document.visit.dust.start(&request);
     let active = e.document.visit.ready.as_ref().unwrap().area;
     e.receive_dust(request.request, Ok(Some(response(&request, active))));
     assert_eq!(e.dust_repairs(source), Some(&original));
@@ -78,7 +78,7 @@ fn obsolete_success_cannot_modify_new_support_or_offset_or_steal_a_new_request()
     let first = request(&mut e);
     let active = e.document.visit.ready.as_ref().unwrap().area;
     let stale = chosen_response(&first, active, [60, 0]);
-    e.document.dust.start(&first);
+    e.document.visit.dust.start(&first);
     e.dust_repairs_mut(first.source)
         .set_support(
             first.repair.id,
@@ -90,10 +90,13 @@ fn obsolete_success_cannot_modify_new_support_or_offset_or_steal_a_new_request()
         .unwrap();
     let expected = e.dust_repairs(first.source).unwrap().clone();
     let second = request(&mut e);
-    e.document.dust.start(&second);
+    e.document.visit.dust.start(&second);
     e.receive_dust(first.request, Ok(Some(stale)));
     assert_eq!(e.dust_repairs(first.source), Some(&expected));
-    assert_eq!(e.document.dust.pending_request(), Some(second.request));
+    assert_eq!(
+        e.document.visit.dust.pending_request(),
+        Some(second.request)
+    );
     assert!(e.document.dust.cached.is_empty());
 }
 
@@ -102,7 +105,7 @@ fn ordinary_evaluation_cannot_propose_a_different_offset() {
     let mut e = editor();
     let request = request(&mut e);
     let active = e.document.visit.ready.as_ref().unwrap().area;
-    e.document.dust.start(&request);
+    e.document.visit.dust.start(&request);
     e.receive_dust(
         request.request,
         Ok(Some(chosen_response(&request, active, [60, 0]))),
@@ -121,7 +124,7 @@ fn pending_stroke_has_no_donor_or_saved_instruction_then_accepts_only_the_search
     let before = e.history_snapshot();
     let dirty = e.document.dirty();
     let search = queue(&mut e, [80, 80]);
-    assert_eq!(e.document.project, before);
+    assert_eq!(e.document.state.project, before);
     assert_eq!(e.document.dirty(), dirty);
     assert!(e.dust_search_pending());
     assert!(e.dust_donor_regions().is_empty());
@@ -139,7 +142,7 @@ fn pending_stroke_has_no_donor_or_saved_instruction_then_accepts_only_the_search
     assert!(!path.exists());
     assert!(e.document_pending.is_none());
     e.open_export_dialog();
-    assert!(e.export_dialog.is_none());
+    assert!(e.document.export_dialog.is_none());
     e.receive_dust_search(search.id, Ok(SearchOutcome::Candidate([20, 0])));
     assert!(!e.dust_search_pending());
     let stored = e
@@ -175,7 +178,7 @@ fn failed_heal_keeps_the_completed_search_donor_draggable() {
         .clone();
     let mut evaluation = request(&mut e);
     evaluation.repair = stored.clone();
-    e.document.dust.start(&evaluation);
+    e.document.visit.dust.start(&evaluation);
     e.receive_dust(evaluation.request, Err("authored healing failure".into()));
     let geometry = layout(&mut e);
     let point = screen_source_point(geometry, [111., 81.]);
@@ -204,10 +207,11 @@ fn failed_heal_keeps_the_completed_search_donor_draggable() {
 fn changed_support_keeps_the_previous_instruction_until_search_finishes() {
     let mut e = editor();
     e.begin_dust_cleanup();
-    let source = e.current_source.unwrap();
+    let source = e.document.visit.current_source.unwrap();
     let previous = e.dust_repairs(source).unwrap().repairs()[0].clone();
     e.begin_dust_mask(Some(previous.id));
     e.document
+        .visit
         .dust
         .mask_draft
         .as_mut()
@@ -227,9 +231,10 @@ fn changed_support_keeps_the_previous_instruction_until_search_finishes() {
 #[test]
 fn starting_another_edit_cannot_discard_a_released_pending_mask() {
     let mut e = editor();
-    let source = e.current_source.unwrap();
+    let source = e.document.visit.current_source.unwrap();
     e.begin_dust_mask(Some(RepairId(1)));
     e.document
+        .visit
         .dust
         .mask_draft
         .as_mut()
@@ -239,7 +244,7 @@ fn starting_another_edit_cannot_discard_a_released_pending_mask() {
     e.commit_dust_mask();
     let search = e.dust_search_requests()[0].clone();
     e.begin_dust_mask(Some(RepairId(1)));
-    assert!(e.document.dust.mask_draft.is_none());
+    assert!(e.document.visit.dust.mask_draft.is_none());
     e.cancel_dust_mask();
     assert!(!search.cancelled.is_cancelled());
     assert!(e.dust_search_pending());
@@ -254,9 +259,10 @@ fn starting_another_edit_cannot_discard_a_released_pending_mask() {
 #[test]
 fn stale_search_cannot_overwrite_a_newer_accepted_instruction() {
     let mut e = editor();
-    let source = e.current_source.unwrap();
+    let source = e.document.visit.current_source.unwrap();
     e.begin_dust_mask(Some(RepairId(1)));
     e.document
+        .visit
         .dust
         .mask_draft
         .as_mut()
@@ -270,7 +276,7 @@ fn stale_search_cannot_overwrite_a_newer_accepted_instruction() {
         .unwrap();
     let before = e.history_snapshot();
     e.receive_dust_search(search.id, Ok(SearchOutcome::Candidate([60, 0])));
-    assert_eq!(e.document.project, before);
+    assert_eq!(e.document.state.project, before);
     assert!(!e.dust_search_pending());
     assert_eq!(e.history_label(history::Direction::Undo), None);
 }
@@ -284,14 +290,14 @@ fn reset_cancels_pending_search_and_ignores_its_late_success() {
     assert!(!e.dust_search_pending());
     let before = e.history_snapshot();
     e.receive_dust_search(search.id, Ok(SearchOutcome::Candidate([20, 0])));
-    assert_eq!(e.document.project, before);
+    assert_eq!(e.document.state.project, before);
     assert!(e.dust_repairs(search.source).is_none());
 }
 
 #[test]
 fn impossible_stroke_is_rejected_whole_without_changing_existing_repairs() {
     let mut e = editor();
-    let source = e.current_source.unwrap();
+    let source = e.document.visit.current_source.unwrap();
     let active = SourceRegion {
         x: 12,
         y: 7,
@@ -300,6 +306,7 @@ fn impossible_stroke_is_rejected_whole_without_changing_existing_repairs() {
     };
     e.document.visit.ready.as_mut().unwrap().area = active;
     e.document
+        .state
         .project
         .source_mut(source)
         .unwrap()
@@ -307,14 +314,15 @@ fn impossible_stroke_is_rejected_whole_without_changing_existing_repairs() {
         .active_area = [12, 7, 96, 96];
     let before = e.history_snapshot();
     e.begin_dust_mask(None);
-    e.document.dust.mask_draft.as_mut().unwrap().pixels = (active.y..active.y + active.height)
+    e.document.visit.dust.mask_draft.as_mut().unwrap().pixels = (active.y
+        ..active.y + active.height)
         .flat_map(|y| (active.x..active.x + active.width).map(move |x| [x, y]))
         .collect();
     e.commit_dust_mask();
     let search = e.dust_search_requests()[0].clone();
-    assert_eq!(e.document.project, before);
+    assert_eq!(e.document.state.project, before);
     e.receive_dust_search(search.id, Ok(SearchOutcome::Impossible));
-    assert_eq!(e.document.project, before);
+    assert_eq!(e.document.state.project, before);
     assert!(!e.dust_search_pending());
     assert!(e.status.contains("no clean donor"), "{}", e.status);
     assert_eq!(e.history_label(history::Direction::Undo), None);
@@ -375,14 +383,14 @@ fn coherent_editor() -> Editor {
         });
     e.set_dmin(Some(DVec3::splat(0.8)));
     e.set_dmax(Some(DVec3::splat(0.02)));
-    e.source = false;
+    e.document.source = false;
     e
 }
 
 #[test]
 fn real_evaluation_workflow_continues_after_a_failed_repair_without_another_paint() {
     let mut e = coherent_editor();
-    let source = e.current_source.unwrap();
+    let source = e.document.visit.current_source.unwrap();
     let active = e.document.visit.ready.as_ref().unwrap().area;
     e.dust_repairs_mut(source)
         .insert(
@@ -406,7 +414,7 @@ fn real_evaluation_workflow_continues_after_a_failed_repair_without_another_pain
         });
         app.read(|e| {
             assert!(e.document.dust.failed.contains_key(&(source, RepairId(1))));
-            assert!(e.document.dust.pending.is_none());
+            assert!(e.document.visit.dust.pending.is_none());
         });
     });
 }
@@ -420,20 +428,20 @@ fn pending_search_blocks_undo_then_one_completed_stroke_round_trips_without_a_pr
         app.enter(|e, cx| {
             e.restore_history(history::Direction::Undo, cx);
             assert!(e.document_pending.is_none());
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             e.receive_dust_search(search.id, Ok(SearchOutcome::Candidate([30, 0])));
         });
-        let after = app.read(|e| e.document.project.clone());
+        let after = app.read(|e| e.document.state.project.clone());
         app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(30), |e| {
             !e.busy && e.document_pending.is_none()
         });
-        app.read(|e| assert_eq!(e.document.project, before));
+        app.read(|e| assert_eq!(e.document.state.project, before));
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
         app.run_until(Duration::from_secs(30), |e| {
             !e.busy && e.document_pending.is_none()
         });
-        app.read(|e| assert_eq!(e.document.project, after));
+        app.read(|e| assert_eq!(e.document.state.project, after));
     });
 }
 
@@ -450,7 +458,7 @@ fn search_retains_its_source_and_publishes_after_navigation_without_retargeting(
                 cx,
             );
         });
-    let old = e.current_source.unwrap();
+    let old = e.document.visit.current_source.unwrap();
     let other = e
         .document
         .project
@@ -472,7 +480,7 @@ fn search_retains_its_source_and_publishes_after_navigation_without_retargeting(
         app.enter(|e, cx| {
             e.start_dust_searches(cx);
             e.select_roll_photo(index, egui::Modifiers::NONE, cx);
-            assert_eq!(e.current_source, Some(other));
+            assert_eq!(e.document.visit.current_source, Some(other));
             assert!(e.dust_search_pending());
         });
         drop(admission);
@@ -480,7 +488,7 @@ fn search_retains_its_source_and_publishes_after_navigation_without_retargeting(
             !e.dust_search_pending() && !e.busy
         });
         app.read(|e| {
-            assert_eq!(e.current_source, Some(other));
+            assert_eq!(e.document.visit.current_source, Some(other));
             assert!(e.dust_repairs(other).is_none());
             assert_eq!(
                 e.dust_repairs(old).unwrap().repairs()[0].support,
@@ -493,7 +501,7 @@ fn search_retains_its_source_and_publishes_after_navigation_without_retargeting(
 #[test]
 fn real_search_publishes_a_donor_before_a_failed_heal_without_another_paint() {
     let mut e = coherent_editor();
-    let source = e.current_source.unwrap();
+    let source = e.document.visit.current_source.unwrap();
     let active = e.document.visit.ready.as_ref().unwrap().area;
     // Source-edge support has possible donors but cannot satisfy the healer's exterior.
     let search = queue(&mut e, [active.x, active.y]);

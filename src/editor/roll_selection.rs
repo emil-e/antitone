@@ -37,10 +37,12 @@ impl Editor {
     }
 
     fn roll_navigation_available(&self) -> bool {
-        (!self.busy || self.document.visit.ready.is_none() && self.selection_timing.is_some())
+        (!self.busy
+            || self.document.visit.ready.is_none()
+                && self.document.visit.selection_timing.is_some())
             && self.fullscreen.is_none()
-            && self.pick.is_none()
-            && self.flat_edit.is_none()
+            && self.document.picking.kind.is_none()
+            && self.document.flat_edit.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
             && self.failure.is_none()
@@ -58,58 +60,66 @@ impl Editor {
         modifiers: egui::Modifiers,
         cx: &UiContext<'_, Self>,
     ) {
-        if !self.roll_navigation_available() || self.removal_pending.is_some() {
+        if !self.roll_navigation_available() || self.document.removal_pending.is_some() {
             return;
         }
-        let Some(&id) = self.document.project.order.get(index) else {
+        let Some(&id) = self.document.state.project.order.get(index) else {
             return;
         };
-        let order = &self.document.project.order;
-        self.roll_selection.reconcile(order, self.current_source);
+        let order = &self.document.state.project.order;
+        self.document
+            .roll_selection
+            .reconcile(order, self.document.visit.current_source);
         let active = if modifiers.shift {
-            let anchor = self.roll_selection.anchor.unwrap_or(id);
+            let anchor = self.document.roll_selection.anchor.unwrap_or(id);
             let start = order
                 .iter()
                 .position(|candidate| *candidate == anchor)
                 .unwrap_or(index);
-            self.roll_selection.ids = order[start.min(index)..=start.max(index)].to_vec();
+            self.document.roll_selection.ids = order[start.min(index)..=start.max(index)].to_vec();
             anchor
         } else if modifiers.command {
-            if self.roll_selection.contains(id) {
-                if self.roll_selection.ids.len() == 1 {
+            if self.document.roll_selection.contains(id) {
+                if self.document.roll_selection.ids.len() == 1 {
                     return;
                 }
-                self.roll_selection.ids.retain(|candidate| *candidate != id);
-                if self.current_source == Some(id) {
+                self.document
+                    .roll_selection
+                    .ids
+                    .retain(|candidate| *candidate != id);
+                if self.document.visit.current_source == Some(id) {
                     // Prefer a selected successor, then the final selected predecessor.
                     order[index..]
                         .iter()
-                        .find(|id| self.roll_selection.contains(**id))
+                        .find(|id| self.document.roll_selection.contains(**id))
                         .or_else(|| {
                             order[..index]
                                 .iter()
                                 .rev()
-                                .find(|id| self.roll_selection.contains(**id))
+                                .find(|id| self.document.roll_selection.contains(**id))
                         })
                         .copied()
                         .expect("remaining selection")
                 } else {
-                    self.current_source.expect("active selected photo")
+                    self.document
+                        .visit
+                        .current_source
+                        .expect("active selected photo")
                 }
             } else {
-                self.roll_selection.ids.push(id);
-                self.current_source.unwrap_or(id)
+                self.document.roll_selection.ids.push(id);
+                self.document.visit.current_source.unwrap_or(id)
             }
         } else {
-            if !self.roll_selection.contains(id) {
-                self.roll_selection.only(id);
+            if !self.document.roll_selection.contains(id) {
+                self.document.roll_selection.only(id);
             }
-            self.roll_selection.anchor = Some(id);
+            self.document.roll_selection.anchor = Some(id);
             id
         };
         let retry = active == id && self.document.visit.ready.is_none();
-        if self.current_source != Some(active) || retry {
-            self.selected = self
+        if self.document.visit.current_source != Some(active) || retry {
+            self.document.selected = self
                 .document
                 .project
                 .order
@@ -126,20 +136,22 @@ impl Editor {
     }
 
     pub(super) fn select_active_photo_only(&mut self) {
-        if !self.roll_edit_available() || self.removal_pending.is_some() {
+        if !self.roll_edit_available() || self.document.removal_pending.is_some() {
             return;
         }
         if let Some(id) = self
+            .document
+            .visit
             .current_source
-            .filter(|id| self.document.project.order.contains(id))
+            .filter(|id| self.document.state.project.order.contains(id))
         {
-            self.roll_selection.only(id);
+            self.document.roll_selection.only(id);
         }
     }
 
     pub(super) fn select_active_shortcut(&mut self, context: &egui::Context) {
         if self.roll_edit_available()
-            && self.removal_pending.is_none()
+            && self.document.removal_pending.is_none()
             && !egui::Popup::is_any_open(context)
             && context.input_mut(|input| {
                 input.consume_key(
@@ -156,22 +168,24 @@ impl Editor {
     pub(super) fn request_removal(&mut self) {
         if !self.roll_edit_available()
             || self.document.auto_crop_edit.is_some()
-            || self.removal_pending.is_some()
+            || self.document.removal_pending.is_some()
         {
             return;
         }
-        self.roll_selection
-            .reconcile(&self.document.project.order, self.current_source);
+        self.document.roll_selection.reconcile(
+            &self.document.state.project.order,
+            self.document.visit.current_source,
+        );
         let ids: Vec<_> = self
             .document
             .project
             .order
             .iter()
             .copied()
-            .filter(|id| self.roll_selection.contains(*id))
+            .filter(|id| self.document.roll_selection.contains(*id))
             .collect();
         if !ids.is_empty() {
-            self.removal_pending = Some(ids);
+            self.document.removal_pending = Some(ids);
         }
     }
 
@@ -179,28 +193,33 @@ impl Editor {
         if !self.roll_edit_available() {
             return;
         }
-        let Some(ids) = self.removal_pending.take() else {
+        let Some(ids) = self.document.removal_pending.take() else {
             return;
         };
-        let index = self.selected;
-        let active_removed = self.current_source.is_some_and(|id| ids.contains(&id));
+        let index = self.document.selected;
+        let active_removed = self
+            .document
+            .visit
+            .current_source
+            .is_some_and(|id| ids.contains(&id));
         let before = self.history_snapshot();
         for id in ids {
             self.document
+                .state
                 .project
                 .remove_from_filmstrip(id)
                 .expect("confirmed ordered source");
         }
         if active_removed {
-            self.current_source = None;
+            self.document.visit.current_source = None;
         }
         self.record_edit(before, "Remove photos", None);
-        self.thumbnails.cancel();
-        self.roll_selection = RollSelection::default();
-        if !self.document.project.order.is_empty() {
-            self.selected = index.min(self.document.project.order.len() - 1);
-            let id = self.document.project.order[self.selected];
-            self.roll_selection.only(id);
+        self.document.thumbnails.cancel();
+        self.document.roll_selection = RollSelection::default();
+        if !self.document.state.project.order.is_empty() {
+            self.document.selected = index.min(self.document.state.project.order.len() - 1);
+            let id = self.document.state.project.order[self.document.selected];
+            self.document.roll_selection.only(id);
             self.load(
                 self.document
                     .source_path(id)
@@ -209,24 +228,24 @@ impl Editor {
             );
         } else {
             self.invalidate_original();
-            self.working.clear();
+            self.document.visit.working_view.clear();
             self.id = self.request_id();
             self.replace_photo_scope(self.id);
             self.source_epoch
                 .store(self.id, std::sync::atomic::Ordering::Relaxed);
             self.document.visit.support = Default::default();
-            self.thumbnails.release_selected();
-            self.thumbnails.refresh_hidden_memory();
-            self.current_source = None;
-            self.selected = 0;
+            self.document.thumbnails.release_selected();
+            self.document.thumbnails.refresh_hidden_memory();
+            self.document.visit.current_source = None;
+            self.document.selected = 0;
             self.document.visit.ready = None;
-            self.pending_preview = None;
-            self.selection_timing = None;
-            self.last_layout = None;
-            self.viewport.fit();
-            self.adjustment_layer_settings = AdjustmentLayerSettings::default();
-            self.photo_orientation = PhotoOrientation::default();
-            self.crop = None;
+            self.document.visit.pending_preview = None;
+            self.document.visit.selection_timing = None;
+            self.document.visit.last_layout = None;
+            self.document.visit.viewport.fit();
+            self.document.visit.adjustment_layer_settings = AdjustmentLayerSettings::default();
+            self.document.visit.photo_orientation = PhotoOrientation::default();
+            self.document.visit.crop = None;
             self.status = "No photos in this roll. Add scans to continue.".into();
         }
     }
@@ -237,7 +256,7 @@ impl Editor {
         escape_available: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        let Some(ids) = &self.removal_pending else {
+        let Some(ids) = &self.document.removal_pending else {
             return;
         };
         let title = if ids.len() == 1 {
@@ -257,7 +276,7 @@ impl Editor {
             escape_available,
         );
         match choice {
-            Some(presentation::DialogChoice::Cancel) => self.removal_pending = None,
+            Some(presentation::DialogChoice::Cancel) => self.document.removal_pending = None,
             Some(presentation::DialogChoice::Confirm) => self.remove_selected_photos(cx),
             _ => {}
         }

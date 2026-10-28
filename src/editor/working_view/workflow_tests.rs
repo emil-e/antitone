@@ -49,7 +49,7 @@ fn fixture() -> (
         developments: scheduler.clone(),
         renderers: Arc::default(),
     });
-    e.working = WorkingView::new(device, queue.clone());
+    e.document.visit.working_view = WorkingView::new(device, queue.clone());
     e.source_epoch.store(e.id, Ordering::Relaxed);
     (e, input, spec, scheduler)
 }
@@ -61,13 +61,15 @@ fn physical_support_completes_without_backend_or_another_paint() {
         app.enter(|e, access| {
             e.request_working(spec.clone(), input, access);
         });
-        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
         app.read(|e| {
-            assert!(e.working.source.as_ref().unwrap().spec == spec);
-            assert!(e.working.underlay.is_some());
+            assert!(e.document.visit.working_view.source.as_ref().unwrap().spec == spec);
+            assert!(e.document.visit.working_view.underlay.is_some());
             assert!(e.document.visit.working.task.is_none());
             assert!(
-                e.working.displayed.is_none(),
+                e.document.visit.working_view.displayed.is_none(),
                 "colour capture remains frame-bound"
             );
         });
@@ -88,15 +90,19 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
             });
             app.pump();
             app.read(|e| {
-                assert!(!e.working.support_ready());
+                assert!(!e.document.visit.working_view.support_ready());
                 assert!(e.document.visit.working.task.is_some());
             });
         }
         drop(hold);
-        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
         let neutral = app.read(|e| {
-            assert!(e.working.source.as_ref().unwrap().spec == spec);
-            e.working
+            assert!(e.document.visit.working_view.source.as_ref().unwrap().spec == spec);
+            e.document
+                .visit
+                .working_view
                 .mailbox
                 .0
                 .lock()
@@ -106,7 +112,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
                 .unwrap()
         });
         app.enter(|e, access| {
-            e.target = OutputTarget::Srgb;
+            e.document.target = OutputTarget::Srgb;
             e.source_exposure = 1.2;
             let processing =
                 ProcessingInput::from(ProcessingParameters::source_inspection(1.2).unwrap());
@@ -121,7 +127,9 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
             );
             assert!(Arc::ptr_eq(
                 &neutral,
-                e.working
+                e.document
+                    .visit
+                    .working_view
                     .mailbox
                     .0
                     .lock()
@@ -184,10 +192,20 @@ fn retiring_running_support_keeps_its_native_lease_through_submission() {
             "a running acquisition keeps its source lease"
         );
         release.send(()).unwrap();
-        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
-        assert!(source.upgrade().is_none());
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while source.upgrade().is_some() {
+            app.pump();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "retired physical support did not release its source"
+            );
+            std::thread::yield_now();
+        }
         app.read(|e| {
-            assert!(e.working.source.as_ref().unwrap().spec == spec);
+            assert!(e.document.visit.working_view.source.as_ref().unwrap().spec == spec);
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -209,7 +227,10 @@ fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
         drop(hold);
         app.pump();
         app.read(|e| {
-            assert!(e.working.source.is_none() && e.working.underlay.is_none());
+            assert!(
+                e.document.visit.working_view.source.is_none()
+                    && e.document.visit.working_view.underlay.is_none()
+            );
             assert!(e.document.visit.working.task.is_none());
         });
     });
@@ -232,10 +253,10 @@ fn save_completion_readmits_existing_working_demand_without_another_paint() {
             );
         });
         app.run_until(Duration::from_secs(15), |e| {
-            e.document_pending.is_none() && e.working.support_ready()
+            e.document_pending.is_none() && e.document.visit.working_view.support_ready()
         });
         app.read(|e| {
-            assert!(e.working.source.as_ref().unwrap().spec == spec);
+            assert!(e.document.visit.working_view.source.as_ref().unwrap().spec == spec);
             assert!(e.document.visit.working.task.is_none() && !e.busy);
             assert!(e.failure.is_none(), "{}", e.status);
         });
@@ -266,7 +287,7 @@ fn guarded_save_close_does_not_readmit_waiting_working_demand() {
             assert!(e.document_pending.is_none() && !e.busy);
             assert!(e.document.visit.working.task.is_none());
             assert!(
-                e.working.source.is_none(),
+                e.document.visit.working_view.source.is_none(),
                 "close must not start another acquisition"
             );
         });

@@ -42,7 +42,7 @@ fn request(name: &str) -> (DocumentScope, Request) {
         wb,
         expected: Some(expected),
         file,
-        cache: Some(document.cache.clone()),
+        sources: None,
         correction: None,
     };
     (document, request)
@@ -50,8 +50,9 @@ fn request(name: &str) -> (DocumentScope, Request) {
 
 #[test]
 fn acquisition_preserves_source_identity_precision_and_pixels_without_editor_or_gpu() {
-    let (document, request) = request("patches.dng");
+    let (document, mut request) = request("patches.dng");
     let scheduler = source_loading::SourceLoader::new();
+    request.sources = Some(scheduler.provider(Some(document.cache.clone())));
     let developed = request.load(&scheduler, &|| false).unwrap();
     let context = developed.context;
     assert_eq!(document.cache.charges().retained, 0);
@@ -68,7 +69,9 @@ fn acquisition_preserves_source_identity_precision_and_pixels_without_editor_or_
         Arc::ptr_eq(scan.source(), &context.source),
         "a job context must lease, not copy, the source"
     );
-    document.cache.close();
+    let cache = Arc::downgrade(&document.cache);
+    drop(document);
+    assert!(cache.upgrade().is_none());
     let measured = scan
         .reference(crate::raw::Rect {
             x: 24,
@@ -101,8 +104,10 @@ fn incompatible_requests_reject_without_rewriting_document_authority() {
 
 #[test]
 fn dropping_the_operation_owner_retires_native_demand_before_the_native_call_returns() {
-    for close_store in [false, true] {
-        let (document, request) = request("patches.dng");
+    for retire_document in [false, true] {
+        let (document, mut request) = request("patches.dng");
+        let cache = Arc::downgrade(&document.cache);
+        let mut document = Some(document);
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
         let resume = Mutex::new(resume);
@@ -117,6 +122,7 @@ fn dropping_the_operation_owner_retires_native_demand_before_the_native_call_ret
             }
             Ok(())
         });
+        request.sources = Some(scheduler.provider(Some(document.as_ref().unwrap().cache.clone())));
         let cancel = crate::cancellation::Cancellation::default();
         let owner = cancel.cancel_on_drop();
         let sources = scheduler.clone();
@@ -127,15 +133,15 @@ fn dropping_the_operation_owner_retires_native_demand_before_the_native_call_ret
                 .unwrap();
         });
         starts.recv_timeout(Duration::from_secs(5)).unwrap();
-        if close_store {
-            document.cache.close();
+        if retire_document {
+            drop(document.take());
         }
         drop(owner);
         let result = returns
             .recv_timeout(Duration::from_secs(5))
             .expect("source waiter did not retire");
         assert!(matches!(result, Err(Error::UnusableSample(_))));
-        assert_eq!(document.cache.charges().retained, 0);
+        assert_eq!(cache.upgrade().is_none(), retire_document);
         release.send(()).unwrap();
         waiter.join().unwrap();
         scheduler.close_and_wait().unwrap();
@@ -143,20 +149,22 @@ fn dropping_the_operation_owner_retires_native_demand_before_the_native_call_ret
 }
 
 #[test]
-fn operation_cancellation_prevents_native_start_but_optional_cache_closure_does_not() {
+fn cacheless_acquisition_still_obeys_operation_cancellation() {
     for cancelled in [false, true] {
-        let (document, request) = request("patches.dng");
+        let (document, mut request) = request("patches.dng");
+        request.sources = None;
         let entered = Arc::new(AtomicBool::new(false));
         let observed = entered.clone();
         let scheduler = source_loading::SourceLoader::new_observed(move |_, _, _| {
             observed.store(true, Ordering::Relaxed);
             Ok(())
         });
-        document.cache.close();
+        let cache = Arc::downgrade(&document.cache);
+        drop(document);
+        assert!(cache.upgrade().is_none());
         assert_eq!(request.load(&scheduler, &|| cancelled).is_err(), cancelled);
         scheduler.close_and_wait().unwrap();
         assert_eq!(entered.load(Ordering::Relaxed), !cancelled);
-        assert_eq!(document.cache.charges().retained, 0);
     }
 }
 

@@ -1,6 +1,7 @@
 //! Opt-in read-only photographs: shared preview latency and camera/zero/initialized panels.
 use super::*;
 use crate::rendering::{CpuRenderer, OutputTarget};
+use crate::source::SourceCache;
 use std::time::Instant;
 
 #[test]
@@ -19,25 +20,28 @@ fn photographic_reference_initialization() {
         let file = raw.file.clone();
         let development = SourceDevelopment::from_metadata(&raw.metadata, wb).unwrap();
         let header_ms = start.elapsed().as_secs_f64() * 1000.;
-        let store = SourceCache::new(128 << 20);
+        let store = Arc::new(SourceCache::new(128 << 20));
         let tick = Instant::now();
-        let preview = store
-            .preview(&file, || embedded_preview::read(&path, &development))
-            .unwrap();
+        let preview = embedded_preview::read(&path, &development).unwrap();
+        if let Some(preview) = &preview {
+            store
+                .publish_preview(file.clone(), preview.clone())
+                .unwrap();
+        }
         let preview_ms = tick.elapsed().as_secs_f64() * 1000.;
         let tick = Instant::now();
         let scan = Scan::from_raw(raw, Some(wb)).unwrap();
         let develop_ms = tick.elapsed().as_secs_f64() * 1000.;
         let tick = Instant::now();
         let memo = OnceLock::new();
-        let prepared = native(Some(&store), &memo, InputSettings::Digital, scan.source()).unwrap();
+        let prepared = native(None, &memo, InputSettings::Digital, scan.source()).unwrap();
         let proxy = prepared.proxy;
         let prepare_ms = tick.elapsed().as_secs_f64() * 1000.;
         let reference = memo.get().unwrap();
         let tick = Instant::now();
         for _ in 0..10 {
             assert!(
-                native(Some(&store), &memo, InputSettings::Digital, scan.source())
+                native(None, &memo, InputSettings::Digital, scan.source())
                     .unwrap()
                     .proxy
                     .is_none()

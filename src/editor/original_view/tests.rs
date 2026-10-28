@@ -65,14 +65,18 @@ fn ordinary_views_never_become_original_tool_requests() {
     let mut editor = super::super::tests::fixture();
     super::super::tests::add_ready_fixture(&mut editor);
     let context = egui::Context::default();
-    assert!(editor.working.enabled());
+    assert!(editor.document.visit.working_view.enabled());
     for source in [false, true] {
-        editor.source = source;
+        editor.document.source = source;
         for _ in 0..3 {
-            editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+            editor.document.visit.grade.original.last_edit =
+                std::time::Instant::now() - Duration::from_secs(1);
             super::super::tests::app_frame(&mut editor, &context, vec![]);
         }
-        assert!(editor.original.signature.is_none() && editor.original.refining.is_none());
+        assert!(
+            editor.document.visit.grade.original.signature.is_none()
+                && editor.document.visit.grade.original.refining.is_none()
+        );
         assert!(editor.document.visit.grade.task.is_none());
     }
 }
@@ -81,8 +85,8 @@ fn ordinary_views_never_become_original_tool_requests() {
 fn an_uninitialized_viewer_does_not_paint_through_an_alternate_proxy_renderer() {
     let mut editor = super::super::tests::fixture();
     super::super::tests::add_ready_fixture(&mut editor);
-    editor.working = WorkingView::default();
-    editor.source = true;
+    editor.document.visit.working_view = WorkingView::default();
+    editor.document.source = true;
     editor.scopes.visible = false;
     let context = egui::Context::default();
     presentation::configure_fonts(&context);

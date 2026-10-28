@@ -46,7 +46,7 @@ fn outside_drag_straightens_about_crop_centre_through_reflections_and_turns() {
             assert_eq!(draft.size, [PATCH.width, PATCH.height]);
             assert_eq!(after.image, before.image);
             draft.coverage().unwrap().bounds(AREA).unwrap();
-            assert!(h.editor.crop.is_none());
+            assert!(h.editor.document.visit.crop.is_none());
             h.press(end, false);
             assert!(
                 h.editor
@@ -165,12 +165,18 @@ fn angle_control_reframing_keeps_magnification_and_screen_pivot() {
     let crop = before.composition.crop().straightened(AREA, 0.23).unwrap();
     let next = Composition::with_crop(
         AREA,
-        h.editor.roll_orientation,
-        h.editor.photo_orientation,
+        h.editor.document.roll_orientation,
+        h.editor.document.visit.photo_orientation,
         Some(crop),
     )
     .unwrap();
-    reframe_crop(&mut h.editor.viewport, before, next, 1., true);
+    reframe_crop(
+        &mut h.editor.document.visit.viewport,
+        before,
+        next,
+        1.,
+        true,
+    );
     h.editor.document.visit.crop_edit.as_mut().unwrap().draft = crop;
     let after = h.frame(vec![]);
     assert_eq!(before.scale, after.scale);
@@ -344,7 +350,7 @@ fn rotation_hover_follows_edges_and_corners_without_changing_geometry() {
                 .drag
                 .is_none()
         );
-        assert!(h.editor.crop.is_none());
+        assert!(h.editor.document.visit.crop.is_none());
     }
     // Nearby bearings rotate smoothly instead of using edge/quadrant buckets.
     let point = before.image.right_center() + egui::vec2(18., 3.);
@@ -385,7 +391,7 @@ fn rotation_drag_uses_original_pivot_inside_the_frame_and_releases_to_move_hover
             assert!((draft.angle + turn * before.composition.handedness()).abs() < 2e-7);
             assert_eq!(draft.center, Crop::from_region(PATCH).center);
             assert_eq!(after.image.center(), before.image.center());
-            assert!(h.editor.crop.is_none());
+            assert!(h.editor.document.visit.crop.is_none());
             h.frame(vec![egui::Event::PointerMoved(
                 before.canvas.max + egui::vec2(30., 30.),
             )]);
@@ -566,8 +572,8 @@ impl Harness {
         ratio: Option<f64>,
     ) -> Self {
         let mut editor = Editor::state();
-        editor.roll_orientation = roll;
-        editor.photo_orientation = PhotoOrientation {
+        editor.document.roll_orientation = roll;
+        editor.document.visit.photo_orientation = PhotoOrientation {
             turns,
             flips: Flips {
                 horizontal: true,
@@ -618,12 +624,12 @@ impl Harness {
                         );
                         let composition = Composition::with_crop(
                             AREA,
-                            self.editor.roll_orientation,
-                            self.editor.photo_orientation,
+                            self.editor.document.roll_orientation,
+                            self.editor.document.visit.photo_orientation,
                             Some(self.editor.document.visit.crop_edit.as_ref().unwrap().draft),
                         )
                         .unwrap();
-                        let mut layout = self.editor.viewport.layout_crop(
+                        let mut layout = self.editor.document.visit.viewport.layout_crop(
                             canvas.shrink(20.),
                             composition,
                             ui.ctx().pixels_per_point(),
@@ -704,7 +710,7 @@ fn dragging_image_moves_content_not_the_frame_through_exact_orientations() {
                     h.editor.document.visit.crop_edit.as_ref().unwrap().draft,
                     wanted
                 );
-                assert!(h.editor.crop.is_none());
+                assert!(h.editor.document.visit.crop.is_none());
                 h.press(end, false);
             }
         }
@@ -764,7 +770,7 @@ fn every_edge_and_corner_resizes_without_moving_its_opposite_anchor() {
                     );
                     assert!(AREA.contains_region(after.area));
                     assert_ne!(after.area, PATCH);
-                    assert!(h.editor.crop.is_none());
+                    assert!(h.editor.document.visit.crop.is_none());
                     h.press(end, false);
                     assert!(
                         h.editor

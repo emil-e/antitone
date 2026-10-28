@@ -416,7 +416,8 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
         adapter.request_device(&Default::default()).await.unwrap()
     });
     let mut editor = Editor::new(&device, &queue);
-    editor.thumbnails = Thumbnails::default();
+    editor.document.thumbnails =
+        (Thumbnails::default()).with_sources(editor.document.cache.clone());
     let capture = Rc::new(RefCell::new(FloatCapture::default()));
     let renderer = FloatRenderer::new(
         &device,
@@ -436,10 +437,10 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
         !editor.busy && editor.document_pending.is_none()
     });
     harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
-    harness.update(|editor| editor.adjustment_layer_settings.exposure = 1.25);
+    harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 1.25);
     harness.update(|editor| editor.sync_document());
-    let before = harness.read(|editor| editor.document.project.clone());
-    let selected = harness.read(|editor| editor.current_source);
+    let before = harness.read(|editor| editor.document.state.project.clone());
+    let selected = harness.read(|editor| editor.document.visit.current_source);
     harness.get_by_label("Viewer help").click();
     harness.run();
     assert!(egui::Popup::is_any_open(&harness.ctx));
@@ -482,7 +483,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                     );
                     draft.collision = export_batch::Collision::Replace;
                     draft.confirming_replace = true;
-                    editor.export_dialog = Some(draft);
+                    editor.document.export_dialog = Some(draft);
                 }
                 _ => unreachable!(),
             });
@@ -512,7 +513,14 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
             harness.run();
             if decision == 2 {
                 harness.read(|editor| {
-                    assert!(!editor.export_dialog.as_ref().unwrap().confirming_replace)
+                    assert!(
+                        !editor
+                            .document
+                            .export_dialog
+                            .as_ref()
+                            .unwrap()
+                            .confirming_replace
+                    )
                 });
                 harness.get_by_label("Cancel").click();
                 harness.run();
@@ -521,12 +529,12 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                 assert!(
                     editor.transition.is_none()
                         && editor.project_overwrite.is_none()
-                        && editor.export_dialog.is_none()
+                        && editor.document.export_dialog.is_none()
                 )
             });
             harness.read(|editor| assert!(!editor.busy));
-            harness.read(|editor| assert_eq!(editor.document.project, before));
-            harness.read(|editor| assert_eq!(editor.current_source, selected));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
+            harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         }
     }
 }
@@ -542,7 +550,8 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
         adapter.request_device(&Default::default()).await.unwrap()
     });
     let mut editor = Editor::new(&device, &queue);
-    editor.thumbnails = Thumbnails::default();
+    editor.document.thumbnails =
+        (Thumbnails::default()).with_sources(editor.document.cache.clone());
     let renderer = FloatRenderer::new(
         &device,
         &queue,
@@ -557,7 +566,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
         !editor.busy && editor.document_pending.is_none()
     });
     harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
-    harness.update(|editor| editor.adjustment_layer_settings.exposure = 1.25);
+    harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 1.25);
     harness.update(|editor| editor.sync_document());
     let directory = tempfile::tempdir().unwrap();
     let project_path = directory.path().join("project.json");
@@ -569,10 +578,10 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
     });
     harness.update(|editor| *editor.document = saved);
     let saved_bytes = std::fs::read(&project_path).unwrap();
-    harness.update(|editor| editor.adjustment_layer_settings.exposure = 2.);
+    harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 2.);
     harness.update(|editor| editor.sync_document());
-    let before = harness.read(|editor| editor.document.project.clone());
-    let selected = harness.read(|editor| editor.current_source);
+    let before = harness.read(|editor| editor.document.state.project.clone());
+    let selected = harness.read(|editor| editor.document.visit.current_source);
     for (layout, size) in [
         ("normal", egui::vec2(1100., 800.)),
         ("narrow", egui::vec2(800., 600.)),
@@ -594,11 +603,11 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 FailureKind::FlatSupport | FailureKind::FlatCorrection => {
                     harness.enter(|editor, cx| editor.begin_flat_edit(fixture.clone(), None, cx));
                     wait_for(&mut harness, |editor| !editor.busy);
-                    harness.read(|editor| assert!(editor.flat_edit.is_some()));
+                    harness.read(|editor| assert!(editor.document.flat_edit.is_some()));
                     let area =
                         harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
                     harness.update(|editor| {
-                        editor.region = Some(if kind == FailureKind::FlatSupport {
+                        editor.document.picking.region = Some(if kind == FailureKind::FlatSupport {
                             let x = f64::from(area.x) + 0.25;
                             let y = f64::from(area.y);
                             Coverage::new(
@@ -653,7 +662,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 !editor.busy && editor.failure.is_some()
             });
             harness.read(|editor| assert_eq!(editor.failure.as_ref().unwrap().kind, kind));
-            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
             harness.hover_at(egui::pos2(10., size.y - 10.));
             harness.run();
             assert!(!harness.get_by_label("OK").accesskit_node().is_disabled());
@@ -714,13 +723,13 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 harness.read(|editor| assert!(!editor.allow_close));
             }
             if kind == FailureKind::FlatSupport {
-                harness.read(|editor| assert!(editor.flat_edit.is_some()));
+                harness.read(|editor| assert!(editor.document.flat_edit.is_some()));
                 harness.get_by_label("Cancel").click();
                 harness.run();
             }
-            harness.read(|editor| assert_eq!(editor.document.project, before));
-            harness.read(|editor| assert_eq!(editor.current_source, selected));
-            harness.read(|editor| assert!(editor.flat_edit.is_none()));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
+            harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
+            harness.read(|editor| assert!(editor.document.flat_edit.is_none()));
             harness.read(|editor| assert_eq!(editor.document.path.as_ref(), Some(&project_path)));
             harness.read(|editor| assert!(editor.document.dirty()));
             assert_eq!(std::fs::read(&project_path).unwrap(), saved_bytes);
@@ -743,8 +752,8 @@ fn wait_for_with_timeout(
             assert!(
                 Instant::now() < deadline,
                 "Editor wait timed out: {}; working updating={} error={:?}, dust error={:?}, evaluations={:?}, original pending={:?}, source epoch={}/{}",
-                editor.status, editor.working.updating, editor.working.error,
-                editor.document.dust.render_error, editor.dust_signature().map(|s| editor.dust_evaluations(s).len()), editor.original.refining,
+                editor.status, editor.document.visit.working_view.updating, editor.document.visit.working_view.error,
+                editor.document.visit.dust.render_error, editor.dust_signature().map(|s| editor.dust_evaluations(s).len()), editor.document.visit.grade.original.refining,
                 editor.source_epoch.load(std::sync::atomic::Ordering::Relaxed), editor.id
             )
         });
@@ -781,13 +790,15 @@ fn editor_harness_with_gpu<R>(
         adapter.request_device(&Default::default()).await.unwrap()
     });
     let mut editor = Editor::new(&device, &queue);
-    editor.thumbnails = if thumbnails {
+    editor.document.thumbnails = (if thumbnails {
         editor
+            .document
             .thumbnails
             .without_disk(editor.developments.as_ref().unwrap().clone())
     } else {
         Thumbnails::default()
-    };
+    })
+    .with_sources(editor.document.cache.clone());
     let capture = Rc::new(RefCell::new(FloatCapture::default()));
     let renderer = FloatRenderer::new(
         &device,
@@ -811,24 +822,32 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
             assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
             assert!(editor.dmin().is_none());
         });
-        let project = harness.read(|editor| editor.document.project.clone());
+        let project = harness.read(|editor| editor.document.state.project.clone());
         harness.get_by_label("Pick Dmin (film base)").scroll_to_me();
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
-        assert_eq!(harness.read(|editor| editor.pick), Some(Pick::Dmin));
+        assert_eq!(
+            harness.read(|editor| editor.document.picking.kind),
+            Some(Pick::Dmin)
+        );
         assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.read(|editor| {
-            assert!(editor.pick.is_none());
-            assert_eq!(editor.document.project, project);
+            assert!(editor.document.picking.kind.is_none());
+            assert_eq!(editor.document.state.project, project);
         });
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
-        assert_eq!(harness.read(|editor| editor.pick), Some(Pick::Dmin));
+        assert_eq!(
+            harness.read(|editor| editor.document.picking.kind),
+            Some(Pick::Dmin)
+        );
         let point = harness.read(|editor| {
             editor
+                .document
+                .visit
                 .last_layout
                 .unwrap()
                 .0
@@ -844,45 +863,45 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
             });
         }
         harness.step();
-        assert!(harness.read(|editor| editor.region.is_some()));
+        assert!(harness.read(|editor| editor.document.picking.region.is_some()));
         harness.get_by_label("Apply").click();
         harness.step();
         assert!(harness.read(|editor| editor.busy));
         // This fixture delivers completion without another UI pass.
         harness.run_until(Duration::from_secs(5), |editor| !editor.busy);
         harness.read(|editor| {
-            assert!(editor.pick.is_none());
+            assert!(editor.document.picking.kind.is_none());
             assert_eq!(editor.status, "Dmin measured");
         });
         let measured = harness.read(|editor| editor.dmin().unwrap());
         assert!((measured - DVec3::splat(3000. / 4031.)).abs().max_element() <= 2. / 65535.);
-        assert_eq!(harness.read(|editor| editor.roll), project.roll);
+        assert_eq!(harness.read(|editor| editor.document.roll), project.roll);
         let mut expected_project = project;
         expected_project.set_dmin(Some(measured.to_array()));
         harness.read(|editor| {
-            assert_eq!(editor.document.project, expected_project);
+            assert_eq!(editor.document.state.project, expected_project);
             assert!(editor.preference_store.is_none());
         });
         let timing = Arc::new(SelectionTiming::new(
             harness.read(|editor| editor.id),
             Instant::now(),
         ));
-        harness.update(|editor| editor.selection_timing = Some(timing.clone()));
+        harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
         harness.step();
         let png = harness.render().unwrap();
         assert!(
             timing.ready_was_painted(),
             "production selected-image callback did not paint"
         );
-        let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
+        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
         let output = capture.borrow();
         assert_eq!(png.dimensions(), (output.size[0], output.size[1]));
         harness.read(|editor| {
-            assert!(editor.source);
+            assert!(editor.document.source);
             assert_eq!(editor.source_exposure, 0.);
         });
         let metadata = crate::raw::RawFile::open(&fixture).unwrap().metadata;
-        let target = harness.read(|editor| editor.target);
+        let target = harness.read(|editor| editor.document.target);
         let cpu = crate::rendering::CpuRenderer::new(target).unwrap();
         for (source, code) in [(egui::pos2(32., 32.), 3000.), (egui::pos2(96., 32.), 128.)] {
             let position = geometry.screen_point(source);
@@ -933,7 +952,7 @@ fn stage(harness: &mut Harness<'_, Editor>, name: &str) {
 }
 
 fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {
-    let current = if harness.read(|editor| editor.target == OutputTarget::DisplayP3) {
+    let current = if harness.read(|editor| editor.document.target == OutputTarget::DisplayP3) {
         "Display P3"
     } else {
         "sRGB"
@@ -954,7 +973,7 @@ fn select_target(harness: &mut Harness<'_, Editor>, target: OutputTarget) {
         })
         .click();
     harness.step();
-    harness.read(|editor| assert_eq!(editor.target, target));
+    harness.read(|editor| assert_eq!(editor.document.target, target));
 }
 
 fn drag(harness: &mut Harness<'_, Editor>, start: egui::Pos2, end: egui::Pos2) {
@@ -1002,14 +1021,14 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
             .clone()
             .expect("fixture save destination")
     });
-    let project = harness.read(|editor| editor.document.project.clone());
+    let project = harness.read(|editor| editor.document.state.project.clone());
     let metadata = harness.read(|editor| editor.document.capture().ready_spatial_metadata());
     let request = harness.read(|editor| editor.next_request);
     native_file_action(harness, crate::platform::menu::Action::Save);
     harness.read(|editor| assert!(editor.next_request > request, "Save did not dispatch"));
     wait_for(harness, |e| !e.busy && e.document_pending.is_none());
     harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
-    harness.read(|editor| assert_eq!(editor.document.project, project));
+    harness.read(|editor| assert_eq!(editor.document.state.project, project));
     let (accepted, regions) = crate::project::Project::load_with_spatial_metadata(&path).unwrap();
     assert_eq!(accepted, project);
     assert_eq!(regions, metadata);
@@ -1025,8 +1044,8 @@ fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
 fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.get_by_label("Fit").click();
     harness.step();
-    let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
-    harness.read(|editor| assert!(editor.region.is_none()));
+    let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+    harness.read(|editor| assert!(editor.document.picking.region.is_none()));
     drag(
         harness,
         geometry.screen_point(egui::pos2(area.x as f32, area.y as f32)),
@@ -1038,6 +1057,8 @@ fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.read(|editor| {
         assert_eq!(
             editor
+                .document
+                .picking
                 .region
                 .unwrap()
                 .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area),
@@ -1075,16 +1096,16 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
             editor.set_gamma(0.75);
-            editor.adjustment_layer_settings.exposure = 0.5;
-            editor.adjustment_layer_settings.wb = Balance {
+            editor.document.visit.adjustment_layer_settings.exposure = 0.5;
+            editor.document.visit.adjustment_layer_settings.wb = Balance {
                 warmth: 0.1,
                 tint: -0.05,
             };
-            editor.source = false;
+            editor.document.source = false;
             editor.sync_document();
         });
-        let project = harness.read(|editor| editor.document.project.clone());
-        let source = harness.read(|editor| editor.current_source);
+        let project = harness.read(|editor| editor.document.state.project.clone());
+        let source = harness.read(|editor| editor.document.visit.current_source);
         for (layout, size, width) in [
             ("normal", egui::vec2(1100., 800.), 340.),
             ("narrow", egui::vec2(800., 600.), 270.),
@@ -1120,8 +1141,8 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
                 assert!(header.top() >= tabs.bottom());
                 assert!(header.left() >= size.x - width && header.right() <= size.x);
                 assert!(harness.query_by_label(absent).is_none());
-                harness.read(|editor| assert_eq!(editor.document.project, project));
-                harness.read(|editor| assert_eq!(editor.current_source, source));
+                harness.read(|editor| assert_eq!(editor.document.state.project, project));
+                harness.read(|editor| assert_eq!(editor.document.visit.current_source, source));
                 harness.read(|editor| assert!(editor.preference_store.is_none()));
                 workflow::wait_settled(&mut harness);
                 harness.render().unwrap();
@@ -1130,7 +1151,7 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
                     let input = e.scope_request().unwrap();
                     let frame = input.frame();
                     let settings = crate::scopes::Settings {
-                        target: e.target,
+                        target: e.document.target,
                         plot: crate::scopes::Plot::Vector,
                         amplification: 1,
                     };
@@ -1144,7 +1165,8 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
                 });
                 let timing = harness
                     .read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-                harness.update(|editor| editor.selection_timing = Some(timing.clone()));
+                harness
+                    .update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
                 harness.step();
                 let png = harness.render().unwrap();
                 assert_eq!(png.dimensions(), (size.x as u32, size.y as u32));
@@ -1155,7 +1177,7 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
                 );
             }
         }
-        harness.read(|editor| assert_eq!(editor.document.project, project));
-        harness.read(|editor| assert_eq!(editor.current_source, source));
+        harness.read(|editor| assert_eq!(editor.document.state.project, project));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, source));
     });
 }

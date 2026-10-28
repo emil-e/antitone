@@ -11,7 +11,8 @@ fn fixture() -> Editor {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);
-        editor.thumbnails = Thumbnails::default();
+        editor.document.thumbnails =
+            (Thumbnails::default()).with_sources(editor.document.cache.clone());
         editor = complete_document_operation(editor, Duration::from_secs(30), |editor, cx| {
             editor.add_raws(
                 ["roll-0.dng", "roll-1.dng"]
@@ -24,19 +25,25 @@ fn fixture() -> Editor {
                 cx,
             );
         });
-        assert_eq!(editor.document.project.order.len(), 2, "{}", editor.status);
+        assert_eq!(
+            editor.document.state.project.order.len(),
+            2,
+            "{}",
+            editor.status
+        );
         editor.set_dmin(Some(glam::DVec3::splat(0.8)));
         editor.set_dmax(Some(glam::DVec3::splat(0.02)));
         editor.sync_document();
         for (index, id) in editor
             .document
+            .state
             .project
             .order
             .clone()
             .into_iter()
             .enumerate()
         {
-            let source = editor.document.project.source_mut(id).unwrap();
+            let source = editor.document.state.project.source_mut(id).unwrap();
             source.adjustment_layers.as_mut().unwrap().layers[0]
                 .adjustment
                 .photo
@@ -50,13 +57,15 @@ fn fixture() -> Editor {
         // Keep the active control mirror consistent with the accepted first source.
         let active = editor
             .document
+            .state
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap();
-        editor.adjustment_layer_settings = active.adjustment_layers.as_ref().unwrap().layers[0]
-            .adjustment
-            .photo;
-        editor.crop = active.crop;
+        editor.document.visit.adjustment_layer_settings =
+            active.adjustment_layers.as_ref().unwrap().layers[0]
+                .adjustment
+                .photo;
+        editor.document.visit.crop = active.crop;
         editor
     })
 }
@@ -89,7 +98,7 @@ fn filenames_preserve_dotted_stems_and_do_not_accept_path_injection() {
 }
 
 #[test]
-fn captured_multisource_batch_finishes_without_paint_after_document_retirement() {
+fn captured_multisource_batch_finishes_without_paint_after_live_selection_changes() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let request = editor.batch_input(&draft(directory.path())).unwrap();
@@ -105,10 +114,10 @@ fn captured_multisource_batch_finishes_without_paint_after_document_retirement()
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.start_export(request, cx);
-            editor.document = crate::editor::document::Document::default().into();
+            editor.document.state.project.order.clear();
         });
         app.run_until(Duration::from_secs(30), |editor| {
-            editor.export_operation.pending.is_none()
+            editor.document.export_operation.pending.is_none()
         });
         app.read(|editor| {
             assert!(
@@ -116,12 +125,12 @@ fn captured_multisource_batch_finishes_without_paint_after_document_retirement()
                 "{}",
                 editor.status
             );
-            let summary = editor.export_summary.as_ref().unwrap();
+            let summary = editor.document.export_summary.as_ref().unwrap();
             assert_eq!(
                 (summary.exported(), summary.failed(), summary.unattempted()),
                 (2, 0, 0)
             );
-            assert!(editor.document.project.order.is_empty());
+            assert!(editor.document.state.project.order.is_empty());
         });
     });
     assert_eq!(exr_size(&first), [16, 16]);
@@ -131,16 +140,16 @@ fn captured_multisource_batch_finishes_without_paint_after_document_retirement()
 #[test]
 fn batch_selection_uses_filmstrip_order_and_never_exports_nonordered_sources() {
     let editor = fixture();
-    let ids = editor.document.project.order.clone();
+    let ids = editor.document.state.project.order.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.select_roll_photo(1, egui::Modifiers::NONE, cx);
             assert_eq!(editor.export_ids(Scope::Selected), vec![ids[1]]);
             assert_eq!(editor.export_ids(Scope::All), ids);
-            editor.document.project.order.pop();
+            editor.document.state.project.order.pop();
             assert_eq!(editor.export_ids(Scope::All), vec![ids[0]]);
             assert_eq!(
-                editor.document.project.sources.len(),
+                editor.document.state.project.sources.len(),
                 2,
                 "retained source must exist outside filmstrip"
             );
@@ -154,7 +163,7 @@ fn per_photo_acquisition_failure_does_not_discard_later_success() {
     let directory = tempfile::tempdir().unwrap();
     let mut request = editor.batch_input(&draft(directory.path())).unwrap();
     let mut unavailable = editor.source_input(directory.path().join("missing.dng"));
-    unavailable.cache = None;
+    unavailable.sources = None;
     request.photos[0].input = Input::Acquire(Box::new(unavailable));
     let services = editor.export_services.take().unwrap();
     drop(editor);

@@ -1,6 +1,7 @@
 use super::*;
 use crate::source::{self as source_loading, Priority, SourceLoader, SourceProvider};
 use crate::{project::SourceDevelopment, raw::fixture, scan::Scan, source::Charges};
+use std::sync::OnceLock;
 use std::sync::{
     Weak,
     atomic::{AtomicUsize, Ordering},
@@ -50,16 +51,14 @@ impl Existing {
 }
 
 impl SourceProvider for Existing {
-    async fn load_source(
-        &self,
-        _: SourceKey,
-        priority: Priority,
-    ) -> Result<Arc<DevelopedSource>, Error> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        self.priorities.lock().unwrap().push(priority);
-        self.source
-            .upgrade()
-            .ok_or(Error::UnusableSample("fixture lease expired"))
+    fn load_source(&self, _: SourceKey, priority: Priority) -> crate::source::SourceFuture<'_> {
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.priorities.lock().unwrap().push(priority);
+            self.source
+                .upgrade()
+                .ok_or(Error::UnusableSample("fixture lease expired"))
+        })
     }
 }
 
@@ -70,18 +69,26 @@ fn zero_retention_reuses_live_consumer_leases_without_owning_the_pixels() {
     let weak = Arc::downgrade(&original);
     let store = Arc::new(SourceCache::new(0));
     let cache = store.clone();
-    let provider = Existing::new(&original);
+    let provider = Arc::new(Existing::new(&original));
     futures_lite::future::block_on(async {
-        let first = cache
-            .load_source(&provider, key.clone(), source_loading::Priority::Eager)
-            .await
-            .unwrap();
+        let first = load(
+            &cache,
+            provider.clone(),
+            key.clone(),
+            source_loading::Priority::Eager,
+        )
+        .await
+        .unwrap();
         assert!(Arc::ptr_eq(&first, &original));
         drop(original);
-        let second = cache
-            .load_source(&provider, key.clone(), source_loading::Priority::Foreground)
-            .await
-            .unwrap();
+        let second = load(
+            &cache,
+            provider.clone(),
+            key.clone(),
+            source_loading::Priority::Foreground,
+        )
+        .await
+        .unwrap();
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
         assert_eq!(*provider.priorities.lock().unwrap(), [Priority::Eager]);
@@ -107,12 +114,16 @@ fn cache_budget_owns_a_keepalive_after_consumers_finish() {
     let weak = Arc::downgrade(&original);
     let store = Arc::new(SourceCache::new(bytes));
     let cache = store.clone();
-    let provider = Existing::new(&original);
+    let provider = Arc::new(Existing::new(&original));
     futures_lite::future::block_on(async {
-        let lease = cache
-            .load_source(&provider, key.clone(), source_loading::Priority::Foreground)
-            .await
-            .unwrap();
+        let lease = load(
+            &cache,
+            provider.clone(),
+            key.clone(),
+            source_loading::Priority::Foreground,
+        )
+        .await
+        .unwrap();
         drop(original);
         drop(lease);
         assert!(weak.upgrade().is_some());
@@ -123,10 +134,14 @@ fn cache_budget_owns_a_keepalive_after_consumers_finish() {
                 leased_only: 0
             }
         );
-        let lease = cache
-            .load_source(&provider, key, source_loading::Priority::Foreground)
-            .await
-            .unwrap();
+        let lease = load(
+            &cache,
+            provider.clone(),
+            key,
+            source_loading::Priority::Foreground,
+        )
+        .await
+        .unwrap();
         assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
         store.set_budget(0);
         assert_eq!(
@@ -141,31 +156,27 @@ fn cache_budget_owns_a_keepalive_after_consumers_finish() {
     assert!(weak.upgrade().is_none());
 }
 
-#[test]
-
-fn closed_cache_is_not_authority_to_cancel_an_independent_load() {
-    let (_file, key, source) = input();
-    let store = Arc::new(SourceCache::new(0));
-    store.close();
-    let cache = store.clone();
-    let provider = Existing::new(&source);
-    let lease = futures_lite::future::block_on(cache.load_source(
-        &provider,
-        key,
-        source_loading::Priority::Foreground,
-    ))
-    .unwrap();
-    assert!(Arc::ptr_eq(&lease, &source));
-    assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
-    assert_eq!(store.charges(), Charges::default());
+fn load(
+    cache: &Arc<SourceCache>,
+    backend: Arc<dyn SourceProvider>,
+    key: SourceKey,
+    priority: Priority,
+) -> crate::source::SourceFuture<'static> {
+    let provider = cache.provider(backend);
+    Box::pin(async move { provider.load_source(key, priority).await })
 }
 
 #[test]
 fn unpolled_acquisition_does_not_start_loading() {
     let (_file, key, source) = input();
-    let cache = SourceCache::new(0);
-    let provider = Existing::new(&source);
-    drop(cache.load_source(&provider, key, source_loading::Priority::Foreground));
+    let cache = Arc::new(SourceCache::new(0));
+    let provider = Arc::new(Existing::new(&source));
+    drop(load(
+        &cache,
+        provider.clone(),
+        key,
+        source_loading::Priority::Foreground,
+    ));
     assert_eq!(provider.calls.load(Ordering::Relaxed), 0);
 }
 
@@ -196,26 +207,30 @@ fn concurrent_document_cache_misses_join_native_work_and_one_waiter_can_leave() 
         Ok(())
     });
     let loader = scheduler.clone();
-    let first_cache = SourceCache::new(0);
-    let second_cache = SourceCache::new(0);
+    let first_cache = Arc::new(SourceCache::new(0));
+    let second_cache = Arc::new(SourceCache::new(0));
     let first_loader = loader.clone();
     let executor = async_executor::Executor::new();
     futures_lite::future::block_on(executor.run(async {
         let first_key = key.clone();
         let first = executor.spawn(async move {
-            first_cache
-                .load_source(
-                    &first_loader,
-                    first_key,
-                    source_loading::Priority::Foreground,
-                )
-                .await
+            load(
+                &first_cache,
+                Arc::new(first_loader.clone()),
+                first_key,
+                source_loading::Priority::Foreground,
+            )
+            .await
         });
         blocking::unblock(move || starts.recv_timeout(Duration::from_secs(5)).unwrap()).await;
         let second = executor.spawn(async move {
-            second_cache
-                .load_source(&loader, key, source_loading::Priority::Foreground)
-                .await
+            load(
+                &second_cache,
+                Arc::new(loader.clone()),
+                key,
+                source_loading::Priority::Foreground,
+            )
+            .await
         });
         let deadline = Instant::now() + Duration::from_secs(5);
         while scheduler.waiter_count() != 2 {
@@ -264,10 +279,11 @@ fn completed_native_result_is_reused_before_any_cache_wrapper_has_published_it()
     drop(first);
     let weak = Arc::downgrade(&produced);
     let store = Arc::new(SourceCache::new(0));
-    let provider = scheduler;
+    let provider: Arc<dyn SourceProvider> = Arc::new(scheduler);
     let cache = store;
-    let lease = futures_lite::future::block_on(cache.load_source(
-        &provider,
+    let lease = futures_lite::future::block_on(load(
+        &cache,
+        provider.clone(),
         key,
         source_loading::Priority::Foreground,
     ))
@@ -296,15 +312,16 @@ fn an_interpreted_pixel_lease_remains_discoverable_across_cache_scopes() {
         }
         Ok(())
     });
-    let cache = SourceCache::new(0);
-    let physical = futures_lite::future::block_on(cache.load_source(
-        &loader,
+    let cache = Arc::new(SourceCache::new(0));
+    let physical = futures_lite::future::block_on(load(
+        &cache,
+        Arc::new(loader.clone()),
         key.clone(),
         source_loading::Priority::Foreground,
     ))
     .unwrap();
     let interpreted = crate::photo_preparation::native(
-        Some(&cache),
+        None,
         &OnceLock::new(),
         crate::processing::InputSettings::Digital,
         &physical,
@@ -312,8 +329,9 @@ fn an_interpreted_pixel_lease_remains_discoverable_across_cache_scopes() {
     .unwrap();
     drop(physical);
     drop(cache);
-    let next = futures_lite::future::block_on(SourceCache::new(0).load_source(
-        &loader,
+    let next = futures_lite::future::block_on(load(
+        &Arc::new(SourceCache::new(0)),
+        Arc::new(loader.clone()),
         key,
         source_loading::Priority::Foreground,
     ))
@@ -325,6 +343,33 @@ fn an_interpreted_pixel_lease_remains_discoverable_across_cache_scopes() {
     );
     drop((interpreted, next));
     loader.close_and_wait().unwrap();
+}
+
+#[test]
+fn cacheless_preparation_does_not_bypass_backend_development_validation() {
+    let (file, _key, source) = input();
+    let mut development =
+        crate::project::SourceDevelopment::from_metadata(&source.metadata(), source.fixed_wb())
+            .unwrap();
+    development.camera_model.push_str(" different");
+    let other_key = SourceKey::capture(file.path(), &development).unwrap();
+    assert!(
+        !other_key.matches(&source),
+        "control must actually describe different source pixels"
+    );
+    let provider = Arc::new(Existing::new(&source));
+    let access: Arc<dyn SourceProvider> = provider.clone();
+    assert!(
+        futures_lite::future::block_on(crate::photo_preparation::acquire(
+            access.as_ref(),
+            other_key,
+            source_loading::Priority::Foreground,
+            Default::default(),
+            Arc::default()
+        ))
+        .is_err()
+    );
+    assert_eq!(provider.calls.load(Ordering::Relaxed), 1);
 }
 
 #[test]

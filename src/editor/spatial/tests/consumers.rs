@@ -11,7 +11,7 @@ use crate::{
 
 /// Declared physical hypotheses isolate consumer transactions from blind discovery. The
 /// authored roll's coordinate basis is real, but these bounds are not detector output.
-fn supplied(editor: &mut Editor) -> Metadata {
+pub(super) fn declared(editor: &Editor) -> Metadata {
     let sources: Vec<_> = editor
         .document
         .spatial_inputs()
@@ -41,7 +41,7 @@ fn supplied(editor: &mut Editor) -> Metadata {
     let metadata = Metadata {
         version: VERSION,
         groups: vec![Group {
-            development: editor.document.project.sources[0]
+            development: editor.document.state.project.sources[0]
                 .development
                 .decode
                 .clone(),
@@ -51,6 +51,11 @@ fn supplied(editor: &mut Editor) -> Metadata {
         }],
     };
     metadata.validate().unwrap();
+    metadata
+}
+
+fn supplied(editor: &mut Editor) -> Metadata {
+    let metadata = declared(editor);
     let inputs = editor.document.spatial_inputs();
     let scope = &mut editor.document;
     let request = scope.spatial.begin().unwrap();
@@ -70,7 +75,7 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
     let mut editor = fixture(scheduler.clone());
     let regions = supplied(&mut editor);
     assert!(
-        editor.document.project.analysis_regions.is_empty(),
+        editor.document.state.project.analysis_regions.is_empty(),
         "this must not rely on accepted Analyze evidence"
     );
     with_application(editor, |app| {
@@ -92,7 +97,7 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
                 "{}",
                 editor.status
             );
-            for source in &editor.document.project.sources {
+            for source in &editor.document.state.project.sources {
                 assert_eq!(
                     source.crop,
                     Some(Crop::from_region([96, 96, 320, 320].into()))
@@ -118,7 +123,7 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
                 editor.status
             );
             assert_eq!(*editor.document.spatial.ready(), regions);
-            assert!(editor.document.project.analysis_regions.is_empty());
+            assert!(editor.document.state.project.analysis_regions.is_empty());
         });
         app.enter(|editor, cx| editor.restore_history(history::Direction::Redo, cx));
         app.run_until(LIMIT, |editor| editor.document_pending.is_none());
@@ -144,16 +149,17 @@ fn changed_supporting_geometry_prevents_any_selected_crop_from_being_applied() {
     let (scheduler, _) = observed();
     let mut editor = fixture(scheduler.clone());
     let dir = tempfile::tempdir().unwrap();
-    let peer = editor.document.project.order[1];
+    let peer = editor.document.state.project.order[1];
     let copy = dir.path().join("supporter.dng");
     std::fs::copy(editor.document.source_path(peer).unwrap(), &copy).unwrap();
-    editor.document.project.source_mut(peer).unwrap().path = copy.clone();
+    editor.document.state.project.source_mut(peer).unwrap().path = copy.clone();
     editor.document.capture_source_files().unwrap();
     supplied(&mut editor);
-    editor.roll_selection = Default::default();
-    editor
-        .roll_selection
-        .reconcile(&editor.document.project.order, editor.current_source);
+    editor.document.roll_selection = Default::default();
+    editor.document.roll_selection.reconcile(
+        &editor.document.state.project.order,
+        editor.document.visit.current_source,
+    );
     let undo = editor.history_label(history::Direction::Undo);
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Selected, cx));
@@ -167,10 +173,10 @@ fn changed_supporting_geometry_prevents_any_selected_crop_from_being_applied() {
                 .unwrap()
                 .development
                 .active_area[2] -= 1;
-            let accepted = editor.document.project.clone();
+            let accepted = editor.document.state.project.clone();
             editor.finish_auto_crop(true);
             assert!(editor.document.auto_crop_edit.is_some());
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
         });
     });
@@ -182,20 +188,22 @@ fn selected_targets_are_captured_at_request_time_and_cancel_does_not_accept_marg
     let (scheduler, starts) = observed();
     let mut editor = fixture(scheduler.clone());
     let regions = supplied(&mut editor);
-    let first = editor.document.project.order[0];
-    let second = editor.document.project.order[1];
-    editor.roll_selection = Default::default();
+    let first = editor.document.state.project.order[0];
+    let second = editor.document.state.project.order[1];
+    editor.document.roll_selection = Default::default();
     editor
+        .document
         .roll_selection
-        .reconcile(&editor.document.project.order, Some(first));
+        .reconcile(&editor.document.state.project.order, Some(first));
     let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Selected, cx));
         app.update(|editor| {
-            editor.roll_selection = Default::default();
+            editor.document.roll_selection = Default::default();
             editor
+                .document
                 .roll_selection
-                .reconcile(&editor.document.project.order, Some(second));
+                .reconcile(&editor.document.state.project.order, Some(second));
         });
         drop(admission);
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());

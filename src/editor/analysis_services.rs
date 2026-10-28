@@ -1,5 +1,5 @@
 use super::{Document, Error, Scan, SourceId, analysis, source, source_loading};
-use crate::source::SourceCache;
+use crate::source::SourceProvider;
 use std::sync::Arc;
 
 pub(super) use crate::cancellation::Cancellation;
@@ -7,10 +7,9 @@ pub(super) use crate::cancellation::Cancellation;
 fn source_input(
     document: &Document,
     id: SourceId,
-    cache: Arc<SourceCache>,
+    sources: Arc<dyn SourceProvider>,
 ) -> Result<source::Request, Error> {
-    let project = &document.project;
-    let expected = project.source(id)?;
+    let expected = document.project.source(id)?;
     let path = document.source_path(id)?;
     let wb = expected.development.decode.fixed_wb;
     let file = document.file_key(&path);
@@ -21,11 +20,11 @@ fn source_input(
                 .cloned()
                 .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
         ),
-        input: project.input,
+        input: document.project.input,
         path,
         wb: Some(wb),
         expected: Some(expected.clone()),
-        cache: Some(cache),
+        sources: Some(sources),
         file,
         correction: None,
     })
@@ -33,22 +32,20 @@ fn source_input(
 
 #[derive(Clone)]
 pub(super) struct Services {
-    pub developments: source_loading::SourceLoader,
+    pub sources: Arc<dyn SourceProvider>,
     pub device: wgpu::Device,
-    pub cache: Arc<SourceCache>,
     pub exposures: Arc<crate::exposure_metadata::Store>,
 }
 
 impl Services {
     pub fn new(
         source: &source::Services,
-        cache: Arc<SourceCache>,
+        sources: Arc<dyn SourceProvider>,
         exposures: Arc<crate::exposure_metadata::Store>,
     ) -> Self {
         Self {
-            developments: source.developments.clone(),
+            sources,
             device: source.device.clone(),
-            cache,
             exposures,
         }
     }
@@ -65,8 +62,8 @@ impl Services {
             }
             job().map(Some)
         })
-        .await;
-        let result = result.map_err(|_| Error::UnusableSample("analysis worker panicked"))?;
+        .await
+        .map_err(|_| Error::UnusableSample("analysis worker panicked"))?;
         if cancelled.is_cancelled() {
             Ok(None)
         } else {
@@ -74,21 +71,18 @@ impl Services {
         }
     }
 
-    /// Await a source lease without occupying a blocking-pool thread. Optional
-    /// retention belongs to the cache; analysis owns each frame's sampling inputs.
     pub async fn acquire(
         &self,
         request: Arc<analysis::Request>,
         index: usize,
         cancelled: Cancellation,
     ) -> Result<Option<Scan>, Error> {
-        let cache = self.cache.clone();
         self.acquire_captured(
-            move || {
+            || {
                 source_input(
                     &request.document,
                     request.document.project.order[index],
-                    cache,
+                    self.sources.clone(),
                 )
             },
             cancelled,
@@ -103,7 +97,7 @@ impl Services {
         cancelled: Cancellation,
     ) -> Result<Option<Scan>, Error> {
         self.acquire_captured(
-            move || source_input(&document, source, self.cache.clone()),
+            || source_input(&document, source, self.sources.clone()),
             cancelled,
         )
         .await
@@ -122,22 +116,16 @@ impl Services {
             request.reference = self.exposures.memo(expected.id, &request.file.path);
         }
         let key = request.load_key()?;
-        let cache = request.cache.clone().expect("analysis document cache");
-        let input = request.input;
-        let reference = request.reference;
-
-        let loader = self.developments.clone();
-
         let load = async {
-            let source = cache
-                .load_source(&loader, key, source_loading::Priority::Foreground)
-                .await?;
-            crate::background::run(move || {
-                crate::photo_preparation::native(Some(&cache), &reference, input, &source)
-                    .map(|prepared| Some(prepared.scan()))
-            })
+            crate::photo_preparation::acquire(
+                self.sources.as_ref(),
+                key,
+                source_loading::Priority::Foreground,
+                request.input,
+                request.reference,
+            )
             .await
-            .map_err(|_| Error::UnusableSample("analysis preparation panicked"))?
+            .map(|prepared| Some(prepared.scan()))
         };
         let stop = async {
             cancelled.wait().await;

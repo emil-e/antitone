@@ -79,27 +79,30 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
         import(app);
         let (before, visit) = app.update(|e| {
             assert!(e.document.visit.ready.is_some(), "{}", e.status);
-            e.viewport.zoom = Some(1.375);
+            e.document.visit.viewport.zoom = Some(1.375);
             (e.history_snapshot(), e.document.visit.view)
         });
         begin(app, "bare-light.dng");
-        assert!(app.read(|e| e.flat_edit.as_ref().unwrap().task.is_some()));
+        assert!(app.read(|e| e.document.flat_edit.as_ref().unwrap().task.is_some()));
         wait(app);
         app.read(|e| {
-            assert_eq!(e.document.project, before);
-            assert!(e.region.is_some());
+            assert_eq!(e.document.state.project, before);
+            assert!(e.document.picking.region.is_some());
             assert!(e.source_context().unwrap().correction.is_none());
             assert_ne!(e.document.visit.view, visit);
         });
         apply(app);
         wait(app);
         app.read(|e| {
-            assert!(e.correction.is_some(), "{}", e.status);
-            assert!(e.flat_edit.is_none() && e.document_pending.is_none());
-            assert_eq!(e.document.project.order, before.order);
-            assert_eq!(e.viewport.zoom, Some(1.375));
+            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.flat_edit.is_none() && e.document_pending.is_none());
+            assert_eq!(e.document.state.project.order, before.order);
+            assert_eq!(e.document.visit.viewport.zoom, Some(1.375));
             assert_eq!(
-                (e.document.project.dmin(), e.document.project.dmax()),
+                (
+                    e.document.state.project.dmin(),
+                    e.document.state.project.dmax()
+                ),
                 (before.dmin(), before.dmax())
             );
             assert_eq!(
@@ -117,12 +120,12 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
             1,
             "estimation must consume the captured reference, not reopen it"
         );
-        let accepted = app.read(|e| e.document.project.clone());
+        let accepted = app.read(|e| e.document.state.project.clone());
         let current = app.read(|e| e.document.visit.ready.as_ref().unwrap().developed.clone());
         begin(app, "missing-reference.dng");
         wait(app);
         app.read(|e| {
-            assert_eq!(e.document.project, accepted);
+            assert_eq!(e.document.state.project, accepted);
             assert!(Arc::ptr_eq(
                 &current,
                 &e.document.visit.ready.as_ref().unwrap().developed
@@ -138,7 +141,7 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
     for accept in [false, true] {
         let scheduler = source_loading::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
-            let before = app.read(|e| e.document.project.clone());
+            let before = app.read(|e| e.document.state.project.clone());
             if accept {
                 begin(app, "bare-light.dng");
                 wait(app);
@@ -154,9 +157,9 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
             app.update(Editor::finish_flat_edit);
             app.pump();
             app.read(|e| {
-                assert_eq!(e.document.project, before);
+                assert_eq!(e.document.state.project, before);
                 assert!(!e.busy && e.document_pending.is_none());
-                assert!(e.flat_edit.is_none());
+                assert!(e.document.flat_edit.is_none());
             });
             app.enter(|e, cx| {
                 e.start_document(crate::editor::Preparation::New, cx);
@@ -171,7 +174,7 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
             wait(app);
             app.read(|e| {
                 assert!(e.failure.is_none());
-                assert!(e.document.project.flat_field().is_none());
+                assert!(e.document.state.project.flat_field().is_none());
             });
         });
         scheduler.close_and_wait().unwrap();
@@ -203,7 +206,7 @@ fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_r
             );
         });
         let operation = app.read(|e| {
-            let session = e.flat_edit.as_ref().unwrap();
+            let session = e.document.flat_edit.as_ref().unwrap();
             assert!(session.task.is_none() && session.working.is_some());
             e.document_pending.unwrap()
         });
@@ -212,8 +215,8 @@ fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_r
         drop(hold);
         wait(app);
         app.read(|e| {
-            assert_eq!(e.document.project, before);
-            assert!(e.flat_edit.is_none() && e.correction.is_none());
+            assert_eq!(e.document.state.project, before);
+            assert!(e.document.flat_edit.is_none() && e.document.correction.is_none());
             assert!(Arc::ptr_eq(
                 &pixels,
                 &e.document.visit.ready.as_ref().unwrap().developed
@@ -270,7 +273,7 @@ fn departed_reference_waiter_can_join_running_unpack_without_stale_publication()
         wait(app);
         app.read(|e| {
             assert!(e.document.visit.ready.is_some());
-            assert!(e.document.project.flat_field().is_none());
+            assert!(e.document.state.project.flat_field().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -286,16 +289,16 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
             let visit = e.request_id();
             e.replace_photo_scope(visit);
             assert!(e.document.visit.ready.is_none());
-            assert!(e.flat_edit.as_ref().unwrap().reference.is_some());
+            assert!(e.document.flat_edit.as_ref().unwrap().reference.is_some());
         });
         apply(app);
         assert!(app.read(|e| e.document_pending.is_some()));
         wait(app);
         app.read(|e| {
-            assert!(e.correction.is_some(), "{}", e.status);
-            assert!(e.document.project.order.is_empty());
-            assert_eq!(e.document.project.sources.len(), 1);
-            assert!(e.document.project.sources[0].reference_only);
+            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.state.project.order.is_empty());
+            assert_eq!(e.document.state.project.sources.len(), 1);
+            assert!(e.document.state.project.sources[0].reference_only);
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -305,17 +308,18 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
 fn invalid_measured_support_fails_without_accepting_reference_records_or_history() {
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
-        let before = app.read(|e| e.document.project.clone());
+        let before = app.read(|e| e.document.state.project.clone());
         begin(app, "bare-light.dng");
         wait(app);
         app.update(|e| {
             let area = e.document.visit.ready.as_ref().unwrap().area;
-            e.region = Some(crate::coverage::Coverage::rectangle(crate::raw::Rect {
-                x: area.x,
-                y: area.y,
-                width: 2,
-                height: 2,
-            }));
+            e.document.picking.region =
+                Some(crate::coverage::Coverage::rectangle(crate::raw::Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: 2,
+                    height: 2,
+                }));
         });
         apply(app);
         assert!(
@@ -324,8 +328,8 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
         );
         wait(app);
         app.read(|e| {
-            assert_eq!(e.document.project, before);
-            assert!(e.flat_edit.is_none() && e.correction.is_none());
+            assert_eq!(e.document.state.project, before);
+            assert!(e.document.flat_edit.is_none() && e.document.correction.is_none());
             assert_eq!(
                 e.failure.as_ref().unwrap().kind,
                 FailureKind::FlatCorrection
@@ -347,12 +351,12 @@ fn missing_reference_services_finish_activity_and_preserve_accepted_state() {
     with_application(e, |app| {
         let before = app.update(|e| e.history_snapshot());
         begin(app, "bare-light.dng");
-        assert!(app.read(|e| e.busy && e.flat_edit.as_ref().unwrap().task.is_some()));
+        assert!(app.read(|e| e.busy && e.document.flat_edit.as_ref().unwrap().task.is_some()));
         wait(app);
         app.read(|e| {
             assert!(!e.busy && e.tasks.view().is_none());
-            assert!(e.flat_edit.is_none());
-            assert_eq!(e.document.project, before);
+            assert!(e.document.flat_edit.is_none());
+            assert_eq!(e.document.state.project, before);
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
             assert!(Arc::ptr_eq(
                 &pixels,
@@ -440,8 +444,13 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 frame(app, &context, vec![]);
             }
             let (before, selected, viewport, source) = app.update(|e| {
-                e.viewport.zoom = Some(1.375);
-                (e.history_snapshot(), e.current_source, e.viewport, e.source)
+                e.document.visit.viewport.zoom = Some(1.375);
+                (
+                    e.history_snapshot(),
+                    e.document.visit.current_source,
+                    e.document.visit.viewport,
+                    e.document.source,
+                )
             });
             // Supply the chooser's path through the real admitted control action.
             app.enter(|e, cx| {
@@ -451,7 +460,13 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 )
             });
             wait(app);
-            let region = app.update(|e| e.region.take().expect("proposed reference support"));
+            let region = app.update(|e| {
+                e.document
+                    .picking
+                    .region
+                    .take()
+                    .expect("proposed reference support")
+            });
             let disabled = frame(app, &context, vec![])
                 .platform_output
                 .accesskit_update
@@ -467,7 +482,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             );
             frame(app, &context, key(egui::Key::Enter));
             assert!(!app.read(|e| e.busy));
-            app.update(|e| e.region = Some(region));
+            app.update(|e| e.document.picking.region = Some(region));
             if enter {
                 frame(app, &context, key(egui::Key::Enter));
             } else {
@@ -475,8 +490,8 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             }
             app.read(|e| {
                 assert!(e.busy && e.document_pending.is_some());
-                assert!(e.flat_edit.as_ref().unwrap().task.is_some());
-                assert_eq!(e.document.project, before);
+                assert!(e.document.flat_edit.as_ref().unwrap().task.is_some());
+                assert_eq!(e.document.state.project, before);
             });
             let busy = frame(app, &context, vec![])
                 .platform_output
@@ -493,19 +508,22 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 );
             }
             frame(app, &context, key(egui::Key::Escape));
-            assert!(app.read(|e| e.flat_edit.is_some() && e.busy));
+            assert!(app.read(|e| e.document.flat_edit.is_some() && e.busy));
             // The first executor turn after Apply completes all service stages
             // and the return transaction without invoking UI or a starter list.
             wait(app);
             app.read(|e| {
-                assert!(e.correction.is_some(), "{}", e.status);
-                assert!(e.flat_edit.is_none() && e.document_pending.is_none());
-                assert_eq!(e.current_source, selected);
-                assert_eq!(e.viewport, viewport);
-                assert_eq!(e.source, source);
-                assert_eq!(e.document.project.order, before.order);
+                assert!(e.document.correction.is_some(), "{}", e.status);
+                assert!(e.document.flat_edit.is_none() && e.document_pending.is_none());
+                assert_eq!(e.document.visit.current_source, selected);
+                assert_eq!(e.document.visit.viewport, viewport);
+                assert_eq!(e.document.source, source);
+                assert_eq!(e.document.state.project.order, before.order);
                 assert_eq!(
-                    (e.document.project.dmin(), e.document.project.dmax()),
+                    (
+                        e.document.state.project.dmin(),
+                        e.document.state.project.dmax()
+                    ),
                     (before.dmin(), before.dmax())
                 );
                 assert_eq!(
@@ -517,7 +535,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                         .is_some()
                 );
             });
-            let accepted = app.read(|e| e.document.project.clone());
+            let accepted = app.read(|e| e.document.state.project.clone());
             begin(app, "bare-light.dng");
             wait(app);
             if enter {
@@ -526,11 +544,11 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 click(app, &context, "Cancel");
             }
             app.read(|e| {
-                assert!(e.flat_edit.is_none() && !e.busy);
-                assert_eq!(e.document.project, accepted);
-                assert_eq!(e.current_source, selected);
-                assert_eq!(e.viewport, viewport);
-                assert_eq!(e.source, source);
+                assert!(e.document.flat_edit.is_none() && !e.busy);
+                assert_eq!(e.document.state.project, accepted);
+                assert_eq!(e.document.visit.current_source, selected);
+                assert_eq!(e.document.visit.viewport, viewport);
+                assert_eq!(e.document.source, source);
             });
         });
         scheduler.close_and_wait().unwrap();
@@ -542,7 +560,7 @@ fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
     for accept in [false, true] {
         let scheduler = source_loading::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
-            let before = app.read(|e| e.document.project.clone());
+            let before = app.read(|e| e.document.state.project.clone());
             if accept {
                 begin(app, "bare-light.dng");
                 wait(app);
@@ -552,12 +570,12 @@ fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
             } else {
                 begin(app, "bare-light.dng");
             }
-            assert!(app.read(|e| e.flat_edit.as_ref().unwrap().task.is_some()));
+            assert!(app.read(|e| e.document.flat_edit.as_ref().unwrap().task.is_some()));
             app.update(Editor::finish_flat_edit);
             app.pump();
             app.read(|e| {
-                assert!(e.flat_edit.is_none() && !e.busy && e.document_pending.is_none());
-                assert_eq!(e.document.project, before);
+                assert!(e.document.flat_edit.is_none() && !e.busy && e.document_pending.is_none());
+                assert_eq!(e.document.state.project, before);
             });
             if accept {
                 begin(app, "bare-light.dng");
@@ -570,8 +588,8 @@ fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
                 begin(app, "bare-light.dng");
             }
             app.read(|e| {
-                assert!(e.flat_edit.is_none() && !e.busy && e.document_pending.is_none());
-                assert_eq!(e.document.project, before);
+                assert!(e.document.flat_edit.is_none() && !e.busy && e.document_pending.is_none());
+                assert_eq!(e.document.state.project, before);
                 assert_eq!(
                     e.failure.as_ref().unwrap().kind,
                     if accept {

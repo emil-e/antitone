@@ -44,7 +44,7 @@ impl Editor {
             Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
             Preparation::Import(..) | Preparation::Correction(..) | Preparation::Input(..) => {
                 Some(history::Pending::Edit {
-                    before: Box::new(self.document.project.clone()),
+                    before: Box::new(self.document.state.project.clone()),
                     label: if matches!(&work, Preparation::Import(..)) {
                         "Import photos"
                     } else if matches!(&work, Preparation::Input(..)) {
@@ -59,9 +59,10 @@ impl Editor {
                 direction: *direction,
                 cleanup: self
                     .document
+                    .visit
                     .dust
                     .cleanup
-                    .then_some(self.document.dust.show_masks),
+                    .then_some(self.document.visit.dust.show_masks),
             }),
         };
         let id =
@@ -90,10 +91,13 @@ impl Editor {
             .then(|| self.document.cache.clone());
         let request = DocumentRequest {
             exposures: cache.as_ref().map(|_| self.document.exposures.clone()),
+            sources: self
+                .source_services
+                .as_ref()
+                .map(|services| services.provider(cache)),
             work,
-            cache,
             source,
-            correction: self.correction.clone(),
+            correction: self.document.correction.clone(),
         };
         let source = self.source_services.clone();
         let progress = Arc::new(Progress::default());
@@ -158,9 +162,9 @@ impl Editor {
         self.busy = false;
         match result {
             Ok(prepared) => {
-                let input_changed =
-                    self.input.is_negative() != prepared.document.project.input.is_negative();
-                let flat_context = self.flat_edit.take();
+                let input_changed = self.document.input.is_negative()
+                    != prepared.document.project.input.is_negative();
+                let flat_context = self.document.flat_edit.take();
 
                 if self.reset_repairs_pending {
                     self.document.dust = dust::State::default();
@@ -168,31 +172,29 @@ impl Editor {
                 self.reset_repairs_pending = false;
                 let replacement = matches!(pending_history, Some(history::Pending::Reset));
                 let same_visit = !replacement
-                    && self.current_source == prepared.selected
+                    && self.document.visit.current_source == prepared.selected
                     && self
                         .document
                         .same_visit(prepared.ready.as_ref(), prepared.reuse_ready);
-                let layer_selection = if !replacement && self.current_source == prepared.selected {
-                    self.document.visit.adjustment_layers.selection_only()
-                } else {
-                    AdjustmentLayerEditor::default()
-                };
+                let layer_selection =
+                    if !replacement && self.document.visit.current_source == prepared.selected {
+                        self.document.visit.adjustment_layers.selection_only()
+                    } else {
+                        AdjustmentLayerEditor::default()
+                    };
                 self.document.visit.source = source_workflow::State::default();
-                self.correction = prepared.correction;
                 if replacement {
-                    self.document = prepared.document.into();
+                    self.document = self.document.replacement(prepared.document);
                 } else {
                     self.document.install(prepared.document);
                 }
-                self.thumbnails
-                    .bind_sources(self.document.cache.clone(), &self.document);
+                self.document.correction = prepared.correction;
                 if let Some(ready) = &prepared.ready {
                     self.document.cache_ready(ready);
                 }
                 self.remember_current_look();
                 self.document.visit.adjustment_layers = layer_selection;
                 self.document.visit.mask_edit = None;
-                self.grades.clear();
                 if new_project {
                     self.tab = 0;
                     self.preferences
@@ -203,77 +205,77 @@ impl Editor {
                 if !same_visit {
                     self.replace_photo_scope(self.id);
                 }
-                self.current_source = prepared.selected;
+                self.document.visit.current_source = prepared.selected;
                 if !prepared.reuse_ready && !prepared.preserve_view {
-                    self.roll_selection = RollSelection::default();
+                    self.document.roll_selection = RollSelection::default();
                 }
-                self.roll_selection
-                    .reconcile(&self.document.project.order, self.current_source);
-                self.selected = prepared
+                self.document.roll_selection.reconcile(
+                    &self.document.state.project.order,
+                    self.document.visit.current_source,
+                );
+                self.document.selected = prepared
                     .selected
                     .and_then(|id| {
                         self.document
+                            .state
                             .project
                             .order
                             .iter()
                             .position(|candidate| *candidate == id)
                     })
                     .unwrap_or(0);
-                self.roll = self.document.project.roll;
-                self.roll_orientation = self.document.project.orientation;
-                self.load_input(self.document.project.input);
-                if let InputSettings::Negative { input_floor, .. } = &mut self.input
+                self.document.roll = self.document.state.project.roll;
+                self.document.roll_orientation = self.document.state.project.orientation;
+                self.load_input(self.document.state.project.input);
+                if let InputSettings::Negative { input_floor, .. } = &mut self.document.input
                     && *input_floor == 0.
                 {
                     *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
-                    self.document.project.input = self.input;
+                    self.document.state.project.input = self.document.input;
                 }
-                self.adjustment_layer_settings = prepared
+                self.document.visit.adjustment_layer_settings = prepared
                     .selected
-                    .and_then(|id| self.document.project.source(id).ok())
+                    .and_then(|id| self.document.state.project.source(id).ok())
                     .and_then(|source| source.adjustment_layers.as_ref())
                     .and_then(|layers| layers.layers.last())
                     .map(|record| record.adjustment.photo)
                     .unwrap_or_default();
                 self.refresh_adjustment_layer_selection();
-                self.photo_orientation = prepared
+                self.document.visit.photo_orientation = prepared
                     .selected
-                    .and_then(|id| self.document.project.source(id).ok())
+                    .and_then(|id| self.document.state.project.source(id).ok())
                     .map(|source| source.orientation)
                     .unwrap_or_default();
-                self.crop = prepared
+                self.document.visit.crop = prepared
                     .selected
-                    .and_then(|id| self.document.project.source(id).ok())
+                    .and_then(|id| self.document.state.project.source(id).ok())
                     .and_then(|source| source.crop);
                 self.document.visit.crop_edit = None;
-                self.last_layout = None;
-                self.film_emulation = self.document.project.output.film_emulation;
-                self.target = match self.document.project.output.tiff {
+                self.document.visit.last_layout = None;
+                self.document.film_emulation = self.document.state.project.output.film_emulation;
+                self.document.target = match self.document.state.project.output.tiff {
                     crate::project::TiffTarget::Srgb => OutputTarget::Srgb,
                     crate::project::TiffTarget::DisplayP3 => OutputTarget::DisplayP3,
                 };
                 self.document.visit.ready = prepared.ready;
                 if !prepared.reuse_ready && !prepared.preserve_view {
-                    self.viewport.fit();
-                    self.source = !self.input.ready();
+                    self.document.visit.viewport.fit();
+                    self.document.source = !self.document.input.ready();
                 }
                 if input_changed {
-                    self.source = !self.input.ready();
+                    self.document.source = !self.document.input.ready();
                 }
-                self.pick = None;
-                self.document.pick_view = None;
-                self.document.pick_return = None;
-                self.region = None;
-                self.pick_drag = None;
-                self.return_notice = None;
-                self.export_dialog = None;
-                self.export_summary = None;
+                self.document.picking = Default::default();
+                self.document.visit.pick_drag = None;
+                self.document.visit.return_notice = None;
+                self.document.export_dialog = None;
+                self.document.export_summary = None;
                 self.invalidate_original();
                 if let Some(context) = flat_context {
-                    self.viewport = context.viewport;
-                    self.source = context.source;
+                    self.document.visit.viewport = context.viewport;
+                    self.document.source = context.source;
                 }
-                self.status = if !input_changed && self.document.project.active_flat_field().is_some()
+                self.status = if !input_changed && self.document.state.project.active_flat_field().is_some()
                 {
                     "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup."
                 } else {
@@ -296,7 +298,7 @@ impl Editor {
                 self.resume_source_after_document();
                 self.status = error.to_string();
                 if self.document.visit.source.pending() {
-                    self.return_notice = Some(self.status.clone());
+                    self.document.visit.return_notice = Some(self.status.clone());
                 }
                 self.finish_flat_edit();
                 self.source_epoch

@@ -14,15 +14,16 @@ fn fixture_editor(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir)) {
         harness.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(0.8)));
             editor.set_dmax(Some(DVec3::splat(0.02)));
-            editor.target = OutputTarget::DisplayP3;
-            editor.crop = Some(Crop {
+            editor.document.target = OutputTarget::DisplayP3;
+            editor.document.visit.crop = Some(Crop {
                 center: [120., 100.],
                 size: [16, 16],
                 angle: 0.,
             });
             editor.sync_document();
-            for id in editor.document.project.order.clone() {
-                editor.document.project.source_mut(id).unwrap().crop = editor.crop;
+            for id in editor.document.state.project.order.clone() {
+                editor.document.state.project.source_mut(id).unwrap().crop =
+                    editor.document.visit.crop;
             }
             let (store, _) =
                 preferences::Store::open(directory.path().join("preferences.json")).unwrap();
@@ -53,13 +54,13 @@ fn choose(harness: &mut Harness<'_, Editor>, name: &str, value: &str) {
 #[test]
 fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
     fixture_editor(|mut harness, directory| {
-        let accepted = harness.read(|editor| editor.document.project.clone());
-        let active = harness.read(|editor| editor.current_source);
+        let accepted = harness.read(|editor| editor.document.state.project.clone());
+        let active = harness.read(|editor| editor.document.visit.current_source);
         open(&mut harness);
         harness.read(|editor| {
             assert!(!editor.application_menu_state().enabled(Action::New));
             assert_eq!(
-                editor.export_dialog.as_ref().unwrap().target,
+                editor.document.export_dialog.as_ref().unwrap().target,
                 OutputTarget::DisplayP3
             );
         });
@@ -76,7 +77,7 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
         choose(&mut harness, "Format", "TIFF");
         harness.read(|editor| {
             assert_eq!(
-                editor.export_dialog.as_ref().unwrap().target,
+                editor.document.export_dialog.as_ref().unwrap().target,
                 OutputTarget::DisplayP3
             )
         });
@@ -85,26 +86,26 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
         harness.step();
         harness.try_run_realtime().unwrap();
         harness.read(|editor| {
-            assert_eq!(editor.document.project, accepted);
-            assert_eq!(editor.target, OutputTarget::DisplayP3);
+            assert_eq!(editor.document.state.project, accepted);
+            assert_eq!(editor.document.target, OutputTarget::DisplayP3);
         });
         let png = harness.render().unwrap();
         save_capture(&png, "export-dialog-tiff-offscreen");
         harness.get_by_label("Export 2 photos").click();
         harness.step();
         wait_for(&mut harness, |editor| {
-            editor.export_operation.pending.is_none()
+            editor.document.export_operation.pending.is_none()
         });
         harness.read(|editor| {
             assert_eq!(
-                editor.export_summary.as_ref().unwrap().exported(),
+                editor.document.export_summary.as_ref().unwrap().exported(),
                 2,
                 "{}",
                 editor.status
             );
-            assert_eq!(editor.document.project, accepted);
-            assert_eq!(editor.current_source, active);
-            assert_eq!(editor.target, OutputTarget::DisplayP3);
+            assert_eq!(editor.document.state.project, accepted);
+            assert_eq!(editor.document.visit.current_source, active);
+            assert_eq!(editor.document.target, OutputTarget::DisplayP3);
         });
         for name in ["patches.tif", "roll-0.tif"] {
             let mut decoder = tiff::decoder::Decoder::new(
@@ -129,13 +130,13 @@ fn dialog_preserves_project_state_and_exports_all_with_its_own_target() {
         harness.step();
         open(&mut harness);
         harness.read(|editor| {
-            let draft = editor.export_dialog.as_ref().unwrap();
+            let draft = editor.document.export_dialog.as_ref().unwrap();
             assert_eq!(draft.target, OutputTarget::DisplayP3);
             assert_eq!(draft.folder, directory.path());
         });
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();
-        harness.read(|editor| assert!(editor.export_dialog.is_none()));
+        harness.read(|editor| assert!(editor.document.export_dialog.is_none()));
         let restored = preferences::Store::open(directory.path().join("preferences.json"))
             .unwrap()
             .1;
@@ -159,7 +160,7 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
             assert_eq!(editor.export_ids(export_batch::Scope::Selected).len(), 2);
             assert_eq!(editor.export_ids(export_batch::Scope::All).len(), 3);
         });
-        let accepted = harness.read(|editor| editor.document.project.clone());
+        let accepted = harness.read(|editor| editor.document.state.project.clone());
         open(&mut harness);
         choose(&mut harness, "Format", "EXR");
         choose(&mut harness, "Precision", "Full float · 32-bit");
@@ -176,9 +177,10 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
         harness.get_by_label("Cancel export").click();
         harness.step();
         harness.read(|editor| {
-            assert!(editor.export_operation.pending.is_some());
+            assert!(editor.document.export_operation.pending.is_some());
             assert!(
                 editor
+                    .document
                     .export_operation
                     .cancelled
                     .as_ref()
@@ -195,11 +197,11 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
         save_capture(&png, "export-cancelling-modal-offscreen");
         drop(admission);
         wait_for(&mut harness, |editor| {
-            editor.export_operation.pending.is_none()
+            editor.document.export_operation.pending.is_none()
         });
         harness.read(|editor| {
             assert!(editor.failure.is_none() && !editor.busy && editor.tasks.view().is_none());
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
         });
         assert!(!directory.path().join("patches.exr").exists());
         assert!(!directory.path().join("roll-0.exr").exists());
@@ -209,16 +211,16 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
         harness.get_by_label("Export 2 photos").click();
         harness.step();
         wait_for(&mut harness, |editor| {
-            editor.export_operation.pending.is_none()
+            editor.document.export_operation.pending.is_none()
         });
         harness.read(|editor| {
             assert_eq!(
-                editor.export_summary.as_ref().unwrap().exported(),
+                editor.document.export_summary.as_ref().unwrap().exported(),
                 2,
                 "{}",
                 editor.status
             );
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
         });
         for name in ["patches.exr", "roll-0.exr"] {
             let image =
@@ -249,12 +251,15 @@ fn opening_export_commits_pending_photo_numeric_text_before_blocking_the_workspa
         harness.step();
         open(&mut harness);
         harness.read(|editor| {
-            assert_eq!(editor.adjustment_layer_settings.exposure, 1.25);
+            assert_eq!(
+                editor.document.visit.adjustment_layer_settings.exposure,
+                1.25
+            );
             assert_eq!(
                 editor
                     .document
                     .project
-                    .source(editor.current_source.unwrap())
+                    .source(editor.document.visit.current_source.unwrap())
                     .unwrap()
                     .adjustment_layers
                     .as_ref()
@@ -268,7 +273,12 @@ fn opening_export_commits_pending_photo_numeric_text_before_blocking_the_workspa
         });
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.adjustment_layer_settings.exposure, 1.25));
+        harness.read(|editor| {
+            assert_eq!(
+                editor.document.visit.adjustment_layer_settings.exposure,
+                1.25
+            )
+        });
     });
 }
 
@@ -285,7 +295,7 @@ fn destination_paths_share_a_left_edge_and_choose_stays_on_the_right() {
                 directory.path().join("Photographs"),
             ] {
                 harness.update(|editor| {
-                    editor.export_dialog.as_mut().unwrap().folder = folder.clone()
+                    editor.document.export_dialog.as_mut().unwrap().folder = folder.clone()
                 });
                 harness.try_run_realtime().unwrap();
                 let text = folder.display().to_string();
@@ -333,7 +343,7 @@ fn destination_paths_share_a_left_edge_and_choose_stays_on_the_right() {
 #[test]
 fn narrow_dialog_can_be_cancelled_without_exporting_or_changing_the_document() {
     fixture_editor(|mut harness, directory| {
-        let accepted = harness.read(|editor| editor.document.project.clone());
+        let accepted = harness.read(|editor| editor.document.state.project.clone());
         harness.set_size(egui::vec2(800., 600.));
         open(&mut harness);
         let cancel = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel");
@@ -348,8 +358,11 @@ fn narrow_dialog_can_be_cancelled_without_exporting_or_changing_the_document() {
         harness.step();
         harness.try_run_realtime().unwrap();
         harness.read(|editor| {
-            assert!(editor.export_dialog.is_none() && editor.export_operation.pending.is_none());
-            assert_eq!(editor.document.project, accepted);
+            assert!(
+                editor.document.export_dialog.is_none()
+                    && editor.document.export_operation.pending.is_none()
+            );
+            assert_eq!(editor.document.state.project, accepted);
         });
         assert!(!directory.path().join("patches.tif").exists());
     });

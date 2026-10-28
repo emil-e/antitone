@@ -33,9 +33,9 @@ fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_prefe
     let mut editor = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
     *editor.document = super::tests::fixture();
-    editor.current_source = Some(editor.document.project.order[0]);
+    editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
     editor.busy = true;
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     for height in [52., 80., 140., 240.] {
         editor.preferences.filmstrip_height = height;
         for size in [egui::vec2(700., 600.), egui::vec2(1100., 800.)] {
@@ -97,7 +97,7 @@ fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_prefe
                     assert!(card.rect.expand(0.5).contains_rect(bounds));
                 }
                 assert_eq!(editor.preferences.filmstrip_height, height);
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.state.project, before);
             }
         }
     }
@@ -108,7 +108,7 @@ fn hover_is_neutral_and_distinct_from_selection_without_changing_cell_geometry()
     let mut editor = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
     *editor.document = super::tests::fixture();
-    editor.current_source = Some(editor.document.project.order[0]);
+    editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
     editor.busy = false;
     let context = egui::Context::default();
     context.enable_accesskit();

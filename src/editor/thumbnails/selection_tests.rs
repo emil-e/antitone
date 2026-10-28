@@ -72,20 +72,29 @@ fn truncate_filmstrip(editor: &mut Editor, keep: usize) {
         .skip(keep)
         .collect();
     for id in removed {
-        editor.document.project.remove_from_filmstrip(id).unwrap();
+        editor
+            .document
+            .state
+            .project
+            .remove_from_filmstrip(id)
+            .unwrap();
     }
     if editor
+        .document
+        .visit
         .current_source
-        .is_some_and(|id| !editor.document.project.order.contains(&id))
+        .is_some_and(|id| !editor.document.state.project.order.contains(&id))
     {
-        editor.current_source = None;
+        editor.document.visit.current_source = None;
     }
-    editor.selected = editor
+    editor.document.selected = editor
+        .document
         .selected
-        .min(editor.document.project.order.len().saturating_sub(1));
-    editor
-        .roll_selection
-        .reconcile(&editor.document.project.order, editor.current_source);
+        .min(editor.document.state.project.order.len().saturating_sub(1));
+    editor.document.roll_selection.reconcile(
+        &editor.document.state.project.order,
+        editor.document.visit.current_source,
+    );
 }
 
 fn pointer(point: Pos2, pressed: bool) -> Vec<Event> {
@@ -163,18 +172,24 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
         app.enter(|editor, cx| {
             *editor.document = super::tests::fixture();
             truncate_filmstrip(editor, 3);
-            let selected = editor.document.project.order[1];
+            let selected = editor.document.state.project.order[1];
             let name = "京都_Long_Scan_Reference_Roll01_Frame_04397.ARW";
-            editor.document.project.source_mut(selected).unwrap().path = name.into();
-            editor.selected = 1;
+            editor
+                .document
+                .state
+                .project
+                .source_mut(selected)
+                .unwrap()
+                .path = name.into();
+            editor.document.selected = 1;
             editor.load(editor.document.source_path(selected).unwrap(), cx);
             assert!(editor.document.visit.source.pending());
             assert!(
                 editor.busy
                     && editor.document.visit.ready.is_none()
-                    && editor.pending_preview.is_none()
+                    && editor.document.visit.pending_preview.is_none()
             );
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             let context = egui::Context::default();
             frame(editor, &context, vec![], cx);
             let output = frame(editor, &context, vec![], cx);
@@ -187,13 +202,16 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
                 "loading a photo must not block navigation"
             );
             selected_outline(&output, point(&output, name), true);
-            assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
-            assert_eq!(editor.document.project, before);
+            assert!(
+                editor.document.visit.ready.is_none()
+                    && editor.document.visit.pending_preview.is_none()
+            );
+            assert_eq!(editor.document.state.project, before);
             editor.source_result(editor.id, Err("RAW unavailable".into()));
             assert!(
                 !editor.busy
                     && editor.document.visit.ready.is_none()
-                    && editor.pending_preview.is_none()
+                    && editor.document.visit.pending_preview.is_none()
             );
             let output = frame(editor, &context, vec![], cx);
             selected_outline(&output, point(&output, name), true);
@@ -205,8 +223,8 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
                 !node(&output, name).1.is_disabled(),
                 "allow retry after failure"
             );
-            assert_eq!(editor.current_source, Some(selected));
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.visit.current_source, Some(selected));
+            assert_eq!(editor.document.state.project, before);
         });
     });
 }
@@ -219,9 +237,9 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
             *editor.document = super::tests::fixture();
             truncate_filmstrip(editor, 2);
             crate::editor::tests::add_ready_fixture(editor);
-            editor.selected = 2;
+            editor.document.selected = 2;
             editor.sync_document();
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             let context = egui::Context::default();
             frame(editor, &context, vec![], cx);
             let output = frame(editor, &context, vec![], cx);
@@ -244,13 +262,13 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 match state {
                     "busy" => editor.busy = true,
                     "crop" => editor.begin_crop(),
-                    "pick" => editor.pick = Some(Pick::Gamma),
+                    "pick" => editor.document.picking.kind = Some(Pick::Gamma),
                     "flat" => {
-                        editor.flat_edit = Some(crate::editor::flat::FlatEdit {
+                        editor.document.flat_edit = Some(crate::editor::flat::FlatEdit {
                             working: None,
                             reference: None,
-                            viewport: editor.viewport,
-                            source: editor.source,
+                            viewport: editor.document.visit.viewport,
+                            source: editor.document.source,
                             task: None,
                         })
                     }
@@ -281,11 +299,11 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                     !editor.document.visit.source.pending(),
                     "disabled cards dispatch no work"
                 );
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.state.project, before);
                 editor.busy = false;
                 editor.finish_crop(false);
-                editor.flat_edit = None;
-                editor.pick = None;
+                editor.document.flat_edit = None;
+                editor.document.picking.kind = None;
                 frame(editor, &context, vec![], cx);
             }
             frame(editor, &context, pointer(point, true), cx);
@@ -293,12 +311,12 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
             assert!(
                 editor
                     .document
-                    .source_path(editor.current_source.unwrap())
+                    .source_path(editor.document.visit.current_source.unwrap())
                     .unwrap()
                     .ends_with("photo-0.ARW")
             );
             assert!(editor.document.visit.source.pending());
-            assert_eq!(editor.selected, 0);
+            assert_eq!(editor.document.selected, 0);
         });
     });
 }
@@ -313,7 +331,7 @@ fn document_work_still_blocks_navigation_when_a_selected_load_was_pending() {
             editor.load(
                 editor
                     .document
-                    .source_path(editor.document.project.order[0])
+                    .source_path(editor.document.state.project.order[0])
                     .unwrap(),
                 cx,
             );
@@ -327,8 +345,8 @@ fn document_work_still_blocks_navigation_when_a_selected_load_was_pending() {
             frame(editor, &context, pointer(point, true), cx);
             frame(editor, &context, pointer(point, false), cx);
             assert_eq!(
-                editor.current_source,
-                Some(editor.document.project.order[0])
+                editor.document.visit.current_source,
+                Some(editor.document.state.project.order[0])
             );
         });
     });
@@ -342,11 +360,11 @@ fn card_tooltips_reveal_only_the_source_path_even_when_selection_is_disabled() {
             app.enter(|editor, cx| {
                 *editor.document = super::tests::fixture();
                 truncate_filmstrip(editor, 1);
-                editor.current_source = Some(editor.document.project.order[0]);
+                editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
                 editor.busy = disabled;
                 let path = editor
                     .document
-                    .source_path(editor.current_source.unwrap())
+                    .source_path(editor.document.visit.current_source.unwrap())
                     .unwrap()
                     .display()
                     .to_string();
@@ -382,10 +400,10 @@ fn disabled_cards_keep_actionable_error_tooltips() {
         app.enter(|editor, cx| {
     *editor.document = super::tests::fixture();
     truncate_filmstrip(editor, 1);
-    editor.current_source = Some(editor.document.project.order[0]);
+    editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
     editor.busy = true;
-    let image_key = super::tests::key(&editor.document, editor.current_source.unwrap());
-    editor.thumbnails.cache.insert(
+    let image_key = super::tests::key(&editor.document, editor.document.visit.current_source.unwrap());
+    editor.document.thumbnails.cache.insert(
         image_key,
         Err("Source unavailable: actionable detail".into()),
     );
@@ -417,12 +435,12 @@ fn enabled_reference_cards_keep_ordered_roll_sampling_and_working_photo_return_c
                 *editor.document = super::tests::fixture();
                 truncate_filmstrip(editor, 2);
                 crate::editor::tests::add_ready_fixture(editor);
-                editor.selected = 2;
+                editor.document.selected = 2;
                 editor.sync_document();
-                let before = editor.document.project.clone();
+                let before = editor.document.state.project.clone();
                 let working = editor.document.visit.ready.as_ref().unwrap().path.clone();
                 editor.begin_pick(pick, cx);
-                let view = editor.document.pick_view.unwrap();
+                let view = editor.document.picking.view.unwrap();
                 let context = egui::Context::default();
                 frame(editor, &context, vec![], cx);
                 let output = frame(editor, &context, vec![], cx);
@@ -433,36 +451,45 @@ fn enabled_reference_cards_keep_ordered_roll_sampling_and_working_photo_return_c
                 assert!(
                     editor
                         .document
-                        .source_path(editor.current_source.unwrap())
+                        .source_path(editor.document.visit.current_source.unwrap())
                         .unwrap()
                         .ends_with("photo-0.ARW")
                 );
                 assert_eq!(
-                    editor.current_source,
-                    Some(editor.document.project.order[0])
+                    editor.document.visit.current_source,
+                    Some(editor.document.state.project.order[0])
                 );
-                assert_eq!(editor.pick, Some(pick));
-                assert_eq!(editor.selected, 0);
-                assert_eq!(editor.document.pick_return.as_ref().unwrap().selected, 2);
-                assert_eq!(editor.document.pick_return.as_ref().unwrap().path, working);
-                assert_eq!(editor.document.pick_view.unwrap().viewport, view.viewport);
-                assert_eq!(editor.document.pick_view.unwrap().source, view.source);
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.picking.kind, Some(pick));
+                assert_eq!(editor.document.selected, 0);
+                assert_eq!(
+                    editor.document.picking.return_to.as_ref().unwrap().selected,
+                    2
+                );
+                assert_eq!(
+                    editor.document.picking.return_to.as_ref().unwrap().path,
+                    working
+                );
+                assert_eq!(
+                    editor.document.picking.view.unwrap().viewport,
+                    view.viewport
+                );
+                assert_eq!(editor.document.picking.view.unwrap().source, view.source);
+                assert_eq!(editor.document.state.project, before);
                 editor.source_result(editor.id, Err("sample source unavailable".into()));
                 editor.finish_pick(cx);
                 assert!(editor.document.visit.source.pending());
                 assert!(document::same_path(
                     &editor
                         .document
-                        .source_path(editor.current_source.unwrap())
+                        .source_path(editor.document.visit.current_source.unwrap())
                         .unwrap(),
                     &working
                 ));
-                assert_eq!(editor.selected, 2);
-                assert_eq!(editor.viewport, view.viewport);
-                assert_eq!(editor.source, view.source);
-                assert!(editor.pick.is_none());
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.selected, 2);
+                assert_eq!(editor.document.visit.viewport, view.viewport);
+                assert_eq!(editor.document.source, view.source);
+                assert!(editor.document.picking.kind.is_none());
+                assert_eq!(editor.document.state.project, before);
             });
         });
     }
@@ -476,8 +503,8 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
             app.enter(|editor, cx| {
                 *editor.document = super::tests::fixture();
                 truncate_filmstrip(editor, 2);
-                let first = editor.document.project.order[0];
-                let second = editor.document.project.order[1];
+                let first = editor.document.state.project.order[0];
+                let second = editor.document.state.project.order[1];
                 editor.load(editor.document.source_path(first).unwrap(), cx);
                 let original = editor.id;
                 assert!(editor.document.visit.source.pending());
@@ -504,17 +531,20 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
                     frame(editor, &context, pointer(point, true), cx);
                     frame(editor, &context, pointer(point, false), cx);
                 }
-                assert_eq!(editor.current_source, Some(second));
-                assert_eq!(editor.selected, 1);
+                assert_eq!(editor.document.visit.current_source, Some(second));
+                assert_eq!(editor.document.selected, 1);
                 assert!(editor.busy && editor.document.visit.ready.is_none());
                 assert!(editor.id > original);
                 assert!(editor.document.visit.source.pending());
                 editor.source_result(original, Err("obsolete failure".into()));
-                assert!(editor.busy && editor.current_source == Some(second));
+                assert!(editor.busy && editor.document.visit.current_source == Some(second));
                 assert_ne!(editor.status, "obsolete failure");
                 editor.begin_pick(Pick::Dmin, cx);
                 editor.begin_crop();
-                assert!(editor.pick.is_none() && editor.document.visit.crop_edit.is_none());
+                assert!(
+                    editor.document.picking.kind.is_none()
+                        && editor.document.visit.crop_edit.is_none()
+                );
             });
         });
     }
@@ -527,7 +557,7 @@ fn modifier_clicks_expose_selection_separately_from_the_active_photo() {
         app.enter(|editor, cx| {
             *editor.document = super::tests::fixture();
             truncate_filmstrip(editor, 3);
-            editor.current_source = Some(editor.document.project.order[0]);
+            editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
             let context = egui::Context::default();
             frame(editor, &context, vec![], cx);
             let output = frame(editor, &context, vec![], cx);
@@ -574,8 +604,8 @@ fn modifier_clicks_expose_selection_separately_from_the_active_photo() {
             click(editor, 0, Modifiers::COMMAND);
             assert!(editor.document.visit.source.pending());
             assert_eq!(
-                editor.current_source,
-                Some(editor.document.project.order[2])
+                editor.document.visit.current_source,
+                Some(editor.document.state.project.order[2])
             );
             editor.source_result(editor.id, Err("fixture unavailable".into()));
             click(editor, 2, Modifiers::COMMAND);
@@ -586,8 +616,8 @@ fn modifier_clicks_expose_selection_separately_from_the_active_photo() {
             click(editor, 1, Modifiers::NONE);
             assert!(editor.document.visit.source.pending());
             assert_eq!(
-                editor.current_source,
-                Some(editor.document.project.order[1])
+                editor.document.visit.current_source,
+                Some(editor.document.state.project.order[1])
             );
         });
     });

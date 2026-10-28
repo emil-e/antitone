@@ -27,7 +27,7 @@ fn film_edge_exclusion_survives_authored_review_and_failure_preserves_the_accept
             .publish(pending, metadata.clone(), &scope.state.project, &inputs)
             .unwrap()
     );
-    editor.document.project.analysis_regions = editor
+    editor.document.state.project.analysis_regions = editor
         .document
         .project
         .order
@@ -40,7 +40,7 @@ fn film_edge_exclusion_survives_authored_review_and_failure_preserves_the_accept
         })
         .collect();
     editor.sync_document();
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     let dirty = editor.document.dirty();
     let undo = editor.history_label(history::Direction::Undo);
     with_application(editor, |app| {
@@ -69,7 +69,7 @@ fn film_edge_exclusion_survives_authored_review_and_failure_preserves_the_accept
             );
             assert!(editor.document.analysis_review.is_none());
             assert_eq!(
-                editor.document.project, accepted,
+                editor.document.state.project, accepted,
                 "insufficient interior must not accept areas, skip a photograph or install a partial grade"
             );
             assert_eq!(editor.document.dirty(), dirty);
@@ -112,7 +112,7 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
             .publish(pending, metadata.clone(), &scope.state.project, &inputs)
             .unwrap()
     );
-    editor.document.project.analysis_regions = editor
+    editor.document.state.project.analysis_regions = editor
         .document
         .project
         .order
@@ -126,7 +126,7 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
         .collect();
     editor.auto_crop_margin = 0.;
     editor.sync_document();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let target = before.order[0];
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Roll, cx));
@@ -144,9 +144,9 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
                 crop.region([8, 8, 496, 496].into()).unwrap(),
                 analysis::rect([96, 96, 320, 320])
             );
-            assert_eq!(editor.document.project.dmin(), before.dmin());
+            assert_eq!(editor.document.state.project.dmin(), before.dmin());
             assert_eq!(*editor.document.spatial.ready(), metadata);
-            editor.document.project.clone()
+            editor.document.state.project.clone()
         });
         app.enter(|editor, cx| editor.request_analysis(cx));
         app.run_until(LIMIT, |editor| {
@@ -157,9 +157,9 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
         app.run_until(LIMIT, |editor| !editor.busy);
         app.read(|editor| {
             assert!(editor.status.contains("Analyzed"), "{}", editor.status);
-            assert!(editor.document.project.dmin().is_some());
+            assert!(editor.document.state.project.dmin().is_some());
             assert_eq!(
-                editor.document.project.source(target).unwrap().crop,
+                editor.document.state.project.source(target).unwrap().crop,
                 accepted.source(target).unwrap().crop,
                 "analysis material support cannot trim the photographic crop"
             );
@@ -202,7 +202,7 @@ fn analyze_uses_an_independent_shared_picture_inset_and_preserves_authored_sampl
     );
     let old = [[160., 160.], [340., 160.], [340., 340.], [160., 340.]];
     let authored = [[170., 180.], [310., 180.], [310., 310.], [170., 310.]];
-    editor.document.project.analysis_regions = editor
+    editor.document.state.project.analysis_regions = editor
         .document
         .project
         .order
@@ -220,7 +220,7 @@ fn analyze_uses_an_independent_shared_picture_inset_and_preserves_authored_sampl
         })
         .collect();
     editor.sync_document();
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_analysis(cx));
         app.run_until(LIMIT, |editor| {
@@ -243,7 +243,7 @@ fn analyze_uses_an_independent_shared_picture_inset_and_preserves_authored_sampl
             assert_eq!(review.approved.entries[1].areas.picture, Some(authored));
             assert!(review.approved.entries[1].areas.picture_edited);
             assert_eq!(*editor.document.spatial.ready(), metadata);
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
         });
     });
     scheduler.close_and_wait().unwrap();

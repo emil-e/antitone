@@ -149,6 +149,7 @@ struct State {
 }
 
 struct Shared {
+    previews: super::PreviewLoader,
     state: Mutex<State>,
     changed: Condvar,
 }
@@ -277,22 +278,28 @@ impl Default for SourceLoader {
 }
 
 impl SourceProvider for SourceLoader {
-    async fn load_source(
-        &self,
-        key: SourceKey,
-        priority: Priority,
-    ) -> Result<Arc<DevelopedSource>, Error> {
-        let source = self.submit_key(key.clone(), priority)?.await?;
-        if !key.matches(&source) {
-            return Err(Error::Project(
-                "developed source differs from requested development".into(),
-            ));
-        }
-        Ok(source)
+    fn load_preview(&self, key: SourceKey) -> super::PreviewFuture<'_> {
+        Box::pin(async move { super::provider::preview(&self.previews(), key).await })
+    }
+
+    fn load_source(&self, key: SourceKey, priority: Priority) -> super::SourceFuture<'_> {
+        Box::pin(async move {
+            let source = self.submit_key(key.clone(), priority)?.await?;
+            if !key.matches(&source) {
+                return Err(Error::Project(
+                    "developed source differs from requested development".into(),
+                ));
+            }
+            Ok(source)
+        })
     }
 }
 
 impl SourceLoader {
+    pub(crate) fn previews(&self) -> super::PreviewLoader {
+        self.owner.0.previews.clone()
+    }
+
     pub fn new() -> Self {
         #[cfg(test)]
         {
@@ -397,6 +404,7 @@ impl SourceLoader {
 
     fn shared() -> Arc<Shared> {
         Arc::new(Shared {
+            previews: Default::default(),
             state: Mutex::new(State {
                 tasks: Vec::new(),
                 live: Vec::new(),

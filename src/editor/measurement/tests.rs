@@ -88,7 +88,7 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
             device: device.clone(),
             queue: queue.clone(),
         });
-        editor.current_source = Some(
+        editor.document.visit.current_source = Some(
             editor
                 .document
                 .register_with_development(ready.record.clone(), ready.development().clone())
@@ -106,7 +106,7 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
             let tasks = app.access();
             app.enter(|editor, cx| {
                 editor.begin_pick(Pick::Dmin, cx);
-                editor.region = Some(region);
+                editor.document.picking.region = Some(region);
                 editor.start_measurement(Pick::Dmin, region, &tasks);
                 assert!(editor.document.visit.measurement.is_some() && editor.busy);
                 editor.document.visit.ready = None;
@@ -123,7 +123,10 @@ fn measurement_uses_the_captured_source_and_updates_history_without_receiving_or
             app.run_until(Duration::from_secs(5), |editor| !editor.busy);
             app.read(|editor| {
                 assert_eq!(editor.dmin(), Some(expected), "{}", editor.status);
-                assert!(editor.pick.is_none() && editor.document.visit.measurement.is_none());
+                assert!(
+                    editor.document.picking.kind.is_none()
+                        && editor.document.visit.measurement.is_none()
+                );
                 assert_eq!(
                     editor.history_label(crate::editor::history::Direction::Undo),
                     Some("Calibration pick")
@@ -143,15 +146,15 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
     let mut editor = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
     let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
-    editor.region = Some(Coverage::rectangle(
+    editor.document.picking.region = Some(Coverage::rectangle(
         editor.document.visit.ready.as_ref().unwrap().area,
     ));
     crate::application::test_support::with_application(editor, |app| {
         let tasks = app.access();
         app.update(|editor| {
-            editor.start_measurement(Pick::Dmin, editor.region.unwrap(), &tasks);
+            editor.start_measurement(Pick::Dmin, editor.document.picking.region.unwrap(), &tasks);
             assert!(editor.busy && editor.document.visit.measurement.is_some());
         });
         app.enter(|editor, cx| {
@@ -161,7 +164,7 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
         app.pump();
         app.read(|editor| {
             assert!(editor.document.visit.measurement.is_none() && !editor.busy);
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
         });
         assert!(source.upgrade().is_none());
     });
@@ -196,7 +199,7 @@ fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
         .err()
         .expect("coverage outside the sensor must be rejected")
         .to_string();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let undo = editor
         .history_label(crate::editor::history::Direction::Undo)
         .map(str::to_owned);
@@ -204,16 +207,19 @@ fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
         let tasks = app.access();
         app.enter(|editor, cx| {
             editor.begin_pick(Pick::Dmin, cx);
-            editor.region = Some(region);
+            editor.document.picking.region = Some(region);
             editor.start_measurement(Pick::Dmin, region, &tasks);
             assert!(editor.busy && editor.document.visit.measurement.is_some());
         });
         app.run_until(Duration::from_secs(5), |editor| !editor.busy);
         app.read(|editor| {
             assert_eq!(editor.status, expected_error);
-            assert!(editor.pick.is_none() && editor.document.visit.measurement.is_none());
+            assert!(
+                editor.document.picking.kind.is_none()
+                    && editor.document.visit.measurement.is_none()
+            );
             assert!(editor.tasks.view().is_none());
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),
                 undo.as_deref()
@@ -246,13 +252,17 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, access| {
                 editor.begin_pick(Pick::Dmin, access);
-                editor.region = Some(Coverage::rectangle(Rect {
+                editor.document.picking.region = Some(Coverage::rectangle(Rect {
                     x: 12,
                     y: 7,
                     width: 32,
                     height: 32,
                 }));
-                editor.start_measurement(Pick::Dmin, editor.region.unwrap(), access);
+                editor.start_measurement(
+                    Pick::Dmin,
+                    editor.document.picking.region.unwrap(),
+                    access,
+                );
                 assert!(editor.document.visit.measurement.is_some());
             });
             app.pump();
@@ -524,9 +534,9 @@ fn measurement_captures_correction_and_all_five_kinds_keep_their_declared_inputs
 fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacement() {
     use crate::{adjustment_layers::AdjustmentLayer, project::AdjustmentLayers};
     let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-    editor.input = crate::processing::InputSettings::Digital;
-    editor.roll = RollSettings::default();
-    let source = editor.current_source.unwrap();
+    editor.document.input = crate::processing::InputSettings::Digital;
+    editor.document.roll = RollSettings::default();
+    let source = editor.document.visit.current_source.unwrap();
     let upstream = Balance {
         warmth: 0.2,
         tint: -0.1,
@@ -581,8 +591,8 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
     let baseline = scan
         .white_balance_coverage(
             region,
-            &editor.input,
-            editor.roll,
+            &editor.document.input,
+            editor.document.roll,
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             None,
         )
@@ -612,9 +622,9 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
         project::AdjustmentLayers,
     };
     let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-    editor.input = InputSettings::Digital;
-    editor.roll = RollSettings::default();
-    let source = editor.current_source.unwrap();
+    editor.document.input = InputSettings::Digital;
+    editor.document.roll = RollSettings::default();
+    let source = editor.document.visit.current_source.unwrap();
     let ready = editor.document.visit.ready.as_ref().unwrap();
     let developed = ready.developed.clone();
     let patch = Rect {
@@ -700,7 +710,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
         measured.photo.saturation = 1.;
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             InputSettings::Digital,
-            editor.roll,
+            editor.document.roll,
             AdjustmentLayerSnapshot::new(vec![measured]).unwrap(),
             developed.camera_to_ap1(),
         )
@@ -726,7 +736,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
 #[test]
 fn a_completed_wb_pick_cannot_write_to_a_different_selected_layer() {
     let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-    let source = editor.current_source.unwrap();
+    let source = editor.document.visit.current_source.unwrap();
     let first = editor
         .document
         .project
@@ -765,11 +775,11 @@ fn a_completed_wb_pick_cannot_write_to_a_different_selected_layer() {
                 target: Some((source, first)),
                 _task: task,
             });
-            editor.pick = Some(Pick::Wb);
+            editor.document.picking.kind = Some(Pick::Wb);
             editor.busy = true;
             editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(second));
-            let before = editor.document.project.clone();
-            let settings = editor.adjustment_layer_settings;
+            let before = editor.document.state.project.clone();
+            let settings = editor.document.visit.adjustment_layer_settings;
             editor.measurement_result(
                 view,
                 Pick::Wb,
@@ -779,11 +789,11 @@ fn a_completed_wb_pick_cannot_write_to_a_different_selected_layer() {
                 })),
                 cx,
             );
-            assert_eq!(editor.document.project, before);
-            assert_eq!(editor.adjustment_layer_settings, settings);
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.document.visit.adjustment_layer_settings, settings);
             assert!(editor.document.visit.measurement.is_none());
             assert!(!editor.busy);
-            assert!(editor.pick.is_none());
+            assert!(editor.document.picking.kind.is_none());
         });
     });
 }
@@ -793,10 +803,10 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     use crate::exposure_reference::{ReferenceExposure, StartingExposure};
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
-    editor.input = InputSettings::Digital;
-    editor.document.project.input = InputSettings::Digital;
-    editor.roll = RollSettings::default();
-    let id = editor.current_source.unwrap();
+    editor.document.input = InputSettings::Digital;
+    editor.document.state.project.input = InputSettings::Digital;
+    editor.document.roll = RollSettings::default();
+    let id = editor.document.visit.current_source.unwrap();
     let baseline = ReferenceExposure::Matched(StartingExposure {
         ev: 2.75,
         samples: 1024,

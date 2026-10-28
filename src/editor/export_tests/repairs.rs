@@ -45,7 +45,7 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
     let mut editor = crate::editor::tests::authored_fixture(&["roll-0.dng"]);
     editor.set_dmin(Some(DVec3::splat(0.8)));
     editor.set_dmax(Some(DVec3::splat(0.02)));
-    let id = editor.current_source.unwrap();
+    let id = editor.document.visit.current_source.unwrap();
     let area = editor
         .document
         .project
@@ -67,13 +67,13 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         .repairs
         .insert(edge_border(area), RepairOrigin::Manual, [30, 0])
         .unwrap();
-    editor.crop = Some(crate::crop::Crop {
+    editor.document.visit.crop = Some(crate::crop::Crop {
         center: [area.x as f64 + 25., area.y as f64 + 32.],
         size: [32, 32],
         angle: 0.,
     });
     editor.sync_document();
-    let clean = editor.document.project.image_recipe(id).unwrap();
+    let clean = editor.document.state.project.image_recipe(id).unwrap();
     let scan = Scan::open(
         &editor.document.source_path(id).unwrap(),
         Some(clean.neutral.source_development.decode.fixed_wb),
@@ -92,14 +92,14 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         .unwrap()
         .is_empty()
     );
-    editor.film_emulation = FilmEmulationSettings {
+    editor.document.film_emulation = FilmEmulationSettings {
         enabled: true,
         amount: 0.,
         size: crate::film_emulation::MAX_SIZE,
         ..Default::default()
     };
     editor.sync_document();
-    let film = editor.document.project.image_recipe(id).unwrap();
+    let film = editor.document.state.project.image_recipe(id).unwrap();
     let error = crate::repair_source::resolve_output(
         &scan,
         &film,
@@ -117,7 +117,8 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);
-        editor.thumbnails = Thumbnails::default();
+        editor.document.thumbnails =
+            (Thumbnails::default()).with_sources(editor.document.cache.clone());
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(30),
@@ -151,8 +152,8 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             )
             .unwrap(),
         );
-        editor.document.project.output.look = Some(look.clone());
-        let id = editor.current_source.unwrap();
+        editor.document.state.project.output.look = Some(look.clone());
+        let id = editor.document.visit.current_source.unwrap();
         editor
             .document
             .project
@@ -182,9 +183,9 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             Duration::from_secs(30),
             |editor, cx| editor.start_document(Preparation::Open(saved), cx),
         );
-        let id = editor.current_source.unwrap();
+        let id = editor.document.visit.current_source.unwrap();
         let dirty = editor.document.dirty();
-        let recipe = editor.document.project.image_recipe(id).unwrap();
+        let recipe = editor.document.state.project.image_recipe(id).unwrap();
         let scan = Scan::open(
             &editor.document.source_path(id).unwrap(),
             Some(recipe.neutral.source_development.decode.fixed_wb),
@@ -242,9 +243,9 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             let path = directory.path().join(name);
             editor = wait(editor, |editor, cx| {
                 editor.export(path.clone(), format, Overwrite::Refuse, cx);
-                editor.document.project.output.look = None;
+                editor.document.state.project.output.look = None;
             });
-            editor.document.project.output.look = Some(look.clone());
+            editor.document.state.project.output.look = Some(look.clone());
             assert!(editor.failure.is_none(), "{}", editor.status);
             assert!(path.exists());
             match format {
@@ -286,13 +287,13 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             .repairs
             .insert(edge_border(area), RepairOrigin::Manual, [64, 0])
             .unwrap();
-        editor.crop = Some(crate::crop::Crop {
+        editor.document.visit.crop = Some(crate::crop::Crop {
             center: [48., 48.],
             size: [32, 32],
             angle: 0.2,
         });
         editor.sync_document();
-        let recipe = editor.document.project.image_recipe(id).unwrap();
+        let recipe = editor.document.state.project.image_recipe(id).unwrap();
         let scan = Scan::open(
             &editor.document.source_path(id).unwrap(),
             Some(recipe.neutral.source_development.decode.fixed_wb),
@@ -331,7 +332,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             .repairs
             .remove(border)
             .unwrap();
-        editor.crop = None;
+        editor.document.visit.crop = None;
         editor.sync_document();
         editor
             .document
@@ -382,7 +383,13 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         let before = directory.path().join("repaired.tif");
         let bytes = std::fs::read(&before).unwrap();
         let area = editor.document.visit.ready.as_ref().unwrap().area;
-        let repairs = &mut editor.document.project.source_mut(id).unwrap().repairs;
+        let repairs = &mut editor
+            .document
+            .state
+            .project
+            .source_mut(id)
+            .unwrap()
+            .repairs;
         repairs.clear();
         repairs
             .insert(edge_border(area), RepairOrigin::Manual, [64, 0])

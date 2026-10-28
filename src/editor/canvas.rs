@@ -31,19 +31,19 @@ fn preview_frame(
 impl Editor {
     /// The accepted source framing before any active crop draft, picker or review override.
     pub(super) fn source_composition(&self, source: &Source) -> Composition {
-        let photo_orientation = if self.current_source == Some(source.id) {
-            self.photo_orientation
+        let photo_orientation = if self.document.visit.current_source == Some(source.id) {
+            self.document.visit.photo_orientation
         } else {
             source.orientation
         };
-        let crop = if self.current_source == Some(source.id) {
-            self.crop
+        let crop = if self.document.visit.current_source == Some(source.id) {
+            self.document.visit.crop
         } else {
             source.crop
         };
         Composition::with_crop(
             source.development.active_area.into(),
-            self.roll_orientation,
+            self.document.roll_orientation,
             photo_orientation,
             crop,
         )
@@ -63,7 +63,7 @@ impl Editor {
                 .crop_edit
                 .as_ref()
                 .map(|edit| edit.draft)
-                .or(self.crop)
+                .or(self.document.visit.crop)
         };
         if matches!(active_pick, Some(Pick::Flat | Pick::Analysis)) {
             Composition::new(
@@ -72,7 +72,12 @@ impl Editor {
                 PhotoOrientation::default(),
             )
         } else {
-            Composition::with_crop(area, self.roll_orientation, self.photo_orientation, crop)
+            Composition::with_crop(
+                area,
+                self.document.roll_orientation,
+                self.document.visit.photo_orientation,
+                crop,
+            )
         }
         .expect("accepted crop belongs to the loaded source")
     }
@@ -92,14 +97,19 @@ impl Editor {
             canvas
         };
         let mut geometry = if cropping {
-            self.viewport
+            self.document
+                .visit
+                .viewport
                 .layout_crop(layout_canvas, composition, pixels_per_point)
         } else {
-            self.viewport
-                .layout_composition(layout_canvas, composition, pixels_per_point)
+            self.document.visit.viewport.layout_composition(
+                layout_canvas,
+                composition,
+                pixels_per_point,
+            )
         };
         if let Some(zoom) = zoom_action {
-            self.viewport.zoom_at(
+            self.document.visit.viewport.zoom_at(
                 geometry,
                 pixels_per_point,
                 if zoom > 0. {
@@ -111,11 +121,16 @@ impl Editor {
             );
         }
         geometry = if cropping {
-            self.viewport
+            self.document
+                .visit
+                .viewport
                 .layout_crop(layout_canvas, composition, pixels_per_point)
         } else {
-            self.viewport
-                .layout_composition(layout_canvas, composition, pixels_per_point)
+            self.document.visit.viewport.layout_composition(
+                layout_canvas,
+                composition,
+                pixels_per_point,
+            )
         };
         geometry.canvas = canvas;
         geometry
@@ -135,7 +150,7 @@ impl Editor {
             self.adjust_dust_brush_from_scroll(ui, geometry);
         }
         if response.drag_started_by(egui::PointerButton::Primary) {
-            self.pick_drag = None;
+            self.document.visit.pick_drag = None;
         }
         let (geometry, panning) = if !canvas_input {
             (geometry, false)
@@ -162,7 +177,7 @@ impl Editor {
             self.mask_interaction(ui, response, geometry, panning, canvas_input);
         }
         if !cropping {
-            self.last_layout = Some((geometry, pixels_per_point));
+            self.document.visit.last_layout = Some((geometry, pixels_per_point));
         }
         (geometry, panning)
     }
@@ -172,7 +187,7 @@ impl Editor {
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
     ) -> Option<ProcessingInput> {
-        let mut parameters = if self.source {
+        let mut parameters = if self.document.source {
             let source_parameters = self.source_parameters(self.source_exposure);
             match source_parameters {
                 Ok(parameters) => ProcessingInput::from(parameters),
@@ -182,7 +197,11 @@ impl Editor {
                 }
             }
         } else {
-            match self.view_processing(self.input(), self.roll, self.adjustment_layer_settings) {
+            match self.view_processing(
+                self.input(),
+                self.document.roll,
+                self.document.visit.adjustment_layer_settings,
+            ) {
                 Ok(p) => p,
                 Err(error) => {
                     ui.label(format!("Positive preview unavailable: {error}"));
@@ -190,14 +209,17 @@ impl Editor {
                 }
             }
         };
-        if self.pick.is_some()
-            || self.flat_edit.is_some()
-            || self.document.pick_return.is_some()
+        if self.document.picking.kind.is_some()
+            || self.document.flat_edit.is_some()
+            || self.document.picking.return_to.is_some()
             || self.document.analysis_review.is_some()
         {
             parameters = parameters.with_look(None);
         }
-        if !self.source && self.flat_edit.is_none() && self.document.pick_return.is_none() {
+        if !self.document.source
+            && self.document.flat_edit.is_none()
+            && self.document.picking.return_to.is_none()
+        {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust(signature, cx);
             }
@@ -220,7 +242,7 @@ impl Editor {
     ) -> Option<(egui::Rect, ImagePaint)> {
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas = geometry.canvas;
-        let active_pick = self.pick;
+        let active_pick = self.document.picking.kind;
         let composition = geometry.composition;
         // The camera proxy covers the full source, not the crop's bounding region.
         let rect = geometry.image.intersect(canvas);
@@ -233,9 +255,9 @@ impl Editor {
         let normal = !cropping
             && active_pick.is_none()
             && self.document_pending.is_none()
-            && self.flat_edit.is_none()
-            && self.document.pick_return.is_none();
-        let working = normal && self.working.enabled();
+            && self.document.flat_edit.is_none()
+            && self.document.picking.return_to.is_none();
+        let working = normal && self.document.visit.working_view.enabled();
         let view = if working {
             Some(ViewRequest {
                 area: physical_frame.bounds().expect("validated physical view"),
@@ -256,46 +278,58 @@ impl Editor {
         let parameters = self.canvas_parameters(ui, cx)?;
         self.observe_grade(&parameters);
         if (working || !parameters.repairs.0.is_empty())
-            && self
-                .working
-                .observe(self.id, physical_frame, parameters.signature(), self.target)
+            && self.document.visit.working_view.observe(
+                self.id,
+                physical_frame,
+                parameters.signature(),
+                self.document.target,
+            )
         {
             self.discard_original();
         }
-        let purpose = if normal && !self.source && self.working.compare {
+        let purpose = if normal && !self.document.source && self.document.visit.working_view.compare
+        {
             Some(OriginalPurpose::Reference)
         } else {
             (!cropping
                 && !pending
                 && (active_pick.is_some()
-                    || self.flat_edit.is_some()
-                    || self.document.pick_return.is_some()))
+                    || self.document.flat_edit.is_some()
+                    || self.document.picking.return_to.is_some()))
             .then_some(OriginalPurpose::Tool)
         };
         self.observe_original(
             purpose,
-            (parameters.signature(), self.target, view, composition),
+            (
+                parameters.signature(),
+                self.document.target,
+                view,
+                composition,
+            ),
         );
         let reference_allowed = if working {
             self.admit_view_reference(physical_frame)
         } else {
-            self.thumbnails.reserve_view(0);
+            self.document.thumbnails.reserve_view(0);
             true
         };
         let rendered = match self.working_view(physical_frame, &parameters, ui.ctx(), cx) {
             Ok(view) => view,
             Err(error) => {
-                self.working.error = Some(error.to_string());
-                self.working.hold(self.id, self.target)
+                self.document.visit.working_view.error = Some(error.to_string());
+                self.document
+                    .visit
+                    .working_view
+                    .hold(self.id, self.document.target)
             }
         };
         if purpose.is_some()
             && !self.busy
             && reference_allowed
-            && (!working || self.working.support_ready())
+            && (!working || self.document.visit.working_view.support_ready())
             && let Some(source) = self.source_context()
         {
-            self.request_original(&parameters, self.target, ui.ctx(), source, cx);
+            self.request_original(&parameters, self.document.target, ui.ctx(), source, cx);
         }
         let full_rect = geometry.screen_region(composition.area());
         let display_rect = if cropping { full_rect } else { geometry.image };
@@ -325,7 +359,7 @@ impl Editor {
             None
         };
         let paint = if let Some(rendered) = tool.or(rendered) {
-            self.preview_rendered = None;
+            self.document.visit.preview_rendered = None;
             proxy.release_output();
             let mapping = if cropping {
                 geometry.uv(draw, composition.area())
@@ -348,7 +382,9 @@ impl Editor {
             paint
         } else {
             ui.label(
-                if !parameters.repairs.0.is_empty() && self.working.error.is_none() {
+                if !parameters.repairs.0.is_empty()
+                    && self.document.visit.working_view.error.is_none()
+                {
                     "Updating repairs…"
                 } else {
                     "Preview unavailable"
@@ -379,33 +415,39 @@ impl Editor {
             preview.repairs = Default::default();
         }
         let parameters = &preview;
-        let device = self.working.device()?;
-        let queue = self.working.queue()?;
-        let kernels = self.working.kernels.get()?.clone();
+        let device = self.document.visit.working_view.device()?;
+        let queue = self.document.visit.working_view.queue()?;
+        let kernels = self.document.visit.working_view.kernels.get()?.clone();
         let cropping = self.document.visit.crop_edit.is_some();
         let frame = preview_frame(geometry.composition, proxy.size(), cropping).ok()?;
         let composition = frame.composition;
         let field = self
+            .document
             .correction
             .as_ref()
             .map(|correction| correction.settings.map.clone());
         let inspection = parameters.pipeline().is_none();
-        let settings = match self.input.calibration().filter(|_| !inspection) {
+        let settings = match self.document.input.calibration().filter(|_| !inspection) {
             Some(base) => {
-                let source = self.document.project.source(self.current_source?).ok()?;
-                self.input.with_calibration(
+                let source = self
+                    .document
+                    .project
+                    .source(self.document.visit.current_source?)
+                    .ok()?;
+                self.document.input.with_calibration(
                     source
                         .development
                         .processing_calibration(
                             base,
-                            self.correction
+                            self.document
+                                .correction
                                 .as_ref()
                                 .map(|correction| correction.settings.map.as_ref()),
                         )
                         .ok()?,
                 )
             }
-            None => self.input,
+            None => self.document.input,
         };
         let display_rect = if cropping {
             geometry.screen_region(composition.area())
@@ -429,11 +471,11 @@ impl Editor {
         };
         let signature = parameters.signature();
         if let Some((id, cached_signature, cached_frame, cached_target, rendered)) =
-            &self.preview_rendered
+            &self.document.visit.preview_rendered
             && *id == self.id
             && *cached_signature == signature
             && *cached_frame == frame
-            && *cached_target == self.target
+            && *cached_target == self.document.target
         {
             return Some(ImagePaint::rendered(
                 rendered.clone(),
@@ -445,7 +487,11 @@ impl Editor {
         let spec = if inspection {
             crate::gpu::view::ViewSourceSpec::inspection(self.id, frame, proxy.matrix(), field)
         } else {
-            let source = self.document.project.source(self.current_source?).ok()?;
+            let source = self
+                .document
+                .project
+                .source(self.document.visit.current_source?)
+                .ok()?;
             let matrix = self.document.positive_matrix(source, settings).ok()?;
             crate::gpu::view::ViewSourceSpec::new(self.id, frame, settings, matrix, field)
         }
@@ -453,20 +499,37 @@ impl Editor {
         .with_repairs(parameters.repairs.clone())
         .with_support(parameters.pixel_pipeline().ok()?.support([1., 1.]).ok()?);
         let source = proxy.view_source(queue, kernels, spec).ok()?;
-        let previous = self.preview_rendered.as_ref().map(|entry| &entry.4);
+        let previous = self
+            .document
+            .visit
+            .preview_rendered
+            .as_ref()
+            .map(|entry| &entry.4);
         let rendered = if inspection {
             crate::gpu::view::RenderedView::inspection(
                 device,
                 source,
                 parameters,
-                self.target,
+                self.document.target,
                 previous,
             )
         } else {
-            crate::gpu::view::RenderedView::new(device, source, parameters, self.target, previous)
+            crate::gpu::view::RenderedView::new(
+                device,
+                source,
+                parameters,
+                self.document.target,
+                previous,
+            )
         }
         .ok()?;
-        self.preview_rendered = Some((self.id, signature, frame, self.target, rendered.clone()));
+        self.document.visit.preview_rendered = Some((
+            self.id,
+            signature,
+            frame,
+            self.document.target,
+            rendered.clone(),
+        ));
         Some(ImagePaint::rendered(
             rendered.clone(),
             mapping,
@@ -483,7 +546,7 @@ impl Editor {
             if self.document.analysis_review.is_some() {
                 self.select_review_area(geometry, point);
             } else {
-                self.region = Some(geometry.pick_patch(point, 32));
+                self.document.picking.region = Some(geometry.pick_patch(point, 32));
             }
         }
         if response.drag_started_by(egui::PointerButton::Primary) {
@@ -493,17 +556,20 @@ impl Editor {
                 self.select_review_area(geometry, point);
             }
             // Classify from the press, not the later point where egui recognizes the drag.
-            self.pick_drag = ui
+            self.document.visit.pick_drag = ui
                 .input(|input| input.pointer.press_origin())
                 .filter(|point| {
                     geometry.image.contains(*point) || self.document.analysis_review.is_some()
                 })
-                .map(|point| PickDrag::begin(geometry, point, self.region));
+                .map(|point| PickDrag::begin(geometry, point, self.document.picking.region));
         }
         if response.dragged_by(egui::PointerButton::Primary)
-            && let (Some(drag), Some(end)) = (self.pick_drag, response.interact_pointer_pos())
+            && let (Some(drag), Some(end)) = (
+                self.document.visit.pick_drag,
+                response.interact_pointer_pos(),
+            )
         {
-            self.region = Some(drag.update(geometry, end));
+            self.document.picking.region = Some(drag.update(geometry, end));
         }
     }
 
@@ -512,7 +578,7 @@ impl Editor {
         self.paint_mask(ui, geometry);
         if self.document.analysis_review.is_some() {
             self.paint_review_areas(ui, geometry, canvas);
-        } else if !fullscreen && let Some(region) = self.region {
+        } else if !fullscreen && let Some(region) = self.document.picking.region {
             ui.painter().with_clip_rect(canvas).rect_stroke(
                 geometry.screen_coverage(region),
                 0.,
@@ -568,9 +634,11 @@ impl Editor {
         };
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas_input = self.canvas_input_allowed(ui, canvas);
-        let active_pick = self.pick;
+        let active_pick = self.document.picking.kind;
         let composition = if pending {
-            self.pending_preview
+            self.document
+                .visit
+                .pending_preview
                 .as_ref()
                 .map(|preview| preview.composition)
                 .unwrap_or_else(|| self.canvas_composition(area, active_pick))
@@ -591,7 +659,7 @@ impl Editor {
             .with_clip_rect(canvas)
             .add(egui_wgpu::Callback::new_paint_callback(
                 draw,
-                SelectionPaint::new(paint, self.selection_timing.clone(), pending),
+                SelectionPaint::new(paint, self.document.visit.selection_timing.clone(), pending),
             ));
         if cropping {
             self.paint_crop(ui, geometry);
@@ -614,7 +682,7 @@ impl Editor {
         }
         self.paint_canvas_selection(ui, geometry, fullscreen);
         if response.drag_stopped_by(egui::PointerButton::Primary) {
-            self.pick_drag = None;
+            self.document.visit.pick_drag = None;
         }
     }
 }

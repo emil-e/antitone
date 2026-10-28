@@ -7,21 +7,24 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
     let directory = tempfile::tempdir().unwrap();
     editor_harness_with_thumbnails(true, |mut h, _| {
         h.update(|editor| {
-            editor.input = crate::processing::InputSettings::Digital;
+            editor.document.input = crate::processing::InputSettings::Digital;
             editor.sync_document();
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
             !e.busy
                 && e.document_pending.is_none()
-                && e.working.support_ready()
-                && e.thumbnails.ready_count(&e.document, e.target) == 1
+                && e.document.visit.working_view.support_ready()
+                && e.document
+                    .thumbnails
+                    .ready_count(&e.document, e.document.target)
+                    == 1
         });
         h.render().unwrap();
         let accepted = h.read(|editor| {
-            assert!(!editor.source);
-            assert_eq!(editor.roll.exposure, 0.);
-            assert_eq!(editor.adjustment_layer_settings.exposure, 0.);
+            assert!(!editor.document.source);
+            assert_eq!(editor.document.roll.exposure, 0.);
+            assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
             let ready = editor.document.visit.ready.as_ref().unwrap();
             assert_eq!(ready.record.development.decode.fixed_wb, [4., 1., 2., 1.]);
             assert_eq!(
@@ -32,20 +35,22 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
                 ready.record.development.input_floor,
                 4. * crate::processing::CAMERA_INPUT_FLOOR
             );
-            editor.document.project.clone()
+            editor.document.state.project.clone()
         });
         h.get_by_label("View source").click();
         h.step();
         wait_for(&mut h, |e| {
-            e.working.support_ready()
-                && e.working
+            e.document.visit.working_view.support_ready()
+                && e.document
+                    .visit
+                    .working_view
                     .displayed
                     .as_ref()
                     .is_some_and(|v| v.spec.is_inspection())
         });
         h.render().unwrap();
         h.read(|editor| {
-            assert!(editor.source);
+            assert!(editor.document.source);
             // Inspection retains only its separate +1 EV convention, not another x4.
             assert_eq!(
                 bytemuck::bytes_of(&editor.source_parameters(0.).unwrap()),
@@ -54,9 +59,9 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
             let record = editor
                 .document
                 .project
-                .source(editor.current_source.unwrap())
+                .source(editor.document.visit.current_source.unwrap())
                 .unwrap();
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             let saved = editor
                 .document
                 .save(
@@ -96,10 +101,13 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
         wait_for(&mut h, |e| {
             !e.busy
                 && e.document_pending.is_none()
-                && e.working.support_ready()
-                && e.thumbnails.ready_count(&e.document, e.target) == 1
+                && e.document.visit.working_view.support_ready()
+                && e.document
+                    .thumbnails
+                    .ready_count(&e.document, e.document.target)
+                    == 1
         });
-        let accepted = h.read(|editor| editor.document.project.clone());
+        let accepted = h.read(|editor| editor.document.state.project.clone());
         let developed = h.read(|editor| {
             editor
                 .document
@@ -110,7 +118,15 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
                 .developed
                 .clone()
         });
-        let support = h.read(|editor| editor.working.regional().unwrap().clone());
+        let support = h.read(|editor| {
+            editor
+                .document
+                .visit
+                .working_view
+                .regional()
+                .unwrap()
+                .clone()
+        });
         h.read(|editor| assert_eq!(editor.source_white_balance, SourceWhiteBalance::Daylight));
         let mut pixels = vec![];
         for (white, ev) in [
@@ -140,7 +156,8 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
             h.step();
             workflow::wait_settled(&mut h);
             h.render().unwrap();
-            let canvas = h.read(|editor| editor.last_layout.unwrap().0.image.center());
+            let canvas =
+                h.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center());
             // The authored frame is spatially uniform. The card's centre is an
             // interior image point, clear of its caption and selection border.
             let card = h.get_by_label("negative.dng").rect().center();
@@ -161,12 +178,20 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
             h.read(|editor| {
                 assert_eq!(editor.source_white_balance, white);
                 assert_eq!(editor.source_exposure, ev);
-                assert_eq!(editor.document.project, accepted);
+                assert_eq!(editor.document.state.project, accepted);
                 assert!(Arc::ptr_eq(
                     &editor.document.visit.ready.as_ref().unwrap().developed,
                     &developed
                 ));
-                assert!(editor.working.regional().unwrap().same_source_as(&support));
+                assert!(
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .regional()
+                        .unwrap()
+                        .same_source_as(&support)
+                );
             });
         }
         for adjacent in pixels.windows(2) {
@@ -223,36 +248,46 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         }
         harness.update(|editor| {
             if film {
-                editor.film_emulation = FilmEmulationPreset::Medium.settings();
+                editor.document.film_emulation = FilmEmulationPreset::Medium.settings();
                 editor.scopes.visible = true;
             } else {
                 editor.set_dmin(Some(DVec3::splat(0.7)));
                 editor.set_dmax(Some(DVec3::splat(0.01)));
             }
-            editor.source = false;
+            editor.document.source = false;
             editor.sync_document();
         });
-        wait_for(&mut harness, |e| e.working.support_ready());
-        let previous = harness.read(|editor| editor.current_source.unwrap());
+        wait_for(&mut harness, |e| {
+            e.document.visit.working_view.support_ready()
+        });
+        let previous = harness.read(|editor| editor.document.visit.current_source.unwrap());
         harness.enter(|editor, cx| editor.load_source(second, true, cx));
         // Deliver source readiness without painting or starting physical-view acquisition.
         harness.run_until(Duration::from_secs(15), |e| !e.busy);
         harness.read(|editor| {
-            assert_ne!(editor.current_source.unwrap(), previous);
+            assert_ne!(editor.document.visit.current_source.unwrap(), previous);
             assert!(editor.document.visit.ready.is_some());
             if film {
-                assert_eq!(editor.input, crate::processing::InputSettings::Digital);
-                assert!(editor.film_emulation.enabled);
+                assert_eq!(
+                    editor.document.input,
+                    crate::processing::InputSettings::Digital
+                );
+                assert!(editor.document.film_emulation.enabled);
                 let ready = editor.document.visit.ready.as_ref().unwrap();
-                let proxy = ready.proxy.image(editor.target).unwrap();
+                let proxy = ready.proxy.image(editor.document.target).unwrap();
                 assert!(
                     proxy.linear.width() < ready.area.width,
                     "fixture must exercise a reduced camera proxy"
                 );
             } else {
-                assert!(editor.input.is_negative() && editor.input.calibration().is_some());
+                assert!(
+                    editor.document.input.is_negative()
+                        && editor.document.input.calibration().is_some()
+                );
             }
-            assert!(!editor.source && editor.working.displayed.is_none());
+            assert!(
+                !editor.document.source && editor.document.visit.working_view.displayed.is_none()
+            );
         });
 
         let (started, starts) = mpsc::channel();
@@ -278,7 +313,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         starts.recv_timeout(Duration::from_secs(15)).unwrap();
         harness.read(|editor| {
             assert!(editor.document.visit.working.task.is_some());
-            assert!(!editor.working.support_ready());
+            assert!(!editor.document.visit.working_view.support_ready());
         });
 
         harness.get_by_label("100%").click();
@@ -289,12 +324,17 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             "painting and zoom must finish before the running acquisition resumes"
         );
         harness.read(|editor| {
-            assert_eq!(editor.viewport.zoom, Some(1.));
-            assert!(!editor.working.support_ready() && editor.working.displayed.is_none());
+            assert_eq!(editor.document.visit.viewport.zoom, Some(1.));
+            assert!(
+                !editor.document.visit.working_view.support_ready()
+                    && editor.document.visit.working_view.displayed.is_none()
+            );
             if film {
                 assert!(matches!(editor.scope_request(), Err("Waiting for view")));
             }
             let preview = editor
+                .document
+                .visit
                 .preview_rendered
                 .as_ref()
                 .expect("available proxy preview");
@@ -304,6 +344,8 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             );
             assert!(
                 editor
+                    .document
+                    .visit
                     .selection_timing
                     .as_ref()
                     .unwrap()
@@ -312,11 +354,19 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         });
 
         drop(release);
-        wait_for(&mut harness, |e| e.working.support_ready());
+        wait_for(&mut harness, |e| {
+            e.document.visit.working_view.support_ready()
+        });
         harness.render().unwrap();
         harness.read(|editor| {
-            assert!(editor.preview_rendered.is_none());
-            let displayed = editor.working.displayed.as_ref().unwrap();
+            assert!(editor.document.visit.preview_rendered.is_none());
+            let displayed = editor
+                .document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .unwrap();
             let scopes::ScopeInput::Rendered(view, _) = editor.scope_request().unwrap() else {
                 panic!("scopes must resume from the accepted rendered view");
             };
@@ -326,9 +376,9 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                     view.processing,
                     editor
                         .positive_processing(
-                            editor.input,
-                            editor.roll,
-                            editor.adjustment_layer_settings
+                            editor.document.input,
+                            editor.document.roll,
+                            editor.document.visit.adjustment_layer_settings
                         )
                         .unwrap()
                         .signature()
@@ -347,16 +397,16 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
     editor_harness(|mut h, _| {
         // The authored TIFF has sensor/lens data but no maker-note WB; declare fixed roll gains.
         h.update(|editor| {
-            editor.document.project.scan = Some(scan_setup(file.path(), [1.; 4]));
+            editor.document.state.project.scan = Some(scan_setup(file.path(), [1.; 4]));
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
-            !e.busy && e.document_pending.is_none() && e.working.support_ready()
+            !e.busy && e.document_pending.is_none() && e.document.visit.working_view.support_ready()
         });
-        h.read(|editor| assert!(editor.source));
+        h.read(|editor| assert!(editor.document.source));
         h.render().unwrap();
         h.step();
-        let accepted = h.read(|editor| editor.document.project.clone());
+        let accepted = h.read(|editor| editor.document.state.project.clone());
         let development = h.read(|editor| {
             editor
                 .document
@@ -370,7 +420,15 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
         });
         assert!(development.lens_correction.is_some());
         assert!(development.input_floor > crate::processing::CAMERA_INPUT_FLOOR);
-        let original = h.read(|editor| editor.working.regional().unwrap().clone());
+        let original = h.read(|editor| {
+            editor
+                .document
+                .visit
+                .working_view
+                .regional()
+                .unwrap()
+                .clone()
+        });
         assert!(original.spec.is_inspection());
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Source inspection")
             .click();
@@ -381,25 +439,37 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
             .click();
         h.step();
         h.render().unwrap();
-        h.read(|editor| assert!(editor.working.regional().unwrap().same_source_as(&original)));
-        h.read(|editor| assert_eq!(editor.document.project, accepted));
+        h.read(|editor| {
+            assert!(
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .regional()
+                    .unwrap()
+                    .same_source_as(&original)
+            )
+        });
+        h.read(|editor| assert_eq!(editor.document.state.project, accepted));
 
         h.update(|editor| editor.set_dmin(Some(DVec3::splat(0.7))));
         h.update(|editor| editor.set_dmax(Some(DVec3::splat(0.01))));
         h.update(|editor| editor.sync_document());
-        let calibrated = h.read(|editor| editor.document.project.clone());
+        let calibrated = h.read(|editor| editor.document.state.project.clone());
         for source in [false, true] {
             h.get_by_label("View source").click();
             h.step();
             wait_for(&mut h, |e| {
-                e.working.support_ready()
-                    && e.working
+                e.document.visit.working_view.support_ready()
+                    && e.document
+                        .visit
+                        .working_view
                         .displayed
                         .as_ref()
                         .is_some_and(|v| v.spec.is_inspection() == source)
             });
             h.render().unwrap();
-            h.read(|editor| assert_eq!(editor.source, source));
+            h.read(|editor| assert_eq!(editor.document.source, source));
             h.read(|editor| {
                 assert_eq!(
                     editor
@@ -413,7 +483,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
                     development
                 )
             });
-            h.read(|editor| assert_eq!(editor.document.project, calibrated));
+            h.read(|editor| assert_eq!(editor.document.state.project, calibrated));
         }
         h.read(|editor| assert_eq!(editor.source_exposure, 0.37));
     });
@@ -423,35 +493,48 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
 fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspection_and_navigation() {
     editor_harness(|mut harness, _| {
         harness.update(|editor| {
-            editor.thumbnails.set_limits(cache_limits::CacheLimits {
-                cpu_bytes: 0,
-                gpu_bytes: 0,
-            })
+            editor
+                .document
+                .thumbnails
+                .set_limits(cache_limits::CacheLimits {
+                    cpu_bytes: 0,
+                    gpu_bytes: 0,
+                })
         });
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| {
-            !e.busy && e.document_pending.is_none() && e.working.support_ready()
+            !e.busy && e.document_pending.is_none() && e.document.visit.working_view.support_ready()
         });
-        harness.read(|editor| assert!(editor.source));
+        harness.read(|editor| assert!(editor.document.source));
         harness.read(|editor| assert!(editor.calibration().is_none()));
         stage(&mut harness, "Rendering");
-        harness.update(|editor| editor.viewport.zoom = Some(4.));
+        harness.update(|editor| editor.document.visit.viewport.zoom = Some(4.));
         harness.step();
-        wait_for(&mut harness, |e| e.working.support_ready());
+        wait_for(&mut harness, |e| {
+            e.document.visit.working_view.support_ready()
+        });
         harness.render().unwrap();
-        let retained = harness.read(|editor| editor.working.regional().unwrap().clone());
+        let retained = harness.read(|editor| {
+            editor
+                .document
+                .visit
+                .working_view
+                .regional()
+                .unwrap()
+                .clone()
+        });
         assert!(retained.spec.is_inspection());
-        let mut project = harness.read(|editor| editor.document.project.clone());
+        let mut project = harness.read(|editor| editor.document.state.project.clone());
         // A remembered positive comparison must neither replace source working detail on idle nor
         // force an optional reference past the zero budget while its control is hidden.
-        harness.update(|editor| editor.working.compare = true);
+        harness.update(|editor| editor.document.visit.working_view.compare = true);
         let hold = crate::background::testing::pause();
         for (index, delta) in [egui::vec2(400., 0.), egui::vec2(-800., 100.)]
             .into_iter()
             .enumerate()
         {
-            let layout = harness.read(|editor| editor.last_layout.unwrap().0);
-            harness.update(|editor| editor.viewport.pan(layout, 1., delta));
+            let layout = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            harness.update(|editor| editor.document.visit.viewport.pan(layout, 1., delta));
             harness.step();
             harness.step();
             harness
@@ -475,21 +558,36 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                 project.output.tiff = crate::project::TiffTarget::Srgb;
             }
             wait_for(&mut harness, |e| {
-                e.working.displayed.as_ref().is_some_and(|v| {
-                    v.spec.frame == e.working.current_frame().unwrap()
-                        && Some(&v.processing) == e.working.processing()
-                        && v.target == e.target
-                })
+                e.document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .is_some_and(|v| {
+                        v.spec.frame == e.document.visit.working_view.current_frame().unwrap()
+                            && Some(&v.processing) == e.document.visit.working_view.processing()
+                            && v.target == e.document.target
+                    })
             });
             harness.render().unwrap();
-            harness.read(|editor| assert!(!editor.working.support_ready()));
+            harness.read(|editor| assert!(!editor.document.visit.working_view.support_ready()));
             harness.read(|editor| {
-                assert!(editor.working.regional().unwrap().same_source_as(&retained))
+                assert!(
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .regional()
+                        .unwrap()
+                        .same_source_as(&retained)
+                )
             });
             harness.read(|editor| {
                 assert!(
                     editor
-                        .working
+                        .document
+                        .visit
+                        .working_view
                         .displayed
                         .as_ref()
                         .unwrap()
@@ -503,43 +601,78 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                     "source inspection still suspends photographic scopes"
                 )
             });
-            harness.read(|editor| assert!(!editor.working.reference_ready()));
-            harness.read(|editor| assert!(editor.original.refining.is_none()));
+            harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
+            harness.read(|editor| assert!(editor.document.visit.grade.original.refining.is_none()));
             harness.read(|editor| {
                 assert_eq!(
-                    editor.document.project, project,
+                    editor.document.state.project, project,
                     "inspection EV and navigation do not alter the document"
                 )
             });
             harness.read(|editor| assert!(
             !Arc::ptr_eq(
-                editor.working.displayed.as_ref().unwrap(),
-                editor.working.regional().unwrap()
+                editor.document.visit.working_view.displayed.as_ref().unwrap(),
+                editor.document.visit.working_view.regional().unwrap()
             ),
             "the physical-frame underlay composite, not only a transformed regional patch, is painted"
         ));
-            let held = harness.read(|editor| editor.working.displayed.as_ref().unwrap().clone());
+            let held = harness.read(|editor| {
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .clone()
+            });
             for _ in 0..5 {
                 harness.step();
             }
             harness.render().unwrap();
             harness.read(|editor| {
                 assert!(
-                    Arc::ptr_eq(&held, editor.working.displayed.as_ref().unwrap()),
+                    Arc::ptr_eq(
+                        &held,
+                        editor
+                            .document
+                            .visit
+                            .working_view
+                            .displayed
+                            .as_ref()
+                            .unwrap()
+                    ),
                     "idle does not replace source detail"
                 )
             });
             harness.read(|editor| assert!(editor.document.visit.working.task.is_some()));
         }
         drop(hold);
-        wait_for(&mut harness, |e| e.working.support_ready());
+        wait_for(&mut harness, |e| {
+            e.document.visit.working_view.support_ready()
+        });
         harness.render().unwrap();
-        harness
-            .read(|editor| assert!(!editor.working.regional().unwrap().same_source_as(&retained)));
+        harness.read(|editor| {
+            assert!(
+                !editor
+                    .document
+                    .visit
+                    .working_view
+                    .regional()
+                    .unwrap()
+                    .same_source_as(&retained)
+            )
+        });
         harness.read(|editor| {
             assert!(Arc::ptr_eq(
-                editor.working.displayed.as_ref().unwrap(),
-                editor.working.regional().unwrap()
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .unwrap(),
+                editor.document.visit.working_view.regional().unwrap()
             ))
         });
     });

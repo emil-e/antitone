@@ -16,7 +16,7 @@ fn picture_suggestion_is_captured_demand_and_is_transient_until_applied() {
     let editor = state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             let support = Rect {
                 x: 100,
                 y: 100,
@@ -25,20 +25,20 @@ fn picture_suggestion_is_captured_demand_and_is_transient_until_applied() {
             };
             editor.begin_pick(Pick::Analysis, cx);
             let (request, loaded) = request(editor);
-            assert!(!editor.busy && editor.region.is_none());
+            assert!(!editor.busy && editor.document.picking.region.is_none());
             editor.analysis_support_result(request, loaded, Ok(Some(support)));
             assert_eq!(
-                editor.region,
+                editor.document.picking.region,
                 Some(Coverage::rectangle(analysis::suggest(support)))
             );
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             editor.finish_pick(cx);
             editor.begin_pick(Pick::Analysis, cx);
             assert!(
                 editor.document.visit.support.pending.is_none(),
                 "same ready context already has its suggestion"
             );
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
         });
     });
 }
@@ -58,7 +58,7 @@ fn delayed_suggestion_cannot_overwrite_drawing_cancelled_picker_or_reopened_pick
                     height: 100,
                 });
                 match action {
-                    "draw" => editor.region = Some(drawn),
+                    "draw" => editor.document.picking.region = Some(drawn),
                     "cancel" => editor.finish_pick(cx),
                     "reopen" => {
                         editor.finish_pick(cx);
@@ -69,7 +69,7 @@ fn delayed_suggestion_cannot_overwrite_drawing_cancelled_picker_or_reopened_pick
                     "document" => editor.document_pending = Some(999),
                     _ => unreachable!(),
                 }
-                let before = editor.document.project.clone();
+                let before = editor.document.state.project.clone();
                 editor.analysis_support_result(
                     old,
                     loaded,
@@ -80,11 +80,11 @@ fn delayed_suggestion_cannot_overwrite_drawing_cancelled_picker_or_reopened_pick
                         height: 400,
                     })),
                 );
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.state.project, before);
                 if action == "draw" {
-                    assert_eq!(editor.region, Some(drawn));
+                    assert_eq!(editor.document.picking.region, Some(drawn));
                 } else {
-                    assert!(editor.region.is_none());
+                    assert!(editor.document.picking.region.is_none());
                     assert_eq!(
                         editor
                             .document
@@ -132,11 +132,11 @@ fn accepted_geometry_and_known_missing_support_require_no_lazy_work() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             assert!(editor.analysis_request().unwrap().local_support);
-            editor.document.project.analysis_area = Some([100, 100, 500, 300]);
+            editor.document.state.project.analysis_area = Some([100, 100, 500, 300]);
             editor.begin_pick(Pick::Analysis, cx);
             assert!(editor.document.visit.support.pending.is_none());
             assert_eq!(
-                editor.region,
+                editor.document.picking.region,
                 Some(Coverage::rectangle(Rect {
                     x: 100,
                     y: 100,
@@ -153,12 +153,12 @@ fn support_failure_does_not_change_processing_or_poison_later_demand() {
     let editor = state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             editor.begin_pick(Pick::Analysis, cx);
             let (id, loaded) = request(editor);
             editor.analysis_support_result(id, loaded, Err("support unavailable".into()));
-            assert!(editor.region.is_none());
-            assert_eq!(editor.document.project, before);
+            assert!(editor.document.picking.region.is_none());
+            assert_eq!(editor.document.state.project, before);
             editor.finish_pick(cx);
             editor.begin_pick(Pick::Analysis, cx);
             assert!(editor.document.visit.support.pending.is_some());

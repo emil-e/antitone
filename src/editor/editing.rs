@@ -12,18 +12,18 @@ pub(super) struct ControlSettings {
 impl ControlSettings {
     pub(super) fn capture(editor: &Editor) -> Self {
         Self {
-            input: editor.input,
-            roll: editor.roll,
-            photo: editor.adjustment_layer_settings,
-            film_emulation: editor.film_emulation,
+            input: editor.document.input,
+            roll: editor.document.roll,
+            photo: editor.document.visit.adjustment_layer_settings,
+            film_emulation: editor.document.film_emulation,
         }
     }
 
     pub(super) fn apply(self, editor: &mut Editor) {
-        editor.input = self.input;
-        editor.roll = self.roll;
-        editor.adjustment_layer_settings = self.photo;
-        editor.film_emulation = self.film_emulation;
+        editor.document.input = self.input;
+        editor.document.roll = self.roll;
+        editor.document.visit.adjustment_layer_settings = self.photo;
+        editor.document.film_emulation = self.film_emulation;
     }
 }
 
@@ -164,18 +164,19 @@ impl Editor {
                 self.validate_control_edit(previous, candidate)
                     .map(|()| candidate.apply(self))
             }
-            Scope::Photo(source, target) if Some(source) == self.current_source => match target {
-                adjustment_layers::Target::None => {
-                    Err(Error::InvalidParameter("no selected adjustment layer"))
-                }
-                adjustment_layers::Target::Layer(id) => {
-                    self.edit_adjustment_layers_named("Reset settings", |layers| {
-                        let record = layers
-                            .layers
-                            .iter_mut()
-                            .find(|record| record.id == id)
-                            .ok_or(Error::InvalidParameter("unknown adjustment layer"))?;
-                        match reset {
+            Scope::Photo(source, target) if Some(source) == self.document.visit.current_source => {
+                match target {
+                    adjustment_layers::Target::None => {
+                        Err(Error::InvalidParameter("no selected adjustment layer"))
+                    }
+                    adjustment_layers::Target::Layer(id) => {
+                        self.edit_adjustment_layers_named("Reset settings", |layers| {
+                            let record = layers
+                                .layers
+                                .iter_mut()
+                                .find(|record| record.id == id)
+                                .ok_or(Error::InvalidParameter("unknown adjustment layer"))?;
+                            match reset {
                             controls::Reset::Parameter(controls::Parameter::Strength, _) => {
                                 record.adjustment.strength = 1.
                             }
@@ -190,10 +191,11 @@ impl Editor {
                             }
                             _ => reset_photo(&mut record.adjustment.photo, reset),
                         }
-                        Ok(())
-                    })
+                            Ok(())
+                        })
+                    }
                 }
-            },
+            }
             Scope::Photo(..) => Err(Error::InvalidParameter("reset source changed")),
             Scope::Rendering => {
                 if let controls::Reset::Parameter(kind, _) = reset {
@@ -214,7 +216,7 @@ impl Editor {
                     self.validate_control_edit(previous, candidate)
                         .map(|()| candidate.apply(self))
                 } else {
-                    self.target = OutputTarget::DisplayP3;
+                    self.document.target = OutputTarget::DisplayP3;
                     Ok(())
                 }
             }
@@ -280,7 +282,10 @@ impl Editor {
                 } else {
                     candidate.project.set_flat_field(None);
                 }
-                self.start_document(Preparation::Correction(candidate, self.current_source), cx);
+                self.start_document(
+                    Preparation::Correction(candidate, self.document.visit.current_source),
+                    cx,
+                );
             }
             Command::FlatEdit(path, region) => self.begin_flat_edit(path, region, cx),
         }

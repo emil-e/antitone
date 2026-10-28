@@ -54,7 +54,7 @@ impl Editor {
         input: source::Context,
         cx: &crate::application::UiContext<'_, Self>,
     ) {
-        self.working.request(spec, input);
+        self.document.visit.working_view.request(spec, input);
         self.acquire_working(cx);
     }
 
@@ -65,11 +65,13 @@ impl Editor {
         {
             return;
         }
-        let Some(request) = self.working.acquisition(self.id) else {
+        let Some(request) = self.document.visit.working_view.acquisition(self.id) else {
             return;
         };
         let Some(services) = self.source_services.clone() else {
-            self.working
+            self.document
+                .visit
+                .working_view
                 .acquisition_failed("Working-source services unavailable".into());
             return;
         };
@@ -87,7 +89,7 @@ impl Editor {
                     let changed = mailbox.1.listen();
                     cx.update(|editor| {
                         if editor.document.visit.view == visit {
-                            editor.working.refresh_support();
+                            editor.document.visit.working_view.refresh_support();
                         }
                     });
                     changed.await;
@@ -100,14 +102,16 @@ impl Editor {
                 }
                 editor.document.visit.working.task = None;
                 match result {
-                    Ok(Some(completion)) => editor.working.acquired(completion),
+                    Ok(Some(completion)) => editor.document.visit.working_view.acquired(completion),
                     Ok(None) => {}
-                    Err(error) => editor.working.acquisition_failed(error),
+                    Err(error) => editor.document.visit.working_view.acquisition_failed(error),
                 }
                 editor.acquire_working(&cx);
             });
         }) else {
-            self.working
+            self.document
+                .visit
+                .working_view
                 .acquisition_failed("Application stopped".into());
             return;
         };

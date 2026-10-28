@@ -23,7 +23,7 @@ impl Editor {
             || self.project_overwrite.is_some()
             || self.allow_close
             || self.export_modal()
-            || self.removal_pending.is_some()
+            || self.document.removal_pending.is_some()
             || self.document.visit.adjustment_layers.confirming()
     }
 
@@ -31,8 +31,11 @@ impl Editor {
         !self.fullscreen_blocked()
             && self.document.analysis_review.is_none()
             && (self.fullscreen.is_some()
-                || (self.document.visit.ready.is_some() || self.pending_preview.is_some())
-                    && !(self.busy && (self.pick.is_some() || self.flat_edit.is_some())))
+                || (self.document.visit.ready.is_some()
+                    || self.document.visit.pending_preview.is_some())
+                    && !(self.busy
+                        && (self.document.picking.kind.is_some()
+                            || self.document.flat_edit.is_some())))
     }
 
     pub(super) fn toggle_fullscreen(&mut self, context: &egui::Context) {
@@ -47,17 +50,17 @@ impl Editor {
             let native_before = context.input(|input| input.viewport().fullscreen == Some(true));
             self.fullscreen = Some(FullscreenView {
                 id: self.id,
-                viewport: self.viewport,
-                layout: self.last_layout,
-                source: self.source,
+                viewport: self.document.visit.viewport,
+                layout: self.document.visit.last_layout,
+                source: self.document.source,
                 source_exposure: self.source_exposure,
                 source_white_balance: self.source_white_balance,
-                calibrated: self.input.ready(),
+                calibrated: self.document.input.ready(),
                 native_before,
                 restored: false,
                 exiting: false,
             });
-            if self.viewport.zoom.is_some()
+            if self.document.visit.viewport.zoom.is_some()
                 && let Some((layout, density)) = self
                     .document
                     .visit
@@ -67,11 +70,14 @@ impl Editor {
                         edit.layout
                             .map(|layout| (layout, context.pixels_per_point()))
                     })
-                    .or(self.last_layout)
+                    .or(self.document.visit.last_layout)
             {
-                self.viewport.reframe(layout, layout.composition, density);
+                self.document
+                    .visit
+                    .viewport
+                    .reframe(layout, layout.composition, density);
             }
-            self.thumbnails.cancel();
+            self.document.thumbnails.cancel();
             presentation::ViewerBar::reset_overlay(context);
         }
         context.memory_mut(|memory| {
@@ -103,10 +109,10 @@ impl Editor {
         if context_changed || native_exit || returned {
             let view = self.fullscreen.take().unwrap();
             if !context_changed {
-                self.viewport = view.viewport;
-                self.last_layout = view.layout;
-                if self.input.ready() == view.calibrated {
-                    self.source = view.source;
+                self.document.visit.viewport = view.viewport;
+                self.document.visit.last_layout = view.layout;
+                if self.document.input.ready() == view.calibrated {
+                    self.document.source = view.source;
                 }
                 self.source_exposure = view.source_exposure;
                 self.source_white_balance = view.source_white_balance;
@@ -139,7 +145,7 @@ impl Editor {
         } else if self.fullscreen.is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
         {
-            self.viewport.fit();
+            self.document.visit.viewport.fit();
         }
     }
 }

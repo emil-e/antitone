@@ -109,7 +109,7 @@ fn loaded_luts_remain_available_after_switching_and_duplicate_loads_reuse_one_en
             assert_ne!(first.lut().id(), second.lut().id());
             editor.clear_look();
             assert_eq!(editor.loaded_looks.len(), 2);
-            assert!(editor.document.project.output.look.is_none());
+            assert!(editor.document.state.project.output.look.is_none());
             let mut novel_nodes = second.lut().nodes().to_vec();
             novel_nodes[0][0] += 0.01;
             let novel = Arc::new(
@@ -130,7 +130,7 @@ fn loaded_luts_remain_available_after_switching_and_duplicate_loads_reuse_one_en
                     editor.receive_look(id, Ok(Some(novel.clone())));
                 }
                 assert_eq!(editor.loaded_looks.len(), 2);
-                assert!(editor.document.project.output.look.is_none());
+                assert!(editor.document.state.project.output.look.is_none());
             }
             let reserved = Arc::new(
                 LookAsset::new("None".into(), LookOrigin::Imported, first.lut().clone()).unwrap(),
@@ -156,27 +156,30 @@ fn current_success_installs_one_project_wide_embedded_asset_and_stale_replies_do
     let editor = super::super::tests::fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            let original = editor.document.project.clone();
+            let original = editor.document.state.project.clone();
             editor.begin_look(Source::Builtin(Builtin::PortraEndura), cx);
             let (old, cancel) = pending(editor);
             assert!(editor.busy);
-            assert_eq!(editor.document.project, original);
+            assert_eq!(editor.document.state.project, original);
             editor.begin_look(Source::Builtin(Builtin::Kodak2383), cx);
             let (current, _) = pending(editor);
             assert!(cancel.load(Ordering::Relaxed));
             editor.receive_look(old, Ok(Some(asset())));
             assert!(editor.busy);
-            assert!(editor.document.project.output.look.is_none());
+            assert!(editor.document.state.project.output.look.is_none());
             assert!(editor.loaded_looks.is_empty());
             let chosen = asset();
             editor.receive_look(current, Ok(Some(chosen.clone())));
             assert!(!editor.busy);
-            assert_eq!(editor.document.project.output.look, Some(chosen));
+            assert_eq!(editor.document.state.project.output.look, Some(chosen));
             assert!(editor.document.look.is_none());
             assert_eq!(editor.loaded_looks.len(), 1);
-            let document = serde_json::to_vec(&editor.document.project).unwrap();
+            let document = serde_json::to_vec(&editor.document.state.project).unwrap();
             let reopened: crate::project::Project = serde_json::from_slice(&document).unwrap();
-            assert_eq!(reopened.output.look, editor.document.project.output.look);
+            assert_eq!(
+                reopened.output.look,
+                editor.document.state.project.output.look
+            );
         });
     });
 }
@@ -185,12 +188,12 @@ fn failure_cancel_and_document_retirement_preserve_prior_appearance() {
     let editor = super::super::tests::fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.document.project.output.look = Some(asset());
-            let original = editor.document.project.clone();
+            editor.document.state.project.output.look = Some(asset());
+            let original = editor.document.state.project.clone();
             editor.begin_look(Source::Imported("missing.cube".into()), cx);
             let (id, _) = pending(editor);
             editor.receive_look(id, Err("invalid LUT".into()));
-            assert_eq!(editor.document.project, original);
+            assert_eq!(editor.document.state.project, original);
             assert!(!editor.busy);
             assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Look);
             editor.failure = None;
@@ -200,16 +203,16 @@ fn failure_cancel_and_document_retirement_preserve_prior_appearance() {
             assert!(cancel.load(Ordering::Relaxed));
             assert!(editor.busy);
             editor.receive_look(id, Ok(Some(asset())));
-            assert_eq!(editor.document.project, original);
+            assert_eq!(editor.document.state.project, original);
             assert!(!editor.busy);
             editor.begin_look(Source::Builtin(Builtin::IlfordFilter2), cx);
             let (id, cancel) = pending(editor);
             editor.retire_look();
             assert!(cancel.load(Ordering::Relaxed));
             editor.receive_look(id, Ok(Some(asset())));
-            assert_eq!(editor.document.project, original);
+            assert_eq!(editor.document.state.project, original);
             editor.clear_look();
-            assert!(editor.document.project.output.look.is_none());
+            assert!(editor.document.state.project.output.look.is_none());
             assert!(!editor.busy);
         });
     });

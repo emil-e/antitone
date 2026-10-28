@@ -29,7 +29,8 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);
-        editor.thumbnails = Thumbnails::default();
+        editor.document.thumbnails =
+            (Thumbnails::default()).with_sources(editor.document.cache.clone());
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(240),
@@ -37,8 +38,8 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
         );
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         editor.sync_document();
-        let before = editor.document.project.clone();
-        let first = editor.current_source;
+        let before = editor.document.state.project.clone();
+        let first = editor.document.visit.current_source;
         let count = before.order.len();
         assert_eq!(count, paths.len());
         editor = crate::editor::tests::complete_analysis_preparation(
@@ -51,7 +52,7 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             "{}",
             editor.status
         );
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         let approved = editor
             .document
             .analysis_review
@@ -82,14 +83,14 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
         editor = wait_with_limit(editor, Duration::from_secs(240), |e, cx| {
             e.browse_analysis_review(*before.order.last().unwrap(), cx)
         });
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         editor = wait_with_limit(editor, Duration::from_secs(240), |e, cx| {
             e.confirm_analysis_review(cx);
             assert!(e.document.analysis_pending.is_some(), "{}", e.status);
         });
         assert!(editor.status.starts_with("Analyzed"), "{}", editor.status);
-        assert_eq!(editor.current_source, first);
-        let accepted = editor.document.project.clone();
+        assert_eq!(editor.document.visit.current_source, first);
+        let accepted = editor.document.state.project.clone();
         assert_eq!(accepted.order, before.order);
         assert_eq!(accepted.analysis_regions, approved);
         assert!(accepted.analysis_area.is_none());
@@ -116,7 +117,7 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             Duration::from_secs(240),
             |editor, cx| editor.start_document(Preparation::Open(path), cx),
         );
-        assert_eq!(editor.document.project, accepted);
+        assert_eq!(editor.document.state.project, accepted);
         editor = crate::editor::tests::complete_analysis_preparation(
             editor,
             Duration::from_secs(240),
@@ -133,7 +134,7 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             approved
         );
         editor.finish_pick(&crate::application::UiContext::render_only());
-        assert_eq!(editor.document.project, accepted);
+        assert_eq!(editor.document.state.project, accepted);
         assert!(!editor.document.dirty());
     });
     assert_eq!(

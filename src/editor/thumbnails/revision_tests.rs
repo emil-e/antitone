@@ -48,8 +48,20 @@ fn authored_raw_byte_edits_reopen_without_identity_rejection_and_old_seed_keeps_
         let (file, proxy) = before.thumbnail.clone().unwrap();
         let current = SourceKey::new(source, FileKey::new(&path));
         assert_ne!(file, current.file);
+        let scope: crate::editor::document_scope::DocumentScope = saved.clone().into();
         let mut thumbnails = Thumbnails::default();
+        thumbnails = thumbnails.with_sources(scope.cache.clone());
+        let previous = SourceKey::new(source, file.clone())
+            .store_key_at(&path)
+            .unwrap();
         thumbnails.seed(source, file, proxy.clone());
+        assert!(Arc::ptr_eq(
+            &scope
+                .cache
+                .get_proxy(&previous)
+                .expect("old seed must actually be retained"),
+            &proxy
+        ));
         assert!(
             thumbnails
                 .sources

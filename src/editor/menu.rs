@@ -86,7 +86,7 @@ impl Editor {
     fn file_context_available(&self) -> bool {
         !self.dust_search_pending()
             && !self.application_modal()
-            && self.pick.is_none()
+            && self.document.picking.kind.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
@@ -97,11 +97,11 @@ impl Editor {
             || self.tasks.blocks_workspace() && self.document.spatial_preparing.is_none()
             || self.failure.is_some()
             || self.document_pending.is_some()
-            || self.export_dialog.is_some()
-            || self.export_summary.is_some()
+            || self.document.export_dialog.is_some()
+            || self.document.export_summary.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
-            || self.removal_pending.is_some()
+            || self.document.removal_pending.is_some()
             || self.document.visit.adjustment_layers.confirming()
     }
 
@@ -155,7 +155,7 @@ impl Editor {
         }
         if self.file_available() {
             state.enabled.extend([New, Open, AddScans, Close]);
-            if self.input.ready() && self.document.visit.ready.is_some() {
+            if self.document.input.ready() && self.document.visit.ready.is_some() {
                 state.enabled.insert(Export);
             }
         }
@@ -174,7 +174,7 @@ impl Editor {
             state.enabled.insert(PhotoInspection);
         }
         if self.fullscreen.is_none()
-            && self.pick.is_none()
+            && self.document.picking.kind.is_none()
             && self.document.analysis_review.is_none()
         {
             state.enabled.insert(Scopes);
@@ -295,7 +295,7 @@ impl Editor {
                 self.menus.panel = None;
                 self.menus.pending.push_front(Quit);
             }
-            Fit => self.viewport.fit(),
+            Fit => self.document.visit.viewport.fit(),
             Scopes => {
                 self.scopes.visible = !self.scopes.visible;
                 self.preferences.scopes_visible = self.scopes.visible;

@@ -98,7 +98,6 @@ fn discarding_a_candidate_snapshot_keeps_the_scope_cache_and_live_pixels() {
     let candidate = document.capture();
     drop(candidate);
 
-    assert!(!document.cache.is_closed());
     assert_eq!(document.cache.charges(), before);
     let consumer = Scan::from_source(document.cache.get(&key).unwrap());
     assert!(Arc::ptr_eq(consumer.source(), scan.source()));
@@ -121,7 +120,7 @@ fn same_document_install_keeps_protected_proxies_at_zero_optional_budget() {
     cache.publish_proxy(key.clone(), proxy.clone()).unwrap();
     document.install(document.capture());
     assert!(Arc::ptr_eq(&document.cache, &cache));
-    assert!(!cache.is_closed());
+
     assert_eq!(cache.charges().retained, 0);
     assert_eq!(cache.protected_bytes(), proxy.retained_bytes());
     assert!(Arc::ptr_eq(&cache.get_proxy(&key).unwrap(), &proxy));
@@ -180,7 +179,7 @@ fn cpu_only_proper_work_persists_disk_at_zero_limits_then_materializes_on_demand
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache.clone(), &document);
+        thumbnails = thumbnails.with_sources(document.cache.clone());
         let id = document.project.order[0];
         let source = document.project.source(id).unwrap();
         let path = document.source_path(id).unwrap();
@@ -249,7 +248,7 @@ fn background_native_by_product_is_a_foreground_hit_under_the_shared_cpu_limit()
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache.clone(), &document);
+        thumbnails = thumbnails.with_sources(document.cache.clone());
         let id = document.project.order[0];
         let source = document.project.source(id).unwrap();
         let path = document.source_path(id).unwrap();
@@ -317,7 +316,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache.clone(), &document);
+        thumbnails = thumbnails.with_sources(document.cache.clone());
         let id = document.project.order[0];
         let path = document.source_path(id).unwrap();
         let expected = document.project.source(id).unwrap();
@@ -339,10 +338,19 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
         crate::application::test_support::with_application(Vec::new(), |app| {
             let _task = tests::start_service_request(&thumbnails, job, &app.access());
             app.pump();
-            starts.recv_timeout(Duration::from_secs(5)).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while starts.try_recv().is_err() {
+                app.pump();
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "native acquisition did not start"
+                );
+                std::thread::yield_now();
+            }
             thumbnails.cancel();
             let cache = &document.cache;
             let file = document.file_key(&path);
+            let fixed_wb = wb(&document);
             std::thread::scope(|scope| {
                 let foreground = scope.spawn(|| {
                     prepare_source_scheduled(
@@ -350,7 +358,7 @@ fn cancelled_gpu_ticket_keeps_proper_disk_demand_and_shares_foreground_handoff()
                         &device,
                         &queue,
                         path.clone(),
-                        wb(&document),
+                        fixed_wb,
                         Some(expected),
                         None,
                         Some((cache, file.clone())),
@@ -440,7 +448,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
             },
             memory::Pressure::Normal,
         ));
-        thumbnails.bind_sources(document.cache.clone(), &document);
+        thumbnails = thumbnails.with_sources(document.cache.clone());
         let image_key = |index| {
             let source = document
                 .project
@@ -470,7 +478,15 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
         crate::application::test_support::with_application(Vec::new(), |app| {
             let _eager = tests::start_service_request(&thumbnails, job, &app.access());
             app.pump();
-            starts.recv_timeout(Duration::from_secs(5)).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while starts.try_recv().is_err() {
+                app.pump();
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "native acquisition did not start"
+                );
+                std::thread::yield_now();
+            }
             thumbnails.cancel();
             let job = tests::service_job(
                 &thumbnails,
@@ -488,6 +504,7 @@ fn newly_visible_native_demand_preempts_an_eager_waiter_at_the_phase_boundary() 
             app.pump();
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             while developments.waiter_count() != 2 {
+                app.pump();
                 assert!(std::time::Instant::now() < deadline);
                 std::thread::yield_now();
             }
@@ -531,8 +548,8 @@ fn acquisition_requests_use_stage_wb_and_preserve_saved_source_wb() {
     let saved_wb = [1.5, 1., 2., 1.];
     for digital in [false, true] {
         if digital {
-            editor.document.project.input = crate::processing::InputSettings::Digital;
-            editor.document.project.sources[0].development =
+            editor.document.state.project.input = crate::processing::InputSettings::Digital;
+            editor.document.state.project.sources[0].development =
                 document::read_source(file.path(), Some(saved_wb))
                     .unwrap()
                     .development;
@@ -568,11 +585,20 @@ fn registered_flat_reference_carries_its_document_native_reuse_key() {
     let document = document(file.path());
     let mut editor = Editor::state();
     let expected_key = key(&document);
+    let scan = Scan::open(file.path(), wb(&document)).unwrap();
+    document
+        .cache
+        .publish_source(expected_key.clone(), scan.source().clone())
+        .unwrap();
     editor.document = document;
+    editor.developments = Some(source_loading::SourceLoader::new());
     let request = editor.reference_preview_input(file.path().to_owned());
     assert_eq!(request.load_key().unwrap(), expected_key);
-    let cache = request
-        .cache
-        .expect("registered reference uses the scope cache");
-    assert!(Arc::ptr_eq(&cache, &editor.document.cache));
+    let sources = request
+        .sources
+        .expect("registered reference has an acquisition provider");
+    let reused =
+        pollster::block_on(sources.load_source(expected_key, source_loading::Priority::Foreground))
+            .unwrap();
+    assert!(Arc::ptr_eq(&reused, scan.source()));
 }

@@ -218,10 +218,13 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
 #[test]
 fn reference_admission_respects_budget_inspection_and_explicit_comparison() {
     let mut editor = super::super::tests::fixture();
-    editor.thumbnails.set_limits(cache_limits::CacheLimits {
-        cpu_bytes: 0,
-        gpu_bytes: 0,
-    });
+    editor
+        .document
+        .thumbnails
+        .set_limits(cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 0,
+        });
     let frame = spec(0.).frame;
     let view = ViewRequest {
         area: frame.bounds().unwrap(),
@@ -230,35 +233,41 @@ fn reference_admission_respects_budget_inspection_and_explicit_comparison() {
     };
 
     editor
+        .document
+        .visit
+        .grade
         .original
         .generation
         .store(23, std::sync::atomic::Ordering::Relaxed);
-    editor.original.refining = Some((23, view));
+    editor.document.visit.grade.original.refining = Some((23, view));
     assert!(!editor.admit_view_reference(frame));
-    assert_eq!(editor.original.revision(), 24);
+    assert_eq!(editor.document.visit.grade.original.revision(), 24);
 
     assert!(!editor.admit_view_reference(frame));
     assert_eq!(
-        editor.original.revision(),
+        editor.document.visit.grade.original.revision(),
         24,
         "cancel an admitted reference once"
     );
 
-    editor.working.compare = true;
-    editor.source = true;
+    editor.document.visit.working_view.compare = true;
+    editor.document.source = true;
     assert!(
         !editor.admit_view_reference(frame),
         "hidden positive comparison does not force source reference retention"
     );
 
-    editor.source = false;
+    editor.document.source = false;
     assert!(editor.admit_view_reference(frame));
 
-    editor.working.compare = false;
-    editor.thumbnails.set_limits(cache_limits::CacheLimits {
-        cpu_bytes: 0,
-        gpu_bytes: 512 << 20,
-    });
+    editor.document.visit.working_view.compare = false;
+    editor
+        .document
+        .thumbnails
+        .set_limits(cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 512 << 20,
+        });
     assert!(
         !editor.admit_view_reference(frame),
         "spare optional budget does not request original processing"

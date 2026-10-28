@@ -36,6 +36,14 @@ impl Grades {
         }
     }
 
+    pub(super) fn for_document(&self) -> Self {
+        Self {
+            device: self.device.clone(),
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn clear(&self) {
         self.entries.borrow_mut().clear();
     }
@@ -140,7 +148,8 @@ impl Editor {
             .ok_or(Error::InvalidParameter("positive source unavailable"))?;
         let mut scan = Scan::with_reference(ready.developed.clone(), ready.reference.clone());
         scan.set_flat_field(
-            self.correction
+            self.document
+                .correction
                 .as_ref()
                 .map(|correction| correction.settings.map.clone()),
         )?;
@@ -159,8 +168,10 @@ impl Editor {
         if bound == DVec3::ZERO {
             return Ok(());
         }
-        let (Some(device), Some(ready)) = (self.working.device(), &self.document.visit.ready)
-        else {
+        let (Some(device), Some(ready)) = (
+            self.document.visit.working_view.device(),
+            &self.document.visit.ready,
+        ) else {
             return Ok(());
         };
         let input = match input.calibration() {
@@ -185,26 +196,31 @@ impl Editor {
     pub(super) fn validate_document_candidate(&self, document: &Document) -> Result<(), Error> {
         let mut candidate = document.clone();
         candidate.capture_exposure(&self.document.exposures);
-        candidate.validate_with_device(self.grades.device.as_ref())
+        candidate.validate_with_device(self.document.grades.device.as_ref())
     }
 
     pub(super) fn validate_source_candidate(&self, source: &Source) -> Result<(), Error> {
         let mut input = self.input();
         if let Some(base) = input.calibration() {
-            input = input.with_calibration(source.development.processing_calibration(
-                base,
-                self.correction.as_ref().map(|c| c.settings.map.as_ref()),
-            )?);
+            input = input.with_calibration(
+                source.development.processing_calibration(
+                    base,
+                    self.document
+                        .correction
+                        .as_ref()
+                        .map(|c| c.settings.map.as_ref()),
+                )?,
+            );
         }
         validate_source_with_matrix(
-            self.grades.device.as_ref(),
+            self.document.grades.device.as_ref(),
             input,
-            self.roll,
+            self.document.roll,
             source,
             self.document.positive_matrix(source, input)?,
         )?;
-        if self.current_source == Some(source.id) {
-            self.dust_validate_snapshot(input, self.roll, &source.grade_snapshot()?)?;
+        if self.document.visit.current_source == Some(source.id) {
+            self.dust_validate_snapshot(input, self.document.roll, &source.grade_snapshot()?)?;
         }
         Ok(())
     }
@@ -224,8 +240,9 @@ impl Editor {
             .project
             .image_recipe_for_source(&candidate, &input, roll)?;
         recipe.neutral.reference = self.document.exposure_value(source);
-        recipe.film_emulation = self.film_emulation;
+        recipe.film_emulation = self.document.film_emulation;
         recipe.neutral.correction = self
+            .document
             .correction
             .as_ref()
             .map(|correction| correction.settings.map.clone());
@@ -233,7 +250,8 @@ impl Editor {
         let look = recipe.look;
         let input = recipe.neutral.processing_input()?;
         let matrix = self.document.positive_matrix(source, input)?;
-        self.grades
+        self.document
+            .grades
             .prepare(
                 source.id,
                 Key {
@@ -259,17 +277,17 @@ impl Editor {
         roll: RollSettings,
         photo: AdjustmentLayerSettings,
     ) -> Result<ProcessingInput, Error> {
-        match self.current_source {
+        match self.document.visit.current_source {
             Some(id) => self.positive_processing_for_source(
                 input,
                 roll,
-                self.document.project.source(id)?,
+                self.document.state.project.source(id)?,
                 photo,
             ),
             None => self.positive_parameters(input, roll).map(|parameters| {
                 ProcessingInput::from(parameters)
-                    .with_look(self.document.project.output.look.clone())
-                    .with_film_emulation(self.film_emulation)
+                    .with_look(self.document.state.project.output.look.clone())
+                    .with_film_emulation(self.document.film_emulation)
             }),
         }
     }
@@ -285,18 +303,23 @@ impl Editor {
         photo.validate()?;
         self.positive_parameters(input, roll)?;
         self.dust_validate_processing(input, roll, photo)?;
-        for source in &self.document.project.sources {
+        for source in &self.document.state.project.sources {
             let mut candidate = source.clone();
             self.overlay_adjustment_layer_settings(&mut candidate, photo);
             let source_input = match input.calibration() {
-                Some(base) => input.with_calibration(source.development.processing_calibration(
-                    base,
-                    self.correction.as_ref().map(|c| c.settings.map.as_ref()),
-                )?),
+                Some(base) => input.with_calibration(
+                    source.development.processing_calibration(
+                        base,
+                        self.document
+                            .correction
+                            .as_ref()
+                            .map(|c| c.settings.map.as_ref()),
+                    )?,
+                ),
                 None => input,
             };
             validate_source_with_matrix(
-                self.grades.device.as_ref(),
+                self.document.grades.device.as_ref(),
                 source_input,
                 roll,
                 &candidate,

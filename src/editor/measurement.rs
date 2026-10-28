@@ -79,15 +79,20 @@ impl Editor {
             source: self.document.visit.ready.as_ref()?.developed.clone(),
             reference: self.document.visit.ready.as_ref()?.reference.clone(),
             correction: self
+                .document
                 .correction
                 .as_ref()
                 .map(|correction| correction.settings.map.clone()),
             kind,
             region,
             input: self.input(),
-            roll: self.roll,
+            roll: self.document.roll,
             upstream: if kind == Pick::Wb {
-                let source = self.document.project.source(self.current_source?).ok()?;
+                let source = self
+                    .document
+                    .project
+                    .source(self.document.visit.current_source?)
+                    .ok()?;
                 let crate::editor::adjustment_layers::Target::Layer(id) =
                     self.adjustment_layer_target()
                 else {
@@ -106,7 +111,11 @@ impl Editor {
                 crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).ok()?
             },
             layer: if kind == Pick::Wb {
-                let source = self.document.project.source(self.current_source?).ok()?;
+                let source = self
+                    .document
+                    .project
+                    .source(self.document.visit.current_source?)
+                    .ok()?;
                 let crate::editor::adjustment_layers::Target::Layer(id) =
                     self.adjustment_layer_target()
                 else {
@@ -119,7 +128,7 @@ impl Editor {
                     .iter()
                     .find(|record| record.id == id)?
                     .adjustment;
-                layer.photo = self.adjustment_layer_settings;
+                layer.photo = self.document.visit.adjustment_layer_settings;
                 Some(layer)
             } else {
                 None
@@ -136,7 +145,7 @@ impl Editor {
         if self.document.visit.measurement.is_some() {
             return;
         }
-        self.thumbnails.cancel();
+        self.document.thumbnails.cancel();
         let Some(input) = self.measurement_input(kind, region) else {
             self.status = "No developed source for measurement".into();
             self.finish_pick(cx);
@@ -156,7 +165,11 @@ impl Editor {
             self.finish_pick(cx);
             return;
         };
-        let target = match (kind, self.current_source, self.adjustment_layer_target()) {
+        let target = match (
+            kind,
+            self.document.visit.current_source,
+            self.adjustment_layer_target(),
+        ) {
             (Pick::Wb, Some(source), crate::editor::adjustment_layers::Target::Layer(layer)) => {
                 Some((source, layer))
             }
@@ -199,7 +212,7 @@ impl Editor {
             .as_ref()
             .and_then(|pending| pending.target)
             .is_some_and(|(source, layer)| {
-                self.current_source != Some(source)
+                self.document.visit.current_source != Some(source)
                     || self.adjustment_layer_target()
                         != crate::editor::adjustment_layers::Target::Layer(layer)
             })
@@ -221,7 +234,9 @@ impl Editor {
         self.tasks.finish(TaskRequest::Measurement(view, kind));
         self.busy = false;
         let before = self.history_snapshot();
-        let photo = (kind == Pick::Wb).then_some(self.current_source).flatten();
+        let photo = (kind == Pick::Wb)
+            .then_some(self.document.visit.current_source)
+            .flatten();
         match result {
             Ok(Measurement::Reference(value)) => {
                 let InputSettings::Negative {
@@ -231,7 +246,7 @@ impl Editor {
                     response,
                     gamma,
                     balance,
-                } = self.input
+                } = self.document.input
                 else {
                     self.status = "Reference picks require a scan input".into();
                     self.finish_pick(cx);
@@ -239,7 +254,7 @@ impl Editor {
                 };
                 let other = if kind == Pick::Dmin { dmax } else { dmin };
                 let Some(other) = other else {
-                    set_reference(&mut self.input, kind, value);
+                    set_reference(&mut self.document.input, kind, value);
                     self.status = format!("{kind:?} measured");
                     self.record_edit(before, "Calibration pick", photo);
                     self.finish_pick(cx);
@@ -264,18 +279,25 @@ impl Editor {
                     input_floor,
                 };
                 if let Err(error) = calibration.validate().and_then(|_| {
-                    self.validate_processing(candidate, self.roll, self.adjustment_layer_settings)
+                    self.validate_processing(
+                        candidate,
+                        self.document.roll,
+                        self.document.visit.adjustment_layer_settings,
+                    )
                 }) {
                     self.status = error.to_string();
                     self.finish_pick(cx);
                     return;
                 }
-                self.input = candidate;
+                self.document.input = candidate;
                 self.status = format!("{kind:?} measured");
             }
             Ok(Measurement::Balance(balance)) => {
-                let (mut roll, mut photo) = (self.roll, self.adjustment_layer_settings);
-                let mut input = self.input;
+                let (mut roll, mut photo) = (
+                    self.document.roll,
+                    self.document.visit.adjustment_layer_settings,
+                );
+                let mut input = self.document.input;
                 match kind {
                     Pick::Gamma => {
                         if let InputSettings::Negative {
@@ -296,9 +318,9 @@ impl Editor {
                     self.finish_pick(cx);
                     return;
                 }
-                self.input = input;
-                self.roll = roll;
-                self.adjustment_layer_settings = photo;
+                self.document.input = input;
+                self.document.roll = roll;
+                self.document.visit.adjustment_layer_settings = photo;
                 self.status = format!("{kind:?} neutral correction applied");
             }
             Err(error) => self.status = error,

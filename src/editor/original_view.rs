@@ -36,6 +36,18 @@ pub(super) struct OriginalView {
     pub refinement_error: Option<u64>,
 }
 
+impl Default for OriginalView {
+    fn default() -> Self {
+        Self::new(Arc::default())
+    }
+}
+
+impl Drop for OriginalView {
+    fn drop(&mut self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 impl OriginalView {
     pub fn new(generation: Arc<AtomicU64>) -> Self {
         Self {
@@ -172,16 +184,24 @@ impl Editor {
             frame_raster::FrameRaster,
             gpu::view::{RenderedView, ViewSourceSpec},
         };
-        let Some((revision, view, image)) = self.original.settled.as_ref() else {
+        let Some((revision, view, image)) = self.document.visit.grade.original.settled.as_ref()
+        else {
             return Ok(None);
         };
-        if self.original.purpose != Some(purpose)
-            || *revision != self.original.revision()
-            || self.original.signature.as_ref().is_none_or(|signature| {
-                signature.0 != input.signature()
-                    || signature.1 != self.target
-                    || signature.2 != Some(*view)
-            })
+        if self.document.visit.grade.original.purpose != Some(purpose)
+            || *revision != self.document.visit.grade.original.revision()
+            || self
+                .document
+                .visit
+                .grade
+                .original
+                .signature
+                .as_ref()
+                .is_none_or(|signature| {
+                    signature.0 != input.signature()
+                        || signature.1 != self.document.target
+                        || signature.2 != Some(*view)
+                })
         {
             return Ok(None);
         }
@@ -197,24 +217,28 @@ impl Editor {
                 frame
             }
         };
-        let field = if self.flat_edit.is_some() {
+        let field = if self.document.flat_edit.is_some() {
             None
         } else {
-            self.correction
+            self.document
+                .correction
                 .as_ref()
                 .map(|correction| correction.settings.map.clone())
         };
         let spec = if input.pipeline().is_none() {
             ViewSourceSpec::inspection(self.id, frame, matrix, field)?
         } else {
-            let settings = match self.input.calibration() {
+            let settings = match self.document.input.calibration() {
                 Some(base) => self
+                    .document
                     .input
                     .with_calibration(self.processing_calibration(base)?),
-                None => self.input,
+                None => self.document.input,
             };
-            let source = self.document.project.source(
-                self.current_source
+            let source = self.document.state.project.source(
+                self.document
+                    .visit
+                    .current_source
                     .ok_or(Error::UnusableSample("original source unavailable"))?,
             )?;
             ViewSourceSpec::new(
@@ -226,14 +250,15 @@ impl Editor {
             )?
         }
         .with_repairs(input.repairs.clone());
-        if let Some(rendered) = &self.original.rendered
+        if let Some(rendered) = &self.document.visit.grade.original.rendered
             && Arc::ptr_eq(&rendered.image, image)
-            && rendered.matches(&spec, &input.signature(), self.target)
+            && rendered.matches(&spec, &input.signature(), self.document.target)
         {
             return Ok(Some(rendered.clone()));
         }
-        let rendered = RenderedView::reference(image.clone(), spec, input.signature(), self.target);
-        self.original.rendered = Some(rendered.clone());
+        let rendered =
+            RenderedView::reference(image.clone(), spec, input.signature(), self.document.target);
+        self.document.visit.grade.original.rendered = Some(rendered.clone());
         Ok(Some(rendered))
     }
 }

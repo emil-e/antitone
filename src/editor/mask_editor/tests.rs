@@ -73,7 +73,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
         let id = editor
             .document
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers
             .as_ref()
@@ -81,7 +81,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
             .layers[0]
             .id;
         editor.select_adjustment_layer(adjustment_layers::Target::Layer(id));
-        let layout = editor.last_layout.unwrap().0;
+        let layout = editor.document.visit.last_layout.unwrap().0;
         let context = egui::Context::default();
         for invert in [false, true] {
             editor
@@ -128,7 +128,11 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
             assert_eq!(arrow[0], expected_tip);
         }
         let input = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         editor.document.visit.adjustment_layers.show_coverage = true;
         let mut output = context.run_ui(Default::default(), |ui| editor.paint_mask(ui, layout));
@@ -142,7 +146,11 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
         assert_eq!(
             input.signature(),
             editor
-                .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+                .positive_processing(
+                    editor.document.input,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings
+                )
                 .unwrap()
                 .signature()
         );
@@ -157,7 +165,7 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
         let id = editor
             .document
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers
             .as_ref()
@@ -166,10 +174,14 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
             .id;
         editor.select_adjustment_layer(adjustment_layers::Target::Layer(id));
         editor.document.visit.adjustment_layers.show_coverage = true;
-        editor.working.compare = true;
-        let before = editor.document.project.clone();
+        editor.document.visit.working_view.compare = true;
+        let before = editor.document.state.project.clone();
         let input = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         editor.begin_linear_mask(Some(id));
         editor.document.visit.mask_edit.as_mut().unwrap().mask =
@@ -191,7 +203,7 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
         assert!(editor.mask_preview_source().is_some());
         editor.finish_adjustment_layer_interaction();
         assert!(editor.document.visit.mask_edit.is_none());
-        assert!(editor.working.compare);
+        assert!(editor.document.visit.working_view.compare);
         assert_eq!(
             editor.adjustment_layer_target(),
             adjustment_layers::Target::Layer(id)
@@ -199,16 +211,20 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
         assert!(editor.mask_handles_available());
         assert!(editor.mask_help().is_some());
         assert!(editor.mask_preview_source().is_none());
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         assert_eq!(
             input.signature(),
             editor
-                .view_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+                .view_processing(
+                    editor.document.input,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings
+                )
                 .unwrap()
                 .signature()
         );
         let context = egui::Context::default();
-        let layout = editor.last_layout.unwrap().0;
+        let layout = editor.document.visit.last_layout.unwrap().0;
         let mut output = context.run_ui(Default::default(), |ui| editor.paint_mask(ui, layout));
         output.textures_delta.clear();
         assert!(
@@ -245,12 +261,12 @@ fn inverse_mapping_keeps_subpixel_precision_at_large_source_origins() {
 fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
-        let before = editor.document.project.clone();
-        let mut viewport = editor.viewport;
+        let before = editor.document.state.project.clone();
+        let mut viewport = editor.document.visit.viewport;
         viewport.zoom = Some(3.);
-        editor.working.compare = true;
+        editor.document.visit.working_view.compare = true;
         editor.begin_linear_mask(None);
-        assert!(!editor.working.compare);
+        assert!(!editor.document.visit.working_view.compare);
         assert!(editor.document.visit.mask_edit.is_some());
         assert!(!editor.document.visit.mask_edit.as_ref().unwrap().valid());
         editor.document.visit.mask_edit.as_mut().unwrap().mask =
@@ -275,13 +291,13 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
             .candidate()
             .unwrap();
         assert_eq!(first, repeated);
-        assert_eq!(editor.document.project, before);
-        editor.viewport.zoom = Some(3.);
+        assert_eq!(editor.document.state.project, before);
+        editor.document.visit.viewport.zoom = Some(3.);
         editor.finish_mask(false);
         assert!(editor.document.visit.mask_edit.is_none());
-        assert_eq!(editor.viewport, viewport);
-        assert!(editor.working.compare);
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.visit.viewport, viewport);
+        assert!(editor.document.visit.working_view.compare);
+        assert_eq!(editor.document.state.project, before);
         editor.begin_linear_mask(None);
         editor.document.visit.mask_edit.as_mut().unwrap().mask =
             Some(AdjustmentLayerCoverage::Linear {
@@ -297,7 +313,7 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
         let source = editor
             .document
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap();
         let layers = source.adjustment_layers.as_ref().unwrap();
         let prior = before
@@ -323,7 +339,7 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
 fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
-        let source = editor.current_source.unwrap();
+        let source = editor.document.visit.current_source.unwrap();
         let records = editor
             .document
             .project
@@ -335,7 +351,11 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             .clone();
         let id = records.layers[0].id;
         let input = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         let snapshot = input.pipeline().unwrap().snapshot().clone();
         editor.begin_linear_mask(Some(id));
@@ -345,7 +365,7 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         editor.request_analysis(&UiContext::render_only());
         assert!(
             editor.document.visit.crop_edit.is_none()
-                && editor.pick.is_none()
+                && editor.document.picking.kind.is_none()
                 && editor.document.analysis_pending.is_none()
         );
         assert!(!editor.roll_edit_available());
@@ -376,7 +396,7 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             adjustment_layers::Target::Layer(id)
         );
         assert_eq!(input.pipeline().unwrap().snapshot(), &snapshot);
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         editor.begin_linear_mask(Some(id));
         editor.document.visit.mask_edit.as_mut().unwrap().mask =
             Some(AdjustmentLayerCoverage::Linear {
@@ -388,22 +408,22 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             editor.document.visit.mask_edit.is_none(),
             "rejected refinements return to the accepted selected mask"
         );
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         editor.finish_mask(false);
-        assert_eq!(editor.document.project, before);
-        editor.working.compare = true;
+        assert_eq!(editor.document.state.project, before);
+        editor.document.visit.working_view.compare = true;
         editor.begin_linear_mask(Some(id));
-        assert!(!editor.working.compare);
-        editor.roll.exposure += 0.1;
+        assert!(!editor.document.visit.working_view.compare);
+        editor.document.roll.exposure += 0.1;
         editor.finish_mask(true);
         assert!(
             editor.document.visit.mask_edit.is_none(),
             "changed processing cannot accept a stale mask draft"
         );
         assert!(
-            editor.working.compare,
+            editor.document.visit.working_view.compare,
             "stale rejection restores draft-owned comparison mode"
         );
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
     });
 }

@@ -55,7 +55,7 @@ fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_
                         .iter()
                         .all(|source| source.crop.is_none())
                 );
-                assert!(editor.document.project.analysis_regions.is_empty());
+                assert!(editor.document.state.project.analysis_regions.is_empty());
                 assert!(!editor.document.dirty());
             });
             let (_, saved) = Project::load_with_spatial_metadata(&path).unwrap();
@@ -71,7 +71,7 @@ fn failed_overlapping_save_keeps_the_consumer_until_failure_acknowledgement() {
     let mut editor = fixture(scheduler.clone());
     let metadata = supplied(&mut editor);
     editor.document.spatial = crate::spatial_metadata::Store::default();
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("existing.antitone");
     std::fs::write(&path, b"existing destination").unwrap();
@@ -109,7 +109,7 @@ fn failed_overlapping_save_keeps_the_consumer_until_failure_acknowledgement() {
                 "{}",
                 editor.status
             );
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert_eq!(*editor.document.spatial.ready(), metadata);
         });
         assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");

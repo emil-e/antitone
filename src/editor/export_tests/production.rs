@@ -8,7 +8,8 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);
-        editor.thumbnails = Thumbnails::default();
+        editor.document.thumbnails =
+            (Thumbnails::default()).with_sources(editor.document.cache.clone());
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(30),
@@ -24,9 +25,9 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
         );
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
-        editor.roll = RollSettings::default();
+        editor.document.roll = RollSettings::default();
         let area = editor.document.visit.ready.as_ref().unwrap().area;
-        editor.crop = Some(Crop {
+        editor.document.visit.crop = Some(Crop {
             center: [
                 f64::from(area.x) + f64::from(area.width) / 2.,
                 f64::from(area.y) + f64::from(area.height) / 2.,
@@ -35,7 +36,7 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             angle: 0.13,
         });
         editor.sync_document();
-        let id = editor.current_source.unwrap();
+        let id = editor.document.visit.current_source.unwrap();
         editor
             .document
             .project
@@ -77,11 +78,11 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             )
             .unwrap(),
         );
-        editor.document.project.output.look = Some(look.clone());
+        editor.document.state.project.output.look = Some(look.clone());
         let directory = tempfile::tempdir().unwrap();
         let mut reference: Option<Vec<u16>> = None;
         for with_look in [true, false] {
-            editor.document.project.output.look = with_look.then(|| look.clone());
+            editor.document.state.project.output.look = with_look.then(|| look.clone());
             let path = directory.path().join(format!("look-{with_look}.tif"));
             assert!(
                 !editor
@@ -97,10 +98,10 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                     cx,
                 );
                 // Change live state after capture; neither file may follow this newer value.
-                editor.document.project.output.look = (!with_look).then(|| look.clone());
+                editor.document.state.project.output.look = (!with_look).then(|| look.clone());
             });
             assert!(editor.failure.is_none(), "{}", editor.status);
-            editor.document.project.output.look = Some(look.clone());
+            editor.document.state.project.output.look = Some(look.clone());
             let pixels = tiff_pixels(&path);
             let (triplets, tail) = pixels.as_chunks::<3>();
             assert!(tail.is_empty());
@@ -134,7 +135,13 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                     Overwrite::Confirmed,
                     cx,
                 );
-                editor.export_operation.cancelled.as_ref().unwrap().cancel();
+                editor
+                    .document
+                    .export_operation
+                    .cancelled
+                    .as_ref()
+                    .unwrap()
+                    .cancel();
             });
         });
         assert!(editor.status.contains("cancel"), "{}", editor.status);
@@ -144,6 +151,6 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             3,
             "cancelled job leaves no temporary file"
         );
-        assert!(editor.export_operation.cancelled.is_none());
+        assert!(editor.document.export_operation.cancelled.is_none());
     });
 }

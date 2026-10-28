@@ -93,6 +93,14 @@ fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
     document.project.set_dmax(Some([0.02; 3]));
     let id = document.project.order[0];
     document
+        .exposure_slot(&document.exposures, id)
+        .set(crate::exposure_reference::ReferenceExposure::Unavailable(
+            crate::exposure_reference::UnavailableReference::NoUsablePreview,
+        ))
+        .unwrap();
+    let exposures = document.exposures.clone();
+    document.state.capture_exposure(&exposures);
+    document
         .project
         .source_mut(id)
         .unwrap()
@@ -153,7 +161,7 @@ fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
             })
         })
         .collect::<Vec<_>>();
-    thumbnails.bind_sources(document.cache.clone(), &document);
+    thumbnails = thumbnails.with_sources(document.cache.clone());
     thumbnails.seed(
         document.project.source(id).unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
