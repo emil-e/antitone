@@ -232,7 +232,6 @@ impl Editor {
         };
         let normal = !cropping
             && active_pick.is_none()
-            && !pending
             && self.document_pending.is_none()
             && self.flat_edit.is_none()
             && self.document.pick_return.is_none();
@@ -343,7 +342,9 @@ impl Editor {
                 self.submissions.clone(),
                 ui.ctx().clone(),
             )
-        } else if let Some(paint) = self.preview_paint(&proxy, geometry, &parameters, ui.ctx()) {
+        } else if let Some(paint) =
+            self.preview_paint(&proxy, geometry, &parameters, pending, ui.ctx())
+        {
             paint
         } else {
             ui.label(
@@ -365,13 +366,19 @@ impl Editor {
         proxy: &crate::viewer::GpuProxy,
         geometry: CanvasLayout,
         parameters: &ProcessingInput,
+        placeholder: bool,
         context: &egui::Context,
     ) -> Option<ImagePaint> {
         // Sparse repairs need original-sample footprints. The shared acquisition worker supplies
-        // those views; do not stamp original coordinates into a reduced camera proxy.
-        if !parameters.repairs.0.is_empty() {
+        // those views; a cached selected preview may stand in until the working view arrives.
+        if !parameters.repairs.0.is_empty() && !placeholder {
             return None;
         }
+        let mut preview = parameters.clone();
+        if placeholder {
+            preview.repairs = Default::default();
+        }
+        let parameters = &preview;
         let device = self.working.device()?;
         let queue = self.working.queue()?;
         let kernels = self.working.kernels.get()?.clone();
@@ -575,6 +582,7 @@ impl Editor {
             self.canvas_layout(canvas, composition, pixels_per_point, zoom_action, cropping);
         let (geometry, panning) =
             self.canvas_navigation(ui, &response, geometry, canvas_input, cropping, fullscreen);
+        self.start_dust_searches(cx);
         let Some((draw, paint)) = self.canvas_image(ui, geometry, proxy, pending, cropping, cx)
         else {
             return;

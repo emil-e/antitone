@@ -14,6 +14,10 @@ pub(super) struct State {
 
 impl Editor {
     pub(super) fn start_save(&mut self, write: Write, cx: &UiContext<'_, Self>) {
+        if self.dust_search_pending() {
+            self.status = "Wait for donor selection before saving".into();
+            return;
+        }
         self.cancel_measurement();
         self.document.history.finish_group();
         self.history_pending = None;

@@ -21,7 +21,7 @@ use std::{
 
 mod json;
 
-pub const SCHEMA_VERSION: u32 = 12;
+pub const SCHEMA_VERSION: u32 = 13;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.

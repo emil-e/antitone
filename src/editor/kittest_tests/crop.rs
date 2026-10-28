@@ -142,7 +142,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
                     crate::dust_repair::SupportMask::new([155, 91], [10, 10], vec![true; 100])
                         .unwrap(),
                     crate::dust_repair::RepairOrigin::Manual,
-                    crate::dust_repair::DonorChoice::Offset([0, 64]),
+                    [0, 64],
                 )
                 .unwrap();
         });

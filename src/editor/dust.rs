@@ -6,12 +6,15 @@ use crate::dust_repair::{
 use crate::processing::InputSettings;
 use crate::{
     dust_repair::{
-        DonorChoice, EvaluatedRepair, Repair, RepairId, RepairOrigin, RepairSet, SupportMask,
-        donor_target, mask_within_budget, validate_donor as validate_dust_donor,
+        EvaluatedRepair, Repair, RepairId, RepairOrigin, RepairSet, SupportMask, donor_target,
+        mask_within_budget, validate_offset as validate_dust_offset,
     },
     geometry::SourceRegion,
 };
 use std::collections::{BTreeSet, HashMap};
+
+mod search;
+pub(super) use search::Request as SearchRequest;
 
 #[cfg(test)]
 mod lifecycle_tests;
@@ -90,7 +93,6 @@ struct DonorDrag {
 pub(super) struct DonorDraft {
     pub repair: RepairId,
     pub offset: [i32; 2],
-    choice: DonorChoice,
     drag: Option<DonorDrag>,
 }
 
@@ -170,6 +172,7 @@ pub(super) struct State {
     pub show_masks: bool,
     pub donor_draft: Option<DonorDraft>,
     pub render_error: Option<String>,
+    searches: search::State,
     gpu: HashMap<RepairId, Arc<crate::gpu::repairs::Patch>>,
 }
 
@@ -189,6 +192,7 @@ impl Default for State {
             show_masks: true,
             donor_draft: None,
             render_error: None,
+            searches: search::State::default(),
             gpu: HashMap::new(),
         }
     }
@@ -217,7 +221,7 @@ impl State {
     }
 
     pub(super) fn history_draft(&self) -> bool {
-        self.mask_draft.is_some() || self.donor_draft.is_some()
+        self.mask_draft.is_some() || self.donor_draft.is_some() || !self.searches.is_empty()
     }
 
     #[cfg(test)]
@@ -268,6 +272,7 @@ impl State {
         self.gpu.remove(&repair);
         self.preview_cached.remove(&(source, repair));
         self.failed.remove(&(source, repair));
+        self.searches.cancel_target(source, repair);
     }
 
     fn clear_repairs(&mut self, source: SourceId) {
@@ -276,6 +281,7 @@ impl State {
         self.preview_cached
             .retain(|(candidate, _), _| *candidate != source);
         self.failed.retain(|(candidate, _), _| *candidate != source);
+        self.searches.cancel_source(source);
         if let Some(pending) = self
             .pending
             .take_if(|pending| pending.evaluation.source == source)
@@ -291,7 +297,7 @@ impl State {
         self.render_error = None;
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "ui-tests"))]
     pub fn evaluations(
         &self,
         source: SourceId,
@@ -327,7 +333,7 @@ impl State {
         if self.pending.is_some() {
             return None;
         }
-        repairs
+        let repair = repairs
             .iter()
             .filter(|repair| repair.enabled)
             .find(|repair| {
@@ -347,8 +353,9 @@ impl State {
                     && !self.failed.get(&(source, repair.id)).is_some_and(|failed| {
                         current(failed.loaded, failed.signature, &failed.repair)
                     })
-            })
-            .cloned()
+            })?
+            .clone();
+        Some(repair)
     }
 
     fn start(&mut self, request: &Request) {
@@ -380,7 +387,7 @@ impl State {
             || pending.evaluation.source != response.source
             || pending.evaluation.signature != response.signature
             || pending.evaluation.repair != response.repair
-            || expected != Some(&response.repair)
+            || expected != Some(&pending.evaluation.repair)
         {
             return false;
         }
@@ -431,14 +438,13 @@ impl State {
 
 #[cfg(test)]
 pub(super) fn evaluate(scan: &Scan, request: &Request) -> Result<Response, Error> {
-    evaluate_with(scan, request, None, &|| false).map(|r| r.expect("uncancelled test evaluation"))
+    evaluate_with(scan, request, &|| false).map(|r| r.expect("uncancelled test evaluation"))
 }
 
-pub(super) fn evaluate_with<'a>(
+pub(super) fn evaluate_with(
     scan: &Scan,
     request: &Request,
-    screener: Option<&'a mut dyn crate::dust_repair::Screener>,
-    cancelled: &'a dyn Fn() -> bool,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<Response>, Error> {
     if cancelled() {
         return Ok(None);
@@ -447,10 +453,7 @@ pub(super) fn evaluate_with<'a>(
     let Some(evaluated) = crate::repair_source::evaluate_with(
         &source,
         &request.repair,
-        &mut crate::dust_repair::Execution {
-            screener,
-            cancelled,
-        },
+        &mut crate::dust_repair::Execution { cancelled },
     )?
     else {
         return Ok(None);
@@ -778,7 +781,13 @@ impl Editor {
         };
 
         let repairs = self.effective_dust_repairs(source);
-        let mut pending = false;
+        let mut pending = self
+            .document
+            .dust
+            .searches
+            .supports(source)
+            .next()
+            .is_some();
         for repair in repairs.iter().filter(|repair| repair.enabled) {
             if self
                 .document
@@ -857,6 +866,13 @@ impl Editor {
         let repair_count = self
             .dust_repairs(source)
             .map_or(0, |set| set.repairs().len());
+        let searching = self
+            .document
+            .dust
+            .searches
+            .supports(source)
+            .next()
+            .is_some();
         let available = !self.busy
             && self.document.visit.ready.is_some()
             && self.pick.is_none()
@@ -872,7 +888,7 @@ impl Editor {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let reset = presentation::reset_button(
                         ui,
-                        available && repair_count > 0,
+                        available && (repair_count > 0 || searching),
                         "dust repairs",
                     );
                     ui.weak(format!("{repair_count} repairs"));
@@ -920,7 +936,9 @@ impl Editor {
                 } else {
                     guidance
                 });
-                if repair_count == 0 {
+                if searching {
+                    ui.horizontal(|ui| { ui.spinner(); ui.weak("Finding donor…"); });
+                } else if repair_count == 0 {
                     ui.small("Manual masks only · automatic proposals are not wired yet");
                 }
                 reset_repairs = reset.clicked();
@@ -1050,6 +1068,12 @@ impl Editor {
     }
 
     pub(super) fn begin_dust_mask(&mut self, target: Option<RepairId>) {
+        if let (Some(source), Some(repair)) = (self.current_source, target)
+            && self.document.dust.searches.has_target(source, repair)
+        {
+            self.status = "Wait for this repair's donor search before editing its mask".into();
+            return;
+        }
         self.document.dust.cleanup = true;
         self.document.dust.show_masks = true;
         self.document.dust.donor_draft = None;
@@ -1154,74 +1178,35 @@ impl Editor {
             return;
         }
         let target = draft.target;
-        let donor = self
-            .document
-            .dust
-            .donor_draft
-            .filter(|donor| Some(donor.repair) == target)
-            .map(|donor| donor.choice);
-        let effective_donor = donor.or_else(|| {
-            let id = target?;
+        let support = match draft.support() {
+            Ok(support) => support,
+            Err(error) => {
+                self.status = format!("Dust mask rejected: {error}");
+                self.cancel_dust_mask();
+                return;
+            }
+        };
+        let previous = target.and_then(|id| {
             self.dust_repairs(source)?
                 .repairs()
                 .iter()
-                .find(|repair| repair.id == id)
-                .map(|repair| repair.donor)
+                .find(|r| r.id == id)
+                .cloned()
         });
-        let support = draft.support();
-        if let (Some(id), Ok(support)) = (target, &support)
-            && self.dust_repairs(source).is_some_and(|set| {
-                set.repairs().iter().any(|repair| {
-                    repair.id == id
-                        && repair.support == *support
-                        && donor.is_none_or(|choice| choice == repair.donor)
-                })
-            })
+        if let Some(previous) = &previous
+            && previous.support == support
         {
             self.cancel_dust_mask();
             return;
         }
-
-        let before = self.history_snapshot();
-        let result = support.and_then(|support| {
-            if let Some(choice) = effective_donor {
-                let active = self
-                    .document
-                    .visit
-                    .ready
-                    .as_ref()
-                    .map(|ready| ready.area)
-                    .ok_or(Error::InvalidParameter("manual donor unavailable"))?;
-                validate_dust_donor(choice, &support, active)?;
-            }
-            if let Some(id) = target {
-                self.dust_repairs_mut(source).set_support(id, support)?;
-                if let Some(choice) = donor {
-                    self.dust_repairs_mut(source).set_donor(id, choice)?;
-                }
-                Ok(id)
-            } else {
-                self.dust_repairs_mut(source).insert(
-                    support,
-                    RepairOrigin::Manual,
-                    DonorChoice::Automatic,
-                )
-            }
-        });
-        match result {
-            Ok(id) => {
-                self.document.dust.selected.insert(source, id);
-                self.dust_repair_changed(source, id);
-                self.record_edit(before, "Dust mask", Some(source));
-                self.status = "Dust repair queued for full-resolution evaluation".into();
-                self.invalidate_settled();
-                self.cancel_dust_mask();
-            }
-            Err(error) => {
-                self.status = format!("Dust mask rejected: {error}");
-                self.cancel_dust_mask();
-            }
+        if target.is_some() && previous.is_none() {
+            self.cancel_dust_mask();
+            return;
         }
+        self.queue_dust_search(source, previous, support);
+        self.cancel_dust_mask();
+        self.status = "Finding a donor…".into();
+        self.invalidate_settled();
     }
 
     fn dust_source_position(
@@ -1287,6 +1272,7 @@ impl Editor {
             .flat_map(RepairSet::repairs)
             .filter(|repair| Some(repair.id) != target)
             .map(|repair| repair.support.clone())
+            .chain(self.document.dust.searches.supports(source).cloned())
             .collect::<Vec<_>>();
         let active = self.document.visit.ready.as_ref().unwrap().area;
         let erase = temporary_erase;
@@ -1377,6 +1363,7 @@ impl Editor {
                 .dust_repairs(source)
                 .is_some_and(|set| set.repairs().iter().any(|repair| repair.id == id))
         {
+            self.document.dust.searches.manual_selection(source);
             self.document.dust.selected.insert(source, id);
         }
     }
@@ -1421,69 +1408,23 @@ impl Editor {
                     .then(|| self.selected_dust_repair())
                     .flatten()
             })?;
-        let signature = self.dust_signature()?;
-        let set = self.dust_repairs(source)?;
-        let repair = set.repairs().iter().find(|repair| repair.id == repair_id)?;
+        if self.document.dust.searches.has_target(source, repair_id) {
+            return None;
+        }
         let effective = self.effective_dust_repair(source, repair_id)?;
-        let cached = self
-            .document
-            .dust
-            .preview_cached
-            .get(&(source, repair_id))
-            .filter(|cached| {
-                cached.loaded == self.id
-                    && cached.signature == signature
-                    && cached.repair == effective
-            })
-            .or_else(|| {
-                self.document
-                    .dust
-                    .cached
-                    .get(&(source, repair_id))
-                    .filter(|cached| {
-                        cached.loaded == self.id
-                            && cached.signature == signature
-                            && cached.repair == *repair
-                    })
-            })?;
-        if cached.evaluated.support() != &effective.support {
-            return None;
-        }
-        let groups = effective.support.grouped_supports();
-        if groups.len() != cached.evaluated.donors.len() {
-            return None;
-        }
-        groups
-            .into_iter()
-            .zip(&cached.evaluated.donors)
-            .map(|(support, matched)| {
-                let target = SourceRegion {
-                    x: matched.target[0],
-                    y: matched.target[1],
-                    width: matched.target[2],
-                    height: matched.target[3],
-                };
-                let donor = match effective.donor {
-                    DonorChoice::Automatic => SourceRegion {
-                        x: matched.source[0],
-                        y: matched.source[1],
-                        width: target.width,
-                        height: target.height,
-                    },
-                    DonorChoice::Offset(offset) => SourceRegion {
-                        x: u32::try_from(i64::from(target.x) + i64::from(offset[0])).ok()?,
-                        y: u32::try_from(i64::from(target.y) + i64::from(offset[1])).ok()?,
-                        width: target.width,
-                        height: target.height,
-                    },
-                };
-                Some(DonorRegion {
-                    support,
-                    target,
-                    donor,
-                })
-            })
-            .collect()
+        let active = self.document.visit.ready.as_ref()?.area;
+        let target = donor_target(&effective.support, active).ok()?;
+        let donor = SourceRegion {
+            x: u32::try_from(i64::from(target.x) + i64::from(effective.offset[0])).ok()?,
+            y: u32::try_from(i64::from(target.y) + i64::from(effective.offset[1])).ok()?,
+            width: target.width,
+            height: target.height,
+        };
+        Some(vec![DonorRegion {
+            support: effective.support,
+            target,
+            donor,
+        }])
     }
 
     pub(super) fn dust_donor_at(
@@ -1537,15 +1478,6 @@ impl Editor {
             let Some(repair) = self.selected_dust_repair() else {
                 return;
             };
-            let choice = self
-                .current_source
-                .and_then(|source| self.dust_repairs(source))
-                .and_then(|set| {
-                    set.repairs()
-                        .iter()
-                        .find(|candidate| candidate.id == repair)
-                })
-                .map_or(DonorChoice::Automatic, |repair| repair.donor);
             let (target, donor) = (region.target, region.donor);
             let (Ok(offset_x), Ok(offset_y)) = (
                 i32::try_from(i64::from(donor.x) - i64::from(target.x)),
@@ -1557,7 +1489,6 @@ impl Editor {
             self.document.dust.donor_draft = Some(DonorDraft {
                 repair,
                 offset,
-                choice,
                 drag: None,
             });
         }
@@ -1617,7 +1548,6 @@ impl Editor {
         ];
         if draft.offset != offset {
             draft.offset = offset;
-            draft.choice = DonorChoice::Offset(offset);
             self.invalidate_settled();
         }
     }
@@ -1633,24 +1563,24 @@ impl Editor {
         let Some(draft) = self.document.dust.donor_draft.take() else {
             return;
         };
-        if draft.drag.is_none() || draft.choice == DonorChoice::Automatic {
+        if draft.drag.is_none() {
             return;
         }
         let Some(source) = self.current_source else {
             return;
         };
-        let Some((support, accepted_donor)) = self
+        let Some((support, accepted_offset)) = self
             .dust_repairs(source)
             .and_then(|set| {
                 set.repairs()
                     .iter()
                     .find(|repair| repair.id == draft.repair)
             })
-            .map(|repair| (repair.support.clone(), repair.donor))
+            .map(|repair| (repair.support.clone(), repair.offset))
         else {
             return;
         };
-        if draft.choice == accepted_donor {
+        if draft.offset == accepted_offset {
             return;
         }
         let before = self.history_snapshot();
@@ -1661,10 +1591,10 @@ impl Editor {
             .as_ref()
             .map(|ready| ready.area)
             .ok_or(Error::InvalidParameter("manual donor unavailable"))
-            .and_then(|active| validate_dust_donor(draft.choice, &support, active))
+            .and_then(|active| validate_dust_offset(draft.offset, &support, active))
             .and_then(|()| {
                 self.dust_repairs_mut(source)
-                    .set_donor(draft.repair, draft.choice)
+                    .set_offset(draft.repair, draft.offset)
             });
         match result {
             Ok(()) => {
@@ -1708,7 +1638,7 @@ impl Editor {
                     .donor_draft
                     .filter(|donor| donor.repair == repair.id)
                 {
-                    repair.donor = donor.choice;
+                    repair.offset = donor.offset;
                 }
                 Some(repair)
             })
@@ -1878,6 +1808,7 @@ impl Editor {
     }
 
     pub(super) fn schedule_dust(&mut self, signature: Signature, cx: &UiContext<'_, Self>) {
+        self.start_dust_searches(cx);
         if self.busy
             || self.document_pending.is_some()
             || self.source_epoch.load(std::sync::atomic::Ordering::Relaxed) != self.id
@@ -1948,6 +1879,8 @@ impl Editor {
         match result {
             Ok(Some(response)) => {
                 let current = response.loaded == self.id
+                    && self.source_epoch.load(std::sync::atomic::Ordering::Relaxed)
+                        == response.loaded
                     && Some(response.source) == self.current_source
                     && Some(response.signature) == self.dust_signature();
                 if !current {
@@ -1958,9 +1891,10 @@ impl Editor {
                     return;
                 }
                 let expected = self.effective_dust_repair(response.source, response.repair.id);
-                let accepted = self
-                    .dust_repairs(response.source)
-                    .is_some_and(|set| set.repairs().contains(&response.repair));
+                let accepted = expected.as_ref().is_some_and(|repair| {
+                    self.dust_repairs(response.source)
+                        .is_some_and(|set| set.repairs().contains(repair))
+                });
                 if self
                     .document
                     .dust
@@ -2014,7 +1948,9 @@ impl Editor {
         let overlays_hidden = ui.ctx().input(|input| input.key_down(egui::Key::H));
         if self.document.dust.show_masks && !overlays_hidden {
             for repair in set.into_iter().flat_map(RepairSet::repairs) {
-                if mask_target == Some(repair.id) {
+                if mask_target == Some(repair.id)
+                    || self.document.dust.searches.has_target(source, repair.id)
+                {
                     continue;
                 }
                 let pending = self.document.dust.pending.as_ref().is_some_and(|pending| {
@@ -2054,6 +1990,18 @@ impl Editor {
                     [0., 0.],
                     color,
                     if active { 1.5 } else { 1. },
+                );
+            }
+        }
+        if self.document.dust.show_masks && !overlays_hidden {
+            for support in self.document.dust.searches.supports(source) {
+                paint_support_outline(
+                    &painter,
+                    geometry,
+                    support,
+                    [0., 0.],
+                    ui.visuals().weak_text_color(),
+                    1.5,
                 );
             }
         }
@@ -2258,11 +2206,11 @@ mod tests {
         let mask = || SupportMask::new([20, 20], [3, 3], vec![true; 9]).unwrap();
         let first = editor
             .dust_repairs_mut(first_source)
-            .insert(mask(), RepairOrigin::Manual, DonorChoice::Automatic)
+            .insert(mask(), RepairOrigin::Manual, [4, 0])
             .unwrap();
         let second = editor
             .dust_repairs_mut(second_source)
-            .insert(mask(), RepairOrigin::Detected, DonorChoice::Offset([4, -2]))
+            .insert(mask(), RepairOrigin::Detected, [4, -2])
             .unwrap();
         assert_eq!(first, RepairId(1));
         assert_eq!(second, RepairId(1));
@@ -2284,7 +2232,7 @@ mod tests {
                 .insert(
                     SupportMask::new(origin, [2, 2], vec![true; 4]).unwrap(),
                     RepairOrigin::Manual,
-                    DonorChoice::Automatic,
+                    [4, 0],
                 )
                 .unwrap();
         }

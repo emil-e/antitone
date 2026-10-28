@@ -283,13 +283,13 @@ cargo test --locked --features editor --lib recipe_tests
 cargo test --locked --features editor,ocio-reference \
   --lib editor::thumbnails::recipe_tests::pixel_tests
 cargo test --locked --features ui-tests --lib dust
-# Captured evaluation, physical retirement, source/grade lifetime and shared GPU cache.
-cargo test --locked --features editor --lib editor::dust_workflow::
+# Captured search/evaluation, stale publication, held drafts and worker continuation.
+cargo test --locked --features editor --lib editor::dust::lifecycle_tests
 cargo test --locked --features ui-tests --lib editor::document::tests
 cargo test --locked --release --features ui-tests --lib editor::kittest_tests::dust
 ```
 
-Test [saved repair intent](projects.md#source-owned-dust-repairs) separately from evaluation. Project checks need malformed-record rejection, destination safety and lossless masks/IDs at uneven roll scale. Composed checks need accepted-only dirty state, failure-safe Save/Open/Save As, reopened donor metadata and repaired f32 bits. Viewer/export pixels need repairs before filtering: a nonconstant look must not hide missing repairs, and disabling repairs must restore unrepaired pixels. Navigation checks cover independent proxy grading and card readiness through pending/failed repair work. Optional captures use `dust-persistence-{normal,narrow}-offscreen.png`.
+Test [saved repair intent](projects.md#source-owned-dust-repairs) separately from evaluation. Project checks need malformed-record rejection, destination safety and lossless masks/IDs at uneven roll scale. Composed checks need accepted-only dirty state, failure-safe Save/Open/Save As, reopened donor offsets and repaired f32 bits. Viewer/export pixels need repairs before filtering: a nonconstant look must not hide missing repairs, and disabling repairs must restore unrepaired pixels. Navigation checks cover independent proxy grading and card readiness through pending/failed repair work. Optional captures use `dust-persistence-{normal,narrow}-offscreen.png`.
 
 ## Shared editor UI checks
 

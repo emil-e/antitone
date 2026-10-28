@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
-    dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
+    dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
     film_emulation::{FilmEmulationPreset, FilmEmulationSettings},
     gpu::repairs::{Patch, Snapshot},
     processing::InputPipeline,
@@ -261,7 +261,7 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
                 id: RepairId(1),
                 enabled: true,
                 origin: RepairOrigin::Manual,
-                donor: DonorChoice::Offset([32, 0]),
+                offset: [32, 0],
                 support: SupportMask::new(point, [3, 3], vec![true; 9]).unwrap(),
             };
             let evaluated = Arc::new(

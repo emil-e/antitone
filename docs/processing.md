@@ -88,6 +88,8 @@ The ungraded positive is full-resolution signed/HDR AP1 after input interpretati
 
 The provisional Dust tool heals here. RAW-development WB, gamma balance and fixed Digital normalization are upstream; Roll and adjustment-layer controls are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
 
+[Donor matching](../src/dust_repair/matching.rs) uses unmarked input context. Consistent structure can guide translations and gradient weighting, while full-detail colour matching remains active. The selected translation is stored separately from deterministic reconstruction.
+
 Healing and nonlinear grading do not commute, so pre-grade donor matching can differ from matching graded input. Full-resolution repair composition precedes view filtering; saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer and TIFF/AP0 EXR consume those repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) and measurement inputs omit them.
 
 ### Input and grading have separate contracts

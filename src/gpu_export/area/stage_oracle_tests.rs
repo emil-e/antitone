@@ -2,7 +2,7 @@ use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline},
-    dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
+    dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
     geometry::SourcePoint,
     processing::{Calibration, InvertedPixel},
 };
@@ -72,7 +72,7 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
         origin: RepairOrigin::Manual,
         support: SupportMask::new([centre[0] - 8, centre[1] - 8], [16, 16], vec![true; 256])
             .unwrap(),
-        donor: DonorChoice::Offset([64, 0]),
+        offset: [64, 0],
     };
     // Declared canonical neutral values isolate application/stage order from healer accuracy.
     let neutral = DVec3::new(0.25, 0.5, 0.75);

@@ -1,37 +1,40 @@
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-use super::Editor;
 use super::{dust, source};
-#[cfg(test)]
-use std::sync::atomic::AtomicBool;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
 
 #[derive(Clone)]
-pub(super) struct Services {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    submissions: crate::platform::SubmissionGate,
-    screening: Arc<crate::gpu::dust_screening::Cache>,
-}
+pub(super) struct Services;
 
 impl Services {
-    pub fn new(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        submissions: crate::platform::SubmissionGate,
-        screening: Arc<crate::gpu::dust_screening::Cache>,
-    ) -> Self {
-        Self {
-            device,
-            queue,
-            submissions,
-            screening,
-        }
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub async fn search(
+        self,
+        request: dust::SearchRequest,
+    ) -> Result<crate::dust_repair::SearchOutcome, String> {
+        crate::background::run(move || {
+            let stopped = || request.cancelled.is_cancelled();
+            if stopped() {
+                return Ok(crate::dust_repair::SearchOutcome::Cancelled);
+            }
+            let scan = request.context.scan()?;
+            let source = crate::scan::ImageSource::new(&scan, request.input)?;
+            crate::repair_source::search(
+                &source,
+                &request.support,
+                request.previous.as_ref().map(|repair| repair.offset),
+                &mut crate::dust_repair::Execution {
+                    cancelled: &stopped,
+                },
+            )
+        })
+        .await
+        .map_err(|_| "Dust search worker panicked".to_owned())?
+        .map_err(|error: crate::Error| error.to_string())
     }
 
     pub async fn evaluate(
@@ -50,12 +53,9 @@ impl Services {
             if cancelled() {
                 return Ok(None);
             }
-            let result = input.scan().and_then(|scan| {
-                self.screening
-                    .with(&self.device, &self.queue, &self.submissions, |screening| {
-                        dust::evaluate_with(&scan, &request, Some(screening), &cancelled)
-                    })
-            });
+            let result = input
+                .scan()
+                .and_then(|scan| dust::evaluate_with(&scan, &request, &cancelled));
             if cancelled() { Ok(None) } else { result }
         })
         .await

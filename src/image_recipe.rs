@@ -111,7 +111,7 @@ impl ImageRecipe {
                 .repairs
                 .iter()
                 .zip(&other.repairs)
-                .all(|(a, b)| a.support == b.support && a.donor == b.donor)
+                .all(|(a, b)| a.support == b.support && a.offset == b.offset)
     }
 
     pub fn pixel_pipeline(&self) -> Result<crate::pixel_pipeline::PixelPipeline, Error> {

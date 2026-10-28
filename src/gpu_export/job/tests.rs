@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    dust_repair::{DonorChoice, RepairOrigin, SupportMask},
+    dust_repair::{RepairOrigin, SupportMask},
     project::{Development, Project, Source, SourceDevelopment, SourceId},
 };
 use std::cell::Cell;
@@ -87,28 +87,18 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
             )
             .unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Offset([-32, 0]),
+            [-32, 0],
         )
         .unwrap();
-    let bits = (0..a.width * a.height)
-        .map(|i| {
-            let x = i % a.width;
-            let y = i / a.width;
-            x >= 8
-                && y >= 8
-                && x + 8 < a.width
-                && y + 8 < a.height
-                && (x == 8 || y == 8 || x + 9 == a.width || y + 9 == a.height)
-        })
-        .collect();
+    let bits = vec![true; 16 * 16];
     project
         .source_mut(id)
         .unwrap()
         .repairs
         .insert(
-            SupportMask::new([a.x, a.y], [a.width, a.height], bits).unwrap(),
+            SupportMask::new([a.x, a.y], [16, 16], bits).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Automatic,
+            [64, 0],
         )
         .unwrap();
     let recipe = project.image_recipe(id).unwrap();
@@ -120,7 +110,7 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
             &recipe.repairs()[1]
         )
         .is_err(),
-        "an irrelevant repair would actually fail if prepared"
+        "an irrelevant source-edge repair would actually fail if prepared"
     );
     assert_eq!(
         crate::repair_source::resolve_output(
@@ -177,7 +167,6 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
                 job(&recipe),
                 (&path, Overwrite::Confirmed),
                 &mut Execution {
-                    screener: None,
                     cancelled: &cancelled
                 },
                 || Ok(())
@@ -251,7 +240,7 @@ fn cold_frame_edge_repairs_use_the_common_engine_for_tiff_and_exr() {
         .insert(
             SupportMask::new(p, [1, 1], vec![true]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Offset([32, 0]),
+            [32, 0],
         )
         .unwrap();
     let recipe = project.image_recipe(id).unwrap();

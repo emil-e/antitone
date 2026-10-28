@@ -108,6 +108,20 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
     );
     assert_eq!(editor.document.project, cropped, "painting is a draft");
     editor.commit_dust_mask();
+    assert_eq!(
+        editor.document.project, cropped,
+        "search is still a proposal"
+    );
+    let owner = std::cell::RefCell::new(Some(editor));
+    {
+        let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
+        app.enter(|e, cx| e.start_dust_searches(cx));
+        app.run_until(Duration::from_secs(30), |e| {
+            !e.dust_search_pending() && e.document.dust.pending_request().is_none()
+        });
+        app.close_execution();
+    }
+    let mut editor = owner.into_inner().unwrap();
     let repaired = editor.document.project.clone();
     let id = editor.current_source.unwrap();
     assert_eq!(repaired.source(id).unwrap().repairs.repairs().len(), 1);

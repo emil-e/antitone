@@ -3,7 +3,7 @@ use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     color::{Balance, wb_matrix},
-    dust_repair::{DonorChoice, Repair, RepairId, RepairOrigin, SupportMask},
+    dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
     gpu::repairs::{Patch, Snapshot},
     processing::{NegativeInput, Response},
 };
@@ -20,7 +20,7 @@ fn repaired(
         id: RepairId(1),
         enabled: true,
         origin: RepairOrigin::Manual,
-        donor: DonorChoice::Offset([-50, 50]),
+        offset: [-50, 50],
         support,
     };
     let evaluated = Arc::new(
@@ -197,7 +197,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             id: RepairId(1),
             enabled: true,
             origin: RepairOrigin::Manual,
-            donor: DonorChoice::Offset([20, 0]),
+            offset: [20, 0],
             support,
         };
         let evaluated = Arc::new(
@@ -522,7 +522,7 @@ fn repaired_region_updates_compose_independently_restore_removed_support_and_can
             id: RepairId(2),
             enabled: true,
             origin: RepairOrigin::Manual,
-            donor: DonorChoice::Offset([-60, 60]),
+            offset: [-60, 60],
             support: SupportMask::new([134, 45], [3, 3], vec![true; 9]).unwrap(),
         };
         let evaluate = |repair: &Repair| {

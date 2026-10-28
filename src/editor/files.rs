@@ -84,6 +84,10 @@ impl Editor {
         after: Option<Transition>,
         cx: &UiContext<'_, Self>,
     ) {
+        if self.dust_search_pending() {
+            self.status = "Wait for donor selection before saving".into();
+            return;
+        }
         self.sync_document();
         self.after_save = after;
         self.start_save(
@@ -124,6 +128,10 @@ impl Editor {
     }
 
     pub(super) fn file_action(&mut self, action: FileAction, cx: &UiContext<'_, Self>) {
+        if self.dust_search_pending() {
+            self.status = "Wait for donor selection before changing or saving the document".into();
+            return;
+        }
         if self.document.visit.crop_edit.is_some() || self.document.auto_crop_edit.is_some() {
             self.status =
                 "Apply or cancel the crop tool before changing or saving the document".into();

@@ -782,12 +782,11 @@ impl Editor {
             return Ok(self.working.hold(self.id, self.target));
         }
 
-        if self.pending_preview.is_some()
-            || (input.repairs.0.is_empty()
-                && (self.pick.is_some()
-                    || self.document.pick_return.is_some()
-                    || self.document.visit.crop_edit.is_some()
-                    || self.flat_edit.is_some()))
+        if input.repairs.0.is_empty()
+            && (self.pick.is_some()
+                || self.document.pick_return.is_some()
+                || self.document.visit.crop_edit.is_some()
+                || self.flat_edit.is_some())
         {
             self.working.clear();
             return Ok(None);

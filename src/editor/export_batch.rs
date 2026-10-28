@@ -234,6 +234,11 @@ impl Editor {
     }
 
     pub(super) fn batch_input(&mut self, draft: &Draft) -> Result<Request, Error> {
+        if self.dust_search_pending() {
+            return Err(Error::InvalidParameter(
+                "wait for donor selection before exporting",
+            ));
+        }
         self.sync_document();
         self.validate_document_candidate(&self.document)?;
         if !draft.folder.is_absolute() || !draft.folder.is_dir() {

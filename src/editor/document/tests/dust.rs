@@ -1,5 +1,5 @@
 use super::*;
-use crate::dust_repair::{DonorChoice, RepairId, RepairOrigin, SupportMask};
+use crate::dust_repair::{RepairId, RepairOrigin, SupportMask};
 
 #[test]
 fn save_as_with_unavailable_relative_flat_field_reference_adopts_the_written_baseline() {
@@ -78,14 +78,14 @@ fn authored_repairs_are_deleted_with_their_photo_and_reimport_starts_clean() {
         .insert(
             SupportMask::new([90, 30], [3, 3], vec![true; 9]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Automatic,
+            [64, 0],
         )
         .unwrap();
     let deleted = set
         .insert(
             SupportMask::new([30, 90], [2, 2], vec![true; 4]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Offset([50, 0]),
+            [50, 0],
         )
         .unwrap();
     set.remove(deleted).unwrap();
@@ -136,7 +136,7 @@ fn authored_repairs_are_deleted_with_their_photo_and_reimport_starts_clean() {
         .insert(
             SupportMask::new([30, 90], [2, 2], vec![true; 4]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Offset([50, 0]),
+            [50, 0],
         )
         .unwrap();
     assert_eq!(next, RepairId(1));

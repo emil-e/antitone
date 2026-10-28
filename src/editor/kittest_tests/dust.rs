@@ -1,5 +1,5 @@
 use super::*;
-use crate::dust_repair::{DonorChoice, RepairId};
+use crate::dust_repair::RepairId;
 
 mod persistence;
 
@@ -31,8 +31,9 @@ fn brush_ring_at(h: &Harness<'_, Editor>, point: egui::Pos2) -> bool {
 
 fn ready(h: &mut Harness<'_, Editor>, count: usize) {
     wait_for(h, |e| {
-        e.dust_signature()
-            .is_some_and(|s| e.dust_evaluations(s).len() == count)
+        !e.dust_search_pending()
+            && e.dust_signature()
+                .is_some_and(|s| e.dust_evaluations(s).len() == count)
             && e.working.idle()
     });
 }
@@ -191,10 +192,11 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         h.update(|editor| editor.document.dust.brush_size = 2);
         let before = h.read(|editor| pixels(editor, source, RepairId(1)));
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::ALT);
+        ready(&mut h, 1);
         h.read(|editor| assert!(pixels(editor, source, RepairId(1)) < before));
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::SHIFT);
-        h.read(|editor| assert_eq!(pixels(editor, source, RepairId(1)), before));
         ready(&mut h, 1);
+        h.read(|editor| assert_eq!(pixels(editor, source, RepairId(1)), before));
         let regions = h.read(|editor| editor.dust_donor_regions());
         let (target, donor) = (regions[0].target, regions[0].donor);
         let offset = [
@@ -227,8 +229,8 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         );
         h.read(|editor| {
             assert_eq!(
-                editor.dust_repairs(source).unwrap().repairs()[0].donor,
-                DonorChoice::Offset(desired)
+                editor.dust_repairs(source).unwrap().repairs()[0].offset,
+                desired
             )
         });
         ready(&mut h, 1);

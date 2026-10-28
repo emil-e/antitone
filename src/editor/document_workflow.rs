@@ -33,6 +33,10 @@ impl Editor {
         work: Preparation,
         cx: &crate::application::UiContext<'_, Self>,
     ) {
+        if self.dust_search_pending() {
+            self.status = "Wait for donor selection before changing the document".into();
+            return;
+        }
         self.cancel_spatial();
         self.cancel_measurement();
         self.document.history.finish_group();

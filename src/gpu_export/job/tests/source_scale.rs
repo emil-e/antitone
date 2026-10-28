@@ -49,7 +49,7 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
             .insert(
                 SupportMask::new([31, 31], [3, 3], vec![true; 9]).unwrap(),
                 RepairOrigin::Manual,
-                DonorChoice::Offset([-16, 0]),
+                [-16, 0],
             )
             .unwrap();
         assert_eq!(project.roll.exposure, 0.);

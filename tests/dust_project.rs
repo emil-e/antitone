@@ -1,7 +1,7 @@
 #![cfg(feature = "project")]
 
 use antitone::{
-    dust_repair::{DonorChoice, RepairId, RepairOrigin, RepairSet, SupportMask, evaluate},
+    dust_repair::{RepairId, RepairOrigin, RepairSet, SupportMask, evaluate, nearest_offset},
     project::{Development, Project, Save, Source, SourceDevelopment, SourceId},
 };
 use serde_json::json;
@@ -45,14 +45,14 @@ fn with_repairs() -> (Project, SourceId) {
     set.insert(
         SupportMask::new([60, 60], [4, 3], bits).unwrap(),
         RepairOrigin::Manual,
-        DonorChoice::Automatic,
+        [64, 0],
     )
     .unwrap();
     let manual = set
         .insert(
             SupportMask::new([150, 60], [2, 2], vec![true; 4]).unwrap(),
             RepairOrigin::Detected,
-            DonorChoice::Offset([-40, 30]),
+            [-40, 30],
         )
         .unwrap();
     set.set_enabled(manual, false).unwrap();
@@ -86,7 +86,7 @@ fn exact_instructions_survive_single_file_roundtrip_and_deleted_ids_are_not_reus
         .insert(
             SupportMask::new([60, 60], [1, 1], vec![true]).unwrap(),
             RepairOrigin::Manual,
-            DonorChoice::Automatic,
+            [64, 0],
         )
         .unwrap();
     assert_eq!(next, RepairId(3));
@@ -150,14 +150,8 @@ fn malformed_and_unsupported_repairs_reject_without_replacing_an_existing_file()
             "/sources/0/repairs/repairs/1/support/origin",
             json!([60, 60]),
         ),
-        (
-            "/sources/0/repairs/repairs/1/donor",
-            json!({"offset": [0, 0]}),
-        ),
-        (
-            "/sources/0/repairs/repairs/1/donor",
-            json!({"offset": [-1000, 0]}),
-        ),
+        ("/sources/0/repairs/repairs/1/offset", json!([0, 0])),
+        ("/sources/0/repairs/repairs/1/offset", json!([-1000, 0])),
         (
             "/sources/0/repairs/repairs/0/origin",
             json!("future_detector"),
@@ -167,10 +161,7 @@ fn malformed_and_unsupported_repairs_reject_without_replacing_an_existing_file()
             json!({"origin": [20, 20], "size": [300, 300], "runs": [[0, 65537]]}),
         ),
         ("/sources/0/repairs/repairs/0/support/size", json!([0, 3])),
-        (
-            "/sources/0/repairs/repairs/0/donor",
-            json!({"offset": [1, 1], "unknown": 1}),
-        ),
+        ("/sources/0/repairs/repairs/0/offset", json!({"unknown": 1})),
     ];
 
     for (pointer, value) in changes {
@@ -259,7 +250,7 @@ fn exhausted_allocator_is_retained_but_cannot_wrap_or_reuse_an_id() {
             .insert(
                 SupportMask::new([300, 60], [1, 1], vec![true]).unwrap(),
                 RepairOrigin::Manual,
-                DonorChoice::Automatic
+                [64, 0]
             )
             .is_err()
     );
@@ -267,10 +258,11 @@ fn exhausted_allocator_is_retained_but_cannot_wrap_or_reuse_an_id() {
 }
 
 #[test]
-fn automatic_recomputation_reproduces_donors_and_f32_bits_without_serialized_results() {
+fn stored_offset_reproduces_donors_and_f32_bits() {
     let (project, id) = with_repairs();
     let source = project.source(id).unwrap();
     let base = |[x, y]: [u32; 2]| Ok([x as f32 * 0.001 - 0.2, y as f32 * 0.002, 2.]);
+    let offset = source.repairs.repairs()[0].offset;
     let before = evaluate(
         &source.repairs.repairs()[0],
         source.development.active_area.into(),
@@ -282,6 +274,7 @@ fn automatic_recomputation_reproduces_donors_and_f32_bits_without_serialized_res
     let loaded: Project = serde_json::from_slice(&wire).unwrap();
     loaded.validate().unwrap();
     let source = loaded.source(id).unwrap();
+    assert_eq!(source.repairs.repairs()[0].offset, offset);
     let after = evaluate(
         &source.repairs.repairs()[0],
         source.development.active_area.into(),
@@ -315,36 +308,34 @@ fn uneven_36_photo_roll_with_fragmented_masks_saves_beyond_the_former_eight_mib_
             let bits = (0..128 * 128)
                 .map(|i| (i % 128 + i / 128) % 2 == 0)
                 .collect();
+            let support = SupportMask::new(
+                [20 + (index % 3) * 140, 20 + (index / 3) * 140],
+                [128, 128],
+                bits,
+            )
+            .unwrap();
+            let active: antitone::geometry::SourceRegion = source.development.active_area.into();
+            let offset = nearest_offset(&support, active).unwrap();
             source
                 .repairs
-                .insert(
-                    SupportMask::new(
-                        [20 + (index % 3) * 140, 20 + (index / 3) * 140],
-                        [128, 128],
-                        bits,
-                    )
-                    .unwrap(),
-                    RepairOrigin::Manual,
-                    DonorChoice::Automatic,
-                )
+                .insert(support, RepairOrigin::Manual, offset)
                 .unwrap();
         }
     }
 
     let dusty = &mut project.sources[3];
     for index in 0..3000 {
+        let support = SupportMask::new(
+            [20 + (index % 80) * 10, 20 + (index / 80) * 10],
+            [1, 1],
+            vec![true],
+        )
+        .unwrap();
+        let active: antitone::geometry::SourceRegion = dusty.development.active_area.into();
+        let offset = nearest_offset(&support, active).unwrap();
         dusty
             .repairs
-            .insert(
-                SupportMask::new(
-                    [20 + (index % 80) * 10, 20 + (index / 80) * 10],
-                    [1, 1],
-                    vec![true],
-                )
-                .unwrap(),
-                RepairOrigin::Manual,
-                DonorChoice::Automatic,
-            )
+            .insert(support, RepairOrigin::Manual, offset)
             .unwrap();
     }
 

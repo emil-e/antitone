@@ -41,7 +41,7 @@ fn cold_tiff_and_exr_resolve_starting_exposure_without_viewer_or_manual_control_
                         )
                         .unwrap(),
                         crate::dust_repair::RepairOrigin::Manual,
-                        crate::dust_repair::DonorChoice::Offset([31, 31]),
+                        [31, 31],
                     )
                     .unwrap();
             }

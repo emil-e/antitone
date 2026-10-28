@@ -23,13 +23,31 @@ fn healing_normalized_dark_signed_hdr_and_repeating_texture_preserves_scene_cont
             })
             .collect();
         for gain in [1. / 256., 0.25, 1., 4., 256.] {
-            for donor in [DonorChoice::Automatic, DonorChoice::Offset([-32, 0])] {
+            for automatic in [false, true] {
                 let mut source: Vec<_> = clean.iter().map(|p| p.map(|v| v * gain)).collect();
                 for (pixel, hidden) in source.iter_mut().zip(&mask) {
                     if *hidden {
                         *pixel = [-100. * gain, 100. * gain, 0.];
                     }
                 }
+                let support = SupportMask::new([0, 0], size, mask.clone()).unwrap();
+                let donor = if automatic {
+                    let SearchOutcome::Candidate(offset) = search_donor(
+                        &support,
+                        None,
+                        active(size),
+                        &mut |[x, y]| Ok(source[(y * size[0] + x) as usize]),
+                        Instant::now() + Duration::from_secs(3),
+                        SEARCH_ACCEPTABLE_SCORE,
+                        &mut Execution::default(),
+                    )
+                    .unwrap() else {
+                        panic!("normalization fixture has clean donors")
+                    };
+                    offset
+                } else {
+                    [-32, 0]
+                };
                 let (healed, _) = heal_ranked(&source, size, &mask, donor).unwrap();
                 assert!(outside_bits_equal(&healed, &source, &mask));
                 let mut checked = 0;

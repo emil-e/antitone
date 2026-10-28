@@ -503,7 +503,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
                     )
                     .unwrap(),
                     crate::dust_repair::RepairOrigin::Manual,
-                    crate::dust_repair::DonorChoice::Offset([-32, 0]),
+                    [-32, 0],
                 )
                 .unwrap()
         });

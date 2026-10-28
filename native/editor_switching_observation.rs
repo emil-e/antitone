@@ -213,19 +213,12 @@ fn workload(
         device: device.clone(),
         queue: queue.clone(),
     });
-    let screening = Arc::new(crate::gpu::dust_screening::Cache::default());
-    editor.dust_services = Some(dust_workflow::Services::new(
-        device.clone(),
-        queue.clone(),
-        editor.submissions.clone(),
-        screening.clone(),
-    ));
+    editor.dust_services = Some(dust_workflow::Services::new());
     editor.export_services = Some(export_services::Services::new(
         renderers.clone(),
         device.clone(),
         queue.clone(),
         editor.submissions.clone(),
-        screening,
         editor.source_services.clone().unwrap(),
     ));
     let exercise = crate::application::test_support::with_application(editor, |app| {
