@@ -15,6 +15,7 @@ mod crop_scale;
 mod film_emulation;
 mod identity;
 mod inspection;
+mod open_layers;
 mod performance;
 mod publication;
 mod repairs;

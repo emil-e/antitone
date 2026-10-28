@@ -1,11 +1,22 @@
 //! Gaussian image-response stage. Its input is an AP1 raster, not a photographic recipe.
-use super::raster::{self, Raster};
+use super::raster::Raster;
+#[cfg(all(test, feature = "editor"))]
 use crate::Error;
 
 pub(crate) fn shader() -> String {
     [
         include_str!("../shaders/raster.wgsl"),
+        include_str!("../shaders/image_mtf_sample.wgsl"),
         include_str!("../shaders/image_mtf.wgsl"),
+    ]
+    .join("\n")
+}
+
+#[cfg(feature = "render")]
+pub(crate) fn sample_shader() -> String {
+    [
+        include_str!("../shaders/raster.wgsl"),
+        include_str!("../shaders/image_mtf_sample.wgsl"),
     ]
     .join("\n")
 }
@@ -30,10 +41,11 @@ impl Parameters {
     }
 }
 
+#[cfg(all(test, feature = "editor"))]
 pub(crate) struct Kernels {
     pub horizontal: wgpu::ComputePipeline,
-    vertical: wgpu::ComputePipeline,
 }
+#[cfg(all(test, feature = "editor"))]
 impl Kernels {
     pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -53,46 +65,10 @@ impl Kernels {
         };
         let result = Self {
             horizontal: pipeline("horizontal"),
-            vertical: pipeline("vertical"),
         };
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(result)
-    }
-    pub fn encode(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        parameters: &wgpu::Buffer,
-        raster: Raster,
-        pixels: &wgpu::Buffer,
-        scratch: &wgpu::Buffer,
-    ) {
-        for (pipeline, input, output) in [
-            (&self.horizontal, pixels, scratch),
-            (&self.vertical, scratch, pixels),
-        ] {
-            raster::dispatch(
-                device,
-                encoder,
-                pipeline,
-                &[
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: output.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 10,
-                        resource: parameters.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 11,
-                        resource: input.as_entire_binding(),
-                    },
-                ],
-                raster.count(),
-            );
-        }
     }
 }

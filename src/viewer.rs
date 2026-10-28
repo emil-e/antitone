@@ -223,7 +223,7 @@ impl GpuImage {
                 let working = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("processed AP1 preview"),
                     size: u64::from(count) * 16,
-                    usage: wgpu::BufferUsages::STORAGE,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
                 let aces_group = renderer.render_binding(

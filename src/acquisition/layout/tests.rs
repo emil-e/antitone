@@ -7,15 +7,15 @@ use crate::{
 fn stages(sigma: f64, amount: f64, seed: u64) -> PixelPipeline {
     PixelPipeline {
         stages: vec![
-            PixelStage::Gaussian { sigma },
-            PixelStage::Grain {
+            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma }),
+            PixelStage::new(crate::pixel_pipeline::Grain {
                 parameters: GrainParameters {
                     grain_size: 2.,
                     amplitude: amount,
                     colour: 0.5,
                 },
                 seed,
-            },
+            }),
         ],
     }
 }

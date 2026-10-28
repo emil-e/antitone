@@ -131,7 +131,9 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
                     first
                         .clone()
                         .with_pipeline(crate::pixel_pipeline::PixelPipeline {
-                            stages: vec![crate::pixel_pipeline::PixelStage::Gaussian { sigma: 2. }],
+                            stages: vec![crate::pixel_pipeline::PixelStage::new(
+                                crate::image_mtf::ImageMtfParameters { sigma: 2. },
+                            )],
                         })
                         .unwrap(),
                     input.clone(),

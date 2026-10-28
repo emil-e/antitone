@@ -1,6 +1,6 @@
 //! Codec-independent bounded original-sample execution and destination-only readback.
 use super::{OutputBlock, Request, SampleEncoding, WorkBudget};
-use crate::gpu::{GpuPipeline, SourceGeometry, SubmissionGate, rgb16};
+use crate::gpu::{GpuPipeline, SubmissionGate, pull, rgb16};
 use crate::{
     Error,
     frame_raster::FrameRaster,
@@ -31,6 +31,7 @@ use crate::{
     },
     geometry::FramePoint,
 };
+#[cfg(test)]
 use wgpu::util::DeviceExt;
 
 #[cfg(all(test, target_os = "macos"))]
@@ -169,9 +170,87 @@ impl Unit {
     }
 }
 
+/// Original-cell affine reconstruction owns its demand mapping and shader, not the planner.
+struct Area {
+    composition: Composition,
+    stages: crate::pixel_pipeline::PixelPipeline,
+    budget: WorkBudget,
+    unused_texture: wgpu::TextureView,
+}
+impl pull::Operation for Area {
+    fn input(&self, output: SourceRegion) -> Result<Option<SourceRegion>, Error> {
+        let origin = [output.x, output.y];
+        let extent = [output.width, output.height];
+        // Admit the complete original read before allocating coverage or repair payloads.
+        Unit::plan(self.composition, origin, extent, &self.stages, self.budget)?;
+        let plan = Unit::plan(
+            self.composition,
+            origin,
+            extent,
+            &Default::default(),
+            self.budget,
+        )?;
+        let SourceRead::Originals(bounds) = plan.source_read() else {
+            unreachable!()
+        };
+        Ok(Some(bounds))
+    }
+    fn lower(
+        &self,
+        fragment: &mut pull::Fragment,
+        input: Option<pull::Image>,
+        output: pull::Image,
+    ) -> Result<(), Error> {
+        let input = input.unwrap();
+        let plan = Unit::plan(
+            self.composition,
+            [output.region.x, output.region.y],
+            output.size(),
+            &Default::default(),
+            self.budget,
+        )?;
+        let mut unit = Unit::from_plan(&plan, [output.region.x, output.region.y])?;
+        if unit.bounds != input.region {
+            return Err(Error::InvalidParameter(
+                "reconstruction input differs from demand",
+            ));
+        }
+        // The common reconstruction shader reads the buffer for either linear reference.
+        // Its legacy texture binding is deliberately unused in this implementation.
+        unit.mapping.space[0] = 1;
+        let mapping = fragment.uniform(&unit.mapping);
+        let support = fragment.resource(pull::Storage::Data(
+            bytemuck::cast_slice(unit.support.as_deref().unwrap_or(&[u32::MAX])).into(),
+        ));
+        fragment.work.push(pull::Work::Compute {
+            code: include_str!("../../shaders/export_area.wgsl").into(),
+            entry: "main",
+            initialize: None,
+            bindings: vec![
+                (
+                    0,
+                    pull::Binding::Shared(pull::Shared::Texture(self.unused_texture.clone())),
+                ),
+                (1, pull::Binding::Read(input.resource)),
+                (2, pull::Binding::Write(output.resource)),
+                (3, mapping),
+                (4, pull::Binding::Read(support)),
+            ],
+            groups: [
+                output.size()[0].div_ceil(8),
+                output.size()[1].div_ceil(8),
+                1,
+            ],
+        });
+        Ok(())
+    }
+}
+
 pub(super) struct Reconstructor {
-    pipeline: wgpu::ComputePipeline,
-    output: wgpu::Buffer,
+    #[cfg(test)]
+    pipeline: Option<wgpu::ComputePipeline>,
+    #[cfg(test)]
+    output: Option<wgpu::Buffer>,
     readback: wgpu::Buffer,
     rgb16: Option<(OutputTarget, rgb16::Rgb16, wgpu::Buffer)>,
 }
@@ -179,10 +258,12 @@ pub(super) struct Reconstructor {
 impl Reconstructor {
     #[cfg(test)]
     pub fn new(device: &wgpu::Device) -> Result<Self, Error> {
-        Self::new_output(device, None)
+        Self::new_test(device, None)
     }
 
-    fn new_output(device: &wgpu::Device, target: Option<OutputTarget>) -> Result<Self, Error> {
+    #[cfg(test)]
+    fn new_test(device: &wgpu::Device, target: Option<OutputTarget>) -> Result<Self, Error> {
+        let mut reconstruction = Self::new_output(device, target)?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("cell-local export area reconstruction"),
@@ -206,6 +287,16 @@ impl Reconstructor {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
+
+        reconstruction.pipeline = Some(pipeline);
+        reconstruction.output = Some(output);
+        Ok(reconstruction)
+    }
+
+    fn new_output(device: &wgpu::Device, target: Option<OutputTarget>) -> Result<Self, Error> {
+        #[cfg(test)]
+        let (pipeline, output) = (None, None);
+        let bytes = u64::from(TILE[0]) * u64::from(TILE[1]) * 16;
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("destination-only reconstruction readback"),
             size: bytes,
@@ -225,13 +316,16 @@ impl Reconstructor {
             })
             .transpose()?;
         Ok(Self {
+            #[cfg(test)]
             pipeline,
+            #[cfg(test)]
             output,
             readback,
             rgb16,
         })
     }
 
+    #[cfg(test)]
     fn encode(
         &self,
         device: &wgpu::Device,
@@ -255,7 +349,7 @@ impl Reconstructor {
         let view = texture.create_view(&Default::default());
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("original-to-destination export area bindings"),
-            layout: &self.pipeline.get_bind_group_layout(0),
+            layout: &self.pipeline.as_ref().unwrap().get_bind_group_layout(0),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -267,7 +361,7 @@ impl Reconstructor {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: self.output.as_entire_binding(),
+                    resource: self.output.as_ref().unwrap().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -284,7 +378,7 @@ impl Reconstructor {
                 label: Some("export area reconstruction"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(self.pipeline.as_ref().unwrap());
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(
                 unit.mapping.sizes[2].div_ceil(8),
@@ -292,12 +386,26 @@ impl Reconstructor {
                 1,
             );
         }
-        let count = unit.mapping.sizes[2] * unit.mapping.sizes[3];
+        self.encode_pixels(
+            device,
+            encoder,
+            self.output.as_ref().unwrap(),
+            unit.mapping.sizes[2] * unit.mapping.sizes[3],
+        )
+    }
+
+    fn encode_pixels(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        pixels: &wgpu::Buffer,
+        count: u32,
+    ) -> Result<(), Error> {
         let output = if let Some((_, kernel, packed)) = &self.rgb16 {
-            kernel.encode(device, encoder, &self.output, packed, count)?;
+            kernel.encode(device, encoder, pixels, packed, count)?;
             packed
         } else {
-            &self.output
+            pixels
         };
         encoder.copy_buffer_to_buffer(
             output,
@@ -329,6 +437,7 @@ impl Reconstructor {
         }
     }
 
+    #[cfg(test)]
     fn read_output(
         &self,
         device: &wgpu::Device,
@@ -340,12 +449,29 @@ impl Reconstructor {
         Ok(block)
     }
 
+    #[cfg(test)]
     fn read_raw_output(
         &self,
         device: &wgpu::Device,
         submission: wgpu::SubmissionIndex,
         extent: [u32; 2],
     ) -> Result<OutputBlock, Error> {
+        let rx = self.arm(extent);
+        timed!(
+            DeviceWait,
+            device.poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(std::time::Duration::from_secs(10))
+            })
+        )
+        .map_err(|e| Error::Gpu(e.to_string()))?;
+        self.mapped_output(extent, rx)
+    }
+
+    fn arm(
+        &self,
+        extent: [u32; 2],
+    ) -> std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>> {
         let bytes = u64::from(extent[0]) * u64::from(extent[1]) * self.bytes_per_pixel();
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         timed!(
@@ -355,17 +481,19 @@ impl Reconstructor {
                     let _ = tx.send(result);
                 })
         );
-        timed!(DeviceWait, {
-            device
-                .poll(wgpu::PollType::Wait {
-                    submission_index: Some(submission),
-                    timeout: Some(std::time::Duration::from_secs(10)),
-                })
-                .map_err(|e| Error::Gpu(e.to_string()))?;
-            rx.recv_timeout(std::time::Duration::from_secs(2))
-                .map_err(|e| Error::Gpu(e.to_string()))?
-                .map_err(|e| Error::Gpu(e.to_string()))
-        })?;
+
+        rx
+    }
+
+    fn mapped_output(
+        &self,
+        extent: [u32; 2],
+        rx: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    ) -> Result<OutputBlock, Error> {
+        let bytes = u64::from(extent[0]) * u64::from(extent[1]) * self.bytes_per_pixel();
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .map_err(|e| Error::Gpu(e.to_string()))?
+            .map_err(|e| Error::Gpu(e.to_string()))?;
         let result = timed!(
             ReadbackCopy,
             self.readback
@@ -385,8 +513,6 @@ impl Reconstructor {
     }
 }
 
-use super::raster::Image as Originals;
-
 #[cfg(all(test, target_os = "macos"))]
 #[derive(Default)]
 pub(crate) struct Stats {
@@ -395,7 +521,8 @@ pub(crate) struct Stats {
     pub submissions: u64,
     pub readback_bytes: u64,
     pub peak_unit_payload: u64,
-    pub source_allocations: u64,
+    pub scratch_buffer_allocations: u64,
+    pub source_layout_changes: u64,
     pub look_payload_bytes: u64,
     pub retained_repair_payload_bytes: u64,
     pub peak_repair_upload_bytes: u64,
@@ -444,15 +571,13 @@ pub(crate) fn execute(
         source.area(),
     )?);
     let pipeline = &request.stages;
-    if !pipeline.is_empty() {
-        renderer.pixel_kernels(device)?;
-    }
     let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;
     repairs.require_area(request.scan.area)?;
     if !repairs.0.is_empty() {
         grade.validate_repairs(device, repairs.bound())?;
     }
-    let mut processing = crate::gpu::ProcessingInput::from(grade.clone());
+    let mut processing =
+        crate::gpu::ProcessingInput::from(grade.clone()).with_look(request.look.clone());
     processing.repairs = repairs.clone();
     let _look_resource = request
         .look
@@ -465,7 +590,50 @@ pub(crate) fn execute(
         SampleEncoding::Rgb16 => request.output.display_target(),
     };
     let reconstruction = timed!(Setup, Reconstructor::new_output(device, target))?;
-    let mut originals: Option<Originals> = None;
+    let original = pull::original_chain(
+        device,
+        renderer,
+        request.scan,
+        request.field.clone(),
+        &processing,
+        request.output,
+        pipeline,
+    )?;
+    let dummy = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("unused legacy reconstruction binding"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let size = request.composition.size();
+    let root = pull::Layer::new(
+        pull::Domain {
+            bounds: [0, 0, size[0], size[1]].into(),
+            grid: pull::Grid::axis_aligned([0.; 2], [1.; 2]),
+            meaning: original.domain.meaning,
+        },
+        Some(original),
+        Area {
+            composition: request.composition,
+            stages: pipeline.clone(),
+            budget: WorkBudget {
+                source_pixels: request
+                    .budget
+                    .source_pixels
+                    .min(WorkBudget::for_device(device).source_pixels),
+            },
+            unused_texture: dummy.create_view(&Default::default()),
+        },
+    );
+    let mut executor = pull::Executor::with_programs(renderer.pull_programs.clone());
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
         rgb16_payload_bytes: if reconstruction.rgb16.is_some() {
@@ -481,6 +649,8 @@ pub(crate) fn execute(
     };
     #[cfg(not(all(test, target_os = "macos")))]
     let stats = Stats::default();
+    #[cfg(all(test, target_os = "macos"))]
+    let mut previous_source_size = None;
     #[cfg(all(test, target_os = "macos", feature = "export"))]
     let clock = crate::gpu_export::observation_clock::timebase();
     #[cfg(all(test, target_os = "macos", feature = "export"))]
@@ -492,137 +662,129 @@ pub(crate) fn execute(
     sink(
         &mut |origin, extent| {
             check()?;
+            if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
+                return Err(Error::InvalidParameter(
+                    "invalid processing destination unit",
+                ));
+            }
             #[cfg(all(test, target_os = "macos", feature = "export"))]
-            let mut timing = timestamps.borrow_mut();
-            let (mut unit, plan) = timed!(CoveragePlan, {
-                let plan = Unit::plan(
-                    request.composition,
-                    origin,
-                    extent,
-                    pipeline,
-                    WorkBudget {
-                        source_pixels: request
-                            .budget
-                            .source_pixels
-                            .min(WorkBudget::for_device(device).source_pixels),
+            let timing = std::cell::RefCell::new(timestamps.borrow_mut());
+            let plan = timed!(
+                CoveragePlan,
+                pull::Plan::with_policy(
+                    root.clone(),
+                    [origin[0], origin[1], extent[0], extent[1]].into(),
+                    pull::Budget {
+                        tile: TILE,
+                        scratch_bytes: (32 << 20).min(device.limits().max_buffer_size)
                     },
-                )?;
-                Ok::<_, Error>((Unit::from_plan(&plan, origin)?, plan))
-            })?;
-            unit.mapping.space[0] = u32::from(request.output == OutputReference::SceneReferred);
-            let size = [unit.bounds.width, unit.bounds.height];
-            if originals.as_ref().is_none_or(|s| s.size != size) {
-                originals = None;
-                #[cfg(all(test, target_os = "macos"))]
-                {
-                    stats.source_allocations += 1;
-                }
-                originals = Some(timed!(
-                    Setup,
-                    Originals::new(
-                        device,
-                        renderer,
-                        size,
-                        super::raster::CameraProgram::Interpreted(grade.input_program()),
-                        request.output,
-                        request.look.as_ref()
-                    )
-                )?);
-            }
-            let source = originals.as_mut().unwrap();
-            let geometry = SourceGeometry::original_tile(
-                [
-                    unit.bounds.x,
-                    unit.bounds.y,
-                    unit.bounds.width,
-                    unit.bounds.height,
-                ],
-                size,
+                    pull::Policy::Composed
+                )
             )?;
-            source
-                .source
-                .set_flat_field(request.field.clone(), geometry)?;
-            let pixels = timed!(SourcePrepare, source.read(request.scan, plan.source_read()))?;
-            let (encoder, prepared_stages) = timed!(CommandEncode, {
-                let mut encoder = device.create_command_encoder(&Default::default());
-                timed!(SourceUpload, source.source.write_continuous(queue, &pixels))?;
-                let raster_request =
-                    super::raster::Request::new(&source.source, &processing, Some(&plan));
-                #[cfg(all(test, target_os = "macos", feature = "export"))]
-                let mut raster_request = raster_request;
-                #[cfg(all(test, target_os = "macos", feature = "export"))]
-                if let Some(probe) = timing.as_ref() {
-                    raster_request.processing_queries = Some(probe.processing_queries()?);
-                }
-                let prepared_stages =
-                    raster_request.encode(renderer, device, &mut encoder, &source.working)?;
-                if let Some(target) = request.output.display_target() {
-                    source.render(renderer, device, &mut encoder, target)?;
-                }
-                reconstruction.encode(
-                    device,
-                    &mut encoder,
-                    &unit,
-                    &source.texture,
-                    &source.working,
-                )?;
-                Ok::<_, Error>((encoder, prepared_stages))
-            })?;
             #[cfg(all(test, target_os = "macos", feature = "export"))]
-            let mut encoder = encoder;
-            #[cfg(all(test, target_os = "macos", feature = "export"))]
-            if let Some(probe) = timing.as_mut() {
-                probe.resolve(&mut encoder);
-                probe.submitting();
+            {
+                executor.timestamps = timing
+                    .borrow()
+                    .as_ref()
+                    .map(|p| {
+                        p.processing_queries()
+                            .map(|(set, base)| (set.clone(), base))
+                    })
+                    .transpose()?;
             }
-            let submission = timed!(Submit, gate.submit(queue, [encoder.finish()]));
-            if let Some(prepared) = &prepared_stages {
-                prepared.submitted();
-            }
-            #[cfg(all(test, target_os = "macos", feature = "export"))]
-            if let Some(probe) = timing.as_mut() {
-                probe.arm();
-            }
+            let interrupted = std::cell::RefCell::new(None);
+            let receiver = std::cell::RefCell::new(None);
+            let executed = executor.run_sink_with(
+                device,
+                queue,
+                gate,
+                &plan,
+                || match check() {
+                    Ok(()) => false,
+                    Err(error) => {
+                        *interrupted.borrow_mut() = Some(error);
+                        true
+                    }
+                },
+                pull::Sink {
+                    encode: |encoder: &mut wgpu::CommandEncoder,
+                             image: pull::Image,
+                             pixels: &wgpu::Buffer| {
+                        reconstruction.encode_pixels(device, encoder, pixels, image.cells())?;
+                        #[cfg(all(test, target_os = "macos", feature = "export"))]
+                        if let Some(probe) = timing.borrow_mut().as_mut() {
+                            probe.resolve(encoder);
+                            probe.submitting();
+                        }
+                        Ok(())
+                    },
+                    submitted: || {
+                        *receiver.borrow_mut() = Some(reconstruction.arm(extent));
+                        #[cfg(all(test, target_os = "macos", feature = "export"))]
+                        if let Some(probe) = timing.borrow_mut().as_mut() {
+                            probe.arm();
+                        }
+                    },
+                },
+            )?;
+            let Some(_executed) = executed else {
+                return Err(interrupted.into_inner().unwrap_or(Error::Cancelled));
+            };
             let pixels = timed!(
                 TileAccess,
-                reconstruction.read_output(device, submission, extent)
+                reconstruction.mapped_output(
+                    extent,
+                    receiver
+                        .into_inner()
+                        .expect("submitted destination readback")
+                )
             )?;
+            pixels.validate()?;
             #[cfg(all(test, target_os = "macos", feature = "export"))]
-            if let Some(probe) = timing.as_mut() {
+            if let Some(probe) = timing.borrow_mut().as_mut() {
                 probe.complete(device)?;
             }
             check()?;
             #[cfg(all(test, target_os = "macos"))]
             {
-                stats.source_pixels += u64::from(size[0]) * u64::from(size[1]);
+                stats.source_pixels += _executed.source_cells;
                 stats.destination_pixels += u64::from(extent[0]) * u64::from(extent[1]);
-                stats.submissions += 1;
+                stats.submissions += _executed.submissions as u64;
+                stats.scratch_buffer_allocations += _executed.buffer_allocations as u64;
+                for work in plan.tiles.iter().flat_map(|t| &t.fragment.work) {
+                    if let pull::Work::Upload { output, .. } = work {
+                        if previous_source_size != Some(output.size()) {
+                            stats.source_layout_changes += 1;
+                            previous_source_size = Some(output.size());
+                        }
+                        stats.peak_repair_upload_bytes = stats
+                            .peak_repair_upload_bytes
+                            .max(repairs.upload_scratch_bytes(output.region));
+                    }
+                }
                 stats.readback_bytes +=
                     u64::from(extent[0]) * u64::from(extent[1]) * reconstruction.bytes_per_pixel();
-                let repair_upload = repairs.upload_scratch_bytes(unit.bounds);
-                stats.peak_repair_upload_bytes = stats.peak_repair_upload_bytes.max(repair_upload);
-                // Conservative explicit payload upper bound, not sampled process footprint. Count
-                // GPU source/working/texture, host input, repair uploads, optional look scratch, GPU
-                // destination/readback and host reconstruction/target-encoding temporaries. Some
-                // host phases do not overlap; shared constants/LUTs and driver accounting are separate.
+                let repair_upload = plan
+                    .tiles
+                    .iter()
+                    .flat_map(|t| &t.fragment.resources)
+                    .filter_map(|r| {
+                        if let pull::Storage::Data(bytes) = r {
+                            Some(bytes.len() as u64)
+                        } else {
+                            None
+                        }
+                    })
+                    .sum::<u64>();
+                // Explicit bounded payloads; immutable resources and driver overhead are separate.
                 stats.peak_unit_payload = stats.peak_unit_payload.max(
-                    u64::from(size[0])
-                        * u64::from(size[1])
-                        * (16
-                            + 16
-                            + 16
-                            + 16
-                            + if !pipeline.is_empty() { 32 } else { 0 }
-                            + if _look_resource.is_some() { 16 } else { 0 })
+                    _executed.scratch_bytes
+                        + _executed.source_cells * 16
                         + u64::from(TILE[0])
                             * u64::from(TILE[1])
-                            * (32 + if reconstruction.rgb16.is_some() { 8 } else { 0 })
+                            * (16 + if reconstruction.rgb16.is_some() { 8 } else { 0 })
                         + u64::from(extent[0]) * u64::from(extent[1]) * 42
-                        + repair_upload
-                        + unit
-                            .support
-                            .as_ref()
-                            .map_or(4, |bits| bits.len() as u64 * 8),
+                        + repair_upload,
                 );
             }
             Ok(pixels)
@@ -647,14 +809,14 @@ pub(crate) fn execute(
             probe.stats.report();
         }
         println!(
-            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} unit_payload_upper_bound_bytes={} job_look_payload_bytes={} source_allocations={} retained_repair_payload_bytes={} peak_repair_upload_bytes={} job_rgb16_payload_bytes={}",
+            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} unit_payload_upper_bound_bytes={} job_look_payload_bytes={} scratch_buffer_allocations={} retained_repair_payload_bytes={} peak_repair_upload_bytes={} job_rgb16_payload_bytes={}",
             stats.source_pixels,
             stats.destination_pixels,
             stats.submissions,
             stats.readback_bytes,
             stats.peak_unit_payload,
             stats.look_payload_bytes,
-            stats.source_allocations,
+            stats.scratch_buffer_allocations,
             stats.retained_repair_payload_bytes,
             stats.peak_repair_upload_bytes,
             stats.rgb16_payload_bytes

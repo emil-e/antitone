@@ -60,7 +60,9 @@ fn processed_pixels(
     let working = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(values),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
     });
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -289,16 +291,16 @@ fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolu
     .unwrap();
     let pipeline = PixelPipeline {
         stages: vec![
-            PixelStage::Gaussian { sigma: 1.5 },
-            PixelStage::Grain {
+            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 1.5 }),
+            PixelStage::new(crate::pixel_pipeline::Grain {
                 parameters: GrainParameters {
                     grain_size: 2.,
                     amplitude: 0.,
                     colour: 0.5,
                 },
                 seed: (1 << 60) + 17,
-            },
-            PixelStage::Gaussian { sigma: 2.25 },
+            }),
+            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 2.25 }),
         ],
     };
     let (mut unit, plan) = Unit::planned(composition, [0, 0], [8, 6], &pipeline).unwrap();

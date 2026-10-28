@@ -305,6 +305,109 @@ fn scene_rgb16_is_rejected_and_source_work_is_bounded_before_reading_a_unit() {
 }
 
 #[test]
+fn cancellation_after_submission_finishes_private_readback_without_delivering_a_block() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let scan = scan();
+    let gate = SubmissionGate::default();
+    let submits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = submits.clone();
+    gate.observe_encoded_resources(std::sync::Arc::new(move || {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }));
+    let request = request(
+        &scan,
+        OutputReference::SceneReferred,
+        SampleEncoding::LinearFloat,
+    );
+    let size = request.composition.size();
+    let mut delivered = false;
+    let result = execute(
+        &renderer,
+        &device,
+        (&queue, &gate),
+        request,
+        |render, complete| {
+            render([0; 2], size)?;
+            delivered = true;
+            complete()
+        },
+        || {
+            if submits.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+                Err(Error::Cancelled)
+            } else {
+                Ok(())
+            }
+        },
+    );
+    assert!(matches!(result, Err(Error::Cancelled)));
+    assert!(
+        !delivered,
+        "a submitted but superseded block remains private"
+    );
+    assert_eq!(submits.load(std::sync::atomic::Ordering::Relaxed), 1);
+    render(
+        &device,
+        &queue,
+        &renderer,
+        self::request(
+            &scan,
+            OutputReference::SceneReferred,
+            SampleEncoding::LinearFloat,
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn oversized_destination_blocks_are_rejected_without_submission_and_do_not_poison_reuse() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let scan = scan();
+    let gate = SubmissionGate::default();
+    let submits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = submits.clone();
+    gate.observe_encoded_resources(std::sync::Arc::new(move || {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }));
+    let mut request = request(
+        &scan,
+        OutputReference::SceneReferred,
+        SampleEncoding::LinearFloat,
+    );
+    request.composition =
+        Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    assert!(request.composition.size()[0] > TILE[0]);
+    let result = execute(
+        &renderer,
+        &device,
+        (&queue, &gate),
+        request,
+        |render, _| {
+            render([0; 2], [TILE[0] + 1, TILE[1]])?;
+            Ok(())
+        },
+        || Ok(()),
+    );
+    assert!(matches!(
+        result,
+        Err(Error::InvalidParameter(
+            "invalid processing destination unit"
+        ))
+    ));
+    assert_eq!(submits.load(std::sync::atomic::Ordering::Relaxed), 0);
+    render(
+        &device,
+        &queue,
+        &renderer,
+        self::request(
+            &scan,
+            OutputReference::SceneReferred,
+            SampleEncoding::LinearFloat,
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
 fn completion_checks_publication_rights_and_retires_resources_after_cancelled_memory_output() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let scan = scan();

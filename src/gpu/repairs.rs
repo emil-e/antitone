@@ -8,7 +8,7 @@ use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Pixel {
+pub(super) struct Pixel {
     position: [u32; 4],
     value: [f32; 4],
 }
@@ -62,6 +62,22 @@ impl Patch {
                 && point[0] < region.x + region.width
                 && point[1] < region.y + region.height
         })
+    }
+
+    pub(super) fn fragment_pixels(&self, region: SourceRegion) -> Vec<Pixel> {
+        if !intersects(self.region, region) {
+            return Vec::new();
+        }
+        let count = self.pixels_in(region).count();
+        let mut values = Vec::with_capacity(count);
+        let support = self.evaluated.support();
+        let [x, y] = support.origin();
+        let width = support.size()[0];
+        values.extend(self.pixels_in(region).map(|(point, value)| Pixel {
+            position: [point[0], point[1], (point[1] - y) * width + point[0] - x, 0],
+            value: [value[0], value[1], value[2], 0.],
+        }));
+        values
     }
 
     fn buffer_for(

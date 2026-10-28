@@ -106,7 +106,9 @@ fn unit_admission_rejects_support_before_source_sized_preparation() {
     )
     .unwrap();
     let small = PixelPipeline {
-        stages: vec![PixelStage::Gaussian { sigma: 2. }],
+        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+            sigma: 2.,
+        })],
     };
     let budget = WorkBudget { source_pixels: 500 };
     // The clean unit needs 17x17 originals; its eight-cell stage dependency needs 25x25.
@@ -120,7 +122,9 @@ fn unit_admission_rejects_support_before_source_sized_preparation() {
     // This geometry alone is cheap to plan but its source-cell count exceeds u32.
     // Exercise admission without constructing that mask or acquiring those originals.
     let huge = PixelPipeline {
-        stages: vec![PixelStage::Gaussian { sigma: 20000. }],
+        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+            sigma: 20000.,
+        })],
     };
     assert!(matches!(
         Unit::plan(
@@ -144,7 +148,7 @@ fn delivered_memory_blocks_reject_gpu_failures_before_any_codec_and_allow_reuse_
     let composition =
         Composition::new([0, 0, 8, 8].into(), Default::default(), Default::default()).unwrap();
     for (space, target) in [(0, None), (1, None), (0, Some(OutputTarget::Srgb))] {
-        let engine = Reconstructor::new_output(&device, target).unwrap();
+        let engine = Reconstructor::new_test(&device, target).unwrap();
         let mut unit = Unit::new(composition, [0; 2], [1; 2]).unwrap();
         unit.mapping.space[0] = space;
         for (pixel, invalid_working) in [

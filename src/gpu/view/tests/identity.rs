@@ -28,13 +28,17 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
     let small = base
         .clone()
         .with_pipeline(PixelPipeline {
-            stages: vec![PixelStage::Gaussian { sigma: 1. }],
+            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+                sigma: 1.,
+            })],
         })
         .unwrap();
     let large = base
         .clone()
         .with_pipeline(PixelPipeline {
-            stages: vec![PixelStage::Gaussian { sigma: 2. }],
+            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+                sigma: 2.,
+            })],
         })
         .unwrap();
     assert!(small.same_source(&large));

@@ -2,7 +2,6 @@ use crate::export_timing::timed;
 #[cfg(feature = "ocio-reference")]
 use crate::rendering::CpuRenderer;
 use crate::{Error, color::ap1_to_ap0, profiles, rendering::OutputTarget};
-use exr::{meta::attribute::Chromaticities, prelude::*};
 use glam::DVec3;
 use std::{
     fs,
@@ -10,10 +9,9 @@ use std::{
     path::Path,
 };
 use tempfile::NamedTempFile;
-use tiff::{
-    encoder::{Compression, DeflateLevel, Predictor, TiffEncoder, colortype::RGB16},
-    tags::Tag,
-};
+mod stream;
+#[cfg(all(test, target_os = "macos"))]
+mod stream_tests;
 
 #[cfg(all(test, target_os = "macos"))]
 mod publication_tests;
@@ -276,7 +274,7 @@ pub fn tiff_encoded(
 }
 
 // Only the internal GPU producer selects spatial visits. Public callbacks remain row-major;
-// both paths pack the same checked RGB16 frame and keep the same codec/metadata/safety policy.
+// both paths pack bounded RGB16 row bands with the same codec/metadata/safety policy.
 pub(crate) fn tiff_encoded_ordered(
     path: &Path,
     size: ImageSize,
@@ -296,7 +294,7 @@ pub(crate) fn tiff_encoded_checked(
     mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<[u16; 3]>>,
     before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    let count = size.count()?;
+    size.count()?;
     #[cfg(test)]
     let mut before_publish = Some(before_publish);
     #[cfg(test)]
@@ -309,53 +307,15 @@ pub(crate) fn tiff_encoded_checked(
     }
     #[cfg(test)]
     let before_publish = before_publish.expect("uncaptured completion check");
-    if count > (1024 * 1024 * 1024) / 6 {
-        return Err(Error::Export(
-            "TIFF RGB16 buffer exceeds the current 1 GiB export budget".into(),
-        ));
-    }
+    let rows = match order {
+        BlockOrder::RowMajor => BLOCK[1],
+        BlockOrder::Spatial2x2 => BLOCK[1] * 2,
+    };
+    stream::workspace(size, rows, 6, u64::from(size.height.div_ceil(8)) * 8)?;
     atomic_file(
         path,
         overwrite,
-        |file| {
-            let mut buffered = BufWriter::new(file);
-            {
-                let mut encoder = TiffEncoder::new(&mut buffered)
-                    .map_err(failure)?
-                    .with_compression(Compression::Deflate(DeflateLevel::Fast))
-                    .with_predictor(Predictor::Horizontal);
-                let mut image = encoder
-                    .new_image::<RGB16>(size.width, size.height)
-                    .map_err(failure)?;
-                image.rows_per_strip(8).map_err(failure)?;
-                image
-                    .encoder()
-                    .write_tag(Tag::Unknown(34675), Icc(profiles::icc(target)))
-                    .map_err(failure)?;
-                image
-                    .encoder()
-                    .write_tag(Tag::Software, "Antitone 0.1")
-                    .map_err(failure)?;
-                // tiff 0.11.3 activates compression only in write_data, not write_strip.
-                let mut samples = timed!(FrameAllocation, vec![0; count * 3]);
-                for (origin, extent) in ordered_blocks(size, order) {
-                    let encoded = block(origin, extent)?;
-                    if encoded.len() != (extent[0] * extent[1]) as usize {
-                        return Err(Error::InvalidParameter("invalid TIFF block length"));
-                    }
-                    timed!(FormatPack, {
-                        for (i, pixel) in encoded.into_iter().enumerate() {
-                            let x = origin[0] + i as u32 % extent[0];
-                            let y = origin[1] + i as u32 / extent[0];
-                            let index = (y as usize * size.width as usize + x as usize) * 3;
-                            samples[index..index + 3].copy_from_slice(&pixel);
-                        }
-                    });
-                }
-                timed!(FileEncode, image.write_data(&samples).map_err(failure))?;
-            }
-            timed!(FileFlush, buffered.flush().map_err(failure))
-        },
+        |file| stream::tiff(file, size, target, order, &mut block),
         before_publish,
     )
 }
@@ -395,101 +355,19 @@ pub(crate) fn exr_blocks_checked(
     mut block: impl FnMut([u32; 2], [u32; 2]) -> Result<Vec<DVec3>>,
     before_publish: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
-    let count = size.count()?;
-    let bytes_per_pixel = match precision {
-        ExrPrecision::Half => 6,
-        ExrPrecision::Full => 12,
-    };
-    // One planar frame is retained by the high-level EXR writer; no unbounded allocation.
-    if count > (1024 * 1024 * 1024) / bytes_per_pixel {
-        return Err(Error::Export(
-            "EXR sample buffer exceeds the current 1 GiB export budget".into(),
-        ));
-    }
-    let mut samples: [FlatSamples; 3] = timed!(
-        FrameAllocation,
-        std::array::from_fn(|_| match precision {
-            ExrPrecision::Half => FlatSamples::F16(vec![half::f16::ZERO; count]),
-            ExrPrecision::Full => FlatSamples::F32(vec![0.; count]),
-        })
-    );
-    let conversion = ap1_to_ap0();
-    for (origin, extent) in blocks(size) {
-        let values = block(origin, extent)?;
-        if values.len() != (extent[0] * extent[1]) as usize {
-            return Err(Error::InvalidParameter("invalid EXR block length"));
-        }
-        timed!(FormatPack, {
-            for (i, pixel) in values.into_iter().enumerate() {
-                let x = origin[0] + i as u32 % extent[0];
-                let y = origin[1] + i as u32 / extent[0];
-                let index = y as usize * size.width as usize + x as usize;
-                let ap0 = conversion * pixel;
-                for (channel, value) in ap0.to_array().into_iter().enumerate() {
-                    if !value.is_finite() {
-                        return Err(Error::NonFinitePixel { channel });
-                    }
-                    match &mut samples[channel] {
-                        FlatSamples::F16(values) => {
-                            if value.abs() > 65504.0 {
-                                return Err(Error::Export(
-                                    "AP0 output exceeds finite half-float range; choose full-float EXR"
-                                        .into(),
-                                ));
-                            }
-                            values[index] = half::f16::from_f64(value);
-                        }
-                        FlatSamples::F32(values) => {
-                            if value.abs() > f64::from(f32::MAX) {
-                                return Err(Error::NumericalOverflow);
-                            }
-                            values[index] = value as f32;
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-            }
-            Ok::<_, Error>(())
-        })?;
-    }
-    let channels = AnyChannels::sort(
-        ["R", "G", "B"]
-            .into_iter()
-            .zip(samples)
-            .map(|(name, values)| AnyChannel::new(name, values))
-            .collect(),
-    );
-    let attributes = LayerAttributes::named("scene-linear AP0");
-    let layer = Layer::new(
-        (size.width as usize, size.height as usize),
-        attributes,
-        Encoding {
-            compression: exr::compression::Compression::ZIP16,
-            blocks: Blocks::ScanLines,
-            line_order: LineOrder::Increasing,
+    stream::workspace(
+        size,
+        BLOCK[1],
+        match precision {
+            ExrPrecision::Half => 6,
+            ExrPrecision::Full => 12,
         },
-        channels,
-    );
-    let mut image = Image::from_layer(layer);
-    image.attributes.chromaticities = Some(Chromaticities {
-        red: Vec2(0.7347, 0.2653),
-        green: Vec2(0.0, 1.0),
-        blue: Vec2(0.0001, -0.0770),
-        white: Vec2(0.32168, 0.33767),
-    });
+        u64::from(size.height.div_ceil(16)) * 16,
+    )?;
     atomic_file(
         path,
         overwrite,
-        |file| {
-            timed!(
-                FileEncode,
-                image
-                    .write()
-                    .non_parallel()
-                    .to_unbuffered(file)
-                    .map_err(failure)
-            )
-        },
+        |file| stream::exr(file, size, precision, &mut block),
         before_publish,
     )
 }

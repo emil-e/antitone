@@ -16,6 +16,7 @@ log = { version = "=0.4.34", features = ["std", "kv"] }
 glam = { version = "=0.34.1", default-features = false, features = ["std", "f64"] }
 wgpu = { version = "=30.0.1", optional = true, default-features = false, features = ["std", "metal", "dx12", "vulkan", "glsl", "wgsl"] }
 pollster = { version = "=1.0.1", optional = true }
+naga = { version = "=30.0.1", optional = true, default-features = false, features = ["wgsl-in", "glsl-in", "wgsl-out"] }
 bytemuck = { version = "=1.25.2", optional = true, features = ["derive"] }
 
 egui = { version = "=0.36.2", optional = true }
@@ -71,12 +72,12 @@ dng-sdk = ["dep:cc", "dep:blake3", "dep:tempfile"]
 render = ["dep:lcms2"]
 ocio-reference = ["render", "dep:cc"]
 export = ["render", "dep:tiff", "dep:exr", "dep:tempfile", "dep:libc", "dep:half"]
-gpu = ["dep:wgpu", "dep:ash", "dep:pollster", "dep:bytemuck", "dep:objc2-metal", "dep:blake3", "glam/bytemuck"]
+gpu = ["dep:naga", "dep:wgpu", "dep:ash", "dep:pollster", "dep:bytemuck", "dep:objc2-metal", "dep:blake3", "glam/bytemuck"]
 
 [dev-dependencies]
 tempfile = "=3.27.0"
-# Device-free shader validation: the same naga the GPU backends use.
-naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }
+# Device-free shader validation uses the same Naga frontends as rendering.
+naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in", "glsl-in", "wgsl-out"] }
 
 [build-dependencies]
 cc = { version = "=1.2.62", optional = true }

@@ -30,7 +30,7 @@ fn candidate(
     RenderedView::new(device, source, &input, OutputTarget::Srgb, previous).unwrap()
 }
 
-fn field(view: &RenderedView) -> &Arc<crate::gpu::grain::Field> {
+fn field(view: &RenderedView) -> &Arc<crate::gpu::pull::RetainedBuffer> {
     view.graded.as_ref().unwrap().stages.field().unwrap()
 }
 
@@ -113,6 +113,21 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             AdjustmentLayerSettings::default(),
             Some(&base),
         );
+        let cold_zero = candidate(
+            &device,
+            source.clone(),
+            FilmEmulationSettings {
+                amount: 0.,
+                ..settings
+            },
+            AdjustmentLayerSettings::default(),
+            None,
+        );
+        assert!(
+            cold_zero.graded.as_ref().unwrap().stages.field().is_none(),
+            "omitted grain does not allocate a field; warm reuse may retain an existing value"
+        );
+        drop(cold_zero);
         zero.ensure_submitted(
             &device,
             &queue,

@@ -10,7 +10,9 @@ fn plan(frame: FrameRaster, sigma: f64) -> Arc<Plan> {
         Plan::new(Request {
             output: frame,
             stages: &PixelPipeline {
-                stages: vec![PixelStage::Gaussian { sigma }],
+                stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+                    sigma,
+                })],
             },
             sampling: Sampling::NeutralFootprints,
         })

@@ -15,7 +15,7 @@ pub struct Kernel {
 }
 
 pub struct Lut {
-    buffer: wgpu::Buffer,
+    pub(super) buffer: wgpu::Buffer,
     minimum: [f32; 3],
     maximum: [f32; 3],
     size: u32,
@@ -56,6 +56,20 @@ impl Lut {
         }))
     }
 
+    pub(super) fn parameters(&self, count: u32, stride: u32, coverage: bool) -> Parameters {
+        Parameters {
+            minimum: [self.minimum[0], self.minimum[1], self.minimum[2], 0.],
+            maximum: [self.maximum[0], self.maximum[1], self.maximum[2], 0.],
+            reciprocal: std::array::from_fn(|i| {
+                if i < 3 {
+                    1. / (self.maximum[i] - self.minimum[i])
+                } else {
+                    0.
+                }
+            }),
+            dimensions: [count, self.size, stride, u32::from(coverage)],
+        }
+    }
     pub fn id(&self) -> LookId {
         self.id
     }
@@ -67,7 +81,7 @@ impl Lut {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Parameters {
+pub(super) struct Parameters {
     minimum: [f32; 4],
     maximum: [f32; 4],
     reciprocal: [f32; 4],
@@ -298,21 +312,7 @@ impl Kernel {
         if y > device.limits().max_compute_workgroups_per_dimension {
             return Err(Error::Gpu("look dispatch exceeds device limits".into()));
         }
-        let minimum = [look.minimum[0], look.minimum[1], look.minimum[2], 0.];
-        let maximum = [look.maximum[0], look.maximum[1], look.maximum[2], 0.];
-        let reciprocal = std::array::from_fn(|i| {
-            if i < 3 {
-                1. / (look.maximum[i] - look.minimum[i])
-            } else {
-                0.
-            }
-        });
-        let params = Parameters {
-            minimum,
-            maximum,
-            reciprocal,
-            dimensions: [count, look.size, x * 64, u32::from(coverage)],
-        };
+        let params = look.parameters(count, x * 64, coverage);
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("look domain and dispatch"),
             contents: bytemuck::bytes_of(&params),

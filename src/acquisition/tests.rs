@@ -8,16 +8,16 @@ use crate::{
 fn pipeline() -> PixelPipeline {
     PixelPipeline {
         stages: vec![
-            PixelStage::Gaussian { sigma: 2. },
-            PixelStage::Grain {
+            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 2. }),
+            PixelStage::new(crate::pixel_pipeline::Grain {
                 parameters: GrainParameters {
                     grain_size: 2.,
                     amplitude: 0.055,
                     colour: 0.5,
                 },
                 seed: 17,
-            },
-            PixelStage::Gaussian { sigma: 7.5 },
+            }),
+            PixelStage::new(crate::image_mtf::ImageMtfParameters { sigma: 7.5 }),
         ],
     }
 }

@@ -12,12 +12,6 @@ use crate::{
 #[path = "raster_tests.rs"]
 mod tests;
 
-pub(crate) use super::image::Image;
-pub(crate) enum CameraProgram<'a> {
-    Interpreted(&'a crate::gpu::GpuInputProgram),
-    Matrix(glam::DMat3),
-}
-
 /// A resident camera grid is the complete representation supplied by its adapter.
 /// Original tiles instead supply their acquisition plan, including real-source support.
 pub(crate) fn resident_plan(
@@ -118,7 +112,13 @@ impl<'a> Request<'a> {
                         "processing source layout differs from plan",
                     ));
                 }
-                Prepared::new(device, plan.pipeline(), Raster::planned(plan), None)
+                Prepared::with_programs(
+                    device,
+                    plan.pipeline(),
+                    Raster::planned(plan),
+                    None,
+                    renderer.pull_programs.clone(),
+                )
             })
             .transpose()?;
         match self.input.pipeline() {

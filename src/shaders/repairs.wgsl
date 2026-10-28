@@ -43,11 +43,15 @@ fn repaired_positive(value: vec3f, index: u32) -> array<f32, 3> {
 }
 
 @compute @workgroup_size(64)
-fn repair_original(@builtin(global_invocation_id) id: vec3u) {
-    if id.x >= arrayLength(&repair_pixels) {
+fn repair_original(
+    @builtin(global_invocation_id) id: vec3u,
+    @builtin(num_workgroups) groups: vec3u,
+) {
+    let repair_cell = id.x + id.y * groups.x * 64u;
+    if repair_cell >= arrayLength(&repair_pixels) {
         return;
     }
-    let pixel = repair_pixels[id.x];
+    let pixel = repair_pixels[repair_cell];
     let index = repair_index(pixel.position.xy);
     if index == 0xffffffffu {
         return;
@@ -58,11 +62,15 @@ fn repair_original(@builtin(global_invocation_id) id: vec3u) {
 }
 
 @compute @workgroup_size(64)
-fn repair_neutral(@builtin(global_invocation_id) id: vec3u) {
-    if id.x >= arrayLength(&repair_pixels) {
+fn repair_neutral(
+    @builtin(global_invocation_id) id: vec3u,
+    @builtin(num_workgroups) groups: vec3u,
+) {
+    let repair_cell = id.x + id.y * groups.x * 64u;
+    if repair_cell >= arrayLength(&repair_pixels) {
         return;
     }
-    let sample = repair_pixels[id.x];
+    let sample = repair_pixels[repair_cell];
     let at = repair_index(sample.position.xy);
     if at == 0xffffffffu {
         return;

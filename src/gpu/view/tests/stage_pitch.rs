@@ -31,7 +31,9 @@ fn rotated_rasters_preserve_declared_pitch_and_finite_dependencies_through_paddi
     ] {
         let frame = rotated_frame(pitch);
         let stages = crate::pixel_pipeline::PixelPipeline {
-            stages: vec![crate::pixel_pipeline::PixelStage::Gaussian { sigma: 2. }],
+            stages: vec![crate::pixel_pipeline::PixelStage::new(
+                crate::image_mtf::ImageMtfParameters { sigma: 2. },
+            )],
         };
         let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
             output: frame,

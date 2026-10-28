@@ -168,6 +168,10 @@ pub struct GpuRenderer {
     #[cfg(feature = "ui")]
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
+    #[cfg(feature = "render")]
+    pub(crate) pull_programs: Arc<crate::gpu::pull::Programs>,
+    #[cfg(all(feature = "raw", feature = "render"))]
+    original_copy: std::sync::OnceLock<wgpu::RenderPipeline>,
     look_kernel: crate::gpu::look::Kernel,
     #[cfg(any(feature = "ui", all(feature = "raw", feature = "render")))]
     stages: std::sync::OnceLock<Result<Arc<crate::gpu::pixel_pipeline::Kernels>, Error>>,
@@ -218,6 +222,10 @@ impl GpuRenderer {
             #[cfg(feature = "ui")]
             display,
             targets,
+            #[cfg(feature = "render")]
+            pull_programs: Arc::default(),
+            #[cfg(all(feature = "raw", feature = "render"))]
+            original_copy: std::sync::OnceLock::new(),
             look_kernel,
             #[cfg(any(feature = "ui", all(feature = "raw", feature = "render")))]
             stages: std::sync::OnceLock::new(),
@@ -240,6 +248,17 @@ impl GpuRenderer {
                 pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(device)).map(Arc::new)
             })
             .clone()
+    }
+
+    #[cfg(all(feature = "raw", feature = "render"))]
+    pub(crate) fn original_copy(&self, device: &wgpu::Device) -> &wgpu::RenderPipeline {
+        self.original_copy.get_or_init(|| {
+            crate::gpu::raster::render_pipeline(
+                device,
+                "valid linear original output",
+                include_str!("gpu/pull/copy.wgsl"),
+            )
+        })
     }
 
     /// Native worker-only generation. No compiler, Python or OCIO runtime is involved.
@@ -444,13 +463,8 @@ pub(crate) fn display_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
     )
 }
 
-fn target_resources(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    vertex: &wgpu::ShaderModule,
-    target: OutputTarget,
-) -> Result<TargetResources, Error> {
-    let (code, tables) = match target {
+fn target_assets(target: OutputTarget) -> (&'static str, [&'static [u8]; 2]) {
+    match target {
         OutputTarget::Srgb => (
             include_str!("../assets/ocio/srgb-ap1.glsl"),
             [
@@ -465,7 +479,21 @@ fn target_resources(
                 include_bytes!("../assets/ocio/display-p3-ap1-lut-1.f32").as_slice(),
             ],
         ),
-    };
+    }
+}
+
+#[cfg(feature = "render")]
+pub(crate) fn target_function_glsl(target: OutputTarget) -> Result<String, Error> {
+    aces::adapt(target_assets(target).0).map(|(code, _)| code)
+}
+
+fn target_resources(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    vertex: &wgpu::ShaderModule,
+    target: OutputTarget,
+) -> Result<TargetResources, Error> {
+    let (code, tables) = target_assets(target);
     let (generated, hue_values) = aces::adapt(code)?;
     let hues = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("immutable pinned OCIO cusp hue values"),

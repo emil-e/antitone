@@ -1,5 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::gpu::SourceGeometry;
 use crate::processing::Calibration;
 use crate::processing::RollSettings;
 use crate::{

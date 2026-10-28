@@ -5,7 +5,9 @@ fn original_units_cover_demand_once_and_fetch_neighbours_beyond_reconstruction_e
     let source: SourceRegion = [100, 80, 40, 30].into();
     let output: SourceRegion = [108, 88, 24, 16].into();
     let pipeline = PixelPipeline {
-        stages: vec![PixelStage::Gaussian { sigma: 1. }],
+        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+            sigma: 1.,
+        })],
     };
     let units: Vec<_> = OriginalBatch::new(source, output, &pipeline, [10, 7])
         .unwrap()
@@ -46,7 +48,9 @@ fn original_units_cover_demand_once_and_fetch_neighbours_beyond_reconstruction_e
 fn original_batch_captures_stage_values_and_rejects_nonprogressing_or_exterior_demands() {
     let source: SourceRegion = [100, 80, 40, 30].into();
     let mut pipeline = PixelPipeline {
-        stages: vec![PixelStage::Gaussian { sigma: 1. }],
+        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+            sigma: 1.,
+        })],
     };
     let batch = OriginalBatch::new(source, [112, 92, 2, 2].into(), &pipeline, [10, 7]).unwrap();
     pipeline.stages.clear();

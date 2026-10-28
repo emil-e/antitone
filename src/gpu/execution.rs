@@ -12,7 +12,6 @@ pub(crate) use request::{OutputBlock, Request, SampleEncoding, WorkBudget};
 
 #[cfg(feature = "editor")]
 pub(crate) mod footprints;
-mod image;
 pub(crate) mod raster;
 #[cfg(feature = "editor")]
 pub(crate) mod regional;

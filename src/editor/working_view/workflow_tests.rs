@@ -75,7 +75,9 @@ fn positive_spec(
     )
     .unwrap()
     .with_pipeline(crate::pixel_pipeline::PixelPipeline {
-        stages: vec![crate::pixel_pipeline::PixelStage::Gaussian { sigma }],
+        stages: vec![crate::pixel_pipeline::PixelStage::new(
+            crate::image_mtf::ImageMtfParameters { sigma },
+        )],
     })
     .unwrap()
     .with_identity(crate::gpu::execution::source::Identity::camera(
@@ -191,7 +193,9 @@ fn support_growth_during_submission_cancels_obsolete_units_before_publishing_lat
     let latest = positive_spec(e.id, frame, &input, 0.75);
     let count_work = |spec: &ViewSourceSpec, sigma| {
         let stages = PixelPipeline {
-            stages: vec![PixelStage::Gaussian { sigma }],
+            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+                sigma,
+            })],
         };
         let plans = [spec.frame(), spec.underlay().unwrap().frame()]
             .into_iter()

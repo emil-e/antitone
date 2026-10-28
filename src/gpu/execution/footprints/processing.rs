@@ -48,11 +48,12 @@ impl Processed {
                 pixels: float_buffer(device, source.spec.frame().output)?,
                 grade: None,
                 plan: source.spec.plan.as_ref().clone(),
-                stages: crate::gpu::pixel_pipeline::Prepared::new(
+                stages: crate::gpu::pixel_pipeline::Prepared::with_programs(
                     device,
                     &Default::default(),
                     crate::gpu::raster::Raster::frame(source.spec.frame()),
                     None,
+                    source.renderer.pull_programs.clone(),
                 )?,
                 view: ViewUniform {
                     dimensions: [
@@ -93,11 +94,12 @@ impl Processed {
         let cached = previous
             .filter(|p| p.source.spec.same_source(&source.spec))
             .map(|p| &p.stages);
-        let stages = crate::gpu::pixel_pipeline::Prepared::new(
+        let stages = crate::gpu::pixel_pipeline::Prepared::with_programs(
             device,
             plan.pipeline(),
             crate::gpu::raster::Raster::planned(&plan),
             cached,
+            source.renderer.pull_programs.clone(),
         )?;
         Ok(Arc::new(Self {
             pixels: float_buffer(device, source.spec.frame().output)?,

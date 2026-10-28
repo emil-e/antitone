@@ -5,6 +5,8 @@ use std::{num::NonZeroU64, sync::Arc};
 pub(crate) mod execution;
 mod flat;
 pub mod look;
+#[cfg(feature = "render")]
+pub mod pull;
 #[cfg(all(feature = "raw", feature = "render"))]
 pub(crate) mod rgb16;
 #[cfg(all(test, feature = "render"))]
@@ -17,17 +19,9 @@ pub use input_program::{GpuInputProgram, InputSignature};
 mod pipeline;
 pub use pipeline::GpuPipeline;
 
-#[cfg(any(
-    feature = "editor",
-    all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "render")
-))]
+#[cfg(feature = "render")]
 pub(crate) mod grain;
-#[cfg(any(
-    feature = "editor",
-    all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "render")
-))]
+#[cfg(feature = "render")]
 pub(crate) mod image_mtf;
 #[cfg(any(
     feature = "editor",
@@ -35,11 +29,7 @@ pub(crate) mod image_mtf;
     all(feature = "raw", feature = "render")
 ))]
 pub(crate) mod pixel_pipeline;
-#[cfg(any(
-    feature = "editor",
-    all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "render")
-))]
+#[cfg(feature = "render")]
 pub(crate) mod raster;
 
 mod input;

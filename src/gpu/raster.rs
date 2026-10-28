@@ -89,9 +89,6 @@ impl Raster {
     pub fn footprint(self) -> f64 {
         self.pitch().into_iter().fold(0., f32::max) as f64
     }
-    pub fn count(self) -> u32 {
-        self.dimensions[0] * self.dimensions[1]
-    }
 }
 
 pub(crate) fn render_pipeline(

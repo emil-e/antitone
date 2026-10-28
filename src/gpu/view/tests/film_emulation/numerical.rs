@@ -158,10 +158,12 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
         // Small sources integrate many lattice samples; their actual finite gain is exercised.
         let raster = crate::gpu::raster::Raster::native([1000, 1000, 16, 16].into());
         let plan = crate::pixel_pipeline::PixelPipeline {
-            stages: vec![crate::pixel_pipeline::PixelStage::Grain {
-                parameters: parameters.grain(),
-                seed: 17,
-            }],
+            stages: vec![crate::pixel_pipeline::PixelStage::new(
+                crate::pixel_pipeline::Grain {
+                    parameters: parameters.grain(),
+                    seed: 17,
+                },
+            )],
         };
         let prepared =
             crate::gpu::pixel_pipeline::Prepared::new(&device, &plan, raster, None).unwrap();
@@ -170,7 +172,9 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
             let pixels = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::cast_slice(&values),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
             });
             let mut encoder = device.create_command_encoder(&Default::default());
             kernels

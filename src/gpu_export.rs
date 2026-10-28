@@ -23,6 +23,8 @@ mod film_tests;
 mod area;
 #[cfg(feature = "project")]
 pub(crate) mod job;
+#[cfg(all(test, target_os = "macos", feature = "editor"))]
+mod native_resources;
 use crate::gpu::{execution::OutputBlock, rgb16};
 
 #[cfg(all(test, target_os = "macos", feature = "ocio-reference"))]

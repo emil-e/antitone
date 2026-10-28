@@ -1,7 +1,8 @@
 use super::*;
+use exr::prelude::{FlatSamples, read_first_flat_layer_from_file};
 use tiff::{
     decoder::{Decoder, DecodingResult},
-    tags::CompressionMethod,
+    tags::{CompressionMethod, Tag},
 };
 
 #[test]

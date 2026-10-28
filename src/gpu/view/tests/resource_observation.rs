@@ -39,18 +39,18 @@ fn acquisition_execution_resources() {
             );
         }));
         let checkpoint = |name: &str, started: Instant| {
-            let [creations, cells] = crate::gpu::test_support::take_original_image_creations();
+            let [creations, bytes] = crate::gpu::test_support::take_pull_buffer_creations();
             println!(
                 concat!(
                     "execution_resource phase={} seconds={:.9} retained_device={} ",
-                    "encoded_device_peak={} original_image_creations={} original_image_cells={}"
+                    "encoded_device_peak={} pull_buffer_creations={} pull_buffer_bytes={}"
                 ),
                 name,
                 started.elapsed().as_secs_f64(),
                 crate::gpu::allocated_resource_bytes(device).unwrap(),
                 peak.load(Ordering::Relaxed),
                 creations,
-                cells,
+                bytes,
             );
         };
         let start = Instant::now();

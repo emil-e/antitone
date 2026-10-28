@@ -101,7 +101,7 @@ impl ProcessingRaster {
 }
 
 /// Required regions on the stage's own grid, in forward execution order.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StageRegion {
     pub stage: PixelStage,
     pub support: RasterSupport,
@@ -164,7 +164,7 @@ impl Plan {
         }
         let mut stages = Vec::with_capacity(pipeline.stages.len());
         let mut margin = Support::NONE;
-        for &stage in pipeline.stages.iter().rev() {
+        for stage in pipeline.stages.iter().rev().cloned() {
             let support = RasterSupport(stage.support(pitch).0);
             let input = if matches!(sampling, Sampling::CameraCells { .. }) {
                 // The entire real-source cell grid is present; kernels extend its edge cells.

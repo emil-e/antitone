@@ -38,12 +38,7 @@ impl GrainParameters {
         crate::processing_support::Support::NONE
     }
 }
-#[cfg(any(
-    test,
-    feature = "editor",
-    all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "gpu", feature = "export")
-))]
+#[cfg(any(test, all(feature = "gpu", feature = "render")))]
 impl GrainParameters {
     pub(crate) fn reference_power(self) -> f64 {
         GRAIN_BASIS

@@ -1,18 +1,14 @@
-//! Original-first regional processing and bounded affine reconstruction.
-use super::{
-    WorkBudget,
-    raster::{CameraProgram, Image, Request as RasterRequest},
-};
+//! Original-source layers with bounded lazy processing and affine reconstruction.
 use crate::{
     Error,
-    acquisition::{OriginalBatch, SourceRead},
-    gpu::{GpuFlatField, ProcessingInput, SourceGeometry, SubmissionGate},
+    gpu::{GpuFlatField, ProcessingInput, SubmissionGate, pull},
     renderer::GpuRenderer,
     rendering::{OutputReference, OutputTarget},
     resample::AreaAverage,
     scan::Scan,
 };
 use std::sync::Arc;
+use wgpu::util::DeviceExt;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "regional_tests.rs"]
 mod tests;
@@ -23,7 +19,6 @@ pub struct Demand {
     pub output: [u32; 2],
     pub frame: Option<crate::frame_raster::FrameRaster>,
 }
-
 pub(crate) struct Request<'a> {
     pub scan: &'a Scan,
     pub field: Option<Arc<GpuFlatField>>,
@@ -31,7 +26,6 @@ pub(crate) struct Request<'a> {
     pub target: OutputTarget,
     pub demand: Demand,
 }
-
 impl Request<'_> {
     pub fn validate(&self) -> Result<(), Error> {
         self.scan.validate_area(self.demand.area)?;
@@ -50,7 +44,6 @@ impl Request<'_> {
         Ok(())
     }
 }
-
 pub(crate) struct Completed {
     pub look_check: Option<Arc<crate::gpu::look::Check>>,
 }
@@ -66,7 +59,6 @@ pub(crate) fn execute(
     if cancelled() {
         return Ok(None);
     }
-    let start = std::time::Instant::now();
     request.validate()?;
     let Request {
         scan,
@@ -80,9 +72,26 @@ pub(crate) fn execute(
             "regional output differs from demand",
         ));
     }
-    let pipeline = input.pixel_pipeline()?;
+    let started = std::time::Instant::now();
+    let root = pull::original_chain(
+        device,
+        renderer,
+        scan,
+        field,
+        input,
+        OutputReference::DisplayReferred(target),
+        &input.pixel_pipeline()?,
+    )?;
     let tile_size = [512, 128];
-    let batch = OriginalBatch::new(scan.area, demand.area, &pipeline, tile_size)?;
+    let job = pull::Job::new(
+        root,
+        demand.area,
+        pull::Budget {
+            tile: tile_size,
+            scratch_bytes: (32 << 20).min(device.limits().max_buffer_size),
+        },
+    )?
+    .with_policy(pull::Policy::Composed);
     let average = if let Some(frame) = demand.frame {
         AreaAverage::new_affine_shared(device, renderer.average.clone(), frame)?
     } else {
@@ -93,116 +102,57 @@ pub(crate) fn execute(
             demand.output,
         )?
     };
-    let mut extracted = None;
-    let mut image: Option<Image> = None;
-    let mut sampling = std::time::Duration::ZERO;
-    let mut gpu = std::time::Duration::ZERO;
-    for unit in batch.units() {
+    let tile = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("valid original output for affine reconstruction"),
+        size: wgpu::Extent3d {
+            width: tile_size[0],
+            height: tile_size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let copy = renderer.original_copy(device);
+    let mut executor = pull::Executor::with_programs(renderer.pull_programs.clone());
+    for plan in job.plans() {
         if cancelled() {
             return Ok(None);
         }
-        let tick = std::time::Instant::now();
-        let unit = unit?;
-        let SourceRead::Originals(read) = unit.plan.source_read() else {
-            unreachable!()
+        let plan = plan?;
+        let region = plan.region;
+        let origin = [region.x - demand.area.x, region.y - demand.area.y];
+        let windows = average.windows(&tile, origin);
+        let mut windows = windows.into_iter();
+        let Some(first) = windows.next() else {
+            continue;
         };
-        let size = [read.width, read.height];
-        WorkBudget::for_device(device).require_source(size)?;
-        Image::require(device, size, OutputReference::DisplayReferred(target))?;
-        let pixels = Image::read_originals(scan, unit.plan.source_read())?;
-        if image.as_ref().is_none_or(|image| image.size != size) {
-            drop(image.take());
-            let program = match input.pipeline() {
-                Some(pipeline) => CameraProgram::Interpreted(pipeline.input_program()),
-                None => CameraProgram::Matrix(scan.camera_to_ap1),
-            };
-            image = Some(Image::from_pixels(
-                device,
-                renderer,
-                size,
-                program,
-                OutputReference::DisplayReferred(target),
-                input.look(),
-                &pixels,
-            )?);
-        } else {
-            image
-                .as_ref()
-                .unwrap()
-                .source
-                .write_continuous(queue, &pixels)?;
-        }
-        let image = image.as_mut().unwrap();
-        image.source.set_flat_field(
-            field.clone(),
-            SourceGeometry::original_tile([read.x, read.y, read.width, read.height], size)?,
+        let completed = executor.run_sink(
+            device,
+            queue,
+            gate,
+            &plan,
+            &cancelled,
+            |encoder, image, pixels| {
+                copy_to_texture(device, encoder, copy, pixels, image.size(), &tile);
+                average.accumulate_window(device, encoder, &tile, origin, first);
+                Ok(())
+            },
         )?;
-        sampling += tick.elapsed();
-        let tick = std::time::Instant::now();
-        let origin = [unit.output.x - demand.area.x, unit.output.y - demand.area.y];
-        let extraction = unit.offset != [0; 2] || size != [unit.output.width, unit.output.height];
-        let tile = if extraction {
-            extracted.get_or_insert_with(|| {
-                device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("valid original cells for reconstruction"),
-                    size: wgpu::Extent3d {
-                        width: tile_size[0],
-                        height: tile_size[1],
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba32Float,
-                    usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                })
-            })
-        } else {
-            &image.texture
-        };
-        for (index, window) in average.windows(tile, origin).into_iter().enumerate() {
+        if completed.is_none() {
+            return Ok(None);
+        }
+        for window in windows {
             if cancelled() {
                 return Ok(None);
             }
             let mut encoder = device.create_command_encoder(&Default::default());
-            let prepared =
-                if index == 0 {
-                    let prepared = RasterRequest::new(&image.source, input, Some(&unit.plan))
-                        .encode(renderer, device, &mut encoder, &image.working)?;
-                    image.render(renderer, device, &mut encoder, target)?;
-                    if extraction {
-                        encoder.copy_texture_to_texture(
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &image.texture,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d {
-                                    x: unit.offset[0],
-                                    y: unit.offset[1],
-                                    z: 0,
-                                },
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            tile.as_image_copy(),
-                            wgpu::Extent3d {
-                                width: unit.output.width,
-                                height: unit.output.height,
-                                depth_or_array_layers: 1,
-                            },
-                        );
-                    }
-                    prepared
-                } else {
-                    None
-                };
-            average.accumulate_window(device, &mut encoder, tile, origin, window);
-            let submission = gate.submit(queue, [encoder.finish()]);
-            if let Some(prepared) = &prepared {
-                prepared.submitted();
-            }
-            wait_for(device, submission)?;
+            average.accumulate_window(device, &mut encoder, &tile, origin, window);
+            wait_for(device, gate.submit(queue, [encoder.finish()]))?;
         }
-        gpu += tick.elapsed();
     }
     if cancelled() {
         return Ok(None);
@@ -226,14 +176,58 @@ pub(crate) fn execute(
         return Ok(None);
     }
     log::debug!(
-        source_width = demand.area.width, source_height = demand.area.height,
-        output_width = demand.output[0], output_height = demand.output[1], target:?,
-        seconds = start.elapsed().as_secs_f64(), sampling_seconds = sampling.as_secs_f64(), gpu_seconds = gpu.as_secs_f64();
-        "settled_preview"
+        source_width=demand.area.width,source_height=demand.area.height,
+        output_width=demand.output[0],output_height=demand.output[1],target:?,
+        seconds=started.elapsed().as_secs_f64();"settled_preview"
     );
     Ok(Some(Completed { look_check }))
 }
-
+fn copy_to_texture(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    pipeline: &wgpu::RenderPipeline,
+    pixels: &wgpu::Buffer,
+    size: [u32; 2],
+    texture: &wgpu::Texture,
+) {
+    let dimensions = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("valid original copy dimensions"),
+        contents: bytemuck::cast_slice(&[size[0], size[1], 0, 0]),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("valid original output copy"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: pixels.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: dimensions.as_entire_binding(),
+            },
+        ],
+    });
+    let view = texture.create_view(&Default::default());
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("linear output delivery to reconstruction"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        ..Default::default()
+    });
+    pass.set_viewport(0., 0., size[0] as f32, size[1] as f32, 0., 1.);
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, &group, &[]);
+    pass.draw(0..3, 0..1);
+}
 fn wait_for(device: &wgpu::Device, submission: wgpu::SubmissionIndex) -> Result<(), Error> {
     device
         .poll(wgpu::PollType::Wait {
