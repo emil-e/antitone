@@ -99,7 +99,7 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
                         .as_ref()
                         .unwrap()
                         .spec
-                        .frame,
+                        .frame(),
                     editor.document.visit.working_view.current_frame().unwrap()
                 )
             });

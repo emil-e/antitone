@@ -47,7 +47,7 @@ fn edge_masks_share_exact_whole_frame_relevance_with_repair_preparation() {
 
 #[test]
 fn native_roundoff_cannot_admit_invalid_cells_outside_exact_frame_in_either_linear_space() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let engine = Reconstructor::new(&device).unwrap();
     let pixel = |p| {
         if p == [1, 1] {

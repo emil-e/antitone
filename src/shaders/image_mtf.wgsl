@@ -1,6 +1,7 @@
 struct ImageMtf {
     raster: Raster,
-    sigma: vec4f,
+    raster_sigma: vec4f,
+    radii: vec4u,
 }
 @group(0) @binding(1)
 var<storage, read_write> positives: array<vec4f>;
@@ -9,10 +10,9 @@ var<storage, read> working_source: array<vec4f>;
 @group(0) @binding(10)
 var<uniform> parameters: ImageMtf;
 
-fn source_mtf(index: u32, axis: vec2i, sigma: f32) -> vec4f {
+fn source_mtf(index: u32, axis: vec2i, sigma: f32, radius: i32) -> vec4f {
     let dimensions = vec2i(parameters.raster.dimensions.xy);
     let xy = vec2i(i32(index) % dimensions.x, i32(index) / dimensions.x);
-    let radius = i32(ceil(4.0 * sigma));
     var mean = vec3f(0.0);
     var weight_sum = 0.0;
     for(var i = -radius; i <= radius; i++) {
@@ -43,8 +43,12 @@ fn horizontal(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups)
     if index >= arrayLength(&working_source) {
         return;
     }
-    let sigma = parameters.sigma.x / max(length(parameters.raster.axis_x.xy), 1e-6);
-    positives[index] = source_mtf(index, vec2i(1, 0), sigma);
+    positives[index] = source_mtf(
+            index,
+            vec2i(1, 0),
+            parameters.raster_sigma.x,
+            i32(parameters.radii.x),
+        );
 }
 
 @compute @workgroup_size(64)
@@ -53,6 +57,10 @@ fn vertical(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) g
     if index >= arrayLength(&working_source) {
         return;
     }
-    let sigma = parameters.sigma.x / max(length(parameters.raster.axis_y.xy), 1e-6);
-    positives[index] = source_mtf(index, vec2i(0, 1), sigma);
+    positives[index] = source_mtf(
+            index,
+            vec2i(0, 1),
+            parameters.raster_sigma.y,
+            i32(parameters.radii.y),
+        );
 }

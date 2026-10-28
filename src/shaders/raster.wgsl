@@ -5,6 +5,10 @@ struct Raster {
     axis_y: vec4f,
 }
 
+fn raster_pitch(raster: Raster) -> vec2f {
+    return vec2f(raster.axis_x.z, raster.axis_y.z);
+}
+
 fn raster_point(raster: Raster, index: u32) -> vec2f {
     let xy = vec2f(f32(index % raster.dimensions.x), f32(index / raster.dimensions.x));
     return raster.origin.xy + xy.x * raster.axis_x.xy + xy.y * raster.axis_y.xy;

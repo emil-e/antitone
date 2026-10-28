@@ -163,13 +163,13 @@ pub(crate) struct TargetResources {
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
     pub(crate) submissions: crate::gpu::SubmissionGate,
-    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+    #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
     pub(crate) repairs: crate::gpu::repairs::Kernels,
     #[cfg(feature = "ui")]
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
     look_kernel: crate::gpu::look::Kernel,
-    #[cfg(any(feature = "ui", all(feature = "raw", feature = "export")))]
+    #[cfg(any(feature = "ui", all(feature = "raw", feature = "render")))]
     stages: std::sync::OnceLock<Result<Arc<crate::gpu::pixel_pipeline::Kernels>, Error>>,
     #[cfg(test)]
     look_uploads: std::sync::atomic::AtomicU64,
@@ -193,7 +193,7 @@ impl GpuRenderer {
         let kernel = ProcessingKernel::new(device).await?;
         #[cfg(feature = "ui")]
         let average = Arc::new(AveragePipelines::new(device).await?);
-        #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+        #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
         let repairs = crate::gpu::repairs::Kernels::new(device, &kernel).await?;
         let look_kernel = crate::gpu::look::Kernel::new(device).await?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -213,13 +213,13 @@ impl GpuRenderer {
         Ok(Arc::new(Self {
             kernel,
             submissions,
-            #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+            #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
             repairs,
             #[cfg(feature = "ui")]
             display,
             targets,
             look_kernel,
-            #[cfg(any(feature = "ui", all(feature = "raw", feature = "export")))]
+            #[cfg(any(feature = "ui", all(feature = "raw", feature = "render")))]
             stages: std::sync::OnceLock::new(),
             #[cfg(test)]
             look_uploads: std::sync::atomic::AtomicU64::new(0),
@@ -230,7 +230,7 @@ impl GpuRenderer {
             average,
         }))
     }
-    #[cfg(any(feature = "ui", all(feature = "raw", feature = "export")))]
+    #[cfg(any(feature = "ui", all(feature = "raw", feature = "render")))]
     pub(crate) fn pixel_kernels(
         &self,
         device: &wgpu::Device,

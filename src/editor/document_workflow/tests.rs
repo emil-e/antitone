@@ -382,6 +382,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             .proxy
             .view_source(
                 queue,
+                &crate::gpu::SubmissionGate::default(),
                 pollster::block_on(ViewKernels::new(device)).unwrap(),
                 spec,
             )

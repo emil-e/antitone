@@ -36,7 +36,11 @@ fn fixture() -> (
         [64, 48],
     )
     .unwrap();
-    let spec = ViewSourceSpec::inspection(e.id, frame, scan.camera_to_ap1, None).unwrap();
+    let spec = ViewSourceSpec::inspection(e.id, frame, scan.camera_to_ap1, None)
+        .unwrap()
+        .with_identity(crate::gpu::execution::source::Identity::camera(
+            scan.source().identity(),
+        ));
     let input = source::Context {
         reference: None,
         source: scan.source().clone(),
@@ -52,6 +56,253 @@ fn fixture() -> (
     e.document.visit.working_view = WorkingView::new(device, queue.clone());
     e.source_epoch.store(e.id, Ordering::Relaxed);
     (e, input, spec, scheduler)
+}
+
+fn positive_spec(
+    authority: u64,
+    frame: FrameRaster,
+    input: &source::Context,
+    sigma: f64,
+) -> ViewSourceSpec {
+    let scan = input.scan().unwrap();
+    ViewSourceSpec::new(
+        authority,
+        frame,
+        crate::processing::InputSettings::Digital,
+        scan.positive_matrix(&crate::processing::InputSettings::Digital)
+            .unwrap(),
+        None,
+    )
+    .unwrap()
+    .with_pipeline(crate::pixel_pipeline::PixelPipeline {
+        stages: vec![crate::pixel_pipeline::PixelStage::Gaussian { sigma }],
+    })
+    .unwrap()
+    .with_identity(crate::gpu::execution::source::Identity::camera(
+        input.source.identity(),
+    ))
+}
+
+#[test]
+fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquired_neighbours() {
+    let (e, input, inspection, scheduler) = fixture();
+    let mut frame = inspection.frame();
+    frame.output = std::array::from_fn(|i| (frame.max.0[i] - frame.min.0[i]).ceil() as u32);
+    let small = positive_spec(e.id, frame, &input, 0.25);
+    let queued = positive_spec(e.id, frame, &input, 0.5);
+    let latest = positive_spec(e.id, frame, &input, 0.75);
+    assert!(
+        !small.compatible_processing(&latest),
+        "fixture must actually increase required raster support"
+    );
+    assert!(
+        small.same_source(&latest),
+        "support is not upstream content identity"
+    );
+    with_application(e, |app| {
+        app.enter(|e, access| e.request_working(small.clone(), input.clone(), access));
+        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
+        let old = app.read(|e| e.working.source.as_ref().unwrap().clone());
+        let hold = app.read(|e| crate::editor::tests::hold_blocking_work(&e.workflow_jobs));
+        app.enter(|e, access| e.request_working(queued.clone(), input.clone(), access));
+        app.pump();
+        app.enter(|e, access| e.request_working(latest.clone(), input.clone(), access));
+        app.pump();
+        app.update(|e| {
+            assert!(!e.working.support_ready());
+            assert!(
+                e.working.underlay.is_none(),
+                "old underlay lacks the new neighbourhood"
+            );
+            assert!(e.document.visit.working.task.is_some());
+            e.working.acquired(Completion {
+                spec: queued.clone(),
+                result: Ok(old.clone()),
+            });
+            assert!(
+                e.working.error.is_none(),
+                "obsolete completion cannot fail current demand"
+            );
+            // Publication must validate actual coverage as well as the completion ticket.
+            e.working.acquired(Completion {
+                spec: latest.clone(),
+                result: Ok(old.clone()),
+            });
+            assert!(!e.working.support_ready());
+            assert!(e.working.error.is_some());
+            assert!(Arc::ptr_eq(&old, e.working.source.as_ref().unwrap()));
+        });
+        drop(hold);
+        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
+        let acquired = app.read(|e| {
+            assert!(e.working.error.is_none());
+            assert!(e.working.source.as_ref().unwrap().spec.satisfies(&latest));
+            assert!(
+                e.working
+                    .underlay
+                    .as_ref()
+                    .unwrap()
+                    .spec
+                    .compatible_processing(&latest)
+            );
+            e.working.source.as_ref().unwrap().clone()
+        });
+        app.enter(|e, access| e.request_working(small.clone(), input, access));
+        app.pump();
+        app.read(|e| {
+            assert!(e.working.support_ready());
+            assert!(
+                e.document.visit.working.task.is_none(),
+                "smaller support does not reacquire an already sufficient input"
+            );
+            assert!(Arc::ptr_eq(&acquired, e.working.source.as_ref().unwrap()));
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn support_growth_during_submission_cancels_obsolete_units_before_publishing_latest_support() {
+    use crate::{
+        acquisition::{FootprintBatch, Plan, Request, Sampling},
+        pixel_pipeline::{PixelPipeline, PixelStage},
+    };
+    let (e, _, _, scheduler) = fixture();
+    let fixture = crate::dng_fixture::Fixture {
+        side: 768,
+        ramp: true,
+        ..Default::default()
+    }
+    .write();
+    let scan = Scan::open(fixture.path(), None).unwrap();
+    let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
+    let frame = FrameRaster::new(
+        composition,
+        FramePoint([200., 220.]),
+        FramePoint([328., 316.]),
+        [64, 48],
+    )
+    .unwrap();
+    let input = source::Context {
+        source: scan.source().clone(),
+        correction: None,
+    };
+    let small = positive_spec(e.id, frame, &input, 0.25);
+    let latest = positive_spec(e.id, frame, &input, 0.75);
+    let count_work = |spec: &ViewSourceSpec, sigma| {
+        let stages = PixelPipeline {
+            stages: vec![PixelStage::Gaussian { sigma }],
+        };
+        let plans = [spec.frame(), spec.underlay().unwrap().frame()]
+            .into_iter()
+            .map(|output| {
+                Arc::new(
+                    Plan::new(Request {
+                        output,
+                        stages: &stages,
+                        sampling: Sampling::NeutralFootprints,
+                    })
+                    .unwrap(),
+                )
+            })
+            .collect();
+        FootprintBatch::new(plans, Default::default())
+            .unwrap()
+            .units()
+            .map(|unit| unit.unwrap().submissions.len())
+            .sum::<usize>()
+    };
+    assert!(
+        count_work(&small, 0.25) > 1,
+        "fixture must leave obsolete work after the parked submission"
+    );
+    let expected = 1 + count_work(&latest, 0.75);
+    let (started, starts) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let resume = Mutex::new(resume);
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = count.clone();
+    e.submissions.observe_submissions(Arc::new(move || {
+        if observed.fetch_add(1, Ordering::Relaxed) == 0 {
+            started.send(()).unwrap();
+            resume
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap();
+        }
+    }));
+    with_application(e, |app| {
+        app.enter(|e, access| e.request_working(small.clone(), input.clone(), access));
+        app.pump();
+        starts.recv_timeout(Duration::from_secs(10)).unwrap();
+        app.enter(|e, access| e.request_working(latest.clone(), input, access));
+        app.pump();
+        app.read(|e| {
+            assert!(!e.working.support_ready());
+            let state = e.working.mailbox.0.lock().unwrap();
+            assert!(
+                state.neutral_detail.is_none()
+                    && state.neutral_underlay.is_none()
+                    && state.underlay.is_none(),
+                "partially acquired buffers must remain private"
+            );
+            assert!(
+                !e.workflow_jobs.idle(),
+                "the parked submission retains physical admission"
+            );
+        });
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
+        app.read(|e| {
+            assert!(e.working.source.as_ref().unwrap().spec.satisfies(&latest));
+            assert!(
+                e.working
+                    .underlay
+                    .as_ref()
+                    .unwrap()
+                    .spec
+                    .compatible_processing(&latest)
+            );
+            assert!(e.workflow_jobs.idle());
+        });
+    });
+    // The planner's geometry is protected by independent coverage oracles; this separately
+    // checks that execution follows its declared work without completing superseded units.
+    assert_eq!(count.load(Ordering::Relaxed), expected);
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn current_ticket_reuses_captured_support_and_rejects_the_previous_ticket_completion() {
+    let (e, input, spec, scheduler) = fixture();
+    with_application(e, |app| {
+        app.enter(|e, cx| e.request_working(spec.clone(), input.clone(), cx));
+        app.run_until(Duration::from_secs(15), |e| e.working.support_ready());
+        let mut current = spec.clone();
+        current.authority += 1;
+        app.update(|e| {
+            e.working.request(current.clone(), input);
+            assert!(e.working.support_ready());
+            assert!(
+                e.working.acquisition(current.authority).is_none(),
+                "new rights do not reacquire equal content"
+            );
+            assert_eq!(
+                e.working.source.as_ref().unwrap().spec.authority,
+                current.authority
+            );
+            e.working.acquired(Completion {
+                spec,
+                result: Err("departed owner".into()),
+            });
+            assert!(
+                e.working.error.is_none(),
+                "equal content cannot restore a departed continuation's rights"
+            );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
 }
 
 #[test]
@@ -83,8 +334,10 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
         for _ in 0..40 {
-            spec.frame.min.0[0] += 1.;
-            spec.frame.max.0[0] += 1.;
+            let mut moved_frame = spec.frame();
+            moved_frame.min.0[0] += 1.;
+            moved_frame.max.0[0] += 1.;
+            spec = spec.with_frame(moved_frame).unwrap();
             app.enter(|e, access| {
                 e.request_working(spec.clone(), input.clone(), access);
             });
@@ -178,8 +431,10 @@ fn retiring_running_support_keeps_its_native_lease_through_submission() {
         });
         app.pump();
         starts.recv_timeout(Duration::from_secs(10)).unwrap();
-        spec.frame.min.0[0] += 1.;
-        spec.frame.max.0[0] += 1.;
+        let mut moved_frame = spec.frame();
+        moved_frame.min.0[0] += 1.;
+        moved_frame.max.0[0] += 1.;
+        spec = spec.with_frame(moved_frame).unwrap();
         app.enter(|e, access| {
             e.replace_photo_scope(8);
             e.request_working(spec.clone(), next, access);

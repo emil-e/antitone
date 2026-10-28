@@ -11,6 +11,7 @@ pub struct SubmissionGate(
     Arc<Mutex<()>>,
     #[cfg(any(feature = "ui", test))] Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(test)] Arc<Mutex<Option<SubmissionObserver>>>,
+    #[cfg(test)] Arc<Mutex<Option<SubmissionObserver>>>,
 );
 
 /// Keeps the host polling through asynchronous readback, including after queue completion.
@@ -33,6 +34,8 @@ impl SubmissionGate {
         queue: &wgpu::Queue,
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
     ) -> wgpu::SubmissionIndex {
+        #[cfg(test)]
+        self.observe_encoded();
         let index = self.exclusive(|| queue.submit(commands));
         #[cfg(test)]
         self.observe_submission();
@@ -47,6 +50,8 @@ impl SubmissionGate {
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
         completion: impl FnOnce() + Send + 'static,
     ) -> wgpu::SubmissionIndex {
+        #[cfg(test)]
+        self.observe_encoded();
         let index = self.exclusive(|| {
             use std::sync::atomic::Ordering;
             self.1.fetch_add(1, Ordering::Relaxed);
@@ -61,6 +66,20 @@ impl SubmissionGate {
         #[cfg(test)]
         self.observe_submission();
         index
+    }
+
+    /// Observe resources retained by encoded commands before queue retirement can release scratch.
+    #[cfg(test)]
+    pub(crate) fn observe_encoded_resources(&self, observer: SubmissionObserver) {
+        *self.3.lock().unwrap() = Some(observer);
+    }
+
+    #[cfg(test)]
+    fn observe_encoded(&self) {
+        let observer = self.3.lock().unwrap().clone();
+        if let Some(observer) = observer {
+            observer();
+        }
     }
 
     #[cfg(test)]

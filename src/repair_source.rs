@@ -81,37 +81,47 @@ pub(crate) fn resolve_with(
     recipe: &crate::image_recipe::ImageRecipe,
     execution: &mut Execution<'_>,
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
-    resolve_matching(scan, recipe, execution, |_| true)
+    resolve_matching(scan, recipe, execution, |_| Ok(true))
 }
 
-/// Resolve repairs influencing the captured output's declared processing support.
+/// Resolve repairs selected by the captured recipe's original-output acquisition plan.
 #[cfg(feature = "project")]
 pub fn resolve_output(
     scan: &Scan,
     recipe: &crate::image_recipe::ImageRecipe,
-    support: crate::processing_support::Support,
 ) -> Result<Vec<std::sync::Arc<EvaluatedRepair>>, Error> {
-    resolve_output_with(scan, recipe, support, &mut Execution::default())
+    let stages = recipe.pixel_pipeline()?;
+    let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
+        output: crate::frame_raster::FrameRaster::full(recipe.composition)?,
+        stages: &stages,
+        sampling: crate::acquisition::Sampling::Originals {
+            reconstruction: crate::acquisition::SourceSupport([0; 2]),
+        },
+    })?;
+    resolve_plan_with(scan, recipe, &plan, &mut Execution::default())
         .map(|result| result.expect("uncancelled output repair resolution"))
 }
 
+/// Resolve the original-coordinate repairs selected by the acquisition plan.
 #[cfg(feature = "project")]
-pub(crate) fn resolve_output_with(
+pub(crate) fn resolve_plan_with(
     scan: &Scan,
     recipe: &crate::image_recipe::ImageRecipe,
-    support: crate::processing_support::Support,
+    plan: &crate::acquisition::Plan,
     execution: &mut Execution<'_>,
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
-    use crate::geometry::FramePoint;
-    let size = recipe.composition.size();
-    let coverage = recipe
-        .composition
-        .coverage(FramePoint([0.; 2]), FramePoint(size.map(f64::from)))?;
+    if plan.output().composition != recipe.composition {
+        return Err(Error::InvalidParameter(
+            "repair plan differs from captured composition",
+        ));
+    }
     resolve_matching(scan, recipe, execution, |repair| {
-        repair
-            .support
-            .selected_points()
-            .any(|point| support.contributes(point, coverage, scan.area))
+        for point in repair.support.selected_points() {
+            if plan.original_repair_contributes(point)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     })
 }
 
@@ -120,12 +130,15 @@ fn resolve_matching(
     scan: &Scan,
     recipe: &crate::image_recipe::ImageRecipe,
     execution: &mut Execution<'_>,
-    applicable: impl Fn(&Repair) -> bool,
+    applicable: impl Fn(&Repair) -> Result<bool, Error>,
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
     recipe.neutral.require_scan(scan)?;
     let source = ImageSource::new(scan, recipe.neutral.processing_input()?)?;
     let mut evaluated = Vec::new();
-    for repair in recipe.repairs().iter().filter(|repair| applicable(repair)) {
+    for repair in recipe.repairs() {
+        if !applicable(repair)? {
+            continue;
+        }
         let Some(result) = evaluate_with(&source, repair, execution)
             .map_err(|error| Error::Raw(format!("repair {}: {error}", repair.id.0)))?
         else {

@@ -337,7 +337,11 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
         .unwrap();
         let spec = ViewSourceSpec::inspection(23, regional, scan.camera_to_ap1, None).unwrap();
         let mut coarse = spec.underlay().unwrap();
-        coarse.frame.output = [31, 23];
+        let resized_frame = FrameRaster {
+            output: [31, 23],
+            ..coarse.frame()
+        };
+        coarse = coarse.with_frame(resized_frame).unwrap();
         let mut sources = ViewSource::acquire_many(
             &device,
             &queue,

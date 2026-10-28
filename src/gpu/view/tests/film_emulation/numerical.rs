@@ -207,8 +207,8 @@ fn film_emulation_gpu_mtf_preserves_large_signed_hdr_constants() {
         for footprint in [1. / 16., 2. / 0.075, 64.] {
             let raster = crate::gpu::raster::Raster {
                 dimensions: [65, 1, 8, 0],
-                axis_x: [footprint, 0., 0., 0.],
-                axis_y: [0., 1., 0., 0.],
+                axis_x: [footprint, 0., footprint, 0.],
+                axis_y: [0., 1., 1., 0.],
                 ..bytemuck::Zeroable::zeroed()
             };
             let view = crate::gpu::raster::uniform(

@@ -84,7 +84,7 @@ impl Key {
             self.image.ptr_eq(&request.image) && self.source_revision == request.source_revision;
         #[cfg(feature = "editor")]
         let same_source = match (&self.rendered_source, &request.rendered_source) {
-            (Some(a), Some(b)) => a.same_source(b),
+            (Some(a), Some(b)) => a.authority == b.authority && a.same_source(b),
             (None, None) => same_source,
             _ => false,
         };
@@ -638,7 +638,7 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
         if let Some((view, submissions)) = rendered {
             view.ensure_submitted(device, queue, submissions, &self.context);
             key = Key::rendered(view, self.frame, self.settings);
-            let mut accepted = view.spec.frame;
+            let mut accepted = view.spec.frame();
             accepted.output = self.frame.output;
             coverage_ready =
                 accepted == self.frame && matches!(self.image.look_result(), Some(Ok(())));

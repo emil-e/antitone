@@ -25,7 +25,7 @@ fn candidate(
     );
     let input = ProcessingInput::from(grade)
         .with_film_emulation(film)
-        .with_frame_size(source.spec.frame.composition.crop().size)
+        .with_frame_size(source.spec.frame().composition.crop().size)
         .with_film_seed(17);
     RenderedView::new(device, source, &input, OutputTarget::Srgb, previous).unwrap()
 }
@@ -79,7 +79,19 @@ fn film_emulation_gpu_encoded_field_survives_owner_retirement_before_submission(
 fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        let base = probe_view(&device, &queue, &renderer, &kernels, [2., 1.], true, 17);
+        // Keep acquisition layout fixed while changing Size, so the field-key assertion
+        // cannot pass merely because insufficient support forced a different raster.
+        let base = configured_probe(
+            &device,
+            &renderer,
+            &kernels,
+            ProbeConfig {
+                reserve_scale: Some(3.),
+                impulse: true,
+                ..Default::default()
+            },
+            17,
+        );
         let source = base.graded.as_ref().unwrap().source.clone();
         let settings = FilmEmulationSettings {
             enabled: true,
@@ -138,7 +150,16 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             .channel_variance(1.);
         // Red/blue are flat; green carries the impulse. Verify refreshed photographic
         // and colour uniforms per pixel, independently of a small crop's random mean.
-        for (pixel, grain) in cached.iter().zip(&generated) {
+        let graded = edited.graded.as_ref().unwrap();
+        let input_size = graded.stages.raster.size();
+        let output_size = graded.plan.output().output;
+        let offset = graded.plan.output_offset().unwrap();
+        for (index, pixel) in cached.iter().enumerate() {
+            let point = [
+                index as u32 % output_size[0] + offset[0],
+                index as u32 / output_size[0] + offset[1],
+            ];
+            let grain = generated[(point[1] * input_size[0] + point[0]) as usize];
             for c in [0, 2] {
                 let g = grain[1] as f64 + 2. * settings.colour * (grain[c] - grain[1]) as f64;
                 let expected = 0.18
@@ -207,7 +228,7 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         );
         assert!(!Arc::ptr_eq(field(&warm), field(&resized)));
         let mut other_spec = source.spec.clone();
-        // Same stable seed but different acquisition authority must not borrow stale field storage.
+        // Publication rights do not change the source-anchored field's geometry/model/seed.
         other_spec.authority += 65536;
         let other_source = Arc::new(ViewSource {
             spec: other_spec,
@@ -222,7 +243,7 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             AdjustmentLayerSettings::default(),
             Some(&warm),
         );
-        assert!(!Arc::ptr_eq(field(&warm), field(&other)));
+        assert!(Arc::ptr_eq(field(&warm), field(&other)));
         other.ensure_submitted(
             &device,
             &queue,
@@ -236,8 +257,10 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         );
 
         let mut shifted_spec = source.spec.clone();
-        shifted_spec.frame.min.0 = shifted_spec.frame.min.0.map(|x| x + 8.);
-        shifted_spec.frame.max.0 = shifted_spec.frame.max.0.map(|x| x + 8.);
+        let mut shifted_frame = shifted_spec.frame();
+        shifted_frame.min.0 = shifted_frame.min.0.map(|x| x + 8.);
+        shifted_frame.max.0 = shifted_frame.max.0.map(|x| x + 8.);
+        shifted_spec = shifted_spec.with_frame(shifted_frame).unwrap();
         let shifted_source = Arc::new(ViewSource {
             spec: shifted_spec,
             pixels: source.pixels.clone(),
@@ -260,9 +283,17 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         );
         let a = read(&device, &queue, &field(&warm).pixels);
         let b = read(&device, &queue, &field(&shifted).pixels);
-        for y in 0..N - 8 {
-            for x in 0..N - 8 {
-                assert_eq!(a[(y + 8) * N + x + 8], b[y * N + x]);
+        let size = warm
+            .graded
+            .as_ref()
+            .unwrap()
+            .stages
+            .raster
+            .size()
+            .map(|n| n as usize);
+        for y in 0..size[1] - 8 {
+            for x in 0..size[0] - 8 {
+                assert_eq!(a[(y + 8) * size[0] + x + 8], b[y * size[0] + x]);
             }
         }
     });

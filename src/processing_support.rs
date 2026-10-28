@@ -3,7 +3,6 @@
 mod tests;
 use crate::{
     Error,
-    coverage::Coverage,
     frame_raster::FrameRaster,
     geometry::{FramePoint, SourceRegion},
 };
@@ -41,13 +40,6 @@ impl Support {
             width: right - x,
             height: bottom - y,
         }
-    }
-
-    pub fn contributes(self, point: [u32; 2], output: Coverage, source: SourceRegion) -> bool {
-        if self == Self::NONE {
-            return output.weight(point) > 0.;
-        }
-        output.intersection_area(self.expand([point[0], point[1], 1, 1].into(), source)) > 0.
     }
 
     /// Extend beyond accepted composition while preserving pitch and coordinate basis.

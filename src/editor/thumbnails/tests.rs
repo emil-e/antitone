@@ -182,6 +182,7 @@ fn transient_reference_with_the_same_development_cannot_seed_the_working_photo()
     ready.thumbnail = Some((
         FileKey::new(&ready.record.path),
         Arc::new(Proxy {
+            identity: None,
             width: 1,
             height: 1,
             pixels: vec![[0.; 4]].into(),
@@ -1574,6 +1575,7 @@ fn critical_pressure_releases_the_seed_when_the_working_source_is_gone() {
         source,
         FileKey::new(&document.source_path(source.id).unwrap()),
         Arc::new(Proxy {
+            identity: None,
             width: 1,
             height: 1,
             pixels: vec![[0.; 4]].into(),
@@ -1598,6 +1600,7 @@ fn obsolete_scroll_work_is_replaced_once_without_dropping_valid_source_seeds() {
         editor.document.state.project.source(id).unwrap(),
         FileKey::new(&editor.document.source_path(id).unwrap()),
         Arc::new(Proxy {
+            identity: None,
             width: 1,
             height: 1,
             pixels: vec![[1.; 4]].into(),
@@ -1664,6 +1667,7 @@ fn disk_worker_reuses_camera_pixels_and_reopening_uses_a_new_identity() {
         disk.store(
             &SourceKey::new(&source, FileKey::new(&path)),
             &Proxy {
+                identity: None,
                 width: 2,
                 height: 1,
                 pixels: vec![[1., 2., 3., 0.]; 2].into(),

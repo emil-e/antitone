@@ -47,7 +47,7 @@ fn run(
 
 #[test]
 fn rgb16_matches_cpu_codes_and_float_neighbors_of_every_quantization_boundary() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let mut failures = 0;
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         let kernel = Rgb16::new(&device, target).unwrap();
@@ -86,7 +86,9 @@ fn rgb16_matches_cpu_codes_and_float_neighbors_of_every_quantization_boundary() 
         }
         let mut worst = 0;
         let mut first = None;
-        for chunk in values.chunks((super::super::TILE[0] * super::super::TILE[1]) as usize) {
+        for chunk in values
+            .chunks((crate::gpu::execution::TILE[0] * crate::gpu::execution::TILE[1]) as usize)
+        {
             let actual = decode(&run(&device, &queue, &kernel, chunk)).unwrap();
             for (pixel, &input) in actual.iter().zip(chunk) {
                 for c in 0..3 {
@@ -113,7 +115,7 @@ fn rgb16_matches_cpu_codes_and_float_neighbors_of_every_quantization_boundary() 
 
 #[test]
 fn rgb16_boundaries_and_binary_fallback_do_not_depend_on_the_float_estimate() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let target = OutputTarget::Srgb;
     let boundaries = threshold_bits(target).unwrap();
     for (index, &bits) in boundaries.iter().enumerate() {
@@ -148,7 +150,7 @@ fn rgb16_boundaries_and_binary_fallback_do_not_depend_on_the_float_estimate() {
 
 #[test]
 fn rgb16_rejects_empty_oversized_and_undersized_units_before_encoding() {
-    let (device, _queue, _renderer) = super::super::tests::context();
+    let (device, _queue, _renderer) = crate::gpu::test_support::render_context();
     let kernel = Rgb16::new(&device, OutputTarget::Srgb).unwrap();
     let input = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -162,7 +164,10 @@ fn rgb16_rejects_empty_oversized_and_undersized_units_before_encoding() {
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    for count in [0, super::super::TILE[0] * super::super::TILE[1] + 1] {
+    for count in [
+        0,
+        crate::gpu::execution::TILE[0] * crate::gpu::execution::TILE[1] + 1,
+    ] {
         let mut encoder = device.create_command_encoder(&Default::default());
         assert!(matches!(
             kernel.encode(&device, &mut encoder, &input, &output, count),
@@ -192,7 +197,7 @@ fn rgb16_rejects_empty_oversized_and_undersized_units_before_encoding() {
 
 #[test]
 fn rgb16_rejects_invalid_components_and_range_before_cpu_publication() {
-    let (device, queue, _) = super::super::tests::context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let kernel = Rgb16::new(&device, OutputTarget::Srgb).unwrap();
     for c in 0..4 {
         for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {

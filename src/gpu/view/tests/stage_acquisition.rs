@@ -69,7 +69,8 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
             None,
         )
         .unwrap()
-        .with_support(input.pixel_pipeline().unwrap().support([1., 1.]).unwrap());
+        .with_pipeline(input.pixel_pipeline().unwrap())
+        .unwrap();
         let source = ViewSource::acquire(
             &device,
             &queue,
@@ -151,10 +152,10 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
             };
             let input = input(&device, &scan, film).with_frame_size(composition.crop().size);
             let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
-            let support = input.pixel_pipeline().unwrap().support([1., 1.]).unwrap();
             let spec = ViewSourceSpec::new(17, frame, InputSettings::Digital, matrix, None)
                 .unwrap()
-                .with_support(support);
+                .with_pipeline(input.pixel_pipeline().unwrap())
+                .unwrap();
             let source = ViewSource::acquire(
                 &device,
                 &queue,
@@ -316,7 +317,8 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
                 None,
             )
             .unwrap()
-            .with_support(input.pixel_pipeline().unwrap().support([1., 1.]).unwrap());
+            .with_pipeline(input.pixel_pipeline().unwrap())
+            .unwrap();
             let acquire = |spec| {
                 ViewSource::acquire(
                     &device,

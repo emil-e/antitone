@@ -22,7 +22,7 @@ pub(super) fn wait_context(h: &mut Harness<'_, Editor>) {
                 .as_ref()
                 .is_some_and(|v| {
                     v.spec.authority == e.id
-                        && v.spec.frame.composition.crop() == Crop::from_region(ready.area)
+                        && v.spec.frame().composition.crop() == Crop::from_region(ready.area)
                 })
     });
     let timing = h.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));

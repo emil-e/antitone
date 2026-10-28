@@ -1,3 +1,4 @@
+pub mod acquisition;
 pub mod adjustment_layers;
 #[cfg(feature = "ui")]
 pub mod application;

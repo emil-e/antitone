@@ -89,7 +89,7 @@ impl GpuPipeline {
         })
     }
 
-    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+    #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
     pub(crate) fn validate_repaired(
         device: &wgpu::Device,
         input: impl Into<InputSettings>,
@@ -158,7 +158,7 @@ impl GpuPipeline {
         Ok(parameters)
     }
 
-    #[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+    #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
     pub(crate) fn validate_repairs(
         &self,
         device: &wgpu::Device,

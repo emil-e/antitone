@@ -14,13 +14,18 @@ pub(crate) fn shader() -> String {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct Parameters {
     pub raster: Raster,
-    pub sigma: [f32; 4],
+    pub raster_sigma: [f32; 4],
+    pub radii: [u32; 4],
 }
 impl Parameters {
     pub fn new(raster: Raster, sigma: f64) -> Self {
+        let pitch = raster.pitch().map(|value| value.max(1e-6));
+        // Prepare the finite dependency once; shader arithmetic must not enlarge it.
+        let support = crate::image_mtf::ImageMtfParameters { sigma }.support(pitch.map(f64::from));
         Self {
             raster,
-            sigma: [sigma as f32; 4],
+            raster_sigma: [sigma as f32 / pitch[0], sigma as f32 / pitch[1], 0., 0.],
+            radii: [support.0[0], support.0[1], 0, 0],
         }
     }
 }

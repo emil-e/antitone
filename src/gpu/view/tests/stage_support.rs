@@ -52,9 +52,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
             })
             .with_frame_size([6000; 2])
             .with_film_seed(17);
-        let plan = input.pixel_pipeline().unwrap();
-        let support = plan.support([1., 1.]).unwrap();
-        let make = |frame: FrameRaster, support| {
+        let make = |frame: FrameRaster, padded: bool| {
             // Hold the resolved sigma at two source pixels to isolate boundary handling.
             let dimensions = frame.composition.crop().size;
             let input = input
@@ -66,8 +64,12 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                 });
             let spec =
                 ViewSourceSpec::new(17, frame, InputSettings::Digital, DMat3::IDENTITY, None)
-                    .unwrap()
-                    .with_support(support);
+                    .unwrap();
+            let spec = if padded {
+                spec.with_pipeline(input.pixel_pipeline().unwrap()).unwrap()
+            } else {
+                spec
+            };
             let sampled = spec.input_frame().unwrap();
             let mut values: Vec<[f32; 4]> = Vec::new();
             for y in 0..sampled.output[1] {
@@ -86,22 +88,20 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 }),
             });
-            let view =
-                RenderedView::new(&device, source, &input, OutputTarget::Srgb, None).unwrap();
+            let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None)?;
             view.ensure_submitted(
                 &device,
                 &queue,
                 &SubmissionGate::default(),
                 &egui::Context::default(),
             );
-            read(&device, &queue, &view.graded.as_ref().unwrap().pixels)
+            Ok::<_, Error>(read(&device, &queue, &view.graded.as_ref().unwrap().pixels))
         };
-        let a = make(small, support);
-        let b = make(wide, support);
-        let clipped = make(small, crate::processing_support::Support::NONE);
+        let a = make(small, true).unwrap();
+        let b = make(wide, true).unwrap();
         assert!(
-            (clipped[0][0] - a[0][0]).abs() > 0.05,
-            "unpadded control must expose the boundary defect"
+            matches!(make(small, false), Err(Error::InvalidParameter(_))),
+            "missing neighbours must reject processing rather than turn the viewport into a filter edge"
         );
         let radius = 8;
         let mass: f64 = (-radius..=radius)

@@ -82,11 +82,10 @@ impl FrameRaster {
     }
 
     /// A source unit also supplies constant extension beyond the actual source edges.
-    #[cfg(feature = "editor")]
     pub(crate) fn processing_window(
         self,
         region: SourceRegion,
-    ) -> Result<crate::resample::windows::Window, Error> {
+    ) -> Result<crate::acquisition::windows::Window, Error> {
         let bounds = self.processing_bounds()?;
         let area = self.composition.area();
         let points = [
@@ -117,7 +116,7 @@ impl FrameRaster {
             low[axis] -= origin[axis];
             high[axis] -= origin[axis];
         }
-        Ok(crate::resample::windows::affine_output_rect(
+        Ok(crate::acquisition::windows::affine_output_rect(
             self.affine_in(bounds)?,
             self.output,
             low,

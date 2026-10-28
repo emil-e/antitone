@@ -77,7 +77,8 @@ Production and reference dependencies are separate:
 | `gpu` | Photographic GPU processing; no OCIO or desktop |
 | `render` | Output targets, transfer and profiles; no OCIO |
 | `export` | Encoders, colour tagging and atomic file safety; no OCIO |
-| `raw,gpu,export` | Bounded original-sample GPU export; no desktop or OCIO |
+| `raw,gpu,render` | Bounded scene-/display-referred original-sample execution; no file encoder, desktop or OCIO |
+| `raw,gpu,export` | Original-sample execution with file encoding/publication; no desktop or OCIO |
 | `editor` | Application, including direct DNG SDK development and GPU export; no OCIO |
 | `ocio-reference` | Independent OCIO renderer and scalar composed export oracles |
 | `ui-tests` | Editor interaction checks, including independent OCIO assertions |
@@ -155,9 +156,12 @@ cargo clippy --locked --all-features --all-targets -- -D warnings
 ```sh
 # Production services/workflows, immutable snapshots/operation identity, encoders and destination safety; no OCIO.
 cargo test --locked --features editor --lib export
+# Codec-independent original processing, reconstruction and sample encoding without file export.
+cargo test --locked --features raw,gpu,render,ocio-reference \
+  --lib -- gpu::execution:: gpu::rgb16::
 # Independent original-sample processing/reconstruction and reopened files, including correction/locals.
 cargo test --locked --features raw,gpu,export,project,ocio-reference \
-  --lib gpu_export::
+  --lib -- gpu::execution:: gpu::rgb16:: gpu_export::
 cargo test --locked --features raw,gpu,export,project,ocio-reference \
   --test gpu_export --test export --test geometry_export --test adjustment_layer_export
 cargo build --locked --release --features editor --bin antitone
@@ -390,3 +394,5 @@ These checks require an unlocked desktop for focus and native paints; headless o
 ## Specialist diagnostics
 
 Tests marked ignored are opt-in because they need samples, hardware, visible windows or substantial resources. Choose them for the boundary being investigated; [diagnostics](diagnostics.md) explains safe workloads and interpretation. Keep local photographs and generated images/logs in ignored storage.
+
+For an authored cold/warm physical-view and regional workload on macOS, run `cargo test --locked --release --features editor --lib acquisition_execution_resources -- --ignored --nocapture` alone. It reports phase latency, original-image scratch creation counts/cells, retained Metal allocation and encoded-boundary allocation peaks, alongside sampled process/device observations. Compare isolated repeated runs; boundary observations and periodic sampling can miss shorter-lived peaks.

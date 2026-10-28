@@ -98,8 +98,8 @@ fn filter_authored_repairs(
     repairs: &Snapshot,
 ) -> Arc<ViewSource> {
     let area = source.spec.area;
-    assert_eq!(source.spec.frame.output, [area.width, area.height]);
-    let working = float_buffer(device, source.spec.frame.output).unwrap();
+    assert_eq!(source.spec.frame().output, [area.width, area.height]);
+    let working = float_buffer(device, source.spec.frame().output).unwrap();
     let pixels = float_buffer(device, frame.output).unwrap();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -134,10 +134,12 @@ fn filter_authored_repairs(
         .unwrap();
     source
         .kernels
+        .acquisition
         .copy(device, &mut encoder, &working, &texture);
     let bounds = frame.bounds().unwrap();
     source
         .kernels
+        .acquisition
         .filter(
             device,
             &mut encoder,
@@ -159,7 +161,7 @@ fn filter_authored_repairs(
         })
         .unwrap();
     let mut spec = source.spec.clone().with_repairs(repairs.clone());
-    spec.frame = frame;
+    spec = spec.with_frame(frame).unwrap();
     Arc::new(ViewSource {
         spec,
         pixels,

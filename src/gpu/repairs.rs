@@ -121,7 +121,7 @@ impl Snapshot {
             .map(Self)
     }
 
-    #[cfg(all(feature = "raw", feature = "export"))]
+    #[cfg(all(feature = "raw", feature = "render"))]
     pub(crate) fn require_area(&self, area: SourceRegion) -> Result<(), Error> {
         for (index, patch) in self.0.iter().enumerate() {
             if !area.contains_region(patch.region)
@@ -140,7 +140,7 @@ impl Snapshot {
         Ok(())
     }
 
-    #[cfg(all(test, feature = "raw", feature = "export"))]
+    #[cfg(all(test, feature = "raw", feature = "render"))]
     pub(crate) fn upload_scratch_bytes(&self, region: SourceRegion) -> u64 {
         self.0
             .iter()
@@ -158,7 +158,7 @@ impl Snapshot {
             .sum()
     }
 
-    #[cfg(any(feature = "editor", all(test, feature = "raw", feature = "export")))]
+    #[cfg(any(feature = "editor", all(test, feature = "raw", feature = "render")))]
     pub(crate) fn byte_len(&self) -> u64 {
         (std::mem::size_of::<Self>() + self.0.capacity() * std::mem::size_of::<Arc<Patch>>()) as u64
             + self

@@ -2,9 +2,9 @@
 use crate::{Error, rendering::OutputTarget};
 use wgpu::util::DeviceExt;
 
-pub(super) const THRESHOLD_BYTES: u64 = 65535 * 4;
+pub(crate) const THRESHOLD_BYTES: u64 = 65535 * 4;
 
-pub(super) struct Rgb16 {
+pub(crate) struct Rgb16 {
     pipeline: wgpu::ComputePipeline,
     thresholds: wgpu::Buffer,
 }
@@ -58,7 +58,7 @@ impl Rgb16 {
         count: u32,
     ) -> Result<(), Error> {
         if count == 0
-            || count > super::TILE[0] * super::TILE[1]
+            || count > super::execution::TILE[0] * super::execution::TILE[1]
             || input.size() < u64::from(count) * 16
             || output.size() < u64::from(count) * 8
         {
@@ -135,7 +135,7 @@ fn threshold_bits(target: OutputTarget) -> Result<Vec<u32>, Error> {
     Ok(thresholds)
 }
 
-pub(super) fn decode(records: &[[u32; 2]]) -> Result<Vec<[u16; 3]>, Error> {
+pub(crate) fn validate(records: &[[u32; 2]]) -> Result<(), Error> {
     let status = records.iter().fold(0, |flags, p| flags | (p[1] >> 16));
     if status & 1 != 0 || status & !3 != 0 {
         return Err(Error::Gpu(
@@ -147,6 +147,11 @@ pub(super) fn decode(records: &[[u32; 2]]) -> Result<Vec<[u16; 3]>, Error> {
             "rendered/encoded output channel must be finite and within 0..1",
         ));
     }
+    Ok(())
+}
+
+pub(crate) fn decode(records: &[[u32; 2]]) -> Result<Vec<[u16; 3]>, Error> {
+    validate(records)?;
     Ok(records
         .iter()
         .map(|p| [p[0] as u16, (p[0] >> 16) as u16, p[1] as u16])

@@ -10,6 +10,8 @@ struct ProxyState {
     device: wgpu::Device,
     renderer: Arc<GpuRenderer>,
     source: Arc<ProcessingSource>,
+    #[cfg(feature = "editor")]
+    identity: Option<crate::gpu::execution::source::Identity>,
     size: [u32; 2],
     matrix: DMat3,
     active: std::sync::Mutex<Option<(OutputTarget, Arc<GpuImage>)>>,
@@ -34,14 +36,7 @@ impl GpuProxy {
         }
         let mut source = ProcessingSource::new(device, pixels, matrix)?;
         source.set_flat_field(field, geometry)?;
-        Ok(Self(Arc::new(ProxyState {
-            device: device.clone(),
-            renderer,
-            source: Arc::new(source),
-            size,
-            matrix,
-            active: Default::default(),
-        })))
+        Ok(Self::from_source(renderer, device, size, source, matrix))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -61,14 +56,38 @@ impl GpuProxy {
         }
         let mut source = ProcessingSource::new_continuous(device, pixels, matrix)?;
         source.set_flat_field(field, geometry)?;
-        Ok(Self(Arc::new(ProxyState {
+        Ok(Self::from_source(renderer, device, size, source, matrix))
+    }
+
+    fn from_source(
+        renderer: Arc<GpuRenderer>,
+        device: &wgpu::Device,
+        size: [u32; 2],
+        source: ProcessingSource,
+        matrix: DMat3,
+    ) -> Self {
+        Self(Arc::new(ProxyState {
             device: device.clone(),
             renderer,
             source: Arc::new(source),
+            #[cfg(feature = "editor")]
+            identity: None,
             size,
             matrix,
             active: Default::default(),
-        })))
+        }))
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn with_identity(
+        mut self,
+        identity: crate::gpu::execution::source::Identity,
+    ) -> Result<Self, Error> {
+        let state = Arc::get_mut(&mut self.0).ok_or(Error::InvalidParameter(
+            "proxy identity must be captured before sharing",
+        ))?;
+        state.identity = Some(identity);
+        Ok(self)
     }
 
     pub(crate) fn size(&self) -> [u32; 2] {
@@ -83,16 +102,20 @@ impl GpuProxy {
     pub(crate) fn view_source(
         &self,
         queue: &wgpu::Queue,
+        submissions: &crate::gpu::SubmissionGate,
         kernels: Arc<crate::gpu::view::ViewKernels>,
         spec: crate::gpu::view::ViewSourceSpec,
     ) -> Result<Arc<crate::gpu::view::ViewSource>, Error> {
         crate::gpu::view::ViewSource::from_processing(
             &self.0.device,
             queue,
+            submissions,
             self.0.renderer.clone(),
             kernels,
             self.0.source.clone(),
-            spec,
+            spec.with_identity(self.0.identity.clone().unwrap_or_else(|| {
+                crate::gpu::execution::source::Identity::Resident(Arc::downgrade(&self.0.source))
+            })),
         )
     }
 

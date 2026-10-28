@@ -210,7 +210,7 @@ impl Worker {
             let mapping = composition.texture_mapping(
                 crate::geometry::FramePoint([0.; 2]),
                 crate::geometry::FramePoint(composition.size().map(f64::from)),
-                source.spec.frame.composition.area(),
+                source.spec.frame().composition.area(),
             );
             let mut encoder = self.device.create_command_encoder(&Default::default());
             let check = source.renderer.check_look_projection(

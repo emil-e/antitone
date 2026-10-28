@@ -13,6 +13,8 @@ use std::{path::Path, sync::Arc};
 
 type Result<T> = std::result::Result<T, Error>;
 
+mod identity;
+pub use identity::CameraIdentity;
 mod image_source;
 pub use image_source::{ImageIdentity, ImageSource};
 
@@ -167,6 +169,7 @@ impl DevelopedSource {
 /// The production proxy has a 256-pixel maximum edge, without upscaling.
 #[derive(Clone)]
 pub struct CameraPixels {
+    pub(crate) identity: Option<CameraIdentity>,
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) pixels: Arc<Vec<[f32; 4]>>,
@@ -217,11 +220,16 @@ impl CameraPixels {
             }
         }
         Ok(Self {
+            identity: Some(scan.source.identity()),
             width,
             height,
             pixels: Arc::new(pixels),
             matrix: scan.camera_to_ap1,
         })
+    }
+
+    pub fn identity(&self) -> Option<&CameraIdentity> {
+        self.identity.as_ref()
     }
 
     pub fn dimensions(&self) -> [u32; 2] {
@@ -232,6 +240,7 @@ impl CameraPixels {
         (self.pixels.capacity() * size_of::<[f32; 4]>()
             + size_of::<Self>()
             + size_of::<Vec<[f32; 4]>>()) as u64
+            + self.identity.as_ref().map_or(0, CameraIdentity::heap_bytes)
     }
 }
 

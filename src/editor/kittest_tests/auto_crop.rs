@@ -188,7 +188,7 @@ fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
                 .working_view
                 .displayed
                 .as_ref()
-                .is_some_and(|v| v.spec.frame.composition.crop() == crop)
+                .is_some_and(|v| v.spec.frame().composition.crop() == crop)
     });
     h.read(|editor| {
         assert_eq!(
@@ -772,7 +772,7 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
                     .working_view
                     .displayed
                     .as_ref()
-                    .is_some_and(|v| v.spec.frame.composition.crop() == old)
+                    .is_some_and(|v| v.spec.frame().composition.crop() == old)
         });
         h.key_press(egui::Key::Enter);
         h.step();

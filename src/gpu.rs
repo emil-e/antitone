@@ -1,8 +1,14 @@
 use bytemuck::Zeroable;
 use std::{num::NonZeroU64, sync::Arc};
 
+#[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
+pub(crate) mod execution;
 mod flat;
 pub mod look;
+#[cfg(all(feature = "raw", feature = "render"))]
+pub(crate) mod rgb16;
+#[cfg(all(test, feature = "render"))]
+pub(crate) mod test_support;
 pub use flat::{GpuFlatField, SourceGeometry};
 mod adjustment_layers;
 pub use adjustment_layers::GpuGrade;
@@ -14,25 +20,25 @@ pub use pipeline::GpuPipeline;
 #[cfg(any(
     feature = "editor",
     all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "export")
+    all(feature = "raw", feature = "render")
 ))]
 pub(crate) mod grain;
 #[cfg(any(
     feature = "editor",
     all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "export")
+    all(feature = "raw", feature = "render")
 ))]
 pub(crate) mod image_mtf;
 #[cfg(any(
     feature = "editor",
     all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "export")
+    all(feature = "raw", feature = "render")
 ))]
 pub(crate) mod pixel_pipeline;
 #[cfg(any(
     feature = "editor",
     all(feature = "ui", feature = "render"),
-    all(feature = "raw", feature = "export")
+    all(feature = "raw", feature = "render")
 ))]
 pub(crate) mod raster;
 
@@ -382,7 +388,7 @@ impl CameraMatrix {
     }
 }
 
-#[cfg(any(feature = "editor", all(feature = "raw", feature = "export")))]
+#[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
 pub(crate) mod repairs;
 
 pub struct ProcessingSource {
@@ -564,7 +570,7 @@ impl ProcessingSource {
         self.pixels
     }
 
-    #[cfg(all(feature = "ui", feature = "render"))]
+    #[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
     pub(crate) fn geometry(&self) -> Option<SourceGeometry> {
         self.geometry
     }
