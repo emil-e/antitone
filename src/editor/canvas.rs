@@ -142,9 +142,10 @@ impl Editor {
         response: &egui::Response,
         geometry: CanvasLayout,
         canvas_input: bool,
-        cropping: bool,
         fullscreen: bool,
+        cx: &UiContext<'_, Self>,
     ) -> (CanvasLayout, bool) {
+        let cropping = !fullscreen && self.document.visit.crop_edit.is_some();
         let pixels_per_point = ui.ctx().pixels_per_point();
         if canvas_input && self.tab == 1 && !fullscreen {
             self.adjust_dust_brush_from_scroll(ui, geometry);
@@ -168,7 +169,7 @@ impl Editor {
             }
             result
         };
-        self.dust_interaction(ui, response, geometry, canvas_input, panning);
+        self.dust_interaction(ui, response, geometry, canvas_input, panning, cx);
         if cropping && canvas_input {
             self.crop_rotation_cursor(ui, response, geometry);
         }
@@ -652,8 +653,7 @@ impl Editor {
         let geometry =
             self.canvas_layout(canvas, composition, pixels_per_point, zoom_action, cropping);
         let (geometry, panning) =
-            self.canvas_navigation(ui, &response, geometry, canvas_input, cropping, fullscreen);
-        self.start_dust_searches(cx);
+            self.canvas_navigation(ui, &response, geometry, canvas_input, fullscreen, cx);
         let Some((draw, paint)) = self.canvas_image(ui, geometry, proxy, pending, cropping, cx)
         else {
             return;

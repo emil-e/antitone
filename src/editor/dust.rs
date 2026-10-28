@@ -14,7 +14,7 @@ use crate::{
 use std::collections::{BTreeSet, HashMap};
 
 mod search;
-pub(super) use search::Request as SearchRequest;
+mod worker;
 
 #[cfg(test)]
 mod lifecycle_tests;
@@ -68,13 +68,6 @@ struct Failed {
 struct Pending {
     evaluation: Request,
     task: Option<async_executor::Task<()>>,
-}
-
-struct EvaluationRetire(Arc<std::sync::atomic::AtomicBool>);
-impl Drop for EvaluationRetire {
-    fn drop(&mut self) {
-        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
 }
 
 pub(super) struct DonorRegion {
@@ -164,6 +157,7 @@ pub(super) struct Interaction {
     brush_source: Option<SourceId>,
     pub cleanup: bool,
     pending: Option<Pending>,
+    searches: search::State,
     reveal_controls: bool,
     pub show_masks: bool,
     pub donor_draft: Option<DonorDraft>,
@@ -179,6 +173,7 @@ impl Default for Interaction {
             brush_source: None,
             cleanup: false,
             pending: None,
+            searches: search::State::default(),
             reveal_controls: false,
             show_masks: false,
             donor_draft: None,
@@ -194,7 +189,8 @@ pub(super) struct State {
     cached: HashMap<(SourceId, RepairId), Cached>,
     preview_cached: HashMap<(SourceId, RepairId), Cached>,
     failed: HashMap<(SourceId, RepairId), Failed>,
-    searches: search::State,
+    #[cfg(test)]
+    search_worker: Option<worker::testing::Search>,
 }
 
 impl Drop for Pending {
@@ -207,6 +203,7 @@ impl Drop for Pending {
 
 impl Interaction {
     fn reset_repairs(&mut self) {
+        self.searches = search::State::default();
         self.pending = None;
         self.mask_draft = None;
         self.donor_draft = None;
@@ -215,6 +212,7 @@ impl Interaction {
     }
 
     fn removed(&mut self, source: SourceId, repair: RepairId) {
+        self.searches.cancel_target(source, repair);
         if let Some(pending) = &self.pending
             && pending.evaluation.source == source
             && pending.evaluation.repair.id == repair
@@ -357,7 +355,6 @@ impl State {
         self.cached.remove(&(source, repair));
         self.preview_cached.remove(&(source, repair));
         self.failed.remove(&(source, repair));
-        self.searches.cancel_target(source, repair);
     }
 
     fn clear_repairs(&mut self, source: SourceId) {
@@ -366,7 +363,6 @@ impl State {
         self.preview_cached
             .retain(|(candidate, _), _| *candidate != source);
         self.failed.retain(|(candidate, _), _| *candidate != source);
-        self.searches.cancel_source(source);
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
@@ -742,7 +738,7 @@ impl Editor {
     pub(super) fn dust_history_draft(&self) -> bool {
         self.document.visit.dust.mask_draft.is_some()
             || self.document.visit.dust.donor_draft.is_some()
-            || !self.document.dust.searches.is_empty()
+            || !self.document.visit.dust.searches.is_empty()
     }
 
     pub(super) fn dust_repairs(&self, source: SourceId) -> Option<&RepairSet> {
@@ -782,6 +778,7 @@ impl Editor {
         let repairs = self.effective_dust_repairs(source);
         let mut pending = self
             .document
+            .visit
             .dust
             .searches
             .supports(source)
@@ -856,6 +853,7 @@ impl Editor {
 
     pub(super) fn dust_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         use presentation::ToolIdentity;
+        self.document.visit.dust.searches.prune();
         if !self.document.visit.dust.cleanup {
             return;
         }
@@ -870,6 +868,7 @@ impl Editor {
             .map_or(0, |set| set.repairs().len());
         let searching = self
             .document
+            .visit
             .dust
             .searches
             .supports(source)
@@ -964,6 +963,7 @@ impl Editor {
         geometry: crate::viewport::CanvasLayout,
         canvas_input: bool,
         panning: bool,
+        cx: &UiContext<'_, Self>,
     ) {
         if !self.document.visit.dust.cleanup
             || self.tab != 1
@@ -1036,13 +1036,13 @@ impl Editor {
                 }
             }
             if clicked {
-                self.commit_dust_mask();
+                self.commit_dust_mask(cx);
             }
         }
         if response.drag_stopped_by(egui::PointerButton::Primary) {
             self.end_dust_stroke();
             self.end_dust_donor_drag();
-            self.commit_dust_mask();
+            self.commit_dust_mask(cx);
         }
     }
 
@@ -1066,6 +1066,10 @@ impl Editor {
     }
 
     pub(super) fn finish_dust_cleanup(&mut self) {
+        if self.dust_search_pending() {
+            self.status = "Unfinished Dust strokes discarded".into();
+        }
+        self.document.visit.dust.searches = search::State::default();
         self.cancel_dust_mask();
         self.document.visit.dust.cleanup = false;
         self.document.visit.dust.show_masks = false;
@@ -1074,7 +1078,7 @@ impl Editor {
 
     pub(super) fn begin_dust_mask(&mut self, target: Option<RepairId>) {
         if let (Some(source), Some(repair)) = (self.document.visit.current_source, target)
-            && self.document.dust.searches.has_target(source, repair)
+            && self.document.visit.dust.searches.has_target(source, repair)
         {
             self.status = "Wait for this repair's donor search before editing its mask".into();
             return;
@@ -1111,7 +1115,7 @@ impl Editor {
             })
     }
 
-    pub(super) fn commit_dust_mask(&mut self) {
+    pub(super) fn commit_dust_mask(&mut self, cx: &UiContext<'_, Self>) {
         let Some(draft) = self.document.visit.dust.mask_draft.as_ref() else {
             return;
         };
@@ -1122,7 +1126,7 @@ impl Editor {
                 self.delete_selected_dust_repair();
             }
         } else {
-            self.apply_dust_mask();
+            self.apply_dust_mask(cx);
         }
     }
 
@@ -1179,7 +1183,7 @@ impl Editor {
         };
     }
 
-    pub(super) fn apply_dust_mask(&mut self) {
+    fn apply_dust_mask(&mut self, cx: &UiContext<'_, Self>) {
         let Some(source) = self.document.visit.current_source else {
             self.cancel_dust_mask();
             return;
@@ -1218,9 +1222,9 @@ impl Editor {
             self.cancel_dust_mask();
             return;
         }
-        self.queue_dust_search(source, previous, support);
         self.cancel_dust_mask();
         self.status = "Finding a donor…".into();
+        self.find_dust_donor(source, previous, support, cx);
         self.invalidate_settled();
     }
 
@@ -1289,7 +1293,7 @@ impl Editor {
             .flat_map(RepairSet::repairs)
             .filter(|repair| Some(repair.id) != target)
             .map(|repair| repair.support.clone())
-            .chain(self.document.dust.searches.supports(source).cloned())
+            .chain(self.document.visit.dust.searches.supports(source).cloned())
             .collect::<Vec<_>>();
         let active = self.document.visit.ready.as_ref().unwrap().area;
         let erase = temporary_erase;
@@ -1386,7 +1390,7 @@ impl Editor {
                 .dust_repairs(source)
                 .is_some_and(|set| set.repairs().iter().any(|repair| repair.id == id))
         {
-            self.document.dust.searches.manual_selection(source);
+            self.document.visit.dust.searches.manual_selection(source);
             self.document.dust.selected.insert(source, id);
         }
     }
@@ -1434,7 +1438,13 @@ impl Editor {
                     .then(|| self.selected_dust_repair())
                     .flatten()
             })?;
-        if self.document.dust.searches.has_target(source, repair_id) {
+        if self
+            .document
+            .visit
+            .dust
+            .searches
+            .has_target(source, repair_id)
+        {
             return None;
         }
         let effective = self.effective_dust_repair(source, repair_id)?;
@@ -1845,7 +1855,6 @@ impl Editor {
     }
 
     pub(super) fn schedule_dust(&mut self, signature: Signature, cx: &UiContext<'_, Self>) {
-        self.start_dust_searches(cx);
         if self.busy
             || self.document_pending.is_some()
             || self.source_epoch.load(std::sync::atomic::Ordering::Relaxed) != self.id
@@ -1893,15 +1902,9 @@ impl Editor {
         self.document.visit.dust.start(&request);
         self.status = "Evaluating full-resolution dust repair…".into();
         let id = request.request;
-        let retire = EvaluationRetire(request.cancelled.clone());
-        let services = self.dust_services.clone();
         let epoch = self.source_epoch.clone();
         let Some(task) = cx.spawn(move |cx| async move {
-            let _retire = retire;
-            let result = match services {
-                Some(services) => services.evaluate(request, input, epoch).await,
-                None => Err("Dust services unavailable".into()),
-            };
+            let result = worker::evaluate(request, input, epoch).await;
             cx.update(|editor| {
                 editor.receive_dust(id, result);
                 if let Some(signature) = editor.dust_signature() {
@@ -2001,7 +2004,12 @@ impl Editor {
         if self.document.visit.dust.show_masks && !overlays_hidden {
             for repair in set.into_iter().flat_map(RepairSet::repairs) {
                 if mask_target == Some(repair.id)
-                    || self.document.dust.searches.has_target(source, repair.id)
+                    || self
+                        .document
+                        .visit
+                        .dust
+                        .searches
+                        .has_target(source, repair.id)
                 {
                     continue;
                 }
@@ -2052,7 +2060,7 @@ impl Editor {
             }
         }
         if self.document.visit.dust.show_masks && !overlays_hidden {
-            for support in self.document.dust.searches.supports(source) {
+            for support in self.document.visit.dust.searches.supports(source) {
                 paint_support_outline(
                     &painter,
                     geometry,

@@ -16,7 +16,7 @@ pub(super) struct Pending {
 }
 
 pub(super) async fn prepare(input: source::Context) -> Result<Option<Rect>, String> {
-    crate::background::run(move || input.scan()?.propose_flat_field_area())
+    crate::background::run(move |_| input.scan()?.propose_flat_field_area())
         .await
         .map_err(|_| "Support preparation worker panicked".to_owned())?
         .map_err(|error| error.to_string())

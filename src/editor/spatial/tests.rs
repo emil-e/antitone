@@ -300,7 +300,7 @@ fn document_retirement_cancels_publication_without_blocking_unrelated_cpu_work()
         let probe = app
             .access()
             .spawn(move |_| async move {
-                crate::background::run(move || entered.send(()).unwrap())
+                crate::background::run(move |_| entered.send(()).unwrap())
                     .await
                     .unwrap();
             })

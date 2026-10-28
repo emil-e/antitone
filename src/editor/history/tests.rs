@@ -111,15 +111,16 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
         editor.document.state.project, cropped,
         "painting is a draft"
     );
-    editor.commit_dust_mask();
-    assert_eq!(
-        editor.document.state.project, cropped,
-        "search is still a proposal"
-    );
     let owner = std::cell::RefCell::new(Some(editor));
     {
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
-        app.enter(|e, cx| e.start_dust_searches(cx));
+        app.enter(|e, cx| {
+            e.commit_dust_mask(cx);
+            assert_eq!(
+                e.document.state.project, cropped,
+                "search is still a proposal"
+            );
+        });
         app.run_until(Duration::from_secs(30), |e| {
             !e.dust_search_pending() && e.document.visit.dust.pending_request().is_none()
         });

@@ -36,7 +36,7 @@ impl Request {
         services: source::Services,
         submissions: crate::platform::SubmissionGate,
     ) -> Result<Option<Arc<crate::viewer::GpuImage>>, String> {
-        crate::background::run(move || {
+        crate::background::run(move |_| {
             if self.generation.load(Ordering::Relaxed) != self.revision {
                 return Ok(None);
             }

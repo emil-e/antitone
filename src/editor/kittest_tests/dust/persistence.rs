@@ -30,9 +30,9 @@ fn pending_stroke_shows_no_donor_and_accepts_one_result_after_real_search() {
         });
         let (canvas, marked) = h.read(|e| {
             let geometry = e.document.visit.last_layout.unwrap().0;
-            let request = &e.dust_search_requests()[0];
-            let [x, y] = request.support.origin();
-            let [width, height] = request.support.size();
+            let stroke = &e.pending_dust_strokes()[0];
+            let [x, y] = stroke.support.origin();
+            let [width, height] = stroke.support.size();
             (
                 geometry.canvas,
                 geometry.screen_region(crate::geometry::SourceRegion {
@@ -71,6 +71,68 @@ fn pending_stroke_shows_no_donor_and_accepts_one_result_after_real_search() {
                 Some("Dust mask")
             );
         });
+    });
+}
+
+#[test]
+fn leaving_the_photo_discards_pending_artwork_and_returning_can_apply_a_fresh_stroke() {
+    let directory = tempfile::tempdir().unwrap();
+    let other = directory.path().join("other.dng");
+    std::fs::copy(fixture("patches.dng"), &other).unwrap();
+    tools::calibrated_harness_with_thumbnails(true, |mut h| {
+        h.enter(|editor, cx| editor.add_raws(vec![other], cx));
+        wait_for(&mut h, |editor| {
+            !editor.busy && editor.document_pending.is_none()
+        });
+        h.get_by_label("patches.dng").click();
+        h.step();
+        wait_for(&mut h, |editor| !editor.busy);
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        wait_for(&mut h, |editor| editor.document.visit.working_view.idle());
+        let source = h.read(|editor| editor.document.visit.current_source.unwrap());
+        let undo = h.read(|editor| editor.history_label(crate::editor::history::Direction::Undo));
+        let admission = crate::background::testing::pause();
+        click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
+        h.read(|editor| {
+            assert!(editor.dust_search_pending());
+            assert!(!editor.pending_dust_strokes().is_empty());
+            assert!(editor.dust_repairs(source).is_none());
+        });
+        h.get_by_label("other.dng").click();
+        h.step();
+        h.read(|editor| {
+            assert_ne!(editor.document.visit.current_source, Some(source));
+            assert!(!editor.dust_search_pending());
+            assert!(editor.pending_dust_strokes().is_empty());
+            assert!(!editor.document.visit.dust.cleanup);
+        });
+        drop(admission);
+        wait_for(&mut h, |editor| {
+            !editor.busy && editor.document.visit.working_view.idle()
+        });
+        h.get_by_label("patches.dng").click();
+        h.step();
+        wait_for(&mut h, |editor| {
+            !editor.busy && editor.document.visit.working_view.idle()
+        });
+        h.read(|editor| {
+            assert_eq!(editor.document.visit.current_source, Some(source));
+            assert!(editor.dust_repairs(source).is_none());
+            assert!(editor.pending_dust_strokes().is_empty());
+            assert_eq!(
+                editor.history_label(crate::editor::history::Direction::Undo),
+                undo
+            );
+        });
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
+        ready(&mut h, 1);
+        h.read(|editor| assert_eq!(editor.dust_repairs(source).unwrap().repairs().len(), 1));
     });
 }
 

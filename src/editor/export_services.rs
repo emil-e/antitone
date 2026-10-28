@@ -97,7 +97,7 @@ impl Services {
                 })
                 .collect::<Vec<_>>();
             let planned_published = published.clone();
-            let resolve = crate::background::run(move || {
+            let resolve = crate::background::run(move |_| {
                 let mut photo = photo;
                 let Some(path) =
                     export_batch::destination(&photo.path, policy, &protected, &planned_published)?
@@ -166,7 +166,7 @@ impl Services {
                 let candidate = base.clone();
                 let protected = request.protected.clone();
                 let published = published.clone();
-                let resolved = crate::background::run(move || {
+                let resolved = crate::background::run(move |_| {
                     export_batch::destination(&candidate, policy, &protected, &published)
                 })
                 .await;
@@ -267,7 +267,7 @@ impl Services {
         request: Request,
         cancelled: Arc<AtomicBool>,
     ) -> Result<PathBuf, WriteFailure> {
-        crate::background::run(move || {
+        crate::background::run(move |_| {
             if cancelled.load(Ordering::Relaxed) {
                 return Err(WriteFailure::Photo(crate::Error::Cancelled));
             }

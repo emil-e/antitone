@@ -153,7 +153,7 @@ impl Editor {
         };
         let view = self.document.visit.view;
         let Some(task) = cx.spawn(move |cx| async move {
-            let result = crate::background::run(move || input.measure())
+            let result = crate::background::run(move |_| input.measure())
                 .await
                 .map_err(|_| "Measurement worker panicked".to_owned())
                 .and_then(|result| result.map_err(|error| error.to_string()));

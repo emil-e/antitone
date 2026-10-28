@@ -45,6 +45,9 @@ fn editor() -> Editor {
         )
         .unwrap();
     editor.select_dust_repair(RepairId(1));
+    editor.document.dust.search_worker = Some(worker::testing::Search::Geometry(
+        editor.document.visit.ready.as_ref().unwrap().area,
+    ));
     editor
 }
 
@@ -70,24 +73,6 @@ fn response(request: &Request, active: SourceRegion) -> Response {
         signature: request.signature,
         repair: request.repair.clone(),
         evaluated,
-    }
-}
-
-// Geometry/controller fixtures have synthetic display geometry. Resolve their
-// queued searches geometrically; real source acquisition has separate workflow cases.
-fn finish_searches(e: &mut Editor) {
-    for request in e.dust_search_requests() {
-        let result = crate::dust_repair::search_donor(
-            &request.support,
-            request.previous.as_ref().map(|r| r.offset),
-            request.development.active_area.into(),
-            &mut |_| panic!("expired geometry fixture must not read pixels"),
-            std::time::Instant::now(),
-            0.,
-            &mut crate::dust_repair::Execution::default(),
-        )
-        .unwrap();
-        e.receive_dust_search(request.id, Ok(result));
     }
 }
 
@@ -137,7 +122,7 @@ fn high_response(e: &mut Editor) -> Response {
 fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release() {
     let e = editor();
     crate::application::test_support::with_application(e, |app| {
-        app.enter(|e, cx| {
+        let (source, project) = app.enter(|e, cx| {
             let source = e.document.visit.current_source.unwrap();
             e.reset_dust_repairs(source);
             e.begin_dust_cleanup();
@@ -203,7 +188,10 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
             assert!(e.document.visit.dust.mask_draft.is_none());
             assert!(e.dust_repairs(source).is_none());
             assert!(e.dust_search_pending());
-            finish_searches(e);
+            (source, project)
+        });
+        app.run_until(Duration::from_secs(5), |e| !e.dust_search_pending());
+        app.read(|e| {
             let repairs = e.dust_repairs(source).unwrap().repairs();
             assert_eq!(repairs.len(), 1);
             assert!(repairs[0].support.contains([750, 200]));

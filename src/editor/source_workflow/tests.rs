@@ -14,7 +14,7 @@ fn unregistered_source_requests_defer_file_identity_until_preparation() {
             "UI capture must leave first-time filesystem identity to preparation"
         );
         let key =
-            futures_lite::future::block_on(crate::background::run(move || request.load_key()))
+            futures_lite::future::block_on(crate::background::run(move |_| request.load_key()))
                 .unwrap()
                 .unwrap();
         assert!(
@@ -185,7 +185,7 @@ fn retired_visit_cannot_publish_or_block_unrelated_cpu_work() {
         let access = app.access();
         let probe = access
             .spawn(move |_| async move {
-                crate::background::run(move || entered.send(()).unwrap())
+                crate::background::run(move |_| entered.send(()).unwrap())
                     .await
                     .unwrap();
             })
@@ -238,7 +238,7 @@ fn cancelling_an_unstarted_native_demand_does_not_wait_for_unrelated_calls() {
         let probe = app
             .access()
             .spawn(move |_| async move {
-                crate::background::run(move || entered.send(()).unwrap())
+                crate::background::run(move |_| entered.send(()).unwrap())
                     .await
                     .unwrap();
             })
@@ -318,7 +318,7 @@ fn worker_closure_cleans_up_parked_sources_without_blocking_unrelated_cpu_work()
         let probe = app
             .access()
             .spawn(move |_| async move {
-                crate::background::run(move || entered.send(()).unwrap())
+                crate::background::run(move |_| entered.send(()).unwrap())
                     .await
                     .unwrap();
             })
@@ -345,7 +345,7 @@ fn worker_closure_finishes_the_waiter_while_native_cleanup_continues() {
         let probe = app
             .access()
             .spawn(move |_| async move {
-                crate::background::run(move || entered.send(()).unwrap())
+                crate::background::run(move |_| entered.send(()).unwrap())
                     .await
                     .unwrap();
             })
@@ -537,7 +537,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         let probe = app
             .access()
             .spawn(move |_| async move {
-                crate::background::run(move || entered.send(()).unwrap())
+                crate::background::run(move |_| entered.send(()).unwrap())
                     .await
                     .unwrap();
             })

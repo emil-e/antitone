@@ -330,7 +330,7 @@ fn cancelling_a_running_measurement_retains_its_source_until_the_computation_ret
     let (finished, finishes) = mpsc::channel();
     let task = access
         .spawn(move |_| async move {
-            crate::background::run(move || {
+            crate::background::run(move |_| {
                 entered.send(()).unwrap();
                 resume.recv().unwrap();
                 let result = input.measure();
@@ -404,11 +404,11 @@ fn native_acquisition_wait_does_not_occupy_blocking_job_capacity() {
             upstream: AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             layer: None,
         };
-        crate::background::run(move || input.measure().map_err(|error| error.to_string()))
+        crate::background::run(move |_| input.measure().map_err(|error| error.to_string()))
             .await
             .map_err(|_| "worker panicked".to_owned())?
     });
-    let unrelated = executor.spawn(async move { crate::background::run(|| 42).await });
+    let unrelated = executor.spawn(async move { crate::background::run(|_| 42).await });
     let value = futures_lite::future::block_on(executor.run(async {
         assert_eq!(unrelated.await.unwrap(), 42);
         release.send(()).unwrap();

@@ -377,7 +377,7 @@ impl Worker {
             .store_key_at(&job.path)
             .and_then(|key| sources.available_proxy(&key));
         let worker = self.clone();
-        let mut work = crate::background::run(move || worker.begin(job, cached))
+        let mut work = crate::background::run(move |_| worker.begin(job, cached))
             .await
             .map_err(|_| workflow::Stopped)?;
         if let Ok(Input::Missing(key)) = &work.input {

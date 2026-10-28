@@ -130,7 +130,7 @@ impl Services {
                 .map_err(|error| error.to_string())?,
             );
         }
-        crate::background::run(move || {
+        crate::background::run(move |_| {
             developed.prepare_gpu(&self.renderers, &self.device, &self.queue, &|| {
                 cancelled.is_cancelled()
             })
@@ -169,7 +169,7 @@ impl Services {
             Ok::<_, Error>((request, key))
         };
         let captured = if needs_header {
-            crate::background::run(capture)
+            crate::background::run(move |_| capture())
                 .await
                 .map_err(|_| "Source header worker panicked".to_owned())?
         } else {
@@ -199,7 +199,7 @@ impl Services {
             registration_seconds: 0.,
             verification_seconds: 0.,
         };
-        crate::background::run(move || {
+        crate::background::run(move |_| {
             request.accept(prepared, file, &|| cancelled.is_cancelled(), timing)
         })
         .await

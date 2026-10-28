@@ -107,7 +107,7 @@ pub(super) async fn proxy<P: SourceProvider + ?Sized>(
             "proxy source differs from requested development".into(),
         ));
     }
-    let proxy = crate::background::run(move || {
+    let proxy = crate::background::run(move |_| {
         CameraPixels::from_scan(&crate::scan::Scan::from_source(source)).map(Arc::new)
     })
     .await
