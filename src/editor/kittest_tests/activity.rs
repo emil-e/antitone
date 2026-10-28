@@ -35,7 +35,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
         });
         harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
         harness.update(|editor| editor.sync_document());
-        let before = harness.read(|editor| editor.document.project.clone());
+        let before = harness.read(|editor| editor.document.state.project.clone());
         for (layout, size) in [
             ("normal", egui::vec2(1100., 800.)),
             ("narrow", egui::vec2(800., 600.)),
@@ -110,8 +110,8 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     .click();
                 harness.step();
                 harness.read(|editor| assert_eq!(editor.tab, old_tab));
-                let old_view = harness.read(|editor| editor.viewport);
-                let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
+                let old_view = harness.read(|editor| editor.document.visit.viewport);
+                let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
                 let point = geometry.image.center_bottom() - egui::vec2(0., 10.);
                 harness.hover_at(point);
                 for pressed in [true, false] {
@@ -123,7 +123,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     });
                     harness.step();
                 }
-                harness.read(|editor| assert_eq!(editor.viewport, old_view));
+                harness.read(|editor| assert_eq!(editor.document.visit.viewport, old_view));
                 harness.key_press(egui::Key::Escape);
                 harness.step();
                 harness.read(|editor| assert!(editor.tasks.blocks_workspace()));
@@ -142,10 +142,10 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 ),
             ] {
                 harness.update(|editor| held_activity(editor, task));
-                harness.update(|editor| editor.pick = pick);
+                harness.update(|editor| editor.document.picking.kind = pick);
                 if name == "measurement" {
                     harness.update(|editor| {
-                        editor.region = Some(Coverage::rectangle(Rect {
+                        editor.document.picking.region = Some(Coverage::rectangle(Rect {
                             x: 32,
                             y: 32,
                             width: 64,
@@ -162,8 +162,8 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 if let Some(ready) = ready {
                     harness.update(|editor| editor.document.visit.ready = Some(ready));
                 }
-                harness.update(|editor| editor.pick = None);
-                harness.update(|editor| editor.region = None);
+                harness.update(|editor| editor.document.picking.kind = None);
+                harness.update(|editor| editor.document.picking.region = None);
                 harness.update(|editor| editor.tasks.finish(task.request()));
                 harness.update(|editor| editor.busy = false);
                 harness.step();
@@ -178,7 +178,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 editor.document.spatial_preparing.is_none() && !editor.busy
             });
             drop(admission);
-            let source = harness.read(|editor| editor.current_source.unwrap());
+            let source = harness.read(|editor| editor.document.visit.current_source.unwrap());
             let pending = harness.read(|editor| {
                 super::super::analysis_workflow::Pending::new(
                     9000,
@@ -254,7 +254,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             harness.read(|editor| assert_eq!(editor.status, "Analysis cancelled"));
             stage(&mut harness, "Roll");
             render_case(&mut harness, &format!("background-{layout}"));
-            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
             harness.read(|editor| assert!(editor.tasks.view().is_none()));
         }
     });

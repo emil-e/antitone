@@ -1,4 +1,5 @@
-use super::{Editor, Ready, TaskRequest, measurement};
+use super::{Editor, Ready, TaskRequest, WorkingView, measurement};
+use std::sync::Arc;
 
 #[cfg(test)]
 mod tests;
@@ -8,6 +9,26 @@ mod tests;
 #[derive(Default)]
 pub(super) struct PhotoScope {
     pub view: u64,
+    pub dust: super::dust::Interaction,
+    pub spatial_consumer: Option<super::spatial::Consumer>,
+    pub working_view: WorkingView,
+    pub viewport: super::Viewport,
+    pub pending_preview: Option<super::thumbnails::SelectedPreview>,
+    pub preview_rendered: Option<(
+        u64,
+        crate::gpu::ProcessingSignature,
+        crate::frame_raster::FrameRaster,
+        super::OutputTarget,
+        Arc<crate::gpu::view::RenderedView>,
+    )>,
+    pub selection_timing: Option<Arc<super::SelectionTiming>>,
+    pub return_notice: Option<String>,
+    pub adjustment_layer_settings: super::AdjustmentLayerSettings,
+    pub photo_orientation: super::PhotoOrientation,
+    pub crop: Option<super::Crop>,
+    pub last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
+    pub pick_drag: Option<super::PickDrag>,
+    pub current_source: Option<super::SourceId>,
     pub ready: Option<Ready>,
     pub source: super::source_workflow::State,
     pub measurement: Option<measurement::Pending>,
@@ -23,15 +44,7 @@ impl PhotoScope {
     fn new(view: u64) -> Self {
         Self {
             view,
-            ready: None,
-            source: Default::default(),
-            measurement: None,
-            grade: Default::default(),
-            working: Default::default(),
-            support: Default::default(),
-            crop_edit: None,
-            mask_edit: None,
-            adjustment_layers: Default::default(),
+            ..Self::default()
         }
     }
 
@@ -51,10 +64,17 @@ impl Editor {
     pub(super) fn replace_photo_scope(&mut self, view: u64) {
         let activity = self.document.visit.activity();
         let layers = self.document.visit.adjustment_layers.selection_only();
-        self.invalidate_original();
-        self.working.clear();
-        // Replacing the owner drops its task handles, cancelling their continuations.
-        self.document.visit = PhotoScope::new(view);
+        let working_view = self.document.visit.working_view.for_visit();
+        // Replacing the owner drops its task handles, images and transient tools.
+        self.document.visit = PhotoScope {
+            working_view,
+            viewport: self.document.visit.viewport,
+            current_source: self.document.visit.current_source,
+            crop: self.document.visit.crop,
+            photo_orientation: self.document.visit.photo_orientation,
+            adjustment_layer_settings: self.document.visit.adjustment_layer_settings,
+            ..PhotoScope::new(view)
+        };
         // Temporary reference views retire gestures, not the selected layer's identity.
         self.document.visit.adjustment_layers = layers;
         if let Some(activity) = activity

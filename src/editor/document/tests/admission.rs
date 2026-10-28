@@ -325,27 +325,31 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             .validate_document_candidate(&editor.document)
             .unwrap();
         let accepted = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         let mut retired = editor
             .document
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap()
             .clone();
         retired.id = SourceId(0);
         retired.path = "retired.ARW".into();
         retired.adjustment_layers = Some(unsupported_locals());
-        let id = editor.document.project.add_source(retired).unwrap();
-        assert!(editor.document.project.order.contains(&id));
-        let before = editor.document.project.clone();
-        let selected = editor.current_source;
+        let id = editor.document.state.project.add_source(retired).unwrap();
+        assert!(editor.document.state.project.order.contains(&id));
+        let before = editor.document.state.project.clone();
+        let selected = editor.document.visit.current_source;
         let loaded = editor.id;
         let epoch = editor
             .source_epoch
             .load(std::sync::atomic::Ordering::Relaxed);
-        let revision = editor.original.revision();
-        let viewport = editor.viewport;
+        let revision = editor.document.visit.grade.original.revision();
+        let viewport = editor.document.visit.viewport;
         let path = editor.document.visit.ready.as_ref().unwrap().path.clone();
         editor.load(
             "different.ARW".into(),
@@ -356,7 +360,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             "{}",
             editor.status
         );
-        assert_eq!(editor.current_source, selected);
+        assert_eq!(editor.document.visit.current_source, selected);
         assert_eq!(editor.id, loaded);
         assert_eq!(
             editor
@@ -365,11 +369,12 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             epoch
         );
         assert_eq!(editor.document.visit.ready.as_ref().unwrap().path, path);
-        assert_eq!(editor.viewport, viewport);
-        assert_eq!(editor.original.revision(), revision);
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.visit.viewport, viewport);
+        assert_eq!(editor.document.visit.grade.original.revision(), revision);
+        assert_eq!(editor.document.state.project, before);
         assert!(
-            !editor.document.visit.source.pending() && editor.export_operation.pending.is_none()
+            !editor.document.visit.source.pending()
+                && editor.document.export_operation.pending.is_none()
         );
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("existing.tif");
@@ -386,14 +391,19 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             editor.status
         );
         assert!(!editor.busy);
-        assert!(editor.export_operation.pending.is_none());
+        assert!(editor.document.export_operation.pending.is_none());
         assert!(
-            !editor.document.visit.source.pending() && editor.export_operation.pending.is_none()
+            !editor.document.visit.source.pending()
+                && editor.document.export_operation.pending.is_none()
         );
         assert_eq!(std::fs::read(&destination).unwrap(), b"keep destination");
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
         let current = editor
-            .positive_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+            .positive_processing(
+                editor.document.input,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
         assert!(std::ptr::eq(
             accepted.pipeline().unwrap(),

@@ -24,8 +24,8 @@ pub(super) async fn prepare(input: source::Context) -> Result<Option<Rect>, Stri
 
 impl Editor {
     pub(super) fn request_analysis_support(&mut self, cx: &UiContext<'_, Self>) {
-        self.region = self.analysis_picture().map(Coverage::rectangle);
-        if self.region.is_some()
+        self.document.picking.region = self.analysis_picture().map(Coverage::rectangle);
+        if self.document.picking.region.is_some()
             || self
                 .document
                 .visit

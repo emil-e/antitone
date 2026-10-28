@@ -225,11 +225,12 @@ pub(super) fn require_safe(path: &Path, protected: &[PathBuf]) -> Result<(), Err
 impl Editor {
     pub(super) fn export_ids(&self, scope: Scope) -> Vec<SourceId> {
         self.document
+            .state
             .project
             .order
             .iter()
             .copied()
-            .filter(|id| scope == Scope::All || self.roll_selection.contains(*id))
+            .filter(|id| scope == Scope::All || self.document.roll_selection.contains(*id))
             .collect()
     }
 
@@ -281,8 +282,8 @@ impl Editor {
                 number += 1;
             }
             require_safe(&path, &protected)?;
-            let expected = self.document.project.source(id)?;
-            let input = if self.current_source == Some(id) {
+            let expected = self.document.state.project.source(id)?;
+            let input = if self.document.visit.current_source == Some(id) {
                 self.source_context().map(Input::Ready)
             } else {
                 None
@@ -296,12 +297,12 @@ impl Editor {
                     input: self.input(),
 
                     file: self.document.file_key(&source_path),
-                    cache: Some(self.document.cache.clone()),
+                    sources: None,
 
                     path: source_path,
                     wb,
                     expected: Some(expected),
-                    correction: self.correction.clone(),
+                    correction: self.document.correction.clone(),
                 }))
             });
             photos.push(Photo {

@@ -50,11 +50,11 @@ impl ControlState {
     fn capture(editor: &Editor) -> Self {
         Self {
             input: editor.input(),
-            roll: editor.roll,
-            photo: editor.adjustment_layer_settings,
-            target: editor.target,
-            film_emulation: editor.film_emulation,
-            source: editor.current_source,
+            roll: editor.document.roll,
+            photo: editor.document.visit.adjustment_layer_settings,
+            target: editor.document.target,
+            film_emulation: editor.document.film_emulation,
+            source: editor.document.visit.current_source,
             layer: editor.adjustment_layer_target(),
         }
     }
@@ -197,7 +197,7 @@ impl Editor {
         {
             self.history_snapshot_clones += 1;
         }
-        self.document.project.clone()
+        self.document.state.project.clone()
     }
 
     pub(super) fn history_snapshot(&mut self) -> Project {
@@ -221,7 +221,7 @@ impl Editor {
         photo: Option<SourceId>,
     ) {
         self.sync_document();
-        if before == self.document.project {
+        if before == self.document.state.project {
             return;
         }
         if let Some(controls) = &mut self.history_controls {
@@ -243,8 +243,8 @@ impl Editor {
             && self.menus.panel.is_none()
             && self.document.look.is_none()
             && self.document_pending.is_none()
-            && self.pick.is_none()
-            && self.flat_edit.is_none()
+            && self.document.picking.kind.is_none()
+            && self.document.flat_edit.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
@@ -256,10 +256,10 @@ impl Editor {
             && self.after_save.is_none()
             && !self.allow_close
             && self.project_overwrite.is_none()
-            && self.removal_pending.is_none()
+            && self.document.removal_pending.is_none()
             && !self.document.visit.adjustment_layers.confirming()
             && !self.document.visit.adjustment_layers.dragging()
-            && !self.document.dust.history_draft()
+            && !self.dust_history_draft()
     }
 
     pub(super) fn restore_history(&mut self, direction: Direction, cx: &UiContext<'_, Self>) {
@@ -278,11 +278,19 @@ impl Editor {
         let selected = entry
             .photo
             .filter(|id| project.order.contains(id))
-            .or(self.current_source.filter(|id| project.order.contains(id)))
+            .or(self
+                .document
+                .visit
+                .current_source
+                .filter(|id| project.order.contains(id)))
             .or_else(|| {
                 project
                     .order
-                    .get(self.selected.min(project.order.len().saturating_sub(1)))
+                    .get(
+                        self.document
+                            .selected
+                            .min(project.order.len().saturating_sub(1)),
+                    )
                     .copied()
             });
         let mut candidate = self.document.capture();
@@ -306,12 +314,13 @@ impl Editor {
                     .expect("pending history entry")
                     .label;
                 self.document.history.complete(direction);
-                self.working.clear();
-                self.source = !self.input.ready();
-                self.document.dust.cleanup =
-                    cleanup.is_some() && !self.source && self.document.visit.ready.is_some();
+                self.document.visit.working_view.clear();
+                self.document.source = !self.document.input.ready();
+                self.document.visit.dust.cleanup = cleanup.is_some()
+                    && !self.document.source
+                    && self.document.visit.ready.is_some();
                 if let Some(show_masks) = cleanup {
-                    self.document.dust.show_masks = show_masks;
+                    self.document.visit.dust.show_masks = show_masks;
                 }
                 self.status = format!("{} {label}", direction.verb());
             }
@@ -325,8 +334,8 @@ impl Editor {
             ..
         }) = pending
         {
-            self.document.dust.cleanup = true;
-            self.document.dust.show_masks = show_masks;
+            self.document.visit.dust.cleanup = true;
+            self.document.visit.dust.show_masks = show_masks;
         }
     }
 
@@ -352,7 +361,7 @@ impl Editor {
                 .unwrap_or_else(|| self.clone_history_project());
             controls.state.restore(&mut before);
             self.sync_document();
-            if before != self.document.project {
+            if before != self.document.state.project {
                 let after = self.clone_history_project();
                 self.document
                     .history

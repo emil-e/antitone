@@ -23,7 +23,7 @@ fn a_cached_renderer_failure_stops_before_acquiring_later_photos() {
     let Input::Acquire(second) = &mut request.photos[1].input else {
         panic!("second photo must exercise cold acquisition");
     };
-    second.cache = None;
+    second.sources = None;
     let mut services = editor.export_services.take().unwrap();
     let acquisitions = Arc::new(AtomicUsize::new(0));
     let observed = acquisitions.clone();

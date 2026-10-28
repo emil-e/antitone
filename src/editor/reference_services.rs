@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 pub(super) struct Acceptance {
     pub region: Rect,
-    pub cache: Arc<crate::source::SourceCache>,
+    pub sources: Option<Arc<dyn crate::source::SourceProvider>>,
     pub document: Document,
     pub selected: Option<SourceId>,
     pub source: source::Context,
@@ -38,7 +38,7 @@ impl Acceptance {
         Ok(document_services::Request {
             work: document_services::Preparation::Correction(self.document, self.selected),
             source: None,
-            cache: Some(self.cache),
+            sources: self.sources,
             exposures: Some(exposures),
             correction: self.correction,
         })
@@ -78,10 +78,11 @@ impl Services {
 
     pub async fn estimate(
         &self,
-        request: Acceptance,
+        mut request: Acceptance,
         cancelled: crate::cancellation::Cancellation,
     ) -> Result<document_services::Request, String> {
-        crate::background::run(move || {
+        let sources = request.sources.take();
+        let mut result = crate::background::run(move || {
             if cancelled.is_cancelled() {
                 return Err(Error::UnusableSample("reference retired"));
             }
@@ -89,6 +90,8 @@ impl Services {
         })
         .await
         .map_err(|_| "Reference estimation worker panicked".to_owned())?
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+        result.sources = sources;
+        Ok(result)
     }
 }

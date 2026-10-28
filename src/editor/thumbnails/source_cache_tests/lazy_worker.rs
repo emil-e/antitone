@@ -29,7 +29,7 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
                     wb: wb(&document),
                     expected: Some(source.clone()),
                     correction: None,
-                    cache: Some(document.cache.clone()),
+                    sources: Some(scheduler.provider(Some(document.cache.clone()))),
                     file: document.file_key(&path),
                 },
                 crate::cancellation::Cancellation::default(),

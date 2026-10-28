@@ -6,30 +6,39 @@ pub(super) fn wait_context(h: &mut Harness<'_, Editor>) {
             return false;
         }
         assert!(e.auto_crop_context());
-        assert!(e.working.error.is_none(), "{:?}", e.working.error);
+        assert!(
+            e.document.visit.working_view.error.is_none(),
+            "{:?}",
+            e.document.visit.working_view.error
+        );
         let Some(ready) = &e.document.visit.ready else {
             return false;
         };
-        !e.working.updating
-            && e.working.displayed.as_ref().is_some_and(|v| {
-                v.spec.authority == e.id
-                    && v.spec.frame.composition.crop() == Crop::from_region(ready.area)
-            })
+        !e.document.visit.working_view.updating
+            && e.document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .is_some_and(|v| {
+                    v.spec.authority == e.id
+                        && v.spec.frame.composition.crop() == Crop::from_region(ready.area)
+                })
     });
     let timing = h.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-    h.update(|editor| editor.selection_timing = Some(timing.clone()));
+    h.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
     h.step();
     h.render().unwrap();
     assert!(timing.ready_was_painted());
     h.read(|e| {
-    let layout = e.last_layout.unwrap().0;
+    let layout = e.document.visit.last_layout.unwrap().0;
     assert_eq!(
         layout.composition.crop(),
         Crop::from_region(e.document.visit.ready.as_ref().unwrap().area)
     );
     match e.scope_request().unwrap() {
         scopes::ScopeInput::Rendered(view, frame) => {
-            assert!(Arc::ptr_eq(&view, e.working.displayed.as_ref().unwrap()));
+            assert!(Arc::ptr_eq(&view, e.document.visit.working_view.displayed.as_ref().unwrap()));
             assert_eq!(frame.composition, layout.composition);
         }
         _ => panic!(
@@ -62,8 +71,8 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             h.get_by_label("Original-resolution reference").click();
             h.step();
             workflow::wait_settled(&mut h);
-            let ids = h.read(|editor| editor.document.project.order.clone());
-            let before = h.read(|editor| editor.document.project.clone());
+            let ids = h.read(|editor| editor.document.state.project.order.clone());
+            let before = h.read(|editor| editor.document.state.project.clone());
             h.get_by_label("crop-2.dng")
                 .click_modifiers(egui::Modifiers::COMMAND);
             h.step();
@@ -75,7 +84,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             h.step();
             h.read(|editor| {
                 assert_eq!(
-                    editor.current_source,
+                    editor.document.visit.current_source,
                     Some(ids[0]),
                     "no mandatory browsing or per-photo review"
                 )
@@ -83,13 +92,21 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             wait_context(&mut h);
             workflow::wait_settled(&mut h);
             assert_lifecycle(&h, size);
-            let layout = h.read(|editor| editor.last_layout.unwrap().0);
+            let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
             let outline = h.read(|editor| editor.auto_crop_outline(layout).unwrap());
             assert!(outline.iter().all(|p| layout.image.contains(*p)));
             assert!(egui::Rect::from_points(&outline).width() < layout.image.width());
-            let viewport = h.read(|editor| editor.viewport);
-            let image = h.read(|editor| editor.working.displayed.clone().unwrap());
-            let revision = h.read(|editor| editor.original.revision());
+            let viewport = h.read(|editor| editor.document.visit.viewport);
+            let image = h.read(|editor| {
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .displayed
+                    .clone()
+                    .unwrap()
+            });
+            let revision = h.read(|editor| editor.document.visit.grade.original.revision());
             workflow::enter_numeric(&mut h, "Margin", "1.25");
             wait_context(&mut h);
             h.read(|editor| assert_ne!(editor.auto_crop_outline(layout).unwrap(), outline));
@@ -103,16 +120,28 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             h.read(|editor| assert!(editor.auto_crop_margin > 1.25));
             pointer(&mut h, end, false);
             wait_context(&mut h);
-            h.read(|editor| assert_eq!(editor.document.project, before));
+            h.read(|editor| assert_eq!(editor.document.state.project, before));
             h.read(|editor| assert!(!editor.document.dirty()));
-            h.read(|editor| assert_eq!(editor.crop, None));
-            h.read(|editor| assert_eq!(editor.viewport, viewport));
-            h.read(|editor| assert_eq!(editor.last_layout.unwrap().0.image, layout.image));
-            h.read(|editor| assert_eq!(editor.original.revision(), revision));
+            h.read(|editor| assert_eq!(editor.document.visit.crop, None));
+            h.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
+            h.read(|editor| {
+                assert_eq!(
+                    editor.document.visit.last_layout.unwrap().0.image,
+                    layout.image
+                )
+            });
+            h.read(|editor| assert_eq!(editor.document.visit.grade.original.revision(), revision));
             h.read(|editor| {
                 assert!(Arc::ptr_eq(
                     &image.image,
-                    &editor.working.displayed.as_ref().unwrap().image
+                    &editor
+                        .document
+                        .visit
+                        .working_view
+                        .displayed
+                        .as_ref()
+                        .unwrap()
+                        .image
                 ))
             });
             save_capture(
@@ -142,7 +171,9 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             h.step();
             h.read(|editor| {
                 assert!(
-                    !output.exists() && editor.export_operation.pending.is_none() && !editor.busy,
+                    !output.exists()
+                        && editor.document.export_operation.pending.is_none()
+                        && !editor.busy,
                     "output commands cannot export a draft"
                 )
             });
@@ -151,12 +182,12 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 h.step();
                 wait_for(&mut h, |e| !e.busy && e.document.visit.ready.is_some());
                 wait_context(&mut h);
-                h.read(|editor| assert_eq!(editor.current_source, Some(ids[index])));
-                h.read(|editor| assert_eq!(editor.document.project, before));
+                h.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[index])));
+                h.read(|editor| assert_eq!(editor.document.state.project, before));
                 h.read(|editor| {
                     assert_eq!(
                         editor
-                            .auto_crop_outline(editor.last_layout.unwrap().0)
+                            .auto_crop_outline(editor.document.visit.last_layout.unwrap().0)
                             .is_some(),
                         index == 2
                     )
@@ -170,7 +201,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             workflow::enter_numeric(&mut h, "Margin", "2");
             h.read(|editor| assert_eq!(editor.id, request));
             h.read(|editor| assert!(editor.auto_crop_preview(ids[1]).is_none()));
-            h.read(|editor| assert_eq!(editor.document.project, before));
+            h.read(|editor| assert_eq!(editor.document.state.project, before));
             let mut expected = before;
             for id in [ids[0], ids[2]] {
                 let crop = expected_crop(&h, id, 2.);
@@ -178,9 +209,9 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 expected.source_mut(id).unwrap().crop = Some(crop);
             }
             click_action(&mut h, "Apply");
-            h.read(|editor| assert_eq!(editor.document.project, expected));
-            h.read(|editor| assert_eq!(editor.current_source, Some(ids[1])));
-            h.read(|editor| assert_eq!(editor.crop, None));
+            h.read(|editor| assert_eq!(editor.document.state.project, expected));
+            h.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[1])));
+            h.read(|editor| assert_eq!(editor.document.visit.crop, None));
             let full = h.read(|editor| {
                 Crop::from_region(editor.document.visit.ready.as_ref().unwrap().area)
             });
@@ -201,8 +232,8 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             let composition = h.read(|editor| {
                 Composition::with_crop(
                     editor.document.visit.ready.as_ref().unwrap().area,
-                    editor.roll_orientation,
-                    editor.photo_orientation,
+                    editor.document.roll_orientation,
+                    editor.document.visit.photo_orientation,
                     Some(crop),
                 )
                 .unwrap()
@@ -222,7 +253,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 tiff::decoder::Decoder::new(std::fs::File::open(output).unwrap()).unwrap();
             let [w, height] = composition.size();
             assert_eq!(decoder.dimensions().unwrap(), (w, height));
-            h.read(|editor| assert_eq!(editor.document.project, expected));
+            h.read(|editor| assert_eq!(editor.document.state.project, expected));
         });
     }
 }
@@ -233,8 +264,8 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         stage(&mut h, "Roll");
         click_action(&mut h, "Auto-crop roll");
         wait_context(&mut h);
-        let before = h.read(|editor| editor.document.project.clone());
-        let source = h.read(|editor| editor.current_source.unwrap());
+        let before = h.read(|editor| editor.document.state.project.clone());
+        let source = h.read(|editor| editor.document.visit.current_source.unwrap());
         let initial = h.read(|editor| editor.auto_crop_preview(source));
         h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Margin")
             .click();
@@ -255,7 +286,7 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         h.step();
         assert!(!egui::Popup::is_any_open(&h.ctx));
         h.read(|editor| assert!(editor.document.auto_crop_edit.is_some()));
-        let layout = h.read(|editor| editor.last_layout.unwrap().0);
+        let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
         let q = h.read(|editor| editor.auto_crop_outline(layout).unwrap());
         let end = q[0] + (q[2] - q[0]) * 0.1;
         for checkbox in [false, true] {
@@ -303,15 +334,15 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         h.step();
         h.read(|editor| assert_eq!(editor.auto_crop_margin, 0.5));
         h.read(|editor| assert_eq!(editor.auto_crop_preview(source), initial));
-        h.read(|editor| assert_eq!(editor.document.project, before));
+        h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.key_press(egui::Key::Delete);
         h.step();
-        h.read(|editor| assert!(editor.removal_pending.is_none()));
+        h.read(|editor| assert!(editor.document.removal_pending.is_none()));
         h.key_press(egui::Key::Escape);
         h.step();
         h.step();
         h.read(|editor| assert!(editor.document.auto_crop_edit.is_none()));
-        h.read(|editor| assert_eq!(editor.document.project, before));
+        h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.read(|editor| assert!(!editor.document.dirty()));
     });
 }

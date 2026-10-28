@@ -267,21 +267,22 @@ fn selecting_the_last_eager_source_promotes_its_existing_queued_load() {
             Ok(Some(sources[&task.request.path].clone()))
         });
     });
-    let cache = SourceCache::new(0);
+    let owner = Arc::new(SourceCache::new(0));
+    let cache = owner.provider(Arc::new(loader.clone()));
     let key = |path| request(path).key.unwrap();
-    let mut first_load = Box::pin(cache.load_source(&loader, key(first.path()), Priority::Eager));
+    let mut first_load = Box::pin(cache.load_source(key(first.path()), Priority::Eager));
     assert!(
         futures_lite::future::block_on(futures_lite::future::poll_once(&mut first_load)).is_none()
     );
     starts.recv_timeout(Duration::from_secs(5)).unwrap();
-    let mut middle_load = Box::pin(cache.load_source(&loader, key(middle.path()), Priority::Eager));
+    let mut middle_load = Box::pin(cache.load_source(key(middle.path()), Priority::Eager));
     assert!(
         futures_lite::future::block_on(futures_lite::future::poll_once(&mut middle_load)).is_none()
     );
     let selected_key = key(selected.path());
-    let mut eager = Box::pin(cache.load_source(&loader, selected_key.clone(), Priority::Eager));
+    let mut eager = Box::pin(cache.load_source(selected_key.clone(), Priority::Eager));
     assert!(futures_lite::future::block_on(futures_lite::future::poll_once(&mut eager)).is_none());
-    let mut foreground = Box::pin(cache.load_source(&loader, selected_key, Priority::Foreground));
+    let mut foreground = Box::pin(cache.load_source(selected_key, Priority::Foreground));
     assert!(
         futures_lite::future::block_on(futures_lite::future::poll_once(&mut foreground)).is_none()
     );

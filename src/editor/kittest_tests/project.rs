@@ -4,7 +4,7 @@ use super::*;
 fn compare_pixel(harness: &Harness<'_, Editor>) -> (DVec3, Vec<glam::Vec3>, Vec<glam::Vec3>) {
     let (path, wb, input, roll, snapshot) = harness.read(|editor| {
         let document = &editor.document;
-        let id = editor.current_source.unwrap();
+        let id = editor.document.visit.current_source.unwrap();
         (
             document.source_path(id).unwrap(),
             document.project.development().as_ref().unwrap().fixed_wb,
@@ -73,32 +73,32 @@ fn individual_roll_white_balance_resets_work_in_both_input_stages() {
         tools::calibrated_harness(|mut harness| {
             harness.update(|editor| {
                 if digital {
-                    editor.input = crate::processing::InputSettings::Digital;
+                    editor.document.input = crate::processing::InputSettings::Digital;
                 }
-                editor.roll.wb = Balance {
+                editor.document.roll.wb = Balance {
                     warmth: 0.2,
                     tint: -0.15,
                 };
                 editor.sync_document();
             });
-            let input = harness.read(|editor| editor.input);
+            let input = harness.read(|editor| editor.document.input);
             stage(&mut harness, "Roll");
             reset_shared_balance_component(&mut harness, "Warmth", 0.2);
             harness.read(|editor| {
                 assert_eq!(
-                    editor.roll.wb,
+                    editor.document.roll.wb,
                     Balance {
                         warmth: 0.,
                         tint: -0.15
                     }
                 );
-                assert_eq!(editor.input, input);
-                assert_eq!(editor.document.project.roll, editor.roll);
+                assert_eq!(editor.document.input, input);
+                assert_eq!(editor.document.state.project.roll, editor.document.roll);
             });
             reset_shared_balance_component(&mut harness, "Tint", -0.15);
             harness.read(|editor| {
-                assert_eq!(editor.roll.wb, Balance::default());
-                assert_eq!(editor.input, input);
+                assert_eq!(editor.document.roll.wb, Balance::default());
+                assert_eq!(editor.document.input, input);
             });
         });
     }
@@ -108,7 +108,8 @@ fn individual_roll_white_balance_resets_work_in_both_input_stages() {
 fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_the_document() {
     tools::calibrated_harness(|mut harness| {
         harness.update(|editor| {
-            let crate::processing::InputSettings::Negative { response, .. } = &mut editor.input
+            let crate::processing::InputSettings::Negative { response, .. } =
+                &mut editor.document.input
             else {
                 panic!("calibrated negative fixture");
             };
@@ -118,10 +119,14 @@ fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_t
             };
             editor.sync_document();
             editor
-                .validate_processing(editor.input, editor.roll, editor.adjustment_layer_settings)
+                .validate_processing(
+                    editor.document.input,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
+                )
                 .unwrap();
         });
-        let before = harness.read(|editor| editor.document.project.clone());
+        let before = harness.read(|editor| editor.document.state.project.clone());
         stage(&mut harness, "Roll");
         enter_numeric(&mut harness, "Gamma", "0.1");
         harness.read(|editor| {
@@ -130,13 +135,13 @@ fn interpretation_numeric_edits_reject_unsupported_processing_before_accepting_t
                 "{}",
                 editor.status
             );
-            assert_eq!(editor.document.project, before);
-            assert_eq!(editor.input, before.input);
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.document.input, before.input);
         });
         enter_numeric(&mut harness, "Gamma", "0.7");
         harness.read(|editor| {
-            assert_eq!(editor.input.gamma(), 0.7);
-            assert_eq!(editor.document.project.input, editor.input);
+            assert_eq!(editor.document.input.gamma(), 0.7);
+            assert_eq!(editor.document.state.project.input, editor.document.input);
         });
     });
 }
@@ -157,11 +162,13 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         harness.read(|editor| {
             assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
             assert!(
-                editor.document.project.sources.iter().all(|source| source
-                    .development
-                    .decode
-                    .fixed_wb
-                    == crate::project::UNITY_WB)
+                editor
+                    .document
+                    .state
+                    .project
+                    .sources
+                    .iter()
+                    .all(|source| source.development.decode.fixed_wb == crate::project::UNITY_WB)
             );
         });
         let mut scan = Scan::open(&paths[0], Some(crate::project::UNITY_WB)).unwrap();
@@ -184,19 +191,22 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                 })
                 .unwrap(),
             ));
-            e.source = false;
+            e.document.source = false;
             e.sync_document();
         });
-        let ids = harness.read(|editor| editor.document.project.order.clone());
+        let ids = harness.read(|editor| editor.document.state.project.order.clone());
         harness.step();
         harness.get_by_label("working.dng").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
-        harness.read(|editor| assert_eq!(editor.current_source, Some(ids[1])));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[1])));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "7.123456789012345");
         harness.read(|editor| {
-            assert_eq!(editor.adjustment_layer_settings.exposure, 7.123456789012345)
+            assert_eq!(
+                editor.document.visit.adjustment_layer_settings.exposure,
+                7.123456789012345
+            )
         });
         stage(&mut harness, "Roll");
         harness
@@ -220,8 +230,8 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         });
         // Supply a reordered roll to exercise source-owned Save/Open behavior.
         harness.update(|e| {
-            e.document.project.order.swap(0, 1);
-            e.selected = 0;
+            e.document.state.project.order.swap(0, 1);
+            e.document.selected = 0;
             e.sync_document();
             let path = directory.path().join("film.antitone");
             *e.document = e.document.save(&path, crate::project::Save::New).unwrap();
@@ -245,12 +255,12 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Warmth", "0.1");
         harness.read(|editor| assert!(editor.document.dirty()));
-        let expected = harness.read(|editor| editor.document.project.clone());
+        let expected = harness.read(|editor| editor.document.state.project.clone());
         let pixel = compare_pixel(&harness);
         save_existing_project(&mut harness);
         native_file_action(&mut harness, crate::platform::menu::Action::New);
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.document.project.development().is_none()));
+        harness.read(|editor| assert!(editor.document.state.project.development().is_none()));
         harness.read(|editor| assert!(editor.document.visit.ready.is_none()));
         harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
@@ -266,19 +276,19 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                 crate::project::UNITY_WB
             )
         });
-        let before_open = harness.read(|editor| editor.document.project.clone());
+        let before_open = harness.read(|editor| editor.document.state.project.clone());
         open_project(&mut harness, directory.path().join("film.antitone"));
         harness.read(|editor| assert!(editor.transition.is_some()));
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.project, before_open));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before_open));
         open_project(&mut harness, directory.path().join("film.antitone"));
         harness.get_by_label("Discard changes").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert_eq!(editor.document.project, expected));
+        harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         harness.read(|editor| assert!(!editor.document.dirty()));
-        harness.read(|editor| assert_eq!(editor.current_source, Some(ids[1])));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[1])));
         harness.read(|editor| {
             assert_eq!(
                 editor
@@ -300,7 +310,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             wait_settled(&mut harness);
             let timing =
                 harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-            harness.update(|editor| editor.selection_timing = Some(timing.clone()));
+            harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
             harness.step();
             let png = harness.render().unwrap();
             assert!(timing.ready_was_painted());
@@ -314,7 +324,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             );
         }
         save_existing_project(&mut harness);
-        let mut adjusted = harness.read(|editor| editor.document.project.clone());
+        let mut adjusted = harness.read(|editor| editor.document.state.project.clone());
         adjusted.set_response(crate::processing::Response {
             toe: 3.25,
             shoulder: 0.004,
@@ -325,11 +335,11 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             .unwrap();
         open_project(&mut harness, adjusted_path);
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert_eq!(editor.document.project, adjusted));
+        harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
         let adjusted_pixel = compare_pixel(&harness);
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Tint", "-0.05");
-        harness.read(|editor| adjusted = editor.document.project.clone());
+        harness.read(|editor| adjusted = editor.document.state.project.clone());
         let adjusted_pixel_edited = compare_pixel(&harness);
         assert_ne!(adjusted_pixel_edited, adjusted_pixel);
         save_existing_project(&mut harness);
@@ -338,11 +348,11 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             directory.path().join("adjusted.antitone.json"),
         );
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert_eq!(editor.document.project, adjusted));
+        harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
         harness.read(|editor| assert!(!editor.document.dirty()));
         wait_settled(&mut harness);
         assert_eq!(compare_pixel(&harness), adjusted_pixel_edited);
-        let selected = harness.read(|editor| editor.current_source);
+        let selected = harness.read(|editor| editor.document.visit.current_source);
         let ready =
             harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().proxy.clone());
         for (name, id, missing) in [
@@ -371,8 +381,8 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                     editor.status
                 )
             });
-            harness.read(|editor| assert_eq!(editor.document.project, adjusted));
-            harness.read(|editor| assert_eq!(editor.current_source, selected));
+            harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
+            harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
             harness.read(|editor| {
                 assert!(
                     editor
@@ -388,13 +398,15 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             harness.read(|editor| assert!(!editor.document.dirty()));
         }
         wait_for(&mut harness, |e| {
-            e.thumbnails.ready_count(&e.document, e.target)
-                >= e.document.project.order.len().min(16)
+            e.document
+                .thumbnails
+                .ready_count(&e.document, e.document.target)
+                >= e.document.state.project.order.len().min(16)
         });
-        harness.read(|editor| assert_eq!(editor.document.project, adjusted));
+        harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "0.5");
-        let dirty = harness.read(|editor| editor.document.project.clone());
+        let dirty = harness.read(|editor| editor.document.state.project.clone());
         let saved_path = harness.read(|editor| editor.document.path.clone());
         let failed = directory.path().join("unwritable.antitone.json");
         std::fs::create_dir(&failed).unwrap();
@@ -414,7 +426,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             )
         });
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert_eq!(editor.document.project, dirty));
+        harness.read(|editor| assert_eq!(editor.document.state.project, dirty));
         harness.read(|editor| assert!(editor.document.dirty()));
         harness.read(|editor| assert_eq!(editor.transition, Some(files::Transition::New)));
         harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
@@ -423,7 +435,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         harness.step();
         harness.step();
         harness.read(|editor| assert!(editor.failure.is_none()));
-        harness.read(|editor| assert_eq!(editor.document.project, dirty));
+        harness.read(|editor| assert_eq!(editor.document.state.project, dirty));
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.update(|editor| editor.document.path = saved_path);

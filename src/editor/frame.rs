@@ -24,9 +24,14 @@ impl Editor {
 
     pub(super) fn receive_frame(&mut self) {
         if self.document.visit.ready.is_none()
-            || self.working.authority().is_some_and(|id| id != self.id)
+            || self
+                .document
+                .visit
+                .working_view
+                .authority()
+                .is_some_and(|id| id != self.id)
         {
-            self.working.clear();
+            self.document.visit.working_view.clear();
         }
         self.stash_review_region();
         self.seed_thumbnail();
@@ -149,11 +154,12 @@ impl Editor {
                     ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
                 if previous || next {
                     let index = if previous {
-                        self.selected.saturating_sub(1)
+                        self.document.selected.saturating_sub(1)
                     } else {
-                        (self.selected + 1).min(self.document.project.order.len().saturating_sub(1))
+                        (self.document.selected + 1)
+                            .min(self.document.state.project.order.len().saturating_sub(1))
                     };
-                    if let Some(&id) = self.document.project.order.get(index) {
+                    if let Some(&id) = self.document.state.project.order.get(index) {
                         self.browse_analysis_review(id, cx);
                     }
                 }
@@ -174,7 +180,7 @@ impl Editor {
             && self.fullscreen.is_none()
             && !fullscreen_was_active
             && self.failure.is_none()
-            && self.removal_pending.is_none()
+            && self.document.removal_pending.is_none()
             && !self.document.visit.adjustment_layers.confirming()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && !self.export_modal()
@@ -191,7 +197,7 @@ impl Editor {
                     .as_ref()
                     .is_some_and(MaskEdit::dragging)
             {
-                self.viewport.fit();
+                self.document.visit.viewport.fit();
             }
             self.select_active_shortcut(ui.ctx());
             self.tool_shortcuts(ui, cx);
@@ -200,15 +206,15 @@ impl Editor {
     }
 
     fn tool_shortcuts(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        if self.pick.is_some()
+        if self.document.picking.kind.is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.status = "Pick cancelled; processing unchanged".into();
             self.finish_pick(cx);
-            self.region = None;
+            self.document.picking.region = None;
         }
-        if self.pick.is_some()
-            && self.region.is_some()
+        if self.document.picking.kind.is_some()
+            && self.document.picking.region.is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
         {
             self.apply_pick(cx);
@@ -236,7 +242,7 @@ impl Editor {
         {
             self.finish_mask(false);
         }
-        if self.document.dust.cleanup
+        if self.document.visit.dust.cleanup
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -244,7 +250,7 @@ impl Editor {
         {
             self.delete_selected_dust_repair();
         }
-        if self.document.dust.cleanup
+        if self.document.visit.dust.cleanup
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.finish_dust_cleanup();
@@ -267,7 +273,7 @@ impl Editor {
         {
             self.delete_selected_adjustment_layer();
         }
-        if !self.document.dust.cleanup
+        if !self.document.visit.dust.cleanup
             && self.document.auto_crop_edit.is_none()
             && !adjustment_delete
             && !self.document.visit.adjustment_layers.dragging()
@@ -279,24 +285,24 @@ impl Editor {
         {
             *file_action = Some(FileAction::Remove);
         }
-        if self.pick.is_none()
+        if self.document.picking.kind.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
             && !self.document.visit.adjustment_layers.dragging()
-            && !self.document.project.order.is_empty()
+            && !self.document.state.project.order.is_empty()
         {
             let previous = ui
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
             let next = ui
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
             let index = if previous {
-                self.selected.saturating_sub(1)
+                self.document.selected.saturating_sub(1)
             } else if next {
-                (self.selected + 1).min(self.document.project.order.len() - 1)
+                (self.document.selected + 1).min(self.document.state.project.order.len() - 1)
             } else {
-                self.selected
+                self.document.selected
             };
-            if index != self.selected {
+            if index != self.document.selected {
                 self.select_roll_photo(index, egui::Modifiers::NONE, cx);
             }
         }
@@ -310,7 +316,7 @@ impl Editor {
             || self.document_pending.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
-            || self.removal_pending.is_some()
+            || self.document.removal_pending.is_some()
             || self.document.visit.adjustment_layers.confirming()
         {
             ui.disable();
@@ -351,7 +357,7 @@ impl Editor {
                 }
             });
         self.filmstrip(ui, cx);
-        if self.removal_pending.is_some() {
+        if self.document.removal_pending.is_some() {
             ui.disable();
         }
     }
@@ -394,14 +400,16 @@ impl Editor {
             1 => "Photo settings",
             _ => "Rendering settings",
         });
-        let reset_scope = match (self.tab, self.current_source) {
+        let reset_scope = match (self.tab, self.document.visit.current_source) {
             (0, _) => editing::Scope::Roll,
             (1, Some(source)) => editing::Scope::Photo(source, self.adjustment_layer_target()),
             _ => editing::Scope::Rendering,
         };
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::new("defer-control-resets"), true));
-        let controls_photo = (self.tab == 1).then_some(self.current_source).flatten();
+        let controls_photo = (self.tab == 1)
+            .then_some(self.document.visit.current_source)
+            .flatten();
         let controls = self.workspace_controls(ui, cx);
         self.validate_frame_edits(previous);
         self.record_controls(controls_photo, ui);
@@ -461,7 +469,7 @@ impl Editor {
         actions: Actions,
         analyze: bool,
     ) {
-        let auto_crop = self.auto_crop_requested.take();
+        let auto_crop = self.document.auto_crop_requested.take();
         if let Some(action) = actions.file {
             if self.document.visit.mask_edit.is_none() {
                 self.file_action(action, cx);

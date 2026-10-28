@@ -116,7 +116,7 @@ fn click(
 #[test]
 fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition() {
     let editor = fixture();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let context = egui::Context::default();
     with_application(editor, |app| {
         ui_frame(app, &context, vec![]);
@@ -132,7 +132,7 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
         click(app, &context, cancel);
         app.read(|e| {
             assert!(e.transition.is_none() && e.document_pending.is_none());
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
         });
         app.enter(|e, cx| e.guard_transition(Transition::New, cx));
         ui_frame(app, &context, vec![]);
@@ -147,7 +147,7 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
         assert!(app.read(|e| e.busy && e.document_pending.is_some()));
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| {
-            assert_eq!(e.document.project, crate::project::Project::default());
+            assert_eq!(e.document.state.project, crate::project::Project::default());
             assert!(e.failure.is_none() && !e.document.dirty());
         });
     });
@@ -229,7 +229,7 @@ fn numeric_save(route: SaveInput) {
         .document
         .save(&path, crate::project::Save::New)
         .unwrap();
-    let id = editor.current_source.unwrap();
+    let id = editor.document.visit.current_source.unwrap();
     editor.tab = 1;
     for section in ["photo-white-balance", "photo-contrast", "photo-saturation"] {
         editor.preferences.sections.insert(section.into(), false);
@@ -272,7 +272,10 @@ fn numeric_save(route: SaveInput) {
                 .into(),
             )],
         );
-        assert_eq!(app.read(|e| e.adjustment_layer_settings.exposure), 0.);
+        assert_eq!(
+            app.read(|e| e.document.visit.adjustment_layer_settings.exposure),
+            0.
+        );
         use crate::platform::menu::Action;
         let events = app.update(|e| match route {
             SaveInput::NativeMenu => {
@@ -376,7 +379,9 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     );
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+    assert!(
+        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+    );
     let mut output = context.run_ui(input, |ui| {
         egui::CentralPanel::default().show(ui, |ui| {
             crate::editor::tests::paint_controller(&mut editor, ui)
@@ -390,7 +395,9 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     );
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+    assert!(
+        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+    );
 }
 
 #[test]
@@ -409,7 +416,7 @@ fn export_cannot_replace_the_open_project_document() {
         Overwrite::Confirmed,
         &UiContext::render_only(),
     );
-    assert!(editor.export_operation.pending.is_none());
+    assert!(editor.document.export_operation.pending.is_none());
     assert_eq!(std::fs::read(path).unwrap(), before);
     assert!(!editor.busy);
     assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
@@ -424,12 +431,12 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("existing-file");
             std::fs::write(&path, b"unchanged destination").unwrap();
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             match decision {
                 0 => editor.transition = Some(Transition::Close),
                 1 => editor.project_overwrite = Some((path.clone(), Some(Transition::New))),
                 _ => {
-                    editor.export_dialog = Some(export_batch::Draft::new(
+                    editor.document.export_dialog = Some(export_batch::Draft::new(
                         OutputTarget::Srgb,
                         directory.path().to_owned(),
                     ))
@@ -442,18 +449,24 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
             assert!(
                 editor.transition.is_some()
                     || editor.project_overwrite.is_some()
-                    || editor.export_dialog.is_some()
+                    || editor.document.export_dialog.is_some()
             );
-            assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+            assert!(
+                editor.document_pending.is_none()
+                    && editor.document.export_operation.pending.is_none()
+            );
             ui_frame(&mut editor, &context, key(cancel_key));
             assert!(
                 editor.transition.is_none()
                     && editor.project_overwrite.is_none()
-                    && editor.export_dialog.is_none()
+                    && editor.document.export_dialog.is_none()
             );
-            assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+            assert!(
+                editor.document_pending.is_none()
+                    && editor.document.export_operation.pending.is_none()
+            );
             assert!(!editor.allow_close && !editor.busy);
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             assert_eq!(std::fs::read(path).unwrap(), b"unchanged destination");
         }
     }
@@ -468,8 +481,8 @@ fn save_decision_queues_the_snapshot_with_its_original_continuation() {
         .document
         .save(&path, crate::project::Save::New)
         .unwrap();
-    let id = editor.current_source.unwrap();
-    editor.adjustment_layer_settings.exposure = 1.25;
+    let id = editor.document.visit.current_source.unwrap();
+    editor.document.visit.adjustment_layer_settings.exposure = 1.25;
     let context = egui::Context::default();
     with_application(editor, |app| {
         app.enter(|e, cx| e.guard_transition(Transition::Close, cx));
@@ -515,8 +528,8 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("existing.antitone");
     std::fs::write(&path, b"existing destination").unwrap();
-    let id = editor.current_source.unwrap();
-    editor.adjustment_layer_settings.exposure = 1.25;
+    let id = editor.document.visit.current_source.unwrap();
+    editor.document.visit.adjustment_layer_settings.exposure = 1.25;
     editor.project_overwrite = Some((path.clone(), Some(Transition::New)));
     let context = egui::Context::default();
     with_application(editor, |app| {
@@ -549,7 +562,7 @@ fn project_replace_decision_preserves_destination_snapshot_and_continuation() {
             1.25
         );
         app.read(|e| {
-            assert_eq!(e.document.project, crate::project::Project::default());
+            assert_eq!(e.document.state.project, crate::project::Project::default());
             assert!(e.failure.is_none() && e.after_save.is_none());
         });
     });
@@ -566,9 +579,9 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
-        editor.adjustment_layer_settings.exposure = 1.25;
-        editor.roll.exposure = -0.25;
-        editor.crop = Some(Crop::from_region(Rect {
+        editor.document.visit.adjustment_layer_settings.exposure = 1.25;
+        editor.document.roll.exposure = -0.25;
+        editor.document.visit.crop = Some(Crop::from_region(Rect {
             x: 20,
             y: 20,
             width: 100,
@@ -597,12 +610,15 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             expected.recipe.neutral.input.calibration().unwrap(),
             editor.calibration().unwrap()
         );
-        assert_eq!(expected.recipe.roll, editor.roll);
+        assert_eq!(expected.recipe.roll, editor.document.roll);
         assert_eq!(
             expected.recipe.grade.layers()[0].photo,
-            editor.adjustment_layer_settings
+            editor.document.visit.adjustment_layer_settings
         );
-        assert_eq!(expected.recipe.composition.crop(), editor.crop.unwrap());
+        assert_eq!(
+            expected.recipe.composition.crop(),
+            editor.document.visit.crop.unwrap()
+        );
         let services = editor.export_services.as_ref().unwrap().clone();
         let mut draft = export_batch::Draft::new(OutputTarget::Srgb, directory.path().to_owned());
         match format {
@@ -614,8 +630,8 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
         }
         draft.collision = export_batch::Collision::Replace;
         draft.confirming_replace = true;
-        editor.export_dialog = Some(draft);
-        let before = editor.document.project.clone();
+        editor.document.export_dialog = Some(draft);
+        let before = editor.document.state.project.clone();
         let context = egui::Context::default();
         with_application(editor, |app| {
             ui_frame(app, &context, vec![]);
@@ -628,14 +644,17 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
                 .center();
             click(app, &context, point);
             app.read(|e| {
-                assert!(e.export_dialog.is_none() && e.export_operation.pending.is_some())
+                assert!(
+                    e.document.export_dialog.is_none()
+                        && e.document.export_operation.pending.is_some()
+                )
             });
             app.run_until(Duration::from_secs(30), |e| {
-                e.export_operation.pending.is_none()
+                e.document.export_operation.pending.is_none()
             });
             app.read(|e| {
                 assert!(e.failure.is_none() && !e.busy, "{}", e.status);
-                assert_eq!(e.document.project, before);
+                assert_eq!(e.document.state.project, before);
             });
             pollster::block_on(services.write(
                 expected,
@@ -714,7 +733,7 @@ fn fixture() -> Editor {
             Development::new(crate::raw::version(), [1.; 4]),
         )
         .unwrap();
-    editor.current_source = Some(editor.document.project.order[0]);
+    editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
     editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
     editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
     editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
@@ -727,8 +746,8 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            let id = editor.current_source.unwrap();
-            editor.adjustment_layer_settings = AdjustmentLayerSettings {
+            let id = editor.document.visit.current_source.unwrap();
+            editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings {
                 contrast: 0.4,
                 pivot: 0.25,
                 contrast_colour_mix: 0.75,
@@ -736,31 +755,40 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
                 saturation_density: 0.25,
                 ..AdjustmentLayerSettings::default()
             };
-            editor.roll_orientation.horizontal = true;
-            editor.roll_orientation.turn_clockwise();
-            editor.photo_orientation.turn_clockwise();
-            editor.photo_orientation.flips.vertical = true;
-            editor.crop = Some(Crop::from_region(Rect {
+            editor.document.roll_orientation.horizontal = true;
+            editor.document.roll_orientation.turn_clockwise();
+            editor.document.visit.photo_orientation.turn_clockwise();
+            editor.document.visit.photo_orientation.flips.vertical = true;
+            editor.document.visit.crop = Some(Crop::from_region(Rect {
                 x: 30,
                 y: 20,
                 width: 401,
                 height: 203,
             }));
-            let crop = editor.crop;
-            let orientation = editor.photo_orientation;
+            let crop = editor.document.visit.crop;
+            let orientation = editor.document.visit.photo_orientation;
             let grade = (
-                editor.roll,
-                editor.adjustment_layer_settings,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
                 editor.dmin(),
                 editor.dmax(),
             );
             editor.sync_document();
-            assert_eq!(editor.document.project.orientation, editor.roll_orientation);
             assert_eq!(
-                editor.document.project.source(id).unwrap().orientation,
+                editor.document.state.project.orientation,
+                editor.document.roll_orientation
+            );
+            assert_eq!(
+                editor
+                    .document
+                    .state
+                    .project
+                    .source(id)
+                    .unwrap()
+                    .orientation,
                 orientation
             );
-            let mut other = editor.document.project.source(id).unwrap().clone();
+            let mut other = editor.document.state.project.source(id).unwrap().clone();
             other.path = "second.ARW".into();
             other.orientation = PhotoOrientation::default();
             other.crop = None;
@@ -776,16 +804,16 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
             let other_photo = other.adjustment_layers.as_ref().unwrap().layers[0]
                 .adjustment
                 .photo;
-            let other_id = editor.document.project.add_source(other).unwrap();
+            let other_id = editor.document.state.project.add_source(other).unwrap();
             editor.load("second.ARW".into(), cx);
-            assert_eq!(editor.current_source, Some(other_id));
-            assert_eq!(editor.adjustment_layer_settings, other_photo);
+            assert_eq!(editor.document.visit.current_source, Some(other_id));
+            assert_eq!(editor.document.visit.adjustment_layer_settings, other_photo);
             editor.load("fixture.ARW".into(), cx);
-            assert_eq!(editor.current_source, Some(id));
+            assert_eq!(editor.document.visit.current_source, Some(id));
             assert_eq!(
                 (
-                    editor.roll,
-                    editor.adjustment_layer_settings,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
                     editor.dmin(),
                     editor.dmax()
                 ),
@@ -793,24 +821,30 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
             );
             editor.load("temporary-reference.ARW".into(), cx);
             assert_eq!(
-                editor.adjustment_layer_settings,
+                editor.document.visit.adjustment_layer_settings,
                 AdjustmentLayerSettings::default()
             );
-            assert_eq!(editor.photo_orientation, PhotoOrientation::default());
-            assert!(editor.crop.is_none());
+            assert_eq!(
+                editor.document.visit.photo_orientation,
+                PhotoOrientation::default()
+            );
+            assert!(editor.document.visit.crop.is_none());
             editor.load("fixture.ARW".into(), cx);
-            assert_eq!(editor.photo_orientation, orientation);
-            assert_eq!(editor.crop, crop);
+            assert_eq!(editor.document.visit.photo_orientation, orientation);
+            assert_eq!(editor.document.visit.crop, crop);
             assert_eq!(
                 (
-                    editor.roll,
-                    editor.adjustment_layer_settings,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
                     editor.dmin(),
                     editor.dmax()
                 ),
                 grade
             );
-            assert_eq!(editor.roll_orientation, editor.document.project.orientation);
+            assert_eq!(
+                editor.document.roll_orientation,
+                editor.document.state.project.orientation
+            );
             assert!(editor.document.visit.source.pending());
         });
     });
@@ -819,9 +853,9 @@ fn orientation_is_source_owned_and_restored_without_changing_grade_on_load() {
 #[test]
 fn failed_and_stale_document_results_preserve_state_and_active_request() {
     let mut editor = fixture();
-    editor.adjustment_layer_settings.exposure = 7.123456789012345;
+    editor.document.visit.adjustment_layer_settings.exposure = 7.123456789012345;
     editor.sync_document();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let active = editor.id;
     with_application(editor, |app| {
         app.enter(|editor, cx| {
@@ -843,10 +877,10 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
                 id
             );
             assert!(editor.busy);
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             editor.document_prepared(id, Err("changed RAW".into()));
             assert!(!editor.busy && editor.document_pending.is_none());
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.id, active);
             assert_eq!(
                 editor
@@ -854,7 +888,10 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
                     .load(std::sync::atomic::Ordering::Relaxed),
                 active
             );
-            assert_eq!(editor.adjustment_layer_settings.exposure, 7.123456789012345);
+            assert_eq!(
+                editor.document.visit.adjustment_layer_settings.exposure,
+                7.123456789012345
+            );
             assert!(editor.document.dirty());
         });
         app.pump();
@@ -864,7 +901,7 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
 #[test]
 fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
     let editor = fixture();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("occupied.antitone");
     std::fs::write(&path, b"existing destination").unwrap();
@@ -879,7 +916,7 @@ fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
         });
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| {
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert!(e.document.dirty() && !e.busy);
             assert_eq!(e.transition, Some(Transition::New));
             assert_eq!(
@@ -895,11 +932,11 @@ fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
 #[test]
 fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
     let mut editor = fixture();
-    let one = editor.current_source.unwrap();
-    let mut other = editor.document.project.source(one).unwrap().clone();
+    let one = editor.document.visit.current_source.unwrap();
+    let mut other = editor.document.state.project.source(one).unwrap().clone();
     other.path = "unvisited.ARW".into();
-    let two = editor.document.project.add_source(other).unwrap();
-    editor.adjustment_layer_settings = AdjustmentLayerSettings {
+    let two = editor.document.state.project.add_source(other).unwrap();
+    editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings {
         exposure: 7.123456789012345,
         contrast: 1.6,
         pivot: 0.25,
@@ -908,9 +945,9 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
         saturation_density: 0.25,
         ..AdjustmentLayerSettings::default()
     };
-    editor.roll.exposure = -0.23456789012345678;
-    let photo = editor.adjustment_layer_settings;
-    let roll = editor.roll;
+    editor.document.roll.exposure = -0.23456789012345678;
+    let photo = editor.document.visit.adjustment_layer_settings;
+    let roll = editor.document.roll;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("snapshot.antitone");
     with_application(editor, |app| {
@@ -954,8 +991,11 @@ fn new_resets_development_and_rejects_previous_document_messages() {
         app.enter(|e, cx| e.start_document(Preparation::New, cx));
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.enter(|e, cx| {
-            assert_eq!(e.document.project, crate::project::Project::default());
-            assert!(e.document.project.development().is_none() && e.current_source.is_none());
+            assert_eq!(e.document.state.project, crate::project::Project::default());
+            assert!(
+                e.document.state.project.development().is_none()
+                    && e.document.visit.current_source.is_none()
+            );
             assert_eq!(e.floor(), crate::processing::CAMERA_INPUT_FLOOR);
             assert!(!e.document.dirty());
             e.measurement_result(
@@ -981,10 +1021,10 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
                 .document
                 .save(&path, crate::project::Save::New)
                 .unwrap();
-            let before = editor.document.project.clone();
-            editor.source = false;
-            editor.viewport.zoom = Some(2.);
-            editor.region = Some(Coverage::rectangle(Rect {
+            let before = editor.document.state.project.clone();
+            editor.document.source = false;
+            editor.document.visit.viewport.zoom = Some(2.);
+            editor.document.picking.region = Some(Coverage::rectangle(Rect {
                 x: 12,
                 y: 12,
                 width: 32,
@@ -992,7 +1032,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
             }));
             let source_path = editor
                 .document
-                .source_path(editor.current_source.unwrap())
+                .source_path(editor.document.visit.current_source.unwrap())
                 .unwrap();
             let request = editor.source_input(source_path.clone());
             editor.load(source_path, cx);
@@ -1008,7 +1048,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
             );
             assert!(expected.is_some());
             editor.sync_document();
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             assert!(!editor.document.dirty());
         });
     });
@@ -1024,7 +1064,9 @@ fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() 
     ] {
         editor.guard_transition(transition.clone(), &UiContext::render_only());
         assert_eq!(editor.transition, Some(transition));
-        assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+        assert!(
+            editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+        );
         assert!(!editor.allow_close);
         editor.transition = None;
     }
@@ -1039,14 +1081,15 @@ fn command_save_uses_the_current_document_after_control_processing() {
         .document
         .save(&path, crate::project::Save::New)
         .unwrap();
-    let id = editor.current_source.unwrap();
+    let id = editor.document.visit.current_source.unwrap();
     let context = egui::Context::default();
     with_application(editor, |app| {
         ui_frame(app, &context, vec![]);
         app.update(|e| {
-            e.adjustment_layer_settings.exposure = 7.123456789012345;
+            e.document.visit.adjustment_layer_settings.exposure = 7.123456789012345;
             assert_eq!(
                 e.document
+                    .state
                     .project
                     .source(id)
                     .unwrap()
@@ -1083,7 +1126,7 @@ fn command_save_uses_the_current_document_after_control_processing() {
                 .layers[0]
                 .adjustment
                 .photo,
-            app.read(|e| e.adjustment_layer_settings)
+            app.read(|e| e.document.visit.adjustment_layer_settings)
         );
     });
 }

@@ -107,7 +107,10 @@ fn documented_states_render() {
             !e.busy && e.document.visit.ready.is_some()
         });
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            e.thumbnails.ready_count(&e.document, e.target) == roll_size
+            e.document
+                .thumbnails
+                .ready_count(&e.document, e.document.target)
+                == roll_size
         });
         settle_view(&mut harness);
         capture(&mut harness, "getting-started-filmstrip");
@@ -124,7 +127,7 @@ fn documented_states_render() {
 
         // The export dialog.
         harness.update(|editor| {
-            editor.export_dialog = Some(export_batch::Draft::new(
+            editor.document.export_dialog = Some(export_batch::Draft::new(
                 OutputTarget::Srgb,
                 PathBuf::from("/exports"),
             ));
@@ -132,7 +135,7 @@ fn documented_states_render() {
         frames(&mut harness);
         settle_view(&mut harness);
         capture(&mut harness, "export-dialog");
-        harness.update(|editor| editor.export_dialog = None);
+        harness.update(|editor| editor.document.export_dialog = None);
 
         // The overview last, back on the first photograph: both photographs are
         // developed by now, so the filmstrip and the canvas show graded
@@ -144,7 +147,10 @@ fn documented_states_render() {
         });
         tab(&mut harness, "Roll");
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            e.thumbnails.ready_count(&e.document, e.target) == roll_size
+            e.document
+                .thumbnails
+                .ready_count(&e.document, e.document.target)
+                == roll_size
         });
         settle_view(&mut harness);
         capture(&mut harness, "window-overview");
@@ -259,17 +265,30 @@ fn frames(harness: &mut Harness<'_, Editor>) {
 /// earlier records the provisional preview instead of the graded view.
 fn settle_view(harness: &mut Harness<'_, Editor>) {
     wait_for_with_timeout(harness, Duration::from_secs(600), |e| {
-        assert!(e.working.error.is_none(), "{:?}", e.working.error);
-        if e.working.revision().is_none() {
+        assert!(
+            e.document.visit.working_view.error.is_none(),
+            "{:?}",
+            e.document.visit.working_view.error
+        );
+        if e.document.visit.working_view.revision().is_none() {
             return false;
         }
         let expected = e
-            .positive_processing(e.input(), e.roll, e.adjustment_layer_settings)
+            .positive_processing(
+                e.input(),
+                e.document.roll,
+                e.document.visit.adjustment_layer_settings,
+            )
             .unwrap();
-        !e.working.updating
-            && e.working.displayed.as_ref().is_some_and(|view| {
-                view.processing == expected.signature() && view.target == e.target
-            })
+        !e.document.visit.working_view.updating
+            && e.document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .is_some_and(|view| {
+                    view.processing == expected.signature() && view.target == e.document.target
+                })
     });
     frames(harness);
 }

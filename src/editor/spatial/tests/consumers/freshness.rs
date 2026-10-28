@@ -5,13 +5,14 @@ use crate::editor::analysis_review;
 fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
     let (scheduler, _) = observed();
     let mut editor = fixture(scheduler.clone());
-    let peer = editor.document.project.order[1];
+    let peer = editor.document.state.project.order[1];
     let metadata = supplied(&mut editor);
-    editor.roll_selection = Default::default();
-    editor
-        .roll_selection
-        .reconcile(&editor.document.project.order, editor.current_source);
-    let accepted = editor.document.project.clone();
+    editor.document.roll_selection = Default::default();
+    editor.document.roll_selection.reconcile(
+        &editor.document.state.project.order,
+        editor.document.visit.current_source,
+    );
+    let accepted = editor.document.state.project.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.request_auto_crop(auto_crop::Target::Selected, cx);
@@ -56,9 +57,9 @@ fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
 fn analysis_verification_checks_hidden_dimension_supporters_not_only_visible_sampling_files() {
     let (scheduler, _) = observed();
     let mut editor = fixture(scheduler.clone());
-    let peer = editor.document.project.order[1];
+    let peer = editor.document.state.project.order[1];
     supplied(&mut editor);
-    editor.document.project.order.truncate(1);
+    editor.document.state.project.order.truncate(1);
     let mut request = editor.analysis_request().unwrap();
     assert!(analysis_review::verify(&request).is_ok());
     request
@@ -90,7 +91,7 @@ fn save_as_rebased_relative_locators_do_not_retire_a_completed_shared_result() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
     // Only the locator base is hypothetical; all actual source files remain committed/read-only.
     editor.document.path = Some(root.join("origin.antitone"));
-    for source in &mut editor.document.project.sources {
+    for source in &mut editor.document.state.project.sources {
         source.path = source.path.file_name().unwrap().into();
     }
     editor.document.capture_source_files().unwrap();

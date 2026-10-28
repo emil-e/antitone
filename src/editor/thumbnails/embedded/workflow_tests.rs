@@ -36,11 +36,9 @@ fn wanted(document: &Document) -> Vec<(usize, ImageKey, PathBuf, Source)> {
 
 fn editor(document: Document, services: Services) -> Editor {
     let mut editor = crate::editor::tests::fixture();
-    editor.document = document.into();
-    editor.thumbnails.embedded.services = Some(services);
-    editor
-        .thumbnails
-        .bind_sources(editor.document.cache.clone(), &editor.document);
+    editor.document = editor.document.replacement(document);
+    editor.document.thumbnails.embedded.services = Some(services);
+    editor.document.thumbnails.backend = Some(Arc::new(crate::source::SourceLoader::new()));
     editor
 }
 
@@ -51,7 +49,7 @@ fn request(editor: &mut Editor, cx: &UiContext<'_, Editor>, context: &egui::Cont
 
 fn controlled() -> (Services, mpsc::Receiver<Work>) {
     let (commands, requests) = mpsc::channel();
-    (Services { commands }, requests)
+    (Services::Controlled(commands), requests)
 }
 
 fn finish(work: Work) {
@@ -63,7 +61,7 @@ fn finish(work: Work) {
 fn visible_authored_previews_advance_and_install_without_another_paint() {
     let (document, _directory) = document(2);
     let ids = document.project.order.clone();
-    let editor = editor(document, Services::new());
+    let editor = editor(document, Services::Production);
     let context = egui::Context::default();
     with_application(editor, |app| {
         app.enter(|editor, access| request(editor, access, &context));
@@ -73,11 +71,16 @@ fn visible_authored_previews_advance_and_install_without_another_paint() {
         app.read(|editor| {
             for id in ids {
                 let key = key(&editor.document, id);
-                let texture = editor.thumbnails.embedded.get(&key.source).unwrap();
+                let texture = editor
+                    .document
+                    .thumbnails
+                    .embedded
+                    .get(&key.source)
+                    .unwrap();
                 assert_eq!(texture.size(), [8, 16]);
             }
             assert!(editor.document.visit.ready.is_none());
-            assert!(!editor.thumbnails.embedded.pending());
+            assert!(!editor.document.thumbnails.embedded.pending());
         });
     });
 }
@@ -85,7 +88,7 @@ fn visible_authored_previews_advance_and_install_without_another_paint() {
 #[test]
 fn composed_editor_registers_visible_demand_then_uses_completed_camera_textures() {
     let (document, _directory) = document(2);
-    let editor = editor(document, Services::new());
+    let editor = editor(document, Services::Production);
     let context = egui::Context::default();
     with_application(editor, |app| {
         for _ in 0..4 {
@@ -112,6 +115,7 @@ fn composed_editor_registers_visible_demand_then_uses_completed_camera_textures(
         });
         let textures: Vec<_> = app.read(|editor| {
             editor
+                .document
                 .thumbnails
                 .embedded
                 .entries
@@ -137,7 +141,10 @@ fn composed_editor_registers_visible_demand_then_uses_completed_camera_textures(
             assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.texture_id == texture)), "filmstrip did not use the completed camera texture");
         }
         app.read(|editor| {
-            assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none())
+            assert!(
+                editor.document.visit.ready.is_none()
+                    && editor.document.visit.pending_preview.is_none()
+            )
         });
     });
 }
@@ -155,10 +162,7 @@ fn document_retirement_discards_old_results_and_queues_current_demand() {
         app.pump();
         let first = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         app.enter(|editor, access| {
-            editor.document = second.into();
-            editor
-                .thumbnails
-                .bind_sources(editor.document.cache.clone(), &editor.document);
+            editor.document = editor.document.replacement(second);
             editor.request_embedded_previews(&next, true, &context, access);
         });
         app.pump();
@@ -180,9 +184,10 @@ fn document_retirement_discards_old_results_and_queues_current_demand() {
             editor.document.embedded_preview.is_none()
         });
         app.read(|editor| {
-            assert_eq!(editor.thumbnails.embedded.entries.len(), 1);
+            assert_eq!(editor.document.thumbnails.embedded.entries.len(), 1);
             assert_eq!(
                 editor
+                    .document
                     .thumbnails
                     .embedded
                     .get(&next[0].1.source)
@@ -207,7 +212,7 @@ fn application_retirement_signals_stop_and_discards_the_private_producers_result
         app.close_execution();
         assert!(work.cancelled.load(Ordering::Relaxed));
         assert!(work.reply.send(Ok(None)).is_err());
-        app.read(|editor| assert!(editor.thumbnails.embedded.entries.is_empty()));
+        app.read(|editor| assert!(editor.document.thumbnails.embedded.entries.is_empty()));
     });
 }
 
@@ -226,9 +231,9 @@ fn closed_worker_acknowledges_current_demand_without_paint_or_retries() {
             editor.document.embedded_preview.is_none()
         });
         app.read(|editor| {
-            assert!(editor.thumbnails.embedded.services.is_none());
-            assert_eq!(editor.thumbnails.embedded.entries.len(), 1);
-            assert!(editor.thumbnails.embedded.entries[0].1.is_none());
+            assert!(editor.document.thumbnails.embedded.services.is_none());
+            assert_eq!(editor.document.thumbnails.embedded.entries.len(), 1);
+            assert!(editor.document.thumbnails.embedded.entries[0].1.is_none());
         });
         app.enter(|editor, access| request(editor, access, &context));
         app.pump();
@@ -247,23 +252,29 @@ fn cancelled_preview_is_not_memoised_as_missing_and_can_be_requested_again() {
         app.pump();
         let work = requests.recv_timeout(Duration::from_secs(5)).unwrap();
         app.update(|editor| {
-            editor.thumbnails.apply_budgets(memory::CacheBudgets {
-                images: 0,
-                sources: 0,
-                pressure: memory::Pressure::Critical,
-            })
+            editor
+                .document
+                .thumbnails
+                .apply_budgets(memory::CacheBudgets {
+                    images: 0,
+                    sources: 0,
+                    pressure: memory::Pressure::Critical,
+                })
         });
         assert!(work.cancelled.load(Ordering::Relaxed));
         finish(work);
         app.run_until(Duration::from_secs(5), |editor| {
             editor.document.embedded_preview.is_none()
         });
-        app.read(|editor| assert!(editor.thumbnails.embedded.entries.is_empty()));
+        app.read(|editor| assert!(editor.document.thumbnails.embedded.entries.is_empty()));
         app.enter(|editor, access| {
-            editor.thumbnails.apply_budgets(memory::CacheBudgets::new(
-                editor.thumbnails.limits,
-                memory::Pressure::Normal,
-            ));
+            editor
+                .document
+                .thumbnails
+                .apply_budgets(memory::CacheBudgets::new(
+                    editor.document.thumbnails.limits,
+                    memory::Pressure::Normal,
+                ));
             request(editor, access, &context);
         });
         app.pump();
@@ -273,7 +284,7 @@ fn cancelled_preview_is_not_memoised_as_missing_and_can_be_requested_again() {
         });
         app.read(|editor| {
             assert_eq!(
-                editor.thumbnails.embedded.entries[0]
+                editor.document.thumbnails.embedded.entries[0]
                     .1
                     .as_ref()
                     .unwrap()

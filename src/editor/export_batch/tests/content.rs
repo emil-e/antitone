@@ -23,7 +23,7 @@ fn center_pixel(path: &Path) -> glam::DVec3 {
 fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_settings() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
-    let project = editor.document.project.clone();
+    let project = editor.document.state.project.clone();
     let wb = project.development().as_ref().unwrap().fixed_wb;
     let calibration = project.calibration().unwrap().unwrap();
     let mut scans = Vec::new();
@@ -61,8 +61,8 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
     let mut settings = draft(directory.path());
     settings.precision = ExrPrecision::Full;
     let request = editor.batch_input(&settings).unwrap();
-    editor.roll.exposure += 1.;
-    editor.adjustment_layer_settings.exposure += 2.;
+    editor.document.roll.exposure += 1.;
+    editor.document.visit.adjustment_layer_settings.exposure += 2.;
     editor.sync_document();
     editor
         .document

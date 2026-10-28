@@ -121,7 +121,7 @@ fn native_and_proxy_ownership_compete_in_one_oldest_unprotected_byte_lru() {
     let proxy = Arc::new(CameraPixels::from_scan(&scan).unwrap());
     let n = source.retained_bytes().unwrap();
     let p = proxy.retained_bytes();
-    let store = SourceCache::new(n + p - 1);
+    let store = Arc::new(SourceCache::new(n + p - 1));
     store
         .publish_source(input.key.clone(), source.clone())
         .unwrap()
@@ -164,13 +164,27 @@ fn native_and_proxy_ownership_compete_in_one_oldest_unprotected_byte_lru() {
     assert!(store.get(&input.key).is_some());
     assert!(store.get_proxy(&input.key).is_some());
     assert_eq!(store.charges().retained, 0);
-    store.close();
-    assert!(store.get_proxy(&input.key).is_none());
-    assert!(store.get(&input.key).is_none());
-    drop(proxy);
-    drop(source);
-    drop(scan);
-    assert_eq!(store.charges(), Charges::default());
+    let access = Arc::downgrade(&store);
+    let owner = Arc::downgrade(&store);
+    let native = Arc::downgrade(&source);
+    let pixels = Arc::downgrade(&proxy);
+    drop(store);
+    assert!(owner.upgrade().is_none());
+    assert!(
+        access
+            .upgrade()
+            .and_then(|cache| cache.get_proxy(&input.key))
+            .is_none()
+    );
+    assert!(
+        access
+            .upgrade()
+            .and_then(|cache| cache.get(&input.key))
+            .is_none()
+    );
+    drop((proxy, source, scan));
+    assert!(native.upgrade().is_none());
+    assert!(pixels.upgrade().is_none());
 }
 
 #[test]
@@ -218,34 +232,41 @@ fn zero_limits_preserve_protected_proxies_but_never_exempt_full_native_ownership
 }
 
 #[test]
-fn closure_drops_protected_proxy_ownership_not_active_leases() {
+fn cache_destruction_drops_protected_proxy_ownership_not_active_leases() {
     let input = Input::new();
     let scan = Scan::open(input.file.path(), Some(WB)).unwrap();
     let proxy = Arc::new(CameraPixels::from_scan(&scan).unwrap());
-    let store = SourceCache::new(proxy.retained_bytes());
+    let store = Arc::new(SourceCache::new(proxy.retained_bytes()));
     store.protect_proxies(vec![input.key.clone()]);
     store
         .publish_proxy(input.key.clone(), proxy.clone())
         .unwrap()
         .unwrap();
-    store.close();
-    assert!(store.get_proxy(&input.key).is_none());
-    assert_eq!(store.protected_bytes(), 0);
-    assert_eq!(
-        store.charges(),
-        Charges {
-            retained: 0,
-            leased_only: proxy.retained_bytes()
-        }
-    );
+    let access = Arc::downgrade(&store);
+    let owner = Arc::downgrade(&store);
+    drop(store);
+    assert!(owner.upgrade().is_none());
     assert!(
-        store
-            .publish_proxy(input.key.clone(), proxy.clone())
-            .unwrap()
+        access
+            .upgrade()
+            .and_then(|cache| cache.get_proxy(&input.key))
             .is_none()
     );
-    drop(proxy);
-    assert_eq!(store.charges(), Charges::default());
+    let view = antitone::scan::CameraProxy::new(proxy.clone(), None);
+    let digital = antitone::processing::InputSettings::Digital;
+    assert_eq!(
+        view.positive_matrix(&digital).unwrap(),
+        scan.positive_matrix(&digital).unwrap()
+    );
+    assert!(
+        access
+            .upgrade()
+            .map(|cache| cache.publish_proxy(input.key.clone(), proxy.clone()))
+            .is_none()
+    );
+    let lease = Arc::downgrade(&proxy);
+    drop((proxy, view));
+    assert!(lease.upgrade().is_none());
 }
 
 #[test]
@@ -286,18 +307,14 @@ fn concurrent_mixed_publications_never_exceed_one_optional_limit() {
         worker.join().unwrap();
     }
     assert!(store.charges().retained <= budget);
-    store.close();
-    assert_eq!(
-        store.charges(),
-        Charges {
-            retained: 0,
-            leased_only: source.retained_bytes().unwrap() + proxy.retained_bytes()
-        }
-    );
+    let access = Arc::downgrade(&store);
+    let owner = Arc::downgrade(&store);
+    drop(store);
+    assert!(owner.upgrade().is_none());
     assert!(
-        store
-            .publish_proxy(input.key.clone(), proxy)
-            .unwrap()
+        access
+            .upgrade()
+            .map(|cache| cache.publish_proxy(input.key.clone(), proxy))
             .is_none()
     );
 }
@@ -537,7 +554,7 @@ fn demanded_weak_hits_are_readmitted_only_when_the_explicit_limit_fits() {
 }
 
 #[test]
-fn concurrent_duplicate_publications_and_closed_store_lookup_preserve_one_charge() {
+fn concurrent_duplicate_publications_preserve_one_charge_and_leases_outlive_the_cache() {
     use std::sync::Barrier;
     let input = Input::new();
     let source = input.source();
@@ -573,17 +590,20 @@ fn concurrent_duplicate_publications_and_closed_store_lookup_preserve_one_charge
             leased_only: 0
         }
     );
-    store.close();
-    assert!(store.get(&input.key).is_none());
-    assert_eq!(
-        store.charges(),
-        Charges {
-            retained: 0,
-            leased_only: 10
-        }
+    let access = Arc::downgrade(&store);
+    let owner = Arc::downgrade(&store);
+    let pixels = Arc::downgrade(&source);
+    drop(store);
+    assert!(owner.upgrade().is_none());
+    assert!(
+        access
+            .upgrade()
+            .and_then(|cache| cache.get(&input.key))
+            .is_none()
     );
+    assert!(pixels.upgrade().is_some());
     drop(source);
-    assert_eq!(store.charges(), Charges::default());
+    assert!(pixels.upgrade().is_none());
 }
 
 #[test]
@@ -680,25 +700,33 @@ fn alias_identity_is_captured_when_opened_not_reinterpreted_by_the_store() {
 }
 
 #[test]
-fn closing_one_document_cache_rejects_late_publication_without_revoking_other_leases() {
+fn dropping_one_document_cache_ignores_late_publication_without_revoking_other_leases() {
     let input = Input::new();
     let source = input.source();
     let other = SourceCache::new(10);
-    let closed = SourceCache::new(10);
+    let retiring = Arc::new(SourceCache::new(10));
+    let closed = Arc::downgrade(&retiring);
     other
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
         .unwrap();
-    closed
+    retiring
         .publish(input.key.clone(), source.clone(), 10)
         .unwrap()
         .unwrap();
-    closed.close();
-    assert!(closed.get(&input.key).is_none());
+    let owner = Arc::downgrade(&retiring);
+    drop(retiring);
+    assert!(owner.upgrade().is_none());
     assert!(
         closed
-            .publish(input.key.clone(), source.clone(), 10)
-            .unwrap()
+            .upgrade()
+            .and_then(|cache| cache.get(&input.key))
+            .is_none()
+    );
+    assert!(
+        closed
+            .upgrade()
+            .map(|cache| cache.publish_source(input.key.clone(), source.clone()))
             .is_none()
     );
     assert!(Arc::ptr_eq(&other.get(&input.key).unwrap(), &source));

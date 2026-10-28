@@ -232,8 +232,8 @@ impl ScopeInput {
 impl Editor {
     pub(super) fn scope_request(&self) -> Result<ScopeInput, &'static str> {
         let (ready, parameters, composition) = self.scope_basis()?;
-        if let Some(view) = &self.working.displayed
-            && let Some(visible) = self.working.current_frame()
+        if let Some(view) = &self.document.visit.working_view.displayed
+            && let Some(visible) = self.document.visit.working_view.current_frame()
         {
             // Bound scope sampling, not photographic detail. Read the accepted target raster without
             // grading, ACES, source-proxy mapping or a second composition.
@@ -258,7 +258,7 @@ impl Editor {
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)
             .inner_margin(4)
-            .show(ui, |ui| self.scopes.panel(ui, self.target, 180.))
+            .show(ui, |ui| self.scopes.panel(ui, self.document.target, 180.))
             .inner
     }
 
@@ -271,7 +271,10 @@ impl Editor {
     }
 
     fn scope_basis(&self) -> Result<(&Ready, ProcessingInput, Composition), &'static str> {
-        if self.source || self.document.pick_return.is_some() || self.flat_edit.is_some() {
+        if self.document.source
+            || self.document.picking.return_to.is_some()
+            || self.document.flat_edit.is_some()
+        {
             return Err("Positive grade only");
         }
         if self.busy || self.document_pending.is_some() {
@@ -282,20 +285,24 @@ impl Editor {
         }
         let ready = self.document.visit.ready.as_ref().ok_or("No image")?;
         let parameters = self
-            .view_processing(self.input(), self.roll, self.adjustment_layer_settings)
+            .view_processing(
+                self.input(),
+                self.document.roll,
+                self.document.visit.adjustment_layer_settings,
+            )
             .map_err(|_| "Positive grade unavailable")?;
         let composition = Composition::with_crop(
             ready.area,
-            self.roll_orientation,
-            self.photo_orientation,
+            self.document.roll_orientation,
+            self.document.visit.photo_orientation,
             if self.auto_crop_context() {
                 None
             } else {
-                self.crop
+                self.document.visit.crop
             },
         )
         .map_err(|_| "Composition unavailable")?;
-        self.last_layout.ok_or("Waiting for view")?;
+        self.document.visit.last_layout.ok_or("Waiting for view")?;
         Ok((ready, parameters, composition))
     }
 
@@ -307,15 +314,16 @@ impl Editor {
     ) -> Result<(Arc<GpuImage>, ProcessingInput, FrameRaster), &'static str> {
         let image = ready
             .proxy
-            .image(self.target)
+            .image(self.document.target)
             .map_err(|_| "View unavailable")?;
         if parameters.pipeline().is_some() {
             image
                 .require_processing(&parameters)
                 .map_err(|_| "Positive grade unavailable")?;
         }
-        let (layout, pixels_per_point) = self.last_layout.ok_or("Waiting for view")?;
-        let mut viewport = self.viewport;
+        let (layout, pixels_per_point) =
+            self.document.visit.last_layout.ok_or("Waiting for view")?;
+        let mut viewport = self.document.visit.viewport;
         let visible = viewport
             .layout_composition(layout.canvas, composition, pixels_per_point)
             .frame_raster(pixels_per_point);
@@ -340,7 +348,7 @@ impl Editor {
             return;
         };
         // Output can change later in the controls; use the accepted end-of-frame target/settings.
-        slot.settings.target = self.target;
+        slot.settings.target = self.document.target;
         slot.painter
             .rect_filled(slot.plot, 3., egui::Color32::from_gray(6));
         if let Some(error) = self.look_render_failure() {
@@ -414,7 +422,9 @@ impl Editor {
             slot.settings,
         );
         let status = input.status(gpu, slot.settings);
-        let status = if matches!(input, ScopeInput::Rendered(..)) && self.working.updating {
+        let status = if matches!(input, ScopeInput::Rendered(..))
+            && self.document.visit.working_view.updating
+        {
             None
         } else {
             status

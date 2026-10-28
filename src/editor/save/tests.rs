@@ -24,7 +24,7 @@ fn editor() -> (Editor, crate::source::SourceLoader) {
     let mut document = Document::default();
     document.import(&[path]).unwrap();
     editor.document.install(document);
-    editor.current_source = editor.document.project.order.first().copied();
+    editor.document.visit.current_source = editor.document.state.project.order.first().copied();
     let (device, queue) = gpu();
     let scheduler = crate::source::SourceLoader::new();
     editor.source_services = Some(source::Services {
@@ -47,18 +47,20 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
             (
                 e.document.visit.view,
                 e.document.cache.clone(),
-                e.document.source_path(e.current_source.unwrap()).unwrap(),
+                e.document
+                    .source_path(e.document.visit.current_source.unwrap())
+                    .unwrap(),
             )
         });
         app.enter(|e, access| {
-            e.roll.exposure = 0.25;
+            e.document.roll.exposure = 0.25;
             e.save_project(path.clone(), crate::project::Save::New, None, access);
         });
         app.pump();
         assert!(app.read(|e| e.busy && e.document_pending.is_some()));
         app.update(|e| {
             let before = e.history_snapshot();
-            e.roll.exposure = 0.5;
+            e.document.roll.exposure = 0.5;
             e.record_edit(before, "Later exposure", None);
         });
         drop(hold);
@@ -68,16 +70,18 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
             0.25
         );
         app.read(|e| {
-            assert_eq!(e.document.project.roll.exposure, 0.5);
+            assert_eq!(e.document.state.project.roll.exposure, 0.5);
             assert!(e.document.dirty());
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
                 Some("Later exposure")
             );
             assert_eq!(e.document.visit.view, visit);
-            assert!(Arc::ptr_eq(&e.document.cache, &store) && !store.is_closed());
+            assert!(Arc::ptr_eq(&e.document.cache, &store));
             assert_eq!(
-                e.document.source_path(e.current_source.unwrap()).unwrap(),
+                e.document
+                    .source_path(e.document.visit.current_source.unwrap())
+                    .unwrap(),
                 locator
             );
             assert!(!e.busy && e.tasks.view().is_none() && e.failure.is_none());
@@ -101,11 +105,11 @@ fn failed_live_save_preserves_destination_dirty_state_and_guarded_transition() {
                 access,
             );
         });
-        let accepted = app.read(|e| e.document.project.clone());
+        let accepted = app.read(|e| e.document.state.project.clone());
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
         app.read(|e| {
-            assert_eq!(e.document.project, accepted);
+            assert_eq!(e.document.state.project, accepted);
             assert!(e.document.dirty());
             assert_eq!(e.transition, Some(crate::editor::Transition::Close));
             assert!(e.document_pending.is_none() && !e.allow_close);
@@ -188,7 +192,7 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
     ] {
         let (editor, scheduler) = editor();
         let written = directory.path().join(format!("written-{name}.antitone"));
-        let store = editor.document.cache.clone();
+        let store = Arc::downgrade(&editor.document.cache);
         with_application(editor, |app| {
             let captured = app.enter(|e, access| {
                 e.save_project(
@@ -198,7 +202,7 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
                     access,
                 );
 
-                e.document.project.clone()
+                e.document.state.project.clone()
             });
             app.run_until(Duration::from_secs(15), |e| {
                 !e.busy && e.document_pending.is_none()
@@ -211,14 +215,16 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
                 );
                 match &transition {
                     Transition::New => {
-                        assert!(e.document.project.order.is_empty() && e.document.path.is_none());
-                        assert!(store.is_closed() && !e.allow_close);
+                        assert!(
+                            e.document.state.project.order.is_empty() && e.document.path.is_none()
+                        );
+                        assert!(store.upgrade().is_none() && !e.allow_close);
                     }
                     Transition::Open(path) => {
                         assert_eq!(e.document.path.as_ref(), Some(path));
                         assert!(
-                            e.document.project.order.is_empty()
-                                && store.is_closed()
+                            e.document.state.project.order.is_empty()
+                                && store.upgrade().is_none()
                                 && !e.allow_close
                         );
                     }
@@ -228,8 +234,8 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
                             crate::platform::host::QuitState::Approved
                         );
                         assert_eq!(e.document.path.as_ref(), Some(&written));
-                        assert_eq!(e.document.project, captured);
-                        assert!(!e.document.dirty() && !store.is_closed());
+                        assert_eq!(e.document.state.project, captured);
+                        assert!(!e.document.dirty() && store.upgrade().is_some());
                         assert!(!e.file_available());
                     }
                 }
@@ -254,14 +260,14 @@ fn failed_open_after_successful_save_keeps_the_written_document_without_a_ui_pas
                 access,
             );
 
-            e.document.project.clone()
+            e.document.state.project.clone()
         });
         app.run_until(Duration::from_secs(15), |e| {
             !e.busy && e.document_pending.is_none()
         });
         app.read(|e| {
             assert_eq!(e.document.path.as_ref(), Some(&written));
-            assert_eq!(e.document.project, accepted);
+            assert_eq!(e.document.state.project, accepted);
             assert!(!e.document.dirty() && !e.allow_close);
             assert!(e.status.starts_with("Project: "), "{}", e.status);
             assert!(!e.status.starts_with("Project: Project:"), "{}", e.status);
@@ -281,10 +287,27 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
     let parent = Arc::new(crate::source::SourceCache::new(0));
     let accepted = document.project.clone();
     let source = document.project.order[0];
+    let path = document.source_path(source).unwrap();
+    let wb = document
+        .project
+        .source(source)
+        .unwrap()
+        .development
+        .decode
+        .fixed_wb;
+    let scan = crate::scan::Scan::open(&path, Some(wb)).unwrap();
+    let key = crate::source::SourceKey::capture(
+        &path,
+        &document.project.source(source).unwrap().development,
+    )
+    .unwrap();
+    parent
+        .publish_source(key.clone(), scan.source().clone())
+        .unwrap();
     let prepared = document_services::candidate(
         crate::editor::DocumentRequest {
             exposures: None,
-            cache: Some(parent.clone()),
+            sources: Some(crate::source::SourceLoader::new().provider(Some(parent.clone()))),
             work: Preparation::Correction(document.clone(), Some(source)),
             source: None,
             correction: None,
@@ -295,16 +318,23 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
     .unwrap();
     assert_eq!(prepared.prepared.document.project, accepted);
     assert!(prepared.source.is_some());
-    assert!(Arc::ptr_eq(
-        prepared.source.as_ref().unwrap().cache.as_ref().unwrap(),
-        &parent
-    ));
+    let reused = pollster::block_on(
+        prepared
+            .source
+            .as_ref()
+            .unwrap()
+            .sources
+            .as_ref()
+            .unwrap()
+            .load_source(key.clone(), crate::source::Priority::Foreground),
+    )
+    .unwrap();
+    assert!(Arc::ptr_eq(&reused, scan.source()));
     drop(prepared);
-    assert!(!parent.is_closed());
     let bad = document_services::candidate(
         crate::editor::DocumentRequest {
             exposures: None,
-            cache: Some(parent.clone()),
+            sources: Some(crate::source::SourceLoader::new().provider(Some(parent.clone()))),
             work: Preparation::Import(
                 document.clone(),
                 vec![PathBuf::from("missing-source.dng")],
@@ -318,5 +348,5 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
     );
     assert!(bad.is_err());
     assert_eq!(document.project, accepted);
-    assert!(!parent.is_closed());
+    assert!(Arc::ptr_eq(&parent.get(&key).unwrap(), scan.source()));
 }

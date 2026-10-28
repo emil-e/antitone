@@ -88,30 +88,39 @@ impl CallbackTrait for SelectionPaint {
 
 impl Editor {
     pub(super) fn validate_pending_preview(&mut self) {
-        if self.pending_preview.as_ref().is_some_and(|preview| {
-            self.working.displayed.is_some()
-                || self.document_pending.is_some()
-                || self.pick.is_some()
-                || self.flat_edit.is_some()
-                || self.document.visit.crop_edit.is_some()
-                || !preview.current_source(
-                    &self.document,
-                    self.current_source,
-                    self.correction.as_ref(),
-                )
-        }) {
-            self.pending_preview = None;
+        if self
+            .document
+            .visit
+            .pending_preview
+            .as_ref()
+            .is_some_and(|preview| {
+                self.document.visit.working_view.displayed.is_some()
+                    || self.document_pending.is_some()
+                    || self.document.picking.kind.is_some()
+                    || self.document.flat_edit.is_some()
+                    || self.document.visit.crop_edit.is_some()
+                    || !preview.current_source(
+                        &self.document,
+                        self.document.visit.current_source,
+                        self.document.correction.as_ref(),
+                    )
+            })
+        {
+            self.document.visit.pending_preview = None;
         }
     }
 
     pub(super) fn selected_view(&self) -> Option<(Rect, crate::viewer::GpuProxy, bool)> {
         if let Some(ready) = &self.document.visit.ready
-            && (self.working.displayed.is_some() || self.pending_preview.is_none())
+            && (self.document.visit.working_view.displayed.is_some()
+                || self.document.visit.pending_preview.is_none())
         {
             return Some((ready.area, ready.proxy.clone(), false));
         }
 
-        self.pending_preview
+        self.document
+            .visit
+            .pending_preview
             .as_ref()
             .map(|preview| (preview.area(), preview.proxy.clone(), true))
             .or_else(|| {

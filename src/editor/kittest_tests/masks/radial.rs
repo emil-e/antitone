@@ -7,8 +7,9 @@ fn seed(editor: &mut Editor) {
     let area = editor.document.visit.ready.as_ref().unwrap().area;
     let source = editor
         .document
+        .state
         .project
-        .source_mut(editor.current_source.unwrap())
+        .source_mut(editor.document.visit.current_source.unwrap())
         .unwrap();
     source.adjustment_layers.as_mut().unwrap().layers[0]
         .adjustment
@@ -24,7 +25,7 @@ fn seed(editor: &mut Editor) {
 }
 
 fn screen(editor: &Editor, point: SourcePoint) -> egui::Pos2 {
-    let layout = editor.last_layout.unwrap().0;
+    let layout = editor.document.visit.last_layout.unwrap().0;
     layout.screen_frame_point(layout.composition.source_to_frame(point))
 }
 
@@ -60,9 +61,10 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
             (egui::vec2(800., 600.), 270.),
         ] {
             set_layout(&mut harness, size, width);
-            let before = harness.read(|editor| editor.document.project.clone());
+            let before = harness.read(|editor| editor.document.state.project.clone());
             arm(&mut harness, true);
-            let center = harness.read(|editor| editor.last_layout.unwrap().0.image.center());
+            let center =
+                harness.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center());
             hold_drag(&mut harness, center, center + egui::vec2(0.01, 0.02));
             harness.read(|editor| {
                 assert!(
@@ -73,9 +75,9 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
             harness.key_press(egui::Key::Escape);
             harness.step();
             pointer(&mut harness, center + egui::vec2(0.01, 0.02), false);
-            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
             arm(&mut harness, true);
-            let layout = harness.read(|editor| editor.last_layout.unwrap().0);
+            let layout = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
             let pressed = layout.image.center();
             let expected_center = layout
                 .composition
@@ -133,9 +135,10 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
         harness.update(seed);
         harness.update(|editor| {
             let area = editor.document.visit.ready.as_ref().unwrap().area;
-            editor.roll_orientation.turn_clockwise();
-            editor.photo_orientation.flips.horizontal = true;
-            editor.crop = Some(Crop::from_region(area).straightened(area, 0.13).unwrap());
+            editor.document.roll_orientation.turn_clockwise();
+            editor.document.visit.photo_orientation.flips.horizontal = true;
+            editor.document.visit.crop =
+                Some(Crop::from_region(area).straightened(area, 0.13).unwrap());
             editor.sync_document();
         });
         harness.step();
@@ -146,16 +149,28 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             set_layout(&mut harness, size, width);
             click(&mut harness, "Sky");
             workflow::wait_settled(&mut harness);
-            let before = harness.read(|editor| editor.document.project.clone());
+            let before = harness.read(|editor| editor.document.state.project.clone());
             let original = harness.read(accepted_mask);
             let center_screen = harness.read(|editor| screen(editor, point(original, DVec2::ZERO)));
             harness.read(|editor| assert!(editor.mask_handles_available(), "handles unavailable"));
             harness.read(|editor| {
-                assert!(editor.last_layout.unwrap().0.canvas.contains(center_screen))
+                assert!(
+                    editor
+                        .document
+                        .visit
+                        .last_layout
+                        .unwrap()
+                        .0
+                        .canvas
+                        .contains(center_screen)
+                )
             });
             harness.read(|editor| {
                 assert!(
-                    editor.mask_pointer_interest(editor.last_layout.unwrap().0, center_screen),
+                    editor.mask_pointer_interest(
+                        editor.document.visit.last_layout.unwrap().0,
+                        center_screen
+                    ),
                     "target={:?} mask={original:?}",
                     editor.adjustment_layer_target()
                 )
@@ -165,7 +180,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                 center_screen,
                 center_screen + egui::vec2(20., -15.),
             );
-            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
             harness.read(|editor| {
                 assert!(
                     editor.mask_preview_source().is_some(),
@@ -187,7 +202,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             harness.key_press(egui::Key::Escape);
             harness.step();
             pointer(&mut harness, center_screen + egui::vec2(20., -15.), false);
-            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
             let axis = harness.read(|editor| screen(editor, point(original, DVec2::X)));
             let along = (axis - center_screen).normalized();
             drag(&mut harness, axis, axis + along * 12.);
@@ -284,7 +299,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             let mut expected = before;
             harness.read(|editor| {
                 expected
-                    .source_mut(editor.current_source.unwrap())
+                    .source_mut(editor.document.visit.current_source.unwrap())
                     .unwrap()
                     .adjustment_layers
                     .as_mut()
@@ -294,7 +309,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                     .mask = accepted_mask(editor)
             });
             harness.read(|editor| assert_eq!(
-            editor.document.project,
+            editor.document.state.project,
             expected,
             "IDs, allocator, photographic values, other layers and composition survive geometry edits"
         ));

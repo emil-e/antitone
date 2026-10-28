@@ -210,7 +210,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
 
 impl Editor {
     pub(super) fn export_modal(&self) -> bool {
-        self.export_dialog.is_some() || self.export_summary.is_some()
+        self.document.export_dialog.is_some() || self.document.export_summary.is_some()
     }
 
     pub(super) fn open_export_dialog(&mut self) {
@@ -219,7 +219,7 @@ impl Editor {
             return;
         }
         let folder = self.preferences.export_folder.clone().unwrap_or_default();
-        self.export_dialog = Some(Draft::new(self.target, folder));
+        self.document.export_dialog = Some(Draft::new(self.document.target, folder));
     }
 
     pub(super) fn export_dialogs(
@@ -228,7 +228,7 @@ impl Editor {
         escape: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        if let Some(mut draft) = self.export_dialog.take() {
+        if let Some(mut draft) = self.document.export_dialog.take() {
             if draft.confirming_replace {
                 let choice = presentation::DecisionDialog::new("Replace existing exported files?", "Existing files with the generated names in the destination folder will be replaced. Completed replacements cannot be undone.", "Replace and export")
                     .warning().detail(&draft.folder.display().to_string()).show(context, egui::Id::new("confirm-batch-replace"), escape);
@@ -236,9 +236,9 @@ impl Editor {
                     Some(presentation::DialogChoice::Confirm) => self.accept_export(draft, cx),
                     Some(presentation::DialogChoice::Cancel) => {
                         draft.confirming_replace = false;
-                        self.export_dialog = Some(draft);
+                        self.document.export_dialog = Some(draft);
                     }
-                    _ => self.export_dialog = Some(draft),
+                    _ => self.document.export_dialog = Some(draft),
                 }
                 return;
             }
@@ -266,14 +266,14 @@ impl Editor {
             if response.inner.export {
                 if draft.collision == Collision::Replace {
                     draft.confirming_replace = true;
-                    self.export_dialog = Some(draft);
+                    self.document.export_dialog = Some(draft);
                 } else {
                     self.accept_export(draft, cx);
                 }
             } else {
-                self.export_dialog = Some(draft);
+                self.document.export_dialog = Some(draft);
             }
-        } else if let Some(summary) = self.export_summary.take() {
+        } else if let Some(summary) = self.document.export_summary.take() {
             let response = presentation::modal(context, egui::Id::new("export-summary"), |ui| {
                 ui.heading(if summary.stopped {
                     "Export stopped"
@@ -315,7 +315,7 @@ impl Editor {
                 reveal_file(path.clone());
             }
             if !response.inner.0 && !presentation::escape_requested(&response, escape) {
-                self.export_summary = Some(summary);
+                self.document.export_summary = Some(summary);
             }
         }
     }
@@ -330,7 +330,7 @@ impl Editor {
             Err(error) => {
                 draft.error = Some(error.to_string());
                 draft.confirming_replace = false;
-                self.export_dialog = Some(draft);
+                self.document.export_dialog = Some(draft);
             }
         }
     }

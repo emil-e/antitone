@@ -8,8 +8,8 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
                 let mut editor = fixture();
                 editor.busy = busy;
                 let before = (
-                    editor.roll,
-                    editor.adjustment_layer_settings,
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
                     editor.document.dirty(),
                 );
                 let context = egui::Context::default();
@@ -58,13 +58,13 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
                 assert!(!availability.enabled(crate::platform::menu::Action::Export));
                 assert_eq!(
                     (
-                        editor.roll,
-                        editor.adjustment_layer_settings,
+                        editor.document.roll,
+                        editor.document.visit.adjustment_layer_settings,
                         editor.document.dirty()
                     ),
                     before
                 );
-                assert!(editor.pick.is_none());
+                assert!(editor.document.picking.kind.is_none());
                 assert!(editor.document.visit.crop_edit.is_none());
                 assert!(editor.document_pending.is_none());
             }
@@ -218,7 +218,7 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
     let mut editor = fixture();
     editor.tab = 2;
     editor.sync_document();
-    let project = editor.document.project.clone();
+    let project = editor.document.state.project.clone();
     let context = egui::Context::default();
     editor.file_action(FileAction::New, &UiContext::render_only());
     assert_eq!(editor.transition, Some(Transition::New));
@@ -240,9 +240,11 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
     assert!(editor.transition.is_none());
     assert!(editor.document_pending.is_none());
     assert_eq!(editor.tab, 2);
-    assert_eq!(editor.document.project, project);
+    assert_eq!(editor.document.state.project, project);
     assert_eq!(editor.preferences, preferences);
-    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+    assert!(
+        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+    );
 }
 
 #[test]
@@ -251,11 +253,11 @@ fn failed_new_and_open_or_import_do_not_reset_the_selected_tab() {
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.tab = 2;
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             editor.start_document(Preparation::New, cx);
             editor.document_prepared(editor.document_pending.unwrap(), Err("failed".into()));
             assert_eq!(editor.tab, 2);
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             assert!(!editor.new_project_pending);
             for work in [
                 Preparation::Open("project.json".into()),
@@ -285,9 +287,9 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     let path = directory.path().join("ui-preferences.json");
     let mut editor = fixture();
     with_camera_basis(&mut editor);
-    editor.current_source = editor.document.project.order.first().copied();
+    editor.document.visit.current_source = editor.document.state.project.order.first().copied();
     editor.refresh_adjustment_layer_selection();
-    editor.roll.exposure = 1.23456789;
+    editor.document.roll.exposure = 1.23456789;
     editor.sync_document();
     *editor.document = editor
         .document
@@ -296,7 +298,7 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
             crate::project::Save::New,
         )
         .unwrap();
-    let project = serde_json::to_value(&editor.document.project).unwrap();
+    let project = serde_json::to_value(&editor.document.state.project).unwrap();
     let context = egui::Context::default();
     editor.preference_store = Some(preferences::Store::open(path.clone()).unwrap().0);
     click_section_header(&mut editor, &context, "Gamma & balance");
@@ -310,7 +312,7 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     app_frame(&mut editor, &context, vec![]);
     editor.sync_document();
     assert_eq!(
-        serde_json::to_value(&editor.document.project).unwrap(),
+        serde_json::to_value(&editor.document.state.project).unwrap(),
         project
     );
     assert!(!editor.document.dirty());
@@ -319,7 +321,7 @@ fn section_scope_and_filmstrip_preferences_restore_in_a_fresh_context_without_pr
     assert_eq!(restored, editor.preferences);
     let mut reopened = fixture();
     with_camera_basis(&mut reopened);
-    reopened.current_source = reopened.document.project.order.first().copied();
+    reopened.document.visit.current_source = reopened.document.project.order.first().copied();
     reopened.refresh_adjustment_layer_selection();
     reopened.apply_preferences(restored);
     reopened.preference_store = Some(store);
@@ -475,11 +477,11 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
     let mut editor = fixture();
     editor.tab = 2;
     let grade = (
-        editor.roll,
-        editor.adjustment_layer_settings,
+        editor.document.roll,
+        editor.document.visit.adjustment_layer_settings,
         editor.dmin(),
         editor.dmax(),
-        editor.crop,
+        editor.document.visit.crop,
     );
     let context = egui::Context::default();
     let labels = controls_frame(&mut editor, &context, 315., vec![]);
@@ -497,30 +499,30 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
     for pressed in [true, false] {
         controls_frame(&mut editor, &context, 315., pointer(srgb, pressed));
     }
-    assert_eq!(editor.target, OutputTarget::Srgb);
+    assert_eq!(editor.document.target, OutputTarget::Srgb);
     editor.sync_document();
     assert_eq!(
-        editor.document.project.output.tiff,
+        editor.document.state.project.output.tiff,
         crate::project::TiffTarget::Srgb
     );
     assert_eq!(
         (
-            editor.roll,
-            editor.adjustment_layer_settings,
+            editor.document.roll,
+            editor.document.visit.adjustment_layer_settings,
             editor.dmin(),
             editor.dmax(),
-            editor.crop
+            editor.document.visit.crop
         ),
         grade
     );
     click_section_reset(&mut editor, &context, "Target");
-    assert_eq!(editor.target, OutputTarget::DisplayP3);
-    editor.target = OutputTarget::Srgb;
+    assert_eq!(editor.document.target, OutputTarget::DisplayP3);
+    editor.document.target = OutputTarget::Srgb;
     add_ready_fixture(&mut editor);
     editor.begin_crop();
     let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
     click_section_reset(&mut editor, &context, "Target");
-    assert_eq!(editor.target, OutputTarget::Srgb);
+    assert_eq!(editor.document.target, OutputTarget::Srgb);
     assert_eq!(
         editor.document.visit.crop_edit.as_ref().unwrap().draft,
         draft

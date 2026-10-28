@@ -23,11 +23,11 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
             e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             e.set_dmax(Some(DVec3::splat(128. / 4031.)));
             e.set_gamma(0.75);
-            e.adjustment_layer_settings.exposure = 0.5;
-            e.source = false;
-            e.roll_orientation.turn_clockwise();
-            e.photo_orientation.flips.horizontal = true;
-            e.document.project.analysis_regions = e
+            e.document.visit.adjustment_layer_settings.exposure = 0.5;
+            e.document.source = false;
+            e.document.roll_orientation.turn_clockwise();
+            e.document.visit.photo_orientation.flips.horizontal = true;
+            e.document.state.project.analysis_regions = e
                 .document
                 .project
                 .order
@@ -93,7 +93,10 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
             let metadata = crate::spatial_metadata::Metadata {
                 version: crate::spatial_metadata::VERSION,
                 groups: vec![crate::spatial_metadata::Group {
-                    development: e.document.project.sources[0].development.decode.clone(),
+                    development: e.document.state.project.sources[0]
+                        .development
+                        .decode
+                        .clone(),
                     code_scale: e.document.spatial_code_scale(),
                     common_size: crate::spatial_metadata::CommonSize::fit(&sources),
                     sources,
@@ -162,7 +165,7 @@ fn prior_crop(h: &mut Harness<'_, Editor>) -> Crop {
             width: a.width / 2,
             height: a.height / 2,
         });
-        e.crop = Some(crop);
+        e.document.visit.crop = Some(crop);
         e.sync_document();
         crop
     });
@@ -174,16 +177,34 @@ fn prior_crop(h: &mut Harness<'_, Editor>) -> Crop {
 fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
     h.read(|editor| assert!(editor.document.auto_crop_edit.is_none()));
     wait_for(h, |e| {
-        assert!(e.working.error.is_none(), "{:?}", e.working.error);
-        !e.working.updating
-            && e.working
+        assert!(
+            e.document.visit.working_view.error.is_none(),
+            "{:?}",
+            e.document.visit.working_view.error
+        );
+        !e.document.visit.working_view.updating
+            && e.document
+                .visit
+                .working_view
                 .displayed
                 .as_ref()
                 .is_some_and(|v| v.spec.frame.composition.crop() == crop)
     });
-    h.read(|editor| assert_eq!(editor.last_layout.unwrap().0.composition.crop(), crop));
+    h.read(|editor| {
+        assert_eq!(
+            editor
+                .document
+                .visit
+                .last_layout
+                .unwrap()
+                .0
+                .composition
+                .crop(),
+            crop
+        )
+    });
     let timing = h.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-    h.update(|editor| editor.selection_timing = Some(timing.clone()));
+    h.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
     h.step();
     h.render().unwrap();
     assert!(timing.ready_was_painted());
@@ -193,7 +214,13 @@ fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
         scopes::ScopeInput::Rendered(view, _) => h.read(|editor| {
             assert!(Arc::ptr_eq(
                 &view,
-                editor.working.displayed.as_ref().unwrap()
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .unwrap()
             ))
         }),
         _ => panic!("scopes must consume the accepted physical working/original view"),
@@ -209,7 +236,7 @@ fn assert_lifecycle(h: &Harness<'_, Editor>, size: egui::Vec2) {
             .as_ref()
             .and_then(|e| e.layout)
             .map(|l| l.canvas)
-            .or_else(|| editor.last_layout.map(|(l, _)| l.canvas))
+            .or_else(|| editor.document.visit.last_layout.map(|(l, _)| l.canvas))
             .unwrap()
     });
     for label in ["Apply", "Cancel"] {
@@ -239,13 +266,14 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
     ] {
         setup(|mut h, _directory| {
             set_layout(&mut h, size, width);
-            let ids = h.read(|editor| editor.document.project.order.clone());
+            let ids = h.read(|editor| editor.document.state.project.order.clone());
             h.update(|e| {
                 e.document
+                    .state
                     .project
                     .analysis_regions
                     .retain(|r| r.source != ids[0]);
-                let areas = &mut e.document.project.analysis_regions[0].areas;
+                let areas = &mut e.document.state.project.analysis_regions[0].areas;
                 areas.picture_observed[0] = false;
                 areas.picture_weak[0] = true;
                 let mut metadata = (*e.document.spatial.ready()).clone();
@@ -259,14 +287,14 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             });
             h.step();
             save_existing_project(&mut h);
-            let before = h.read(|editor| editor.document.project.clone());
+            let before = h.read(|editor| editor.document.state.project.clone());
             stage(&mut h, "Roll");
             click_action(&mut h, "Auto-crop roll");
             overlay::wait_context(&mut h);
             h.read(|editor| {
                 assert!(
                     editor
-                        .auto_crop_outline(editor.last_layout.unwrap().0)
+                        .auto_crop_outline(editor.document.visit.last_layout.unwrap().0)
                         .is_none()
                 )
             });
@@ -307,7 +335,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             wait_for(&mut h, |e| !e.busy && e.document.visit.ready.is_some());
             h.read(|editor| {
                 assert_eq!(
-                    editor.current_source,
+                    editor.document.visit.current_source,
                     Some(ids[1]),
                     "badge hover must not steal photo selection"
                 )
@@ -329,12 +357,12 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             h.read(|editor| {
                 assert!(
                     editor
-                        .auto_crop_outline(editor.last_layout.unwrap().0)
+                        .auto_crop_outline(editor.document.visit.last_layout.unwrap().0)
                         .is_some()
                 )
             });
             click_action(&mut h, "Cancel");
-            h.read(|editor| assert_eq!(editor.document.project, before));
+            h.read(|editor| assert_eq!(editor.document.state.project, before));
             assert_eq!(
                 h.query_all_by_role_and_label(egui::accesskit::Role::Image, "Photo warning")
                     .count(),
@@ -349,13 +377,13 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
                 );
             }
             h.update(|editor| {
-                editor.document.project.analysis_regions.clear();
-                let ids = editor.document.project.order.clone();
+                editor.document.state.project.analysis_regions.clear();
+                let ids = editor.document.state.project.order.clone();
                 unavailable_regions(editor, &ids);
             });
             h.step();
             save_existing_project(&mut h);
-            let before = h.read(|editor| editor.document.project.clone());
+            let before = h.read(|editor| editor.document.state.project.clone());
             click_action(&mut h, "Auto-crop roll");
             overlay::wait_context(&mut h);
             assert!(h.get_by_label("Apply").accesskit_node().is_disabled());
@@ -375,7 +403,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
                 &format!("crop-all-unavailable-{name}"),
             );
             click_action(&mut h, "Cancel");
-            h.read(|editor| assert_eq!(editor.document.project, before));
+            h.read(|editor| assert_eq!(editor.document.state.project, before));
             h.read(|editor| assert!(!editor.document.dirty()));
             stage(&mut h, "Photo");
             click_action(&mut h, "Crop & straighten");
@@ -401,7 +429,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
                 1
             );
             click_action(&mut h, "Cancel");
-            h.read(|editor| assert_eq!(editor.document.project, before));
+            h.read(|editor| assert_eq!(editor.document.state.project, before));
             assert!(h.query_by_label("Tool warning").is_none());
             assert_eq!(
                 h.query_all_by_role_and_label(egui::accesskit::Role::Image, "Photo warning")
@@ -422,8 +450,8 @@ fn photo_auto_crop_initializes_the_normal_crop_draft_at_both_layouts() {
             set_layout(&mut h, size, width);
             stage(&mut h, "Photo");
             let old = prior_crop(&mut h);
-            let before = h.read(|editor| editor.document.project.clone());
-            let source = h.read(|editor| editor.current_source.unwrap());
+            let before = h.read(|editor| editor.document.state.project.clone());
+            let source = h.read(|editor| editor.document.visit.current_source.unwrap());
             assert!(
                 h.query_by_role_and_label(egui::accesskit::Role::Button, "Auto-crop")
                     .is_none()
@@ -442,8 +470,8 @@ fn photo_auto_crop_initializes_the_normal_crop_draft_at_both_layouts() {
                 )
             });
             h.read(|editor| assert!(editor.document.auto_crop_edit.is_none()));
-            h.read(|editor| assert_eq!(editor.document.project, before));
-            h.read(|editor| assert_eq!(editor.crop, Some(old)));
+            h.read(|editor| assert_eq!(editor.document.state.project, before));
+            h.read(|editor| assert_eq!(editor.document.visit.crop, Some(old)));
             h.read(|editor| assert!(!editor.document.dirty()));
             assert_eq!(
                 h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
@@ -454,20 +482,20 @@ fn photo_auto_crop_initializes_the_normal_crop_draft_at_both_layouts() {
             save_capture(&h.render().unwrap(), &format!("simple-photo-crop-{name}"));
             click_action(&mut h, "Cancel");
             h.read(|editor| assert!(editor.document.visit.crop_edit.is_none()));
-            h.read(|editor| assert_eq!(editor.document.project, before));
+            h.read(|editor| assert_eq!(editor.document.state.project, before));
             wait_crop(&mut h, old);
             click_action(&mut h, "Crop & straighten");
             click_action(&mut h, "Auto-crop");
             click_action(&mut h, "Apply");
             let mut expected = before;
             expected.source_mut(source).unwrap().crop = Some(proposed);
-            h.read(|editor| assert_eq!(editor.document.project, expected));
-            h.read(|editor| assert_eq!(editor.crop, Some(proposed)));
+            h.read(|editor| assert_eq!(editor.document.state.project, expected));
+            h.read(|editor| assert_eq!(editor.document.visit.crop, Some(proposed)));
             wait_crop(&mut h, proposed);
             click_action(&mut h, "Dust repair");
-            h.read(|editor| assert!(editor.document.dust.cleanup));
+            h.read(|editor| assert!(editor.document.visit.dust.cleanup));
             click_action(&mut h, "Done");
-            h.read(|editor| assert_eq!(editor.document.project, expected));
+            h.read(|editor| assert_eq!(editor.document.state.project, expected));
         });
     }
 }
@@ -481,7 +509,7 @@ fn roll_shelf_keeps_orientation_and_tools_fixed_and_preserves_photo_exceptions()
         setup(|mut h, _directory| {
             set_layout(&mut h, size, width);
             stage(&mut h, "Roll");
-            let before = h.read(|editor| editor.document.project.clone());
+            let before = h.read(|editor| editor.document.state.project.clone());
             for label in [
                 "Turn left",
                 "Turn right",
@@ -512,7 +540,7 @@ fn roll_shelf_keeps_orientation_and_tools_fixed_and_preserves_photo_exceptions()
             expected.orientation = RollOrientation::default();
             expected.orientation.turn_counterclockwise();
             expected.orientation.horizontal = true;
-            h.read(|editor| assert_eq!(editor.document.project, expected));
+            h.read(|editor| assert_eq!(editor.document.state.project, expected));
             h.get_by_role_and_label(egui::accesskit::Role::Button, "Exposure")
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
@@ -574,7 +602,7 @@ fn missing_film_does_not_remove_roll_proposals_or_trim_their_applied_nominal_fra
                 editor.auto_crop_margin = 0.;
                 expected
             });
-            let before = h.read(|editor| editor.document.project.clone());
+            let before = h.read(|editor| editor.document.state.project.clone());
             stage(&mut h, "Roll");
             click_action(&mut h, "Auto-crop roll");
             overlay::wait_context(&mut h);
@@ -584,13 +612,13 @@ fn missing_film_does_not_remove_roll_proposals_or_trim_their_applied_nominal_fra
                 for (id, crop) in &expected {
                     assert_eq!(editor.auto_crop_preview(*id), Some(Some(*crop)));
                 }
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.state.project, before);
             });
             click_action(&mut h, "Apply");
             h.read(|editor| {
                 for (id, crop) in &expected {
                     assert_eq!(
-                        editor.document.project.source(*id).unwrap().crop,
+                        editor.document.state.project.source(*id).unwrap().crop,
                         Some(*crop),
                         "availability cannot trim the nominal photographic crop"
                     );
@@ -603,19 +631,20 @@ fn missing_film_does_not_remove_roll_proposals_or_trim_their_applied_nominal_fra
 #[test]
 fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
     setup(|mut h, _directory| {
-        let ids = h.read(|editor| editor.document.project.order.clone());
+        let ids = h.read(|editor| editor.document.state.project.order.clone());
         h.update(|e| {
-            let a = &mut e.document.project.analysis_regions[1].areas;
+            let a = &mut e.document.state.project.analysis_regions[1].areas;
             a.picture_observed[0] = false;
             a.picture_weak[0] = true;
             unavailable_regions(e, &[ids[1]]);
         });
         h.step();
         save_existing_project(&mut h);
-        let before = h.read(|editor| editor.document.project.clone());
+        let before = h.read(|editor| editor.document.state.project.clone());
         h.read(|editor| {
             assert!(
-                editor.roll_selection.contains(ids[0]) && !editor.roll_selection.contains(ids[2])
+                editor.document.roll_selection.contains(ids[0])
+                    && !editor.document.roll_selection.contains(ids[2])
             )
         });
         stage(&mut h, "Roll");
@@ -635,7 +664,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
                     && editor.auto_crop_preview(ids[1]).is_none()
             )
         });
-        h.read(|editor| assert_eq!(editor.document.project, before));
+        h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.read(|editor| {
             assert!(editor.transition.is_none() && editor.document.analysis_review.is_none())
         });
@@ -644,7 +673,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
             expected.source_mut(id).unwrap().crop = Some(margin::expected_crop(&h, id, 0.5));
         }
         click_action(&mut h, "Apply");
-        h.read(|editor| assert_eq!(editor.document.project, expected));
+        h.read(|editor| assert_eq!(editor.document.state.project, expected));
         h.read(|editor| assert!(editor.document.auto_crop_edit.is_none()));
     });
 }
@@ -653,7 +682,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
 fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_accepted_recipe() {
     setup(|mut h, _directory| {
         h.update(|editor| {
-            editor.document.project.output.look = Some(Arc::new(
+            editor.document.state.project.output.look = Some(Arc::new(
                 crate::looks::LookAsset::new(
                     "Preview look".into(),
                     crate::looks::LookOrigin::Imported,
@@ -667,8 +696,8 @@ fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_a
         });
         h.step();
         save_existing_project(&mut h);
-        let before = h.read(|editor| editor.document.project.clone());
-        let source = h.read(|editor| editor.current_source.unwrap());
+        let before = h.read(|editor| editor.document.state.project.clone());
+        let source = h.read(|editor| editor.document.visit.current_source.unwrap());
         stage(&mut h, "Roll");
         click_action(&mut h, "Auto-crop roll");
         overlay::wait_context(&mut h);
@@ -684,11 +713,14 @@ fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_a
         });
         assert_ne!(projection, before.image_recipe(source).unwrap().composition);
         wait_for(&mut h, |editor| {
-            editor
-                .thumbnails
-                .projection_ready(&editor.document, source, editor.target, projection)
+            editor.document.thumbnails.projection_ready(
+                &editor.document,
+                source,
+                editor.document.target,
+                projection,
+            )
         });
-        h.read(|editor| assert_eq!(editor.document.project, before));
+        h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.read(|editor| assert!(!editor.document.dirty()));
         assert!(
             h.query_by_role_and_label(egui::accesskit::Role::Image, "Photo error")
@@ -698,11 +730,12 @@ fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_a
         h.read(|editor| assert!(editor.document.auto_crop_edit.is_none()));
         wait_for(&mut h, |editor| {
             editor
+                .document
                 .thumbnails
-                .ready_count(&editor.document, editor.target)
+                .ready_count(&editor.document, editor.document.target)
                 == 3
         });
-        h.read(|editor| assert_eq!(editor.document.project, before));
+        h.read(|editor| assert_eq!(editor.document.state.project, before));
     });
 }
 
@@ -711,12 +744,13 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
     setup(|mut h, _directory| {
         stage(&mut h, "Photo");
         let old = prior_crop(&mut h);
-        let before = h.read(|editor| editor.document.project.clone());
+        let before = h.read(|editor| editor.document.state.project.clone());
         stage(&mut h, "Roll");
         click_action(&mut h, "Auto-crop roll");
         overlay::wait_context(&mut h);
         workflow::enter_numeric(&mut h, "Margin", "2");
-        let draft = h.read(|editor| editor.auto_crop_preview(editor.current_source.unwrap()));
+        let draft = h
+            .read(|editor| editor.auto_crop_preview(editor.document.visit.current_source.unwrap()));
         h.key_press(egui::Key::F);
         h.step();
         h.step();
@@ -732,8 +766,10 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
                 .is_none()
         );
         wait_for(&mut h, |e| {
-            !e.working.updating
-                && e.working
+            !e.document.visit.working_view.updating
+                && e.document
+                    .visit
+                    .working_view
                     .displayed
                     .as_ref()
                     .is_some_and(|v| v.spec.frame.composition.crop() == old)
@@ -741,7 +777,7 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
         h.key_press(egui::Key::Enter);
         h.step();
         h.read(|editor| assert!(editor.document.auto_crop_edit.is_some()));
-        h.read(|editor| assert_eq!(editor.document.project, before));
+        h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.key_press(egui::Key::Escape);
         h.step();
         h.update(|editor| editor.fullscreen_changed(false));
@@ -750,7 +786,7 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
         h.read(|editor| assert!(editor.fullscreen.is_none()));
         h.read(|editor| {
             assert_eq!(
-                editor.auto_crop_preview(editor.current_source.unwrap()),
+                editor.auto_crop_preview(editor.document.visit.current_source.unwrap()),
                 draft
             )
         });
@@ -758,7 +794,7 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
         h.step();
         h.step();
         h.read(|editor| assert!(editor.document.auto_crop_edit.is_none()));
-        h.read(|editor| assert_eq!(editor.document.project, before));
+        h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.read(|editor| assert!(!editor.document.dirty()));
         wait_crop(&mut h, old);
     });

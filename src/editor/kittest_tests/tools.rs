@@ -16,12 +16,12 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
             editor.set_gamma(0.75);
-            editor.adjustment_layer_settings.exposure = 0.5;
-            editor.adjustment_layer_settings.wb = Balance {
+            editor.document.visit.adjustment_layer_settings.exposure = 0.5;
+            editor.document.visit.adjustment_layer_settings.wb = Balance {
                 warmth: 0.1,
                 tint: -0.05,
             };
-            editor.source = false;
+            editor.document.source = false;
             editor.sync_document();
         });
         harness.step();
@@ -30,7 +30,15 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
 }
 
 fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
-    let at = harness.read(|editor| editor.last_layout.unwrap().0.screen_point(point));
+    let at = harness.read(|editor| {
+        editor
+            .document
+            .visit
+            .last_layout
+            .unwrap()
+            .0
+            .screen_point(point)
+    });
     harness.hover_at(at);
     for pressed in [true, false] {
         harness.event(egui::Event::PointerButton {
@@ -41,7 +49,7 @@ fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
         });
     }
     harness.step();
-    harness.read(|editor| assert!(editor.region.is_some()));
+    harness.read(|editor| assert!(editor.document.picking.region.is_some()));
 }
 
 fn capture_tool(harness: &mut Harness<'_, Editor>, name: &str, size: egui::Vec2) {
@@ -53,7 +61,7 @@ fn capture_tool(harness: &mut Harness<'_, Editor>, name: &str, size: egui::Vec2)
         assert!(rect.top() >= 0. && rect.bottom() <= size.y);
     }
     let timing = harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-    harness.update(|editor| editor.selection_timing = Some(timing.clone()));
+    harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
     harness.step();
     let png = harness.render().unwrap();
     assert_eq!(png.dimensions(), (size.x as u32, size.y as u32));
@@ -125,12 +133,12 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.update(|e| {
                 e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
                 e.set_dmax(Some(DVec3::splat(128. / 4031.)));
-                e.source = false;
+                e.document.source = false;
                 // Cancel the documented +1 EV source-display baseline for the scalar oracle.
                 e.source_exposure = -1.;
-                e.photo_orientation.turn_clockwise();
-                e.roll_orientation.horizontal = true;
-                e.crop = Some(Crop {
+                e.document.visit.photo_orientation.turn_clockwise();
+                e.document.roll_orientation.horizontal = true;
+                e.document.visit.crop = Some(Crop {
                     center: [128., 96.],
                     size: [220, 140],
                     angle,
@@ -166,30 +174,36 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.try_run_realtime().unwrap();
             h.get_by_label(label).click();
             h.step();
-            h.read(|e| assert_eq!(e.pick, Some(kind)));
-            wait_for(&mut h, |e| e.original.settled.is_some());
+            h.read(|e| assert_eq!(e.document.picking.kind, Some(kind)));
+            wait_for(&mut h, |e| {
+                e.document.visit.grade.original.settled.is_some()
+            });
             h.event(egui::Event::PointerGone);
             h.step();
             h.render().unwrap();
             let (layout, target, matrix, pipeline) = h.read(|e| {
-                let (_, view, _) = e.original.settled.as_ref().unwrap();
+                let (_, view, _) = e.document.visit.grade.original.settled.as_ref().unwrap();
                 assert_eq!(view.frame.is_some(), angle != 0.);
                 let matrix = e.document.visit.ready.as_ref().unwrap().proxy.matrix();
                 (
-                    e.last_layout.unwrap().0,
-                    e.target,
+                    e.document.visit.last_layout.unwrap().0,
+                    e.document.target,
                     matrix,
-                    (!e.source).then(|| {
+                    (!e.document.source).then(|| {
                         e.adjustment_layer_snapshot(
                             e.document
+                                .state
                                 .project
-                                .source(e.current_source.unwrap())
+                                .source(e.document.visit.current_source.unwrap())
                                 .unwrap(),
-                            e.adjustment_layer_settings,
+                            e.document.visit.adjustment_layer_settings,
                         )
                         .and_then(|layers| {
                             crate::adjustment_layers::AdjustmentLayerPipeline::new(
-                                e.input, e.roll, layers, matrix,
+                                e.document.input,
+                                e.document.roll,
+                                layers,
+                                matrix,
                             )
                         })
                         .unwrap()
@@ -229,7 +243,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.step();
             h.read(|e| {
                 assert!(
-                    e.original.settled.is_none(),
+                    e.document.visit.grade.original.settled.is_none(),
                     "departed tool must not retain its image"
                 )
             });
@@ -248,27 +262,27 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
             harness.get_by_label("Scopes").click();
             harness.step();
             stage(&mut harness, "Photo");
-            let before = harness.read(|editor| editor.document.project.clone());
+            let before = harness.read(|editor| editor.document.state.project.clone());
             crop_draft(&mut harness);
-            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
             capture_tool(&mut harness, &format!("crop-{layout}-offscreen"), size);
             harness.get_by_label("Cancel").click();
             harness.step();
             harness.read(|editor| assert!(editor.document.visit.crop_edit.is_none()));
-            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
             let draft = crop_draft(&mut harness);
             harness.get_by_label("Apply").click();
             harness.step();
             harness.read(|editor| assert!(editor.document.visit.crop_edit.is_none()));
-            harness.read(|editor| assert_eq!(editor.crop, Some(draft)));
+            harness.read(|editor| assert_eq!(editor.document.visit.crop, Some(draft)));
             let mut expected = before;
             harness.read(|editor| {
                 expected
-                    .source_mut(editor.current_source.unwrap())
+                    .source_mut(editor.document.visit.current_source.unwrap())
                     .unwrap()
                     .crop = Some(draft)
             });
-            harness.read(|editor| assert_eq!(editor.document.project, expected));
+            harness.read(|editor| assert_eq!(editor.document.state.project, expected));
 
             harness.get_by_label("Scopes").click();
             harness.step();
@@ -277,23 +291,23 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 ("wb", "Photo", "Pick neutral for white balance", Pick::Wb),
             ] {
                 stage(&mut harness, tab);
-                let before = harness.read(|editor| editor.document.project.clone());
+                let before = harness.read(|editor| editor.document.state.project.clone());
                 harness.get_by_label(label).scroll_to_me();
                 harness.try_run_realtime().unwrap();
                 harness.get_by_label(label).click();
                 harness.step();
-                harness.read(|editor| assert_eq!(editor.pick, Some(kind)));
+                harness.read(|editor| assert_eq!(editor.document.picking.kind, Some(kind)));
                 assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
                 harness.get_by_label("Apply").click();
                 harness.step();
                 harness.read(|editor| assert!(!editor.busy));
-                harness.read(|editor| assert_eq!(editor.document.project, before));
+                harness.read(|editor| assert_eq!(editor.document.state.project, before));
                 click_patch(&mut harness, egui::pos2(96., 32.));
                 capture_tool(&mut harness, &format!("{name}-{layout}-offscreen"), size);
                 harness.get_by_label("Cancel").click();
                 harness.step();
-                harness.read(|editor| assert!(editor.pick.is_none()));
-                harness.read(|editor| assert_eq!(editor.document.project, before));
+                harness.read(|editor| assert!(editor.document.picking.kind.is_none()));
+                harness.read(|editor| assert_eq!(editor.document.state.project, before));
                 harness.get_by_label(label).click();
                 harness.step();
                 click_patch(
@@ -304,7 +318,9 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 harness.step();
                 harness.read(|editor| assert!(editor.busy));
                 wait_for(&mut harness, |e| !e.busy);
-                harness.read(|editor| assert!(editor.pick.is_none(), "{}", editor.status));
+                harness.read(|editor| {
+                    assert!(editor.document.picking.kind.is_none(), "{}", editor.status)
+                });
                 let mut expected = before;
                 if kind == Pick::Dmin {
                     let measured = harness.read(|editor| editor.dmin().unwrap());
@@ -315,7 +331,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 } else {
                     harness.read(|editor| {
                         assert_ne!(
-                            editor.adjustment_layer_settings.wb,
+                            editor.document.visit.adjustment_layer_settings.wb,
                             Balance {
                                 warmth: 0.1,
                                 tint: -0.05
@@ -324,7 +340,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                     });
                     harness.read(|editor| {
                         expected
-                            .source_mut(editor.current_source.unwrap())
+                            .source_mut(editor.document.visit.current_source.unwrap())
                             .unwrap()
                             .adjustment_layers
                             .as_mut()
@@ -332,10 +348,10 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                             .layers[0]
                             .adjustment
                             .photo
-                            .wb = editor.adjustment_layer_settings.wb
+                            .wb = editor.document.visit.adjustment_layer_settings.wb
                     });
                 }
-                harness.read(|editor| assert_eq!(editor.document.project, expected));
+                harness.read(|editor| assert_eq!(editor.document.state.project, expected));
             }
             harness.read(|editor| assert!(editor.preference_store.is_none()));
         });
@@ -393,20 +409,22 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
             calibrated_harness(|mut harness| {
                 if oriented {
                     harness.update(|editor| {
-                        editor.roll_orientation.turn_clockwise();
-                        editor.photo_orientation.flips.horizontal = true;
+                        editor.document.roll_orientation.turn_clockwise();
+                        editor.document.visit.photo_orientation.flips.horizontal = true;
                         editor.sync_document();
                     });
                     harness.step();
                 }
-                let before = harness.read(|editor| editor.document.project.clone());
+                let before = harness.read(|editor| editor.document.state.project.clone());
                 harness.get_by_label("Pick Dmin (film base)").scroll_to_me();
                 harness.try_run_realtime().unwrap();
                 harness.get_by_label("Pick Dmin (film base)").click();
                 harness.step();
-                harness.update(|editor| editor.region = initial.map(Coverage::rectangle));
+                harness.update(|editor| {
+                    editor.document.picking.region = initial.map(Coverage::rectangle)
+                });
                 harness.step();
-                let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
+                let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
                 let start = geometry.screen_point(start);
                 let end = geometry.screen_point(end);
                 assert!(start.distance(end) > 8.);
@@ -424,6 +442,8 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                 harness.read(|editor| {
                     assert_eq!(
                         editor
+                            .document
+                            .picking
                             .region
                             .unwrap()
                             .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area),
@@ -431,7 +451,7 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                         "oriented={oriented}, initial={initial:?}"
                     )
                 });
-                let selection = harness.read(|editor| editor.region);
+                let selection = harness.read(|editor| editor.document.picking.region);
                 harness.event(egui::Event::PointerButton {
                     pos: end,
                     button: egui::PointerButton::Primary,
@@ -439,13 +459,13 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                     modifiers: egui::Modifiers::NONE,
                 });
                 harness.step();
-                harness.read(|editor| assert!(editor.pick_drag.is_none()));
-                harness.read(|editor| assert_eq!(editor.region, selection));
-                harness.read(|editor| assert_eq!(editor.document.project, before));
+                harness.read(|editor| assert!(editor.document.visit.pick_drag.is_none()));
+                harness.read(|editor| assert_eq!(editor.document.picking.region, selection));
+                harness.read(|editor| assert_eq!(editor.document.state.project, before));
                 harness.get_by_label("Cancel").click();
                 harness.step();
-                harness.read(|editor| assert!(editor.pick.is_none()));
-                harness.read(|editor| assert_eq!(editor.document.project, before));
+                harness.read(|editor| assert!(editor.document.picking.kind.is_none()));
+                harness.read(|editor| assert_eq!(editor.document.state.project, before));
             });
         }
     }
@@ -459,8 +479,8 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
         harness.get_by_label("Scopes").click();
         harness.step();
-        let before = harness.read(|editor| editor.document.project.clone());
-        let selected = harness.read(|editor| editor.current_source);
+        let before = harness.read(|editor| editor.document.state.project.clone());
+        let selected = harness.read(|editor| editor.document.visit.current_source);
         // The native file chooser is outside this test: supply its resulting path as fixture setup.
         harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
         wait_for(&mut harness, |e| !e.busy);
@@ -471,14 +491,19 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
             set_layout(&mut harness, size, width);
             harness.get_by_label("Fit").click();
             harness.step();
-            harness.read(|editor| assert_eq!(editor.pick, Some(Pick::Flat)));
-            harness.read(|editor| assert!(editor.flat_edit.is_some()));
+            harness.read(|editor| assert_eq!(editor.document.picking.kind, Some(Pick::Flat)));
+            harness.read(|editor| assert!(editor.document.flat_edit.is_some()));
             wait_for(&mut harness, |e| {
-                assert!(e.original.refinement_error.is_none(), "{}", e.status);
-                e.original.settled.is_some()
+                assert!(
+                    e.document.visit.grade.original.refinement_error.is_none(),
+                    "{}",
+                    e.status
+                );
+                e.document.visit.grade.original.settled.is_some()
             });
-            let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
-            let support = harness.read(|editor| editor.region.expect("proposed support"));
+            let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            let support =
+                harness.read(|editor| editor.document.picking.region.expect("proposed support"));
             assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
             assert!(
                 geometry
@@ -486,26 +511,26 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
                     .expand(0.1)
                     .contains_rect(geometry.screen_coverage(support))
             );
-            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
             capture_tool(&mut harness, &format!("flat-{layout}-offscreen"), size);
         }
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert!(editor.flat_edit.is_none()));
-        harness.read(|editor| assert_eq!(editor.document.project, before));
-        harness.read(|editor| assert_eq!(editor.current_source, selected));
+        harness.read(|editor| assert!(editor.document.flat_edit.is_none()));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         harness.get_by_label("Apply").click();
         harness.step();
         harness.read(|editor| assert!(editor.busy));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.correction.is_some(), "{}", editor.status));
-        harness.read(|editor| assert!(editor.flat_edit.is_none()));
-        harness.read(|editor| assert_eq!(editor.current_source, selected));
-        harness.read(|editor| assert_eq!(editor.document.project.order, before.order));
-        harness.read(|editor| assert_eq!(editor.document.project.dmin(), before.dmin()));
-        harness.read(|editor| assert_eq!(editor.document.project.dmax(), before.dmax()));
+        harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
+        harness.read(|editor| assert!(editor.document.flat_edit.is_none()));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
+        harness.read(|editor| assert_eq!(editor.document.state.project.order, before.order));
+        harness.read(|editor| assert_eq!(editor.document.state.project.dmin(), before.dmin()));
+        harness.read(|editor| assert_eq!(editor.document.state.project.dmax(), before.dmax()));
         harness.read(|editor| assert!(editor.preference_store.is_none()));
     });
 }

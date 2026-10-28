@@ -58,7 +58,7 @@ fn authored_positive_cards_keep_grade_reuse_and_freshness() {
     )
     .unwrap();
     let proxy = Arc::new(Proxy::from_scan(&scan).unwrap());
-    thumbnails.bind_sources(document.cache.clone(), &document);
+    thumbnails = thumbnails.with_sources(document.cache.clone());
     thumbnails.seed(
         &source,
         FileKey::new(&document.source_path(id).unwrap()),
@@ -193,7 +193,7 @@ fn cached_proxy_finishes_repair_bearing_navigation_cards_without_a_developable_r
         .project
         .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let id = document.project.order[0];
-    thumbnails.bind_sources(document.cache.clone(), &document);
+    thumbnails = thumbnails.with_sources(document.cache.clone());
     thumbnails.seed(
         document.project.source(id).unwrap(),
         FileKey::new(&document.source_path(id).unwrap()),
@@ -341,9 +341,9 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
     complete(&mut thumbnails, &document, initial_key.clone()).unwrap();
     let mut editor = Editor::state();
     editor.document = document;
-    editor.thumbnails = thumbnails;
-    editor.load_input(editor.document.project.input);
-    editor.current_source = Some(id);
+    editor.document.thumbnails = thumbnails.with_sources(editor.document.cache.clone());
+    editor.load_input(editor.document.state.project.input);
+    editor.document.visit.current_source = Some(id);
     // Hold asynchronous replacement so the composed filmstrip must use existing pixels.
     editor.busy = true;
     let context = egui::Context::default();
@@ -362,18 +362,21 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
         output.textures_delta.clear();
         output
     };
-    let gamma = editor.document.project.input.gamma();
+    let gamma = editor.document.state.project.input.gamma();
     for (index, (exposure, gamma)) in [(0.25, gamma), (0.5, gamma), (0.75, gamma), (1., 1.2)]
         .into_iter()
         .enumerate()
     {
         if index == 3 {
-            editor.thumbnails.set_limits(cache_limits::CacheLimits {
-                cpu_bytes: 0,
-                gpu_bytes: 0,
-            });
+            editor
+                .document
+                .thumbnails
+                .set_limits(cache_limits::CacheLimits {
+                    cpu_bytes: 0,
+                    gpu_bytes: 0,
+                });
         }
-        editor.document.project.set_gamma(gamma);
+        editor.document.state.project.set_gamma(gamma);
         editor.set_gamma(gamma);
         editor
             .document
@@ -387,7 +390,7 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
             .adjustment
             .photo
             .exposure = exposure;
-        editor.adjustment_layer_settings.exposure = exposure;
+        editor.document.visit.adjustment_layer_settings.exposure = exposure;
         let output = frame(&mut editor);
         assert!(
             output
@@ -410,13 +413,18 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
             "previous pixels must not claim to be a current grade"
         );
         let key = tests::key(&editor.document, id);
-        complete(&mut editor.thumbnails, &editor.document, key.clone()).unwrap();
+        complete(
+            &mut editor.document.thumbnails,
+            &editor.document.state,
+            key.clone(),
+        )
+        .unwrap();
         assert_eq!(
-            editor.thumbnails.cache.entries.len(),
+            editor.document.thumbnails.cache.entries.len(),
             1,
             "superseded grades must not compete with other roll photos for retention"
         );
-        assert!(editor.thumbnails.cache.contains(&key));
+        assert!(editor.document.thumbnails.cache.contains(&key));
         let output = frame(&mut editor);
         assert!(
             !output
@@ -442,8 +450,9 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
         .photo
         .exposure = 1.25;
     let key = tests::key(&editor.document, id);
-    editor.thumbnails.protect_images(vec![key.clone()]);
+    editor.document.thumbnails.protect_images(vec![key.clone()]);
     editor
+        .document
         .thumbnails
         .cache
         .insert(key, Err("render rejected".into()));
@@ -633,65 +642,70 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
         .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let selected = document.project.order[0];
     let mut editor = Editor::state();
-    editor.document = document.into();
-    editor.thumbnails = thumbnails;
+    editor.document = editor.document.replacement(document);
+    editor.document.thumbnails = thumbnails.with_sources(editor.document.cache.clone());
     editor
+        .document
         .thumbnails
-        .bind_sources(editor.document.cache.clone(), &editor.document);
-    editor.thumbnails.set_limits(cache_limits::CacheLimits {
-        cpu_bytes: 0,
-        gpu_bytes: 64 << 20,
-    });
-    editor.current_source = Some(selected);
+        .set_limits(cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 64 << 20,
+        });
+    editor.document.visit.current_source = Some(selected);
     // An unsettled selected-view intent blocks optional offscreen GPU work, not
     // the actual thumbnail/native services or the selected card's visible work.
     let frame = crate::frame_raster::FrameRaster::full(
-        editor.thumbnail_composition(editor.document.project.source(selected).unwrap()),
+        editor.thumbnail_composition(editor.document.state.project.source(selected).unwrap()),
     )
     .unwrap();
-    editor.working.observe(
+    editor.document.visit.working_view.observe(
         editor.id,
         frame,
         ProcessingInput::from(ProcessingParameters::source()).signature(),
-        editor.target,
+        editor.document.target,
     );
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.thumbnails.demand = Demand::Visible(vec![selected]);
+            editor.document.thumbnails.demand = Demand::Visible(vec![selected]);
             editor.advance_thumbnail_demand(cx);
         });
         app.run_until(Duration::from_secs(10), |editor| {
-            editor.thumbnails.attempted_sources.len() == 3 && editor.thumbnails.pending.is_none()
+            editor.document.thumbnails.attempted_sources.len() == 3
+                && editor.document.thumbnails.pending.is_none()
         });
         app.read(|editor| {
             assert_eq!(
                 editor
+                    .document
                     .thumbnails
-                    .ready_count(&editor.document, editor.target),
+                    .ready_count(&editor.document, editor.document.target),
                 1,
                 "the selected positive completes while offscreen cards are CPU-only"
             );
             assert!(
                 editor
+                    .document
                     .thumbnails
                     .cache
                     .contains(&tests::key(&editor.document, selected))
             );
         });
         app.enter(|editor, cx| {
-            editor.working.clear();
-            editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+            editor.document.visit.working_view.clear();
+            editor.document.visit.grade.original.last_edit =
+                std::time::Instant::now() - Duration::from_secs(1);
             editor.advance_thumbnail_demand(cx);
         });
         app.run_until(Duration::from_secs(10), |editor| {
             editor
+                .document
                 .thumbnails
-                .ready_count(&editor.document, editor.target)
+                .ready_count(&editor.document, editor.document.target)
                 == 3
-                && editor.thumbnails.pending.is_none()
+                && editor.document.thumbnails.pending.is_none()
         });
         app.read(|editor| {
-            assert_eq!(editor.thumbnails.attempted_sources.len(), 3);
+            assert_eq!(editor.document.thumbnails.attempted_sources.len(), 3);
             assert!(
                 !editor.document.thumbnail_work.pending(),
                 "completed eager cards must not loop back into preparation"
@@ -749,7 +763,7 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
         .unwrap(),
     ));
     let document: crate::editor::document_scope::DocumentScope = document.into();
-    thumbnails.bind_sources(document.cache.clone(), &document);
+    thumbnails = thumbnails.with_sources(document.cache.clone());
     for &id in &document.project.order {
         let product = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
         assert!(product.positive.is_some());

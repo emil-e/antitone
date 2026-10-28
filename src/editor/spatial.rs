@@ -17,7 +17,6 @@ pub(super) enum Consumer {
     AutoCrop {
         target: auto_crop::Target,
         sources: Vec<SourceId>,
-        visit: u64,
     },
 }
 
@@ -56,6 +55,7 @@ impl Editor {
         if self.busy
             || self.document.spatial_preparing.is_some()
             || self.document.spatial_consumer.is_some()
+            || self.document.visit.spatial_consumer.is_some()
         {
             return;
         }
@@ -66,11 +66,23 @@ impl Editor {
         let document = Arc::new(self.document.capture());
         let id = self.request_id();
         let cancelled = Cancellation::default();
+        let consumer = if matches!(
+            &consumer,
+            Consumer::AutoCrop {
+                target: auto_crop::Target::Photo,
+                ..
+            }
+        ) {
+            self.document.visit.spatial_consumer = Some(consumer);
+            None
+        } else {
+            Some(consumer)
+        };
         self.document.spatial_preparing = Some(Pending {
             id,
             document: document.clone(),
             request: Some(request),
-            consumer: Some(consumer),
+            consumer,
             cancelled: cancelled.clone(),
             task: None,
         });
@@ -80,7 +92,7 @@ impl Editor {
         let services = self.source_services.as_ref().map(|source| {
             Services::new(
                 source,
-                self.document.cache.clone(),
+                source.provider(Some(self.document.cache.clone())),
                 self.document.exposures.clone(),
             )
         });
@@ -135,7 +147,11 @@ impl Editor {
 
     pub(super) fn cancel_spatial(&mut self) {
         let pending = self.document.spatial_preparing.take();
-        let consumer = self.document.spatial_consumer.take();
+        let consumer = self
+            .document
+            .spatial_consumer
+            .take()
+            .or_else(|| self.document.visit.spatial_consumer.take());
         if pending.is_some() || consumer.is_some() {
             self.document.spatial.cancel();
             if let Some(pending) = pending {
@@ -168,6 +184,7 @@ impl Editor {
         let metadata = match result {
             Ok(metadata) => metadata,
             Err(error) => {
+                self.document.visit.spatial_consumer = None;
                 self.document.spatial.cancel();
                 if !self.busy {
                     self.status = format!("Regions unavailable: {error}; accepted edits unchanged");
@@ -205,6 +222,7 @@ impl Editor {
                 )
                 .unwrap_or(false);
         if !publish {
+            self.document.visit.spatial_consumer = None;
             if !self.busy {
                 self.status = "Regions discarded: source inputs changed".into();
             }
@@ -218,7 +236,12 @@ impl Editor {
         if self.busy || self.document_pending.is_some() || self.failure.is_some() {
             return;
         }
-        let Some(consumer) = self.document.spatial_consumer.take() else {
+        let Some(consumer) = self
+            .document
+            .spatial_consumer
+            .take()
+            .or_else(|| self.document.visit.spatial_consumer.take())
+        else {
             return;
         };
         if self.document.capture().ready_spatial_metadata() != *self.document.spatial.ready() {
@@ -233,8 +256,8 @@ impl Editor {
                     self.document.path.as_deref(),
                 );
                 if self.id != request.loaded
-                    || self.current_source != Some(request.selected)
-                    || self.document.project != request.document.project
+                    || self.document.visit.current_source != Some(request.selected)
+                    || self.document.state.project != request.document.project
                 {
                     self.status = "Regions ready; analysis request no longer current".into();
                     return;
@@ -242,15 +265,7 @@ impl Editor {
                 request.document = self.document.capture();
                 self.prepare_analysis_review(*request, cx);
             }
-            Consumer::AutoCrop {
-                target,
-                sources,
-                visit,
-            } => {
-                if target == auto_crop::Target::Photo && self.document.visit.view != visit {
-                    self.status = "Regions ready; original Crop visit has ended".into();
-                    return;
-                }
+            Consumer::AutoCrop { target, sources } => {
                 self.auto_crop_sources(target, sources);
             }
         }

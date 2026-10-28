@@ -9,7 +9,7 @@ pub(super) fn layers(editor: &Editor) -> AdjustmentLayers {
     editor
         .document
         .project
-        .source(editor.current_source.unwrap())
+        .source(editor.document.visit.current_source.unwrap())
         .unwrap()
         .adjustment_layers
         .clone()
@@ -43,7 +43,7 @@ pub(super) fn show_layers(harness: &mut Harness<'_, Editor>) {
 }
 
 pub(super) fn install_layers(editor: &mut Editor) -> [AdjustmentLayerId; 2] {
-    let source = editor.current_source.unwrap();
+    let source = editor.document.visit.current_source.unwrap();
     let area = editor.document.visit.ready.as_ref().unwrap().area;
     let mut layers = AdjustmentLayers::default();
     let adjustment = AdjustmentLayer {
@@ -80,10 +80,11 @@ pub(super) fn install_layers(editor: &mut Editor) -> [AdjustmentLayerId; 2] {
         .source_mut(source)
         .unwrap()
         .adjustment_layers = Some(layers);
-    editor.adjustment_layer_settings = editor.selected_adjustment_layer_settings().unwrap();
+    editor.document.visit.adjustment_layer_settings =
+        editor.selected_adjustment_layer_settings().unwrap();
     editor.select_adjustment_layer(super::super::adjustment_layers::Target::Layer(sky));
     editor
-        .validate_source_candidate(editor.document.project.source(source).unwrap())
+        .validate_source_candidate(editor.document.state.project.source(source).unwrap())
         .unwrap();
     [sky, ground]
 }
@@ -165,7 +166,10 @@ fn default_global_is_an_ordinary_layer_and_new_layers_target_the_shared_controls
         workflow::enter_numeric(&mut harness, "Exposure", "-0.25");
         click(&mut harness, "Global");
         harness.read(|editor| {
-            assert_eq!(editor.adjustment_layer_settings.exposure, 0.5);
+            assert_eq!(
+                editor.document.visit.adjustment_layer_settings.exposure,
+                0.5
+            );
             let layers = layers(editor);
             assert_eq!(layers.layers[0].adjustment.photo.exposure, 0.5);
             assert_eq!(layers.layers[1].adjustment.photo.exposure, -0.25);
@@ -177,7 +181,10 @@ fn default_global_is_an_ordinary_layer_and_new_layers_target_the_shared_controls
             let layers = layers(editor);
             assert_eq!(layers.layers.len(), 1);
             assert_eq!(layers.layers[0].name, "Global 2");
-            assert_eq!(editor.adjustment_layer_settings.exposure, -0.25);
+            assert_eq!(
+                editor.document.visit.adjustment_layer_settings.exposure,
+                -0.25
+            );
         });
     });
 }
@@ -338,7 +345,7 @@ fn zero_strength_greys_out_ineffective_controls_but_can_be_restored() {
         harness.step();
         show_layers(&mut harness);
         click(&mut harness, "Foreground");
-        let settings = harness.read(|editor| editor.adjustment_layer_settings);
+        let settings = harness.read(|editor| editor.document.visit.adjustment_layer_settings);
         workflow::enter_numeric(&mut harness, "Strength", "0");
         harness.try_run_realtime().unwrap();
         for name in ["Exposure", "Contrast", "Saturation", "Feather"] {
@@ -494,9 +501,15 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
         show_layers(&mut harness);
         for escape in [false, true] {
             click(&mut harness, "Sky");
-            let before = harness.read(|editor| (editor.document.project.clone(), editor.viewport));
+            let before = harness.read(|editor| {
+                (
+                    editor.document.state.project.clone(),
+                    editor.document.visit.viewport,
+                )
+            });
             let from = harness.get_by_label("Sky").rect().center();
-            let outside = harness.read(|editor| editor.last_layout.unwrap().0.canvas.center());
+            let outside =
+                harness.read(|editor| editor.document.visit.last_layout.unwrap().0.canvas.center());
             harness.hover_at(from);
             harness.event(egui::Event::PointerButton {
                 pos: from,
@@ -520,7 +533,13 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
             harness.step();
             harness.try_run_realtime().unwrap();
             harness.read(|editor| {
-                assert_eq!((editor.document.project.clone(), editor.viewport), before);
+                assert_eq!(
+                    (
+                        editor.document.state.project.clone(),
+                        editor.document.visit.viewport
+                    ),
+                    before
+                );
                 assert!(!editor.document.visit.adjustment_layers.dragging());
                 assert!(editor.document.visit.mask_edit.is_none());
             });
@@ -535,19 +554,19 @@ fn deletion_confirmation_can_cancel_and_text_input_owns_delete() {
         harness.step();
         show_layers(&mut harness);
         click(&mut harness, "Sky");
-        let before = harness.read(|editor| editor.document.project.clone());
+        let before = harness.read(|editor| editor.document.state.project.clone());
         harness.key_press(egui::Key::Delete);
         harness.step();
         harness.get_by_label("Delete layer");
         click(&mut harness, "Cancel");
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
         pending_exposure(&mut harness, "1.25");
         harness.key_press(egui::Key::Delete);
         harness.step();
         harness.read(|editor| assert!(!editor.document.visit.adjustment_layers.confirming()));
         harness.key_press(egui::Key::Escape);
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
     });
 }
 
@@ -559,7 +578,7 @@ fn source_switch_cancels_hidden_text_without_applying_it_to_another_photo() {
         show_layers(&mut harness);
         click(&mut harness, "Sky");
         let (outgoing, outgoing_grade, other, other_grade) = harness.read(|editor| {
-            let outgoing = editor.current_source.unwrap();
+            let outgoing = editor.document.visit.current_source.unwrap();
             let other = editor
                 .document
                 .project
@@ -601,7 +620,7 @@ fn source_switch_cancels_hidden_text_without_applying_it_to_another_photo() {
         harness.get_by_label("patches.dng").click();
         harness.step();
         wait_for(&mut harness, |editor| {
-            editor.current_source == Some(other) && !editor.busy
+            editor.document.visit.current_source == Some(other) && !editor.busy
         });
         harness.read(|editor| {
             assert_eq!(
@@ -625,7 +644,7 @@ fn source_switch_cancels_hidden_text_without_applying_it_to_another_photo() {
                 other_grade
             );
             assert_eq!(
-                editor.adjustment_layer_settings,
+                editor.document.visit.adjustment_layer_settings,
                 editor.selected_adjustment_layer_settings().unwrap()
             );
         });
@@ -651,10 +670,10 @@ fn stale_deletion_confirmation_cannot_remove_a_changed_layer() {
                 })
                 .unwrap()
         });
-        let changed = harness.read(|editor| editor.document.project.clone());
+        let changed = harness.read(|editor| editor.document.state.project.clone());
         click(&mut harness, "Delete layer");
         harness.read(|editor| {
-            assert_eq!(editor.document.project, changed);
+            assert_eq!(editor.document.state.project, changed);
             assert!(!editor.document.visit.adjustment_layers.confirming());
             assert!(editor.status.contains("deletion cancelled"));
         });
@@ -696,7 +715,7 @@ fn white_balance_picker_targets_masked_partial_strength_layers() {
 fn mask_artwork(editor: &Editor) -> usize {
     let context = egui::Context::default();
     let mut output = context.run_ui(Default::default(), |ui| {
-        editor.paint_mask(ui, editor.last_layout.unwrap().0);
+        editor.paint_mask(ui, editor.document.visit.last_layout.unwrap().0);
     });
     output.textures_delta.clear();
     output
@@ -710,7 +729,7 @@ fn mask_center(editor: &Editor) -> egui::Pos2 {
     let source = editor
         .document
         .project
-        .source(editor.current_source.unwrap())
+        .source(editor.document.visit.current_source.unwrap())
         .unwrap();
     let super::super::adjustment_layers::Target::Layer(id) = editor.adjustment_layer_target()
     else {
@@ -733,7 +752,7 @@ fn mask_center(editor: &Editor) -> egui::Pos2 {
         AdjustmentLayerCoverage::Radial { center, .. } => center,
         _ => panic!("gradient"),
     };
-    let layout = editor.last_layout.unwrap().0;
+    let layout = editor.document.visit.last_layout.unwrap().0;
     layout.screen_frame_point(layout.composition.source_to_frame(point))
 }
 
@@ -751,24 +770,27 @@ fn collapsed_layers_hide_all_mask_artwork_and_do_not_intercept_navigation() {
             harness.read(|editor| {
                 assert!(mask_artwork(editor) > 0);
                 let point = mask_center(editor);
-                let layout = editor.last_layout.unwrap().0;
+                let layout = editor.document.visit.last_layout.unwrap().0;
                 assert!(layout.canvas.contains(point));
                 assert!(editor.mask_pointer_interest(layout, point));
             });
-            let before = harness.read(|editor| editor.document.project.clone());
+            let before = harness.read(|editor| editor.document.state.project.clone());
             click(&mut harness, "Layers");
             let point = harness.read(|editor| {
                 assert_eq!(mask_artwork(editor), 0);
                 assert!(editor.document.visit.adjustment_layers.show_coverage);
                 let point = mask_center(editor);
-                assert!(!editor.mask_pointer_interest(editor.last_layout.unwrap().0, point));
+                assert!(
+                    !editor
+                        .mask_pointer_interest(editor.document.visit.last_layout.unwrap().0, point)
+                );
                 point
             });
             super::masks::hold_drag(&mut harness, point, point + egui::vec2(18., 12.));
             super::masks::pointer(&mut harness, point + egui::vec2(18., 12.), false);
             harness.read(|editor| {
                 assert!(editor.document.visit.mask_edit.is_none());
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.state.project, before);
             });
             click(&mut harness, "Layers");
             harness.read(|editor| {
@@ -797,7 +819,8 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
                 .get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
                 .rect()
                 .center();
-            let before = harness.read(|editor| editor.adjustment_layer_settings.exposure);
+            let before =
+                harness.read(|editor| editor.document.visit.adjustment_layer_settings.exposure);
             harness.read(|editor| assert!(mask_artwork(editor) > 0));
             harness.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
             harness.hover_at(point);
@@ -810,7 +833,10 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
             harness.step();
             harness.run_steps(3);
             harness.read(|editor| {
-                assert_eq!(editor.adjustment_layer_settings.exposure, before);
+                assert_eq!(
+                    editor.document.visit.adjustment_layer_settings.exposure,
+                    before
+                );
                 assert_eq!(mask_artwork(editor), 0);
                 assert!(editor.document.visit.adjustment_layers.show_coverage);
             });
@@ -818,7 +844,10 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
             harness.hover_at(end);
             harness.step();
             harness.read(|editor| {
-                assert_ne!(editor.adjustment_layer_settings.exposure, before);
+                assert_ne!(
+                    editor.document.visit.adjustment_layer_settings.exposure,
+                    before
+                );
                 assert_eq!(mask_artwork(editor), 0);
             });
             harness.event(egui::Event::PointerButton {
@@ -845,7 +874,10 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
             harness.step();
             harness.try_run_realtime().unwrap();
             harness.read(|editor| {
-                assert_eq!(editor.adjustment_layer_settings.exposure, 0.375);
+                assert_eq!(
+                    editor.document.visit.adjustment_layer_settings.exposure,
+                    0.375
+                );
                 assert!(mask_artwork(editor) > 0);
             });
 
@@ -872,7 +904,8 @@ fn collapsed_layers_keep_active_gradient_creation_visible_until_release() {
             let before = harness.read(|editor| layers(editor).layers.len());
             click(&mut harness, name);
             click(&mut harness, "Layers");
-            let start = harness.read(|editor| editor.last_layout.unwrap().0.image.center());
+            let start =
+                harness.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center());
             let end = start + egui::vec2(30., 24.);
             super::masks::hold_drag(&mut harness, start, end);
             harness.read(|editor| {

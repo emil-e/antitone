@@ -69,11 +69,15 @@ pub(super) enum Action {
 impl Editor {
     pub(super) fn refresh_adjustment_layer_selection(&mut self) {
         let selected = match self.adjustment_layer_target() {
-            Target::Layer(id) => self.current_source.map(|source| (source, id)),
+            Target::Layer(id) => self
+                .document
+                .visit
+                .current_source
+                .map(|source| (source, id)),
             Target::None => None,
         };
         self.document.visit.adjustment_layers.selected = selected;
-        self.adjustment_layer_settings = self
+        self.document.visit.adjustment_layer_settings = self
             .selected_adjustment_layer_settings()
             .unwrap_or_default();
     }
@@ -83,8 +87,9 @@ impl Editor {
             return None;
         };
         self.document
+            .state
             .project
-            .source(self.current_source?)
+            .source(self.document.visit.current_source?)
             .ok()?
             .adjustment_layers
             .as_ref()?
@@ -99,7 +104,7 @@ impl Editor {
         source: &mut Source,
         photo: AdjustmentLayerSettings,
     ) {
-        if self.current_source == Some(source.id)
+        if self.document.visit.current_source == Some(source.id)
             && let Target::Layer(id) = self.adjustment_layer_target()
             && let Some(record) = source
                 .adjustment_layers
@@ -126,7 +131,7 @@ impl Editor {
             .adjustment_layers
             .selected
             .filter(|(source, id)| {
-                Some(*source) == self.current_source
+                Some(*source) == self.document.visit.current_source
                     && self
                         .document
                         .project
@@ -137,8 +142,10 @@ impl Editor {
             })
             .map(|(_, id)| Target::Layer(id))
             .unwrap_or_else(|| {
-                self.current_source
-                    .and_then(|id| self.document.project.source(id).ok())
+                self.document
+                    .visit
+                    .current_source
+                    .and_then(|id| self.document.state.project.source(id).ok())
                     .and_then(|source| source.adjustment_layers.as_ref())
                     .and_then(|layers| layers.layers.last())
                     .map_or(Target::None, |record| Target::Layer(record.id))
@@ -151,17 +158,23 @@ impl Editor {
         self.document.visit.adjustment_layers.selected = match target {
             Target::None => None,
             Target::Layer(id) => self
+                .document
+                .visit
                 .current_source
                 .filter(|source| {
-                    self.document.project.source(*source).is_ok_and(|source| {
-                        source.adjustment_layers.as_ref().is_some_and(|layers| {
-                            layers.layers.iter().any(|record| record.id == id)
+                    self.document
+                        .state
+                        .project
+                        .source(*source)
+                        .is_ok_and(|source| {
+                            source.adjustment_layers.as_ref().is_some_and(|layers| {
+                                layers.layers.iter().any(|record| record.id == id)
+                            })
                         })
-                    })
                 })
                 .map(|source| (source, id)),
         };
-        self.adjustment_layer_settings = self
+        self.document.visit.adjustment_layer_settings = self
             .selected_adjustment_layer_settings()
             .unwrap_or_default();
         self.document.visit.adjustment_layers.rename = None;
@@ -184,11 +197,11 @@ impl Editor {
 
     fn adjustment_layer_actions_available(&self) -> bool {
         !self.busy
-            && self.input.ready()
-            && self.pick.is_none()
+            && self.document.input.ready()
+            && self.document.picking.kind.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
-            && self.flat_edit.is_none()
+            && self.document.flat_edit.is_none()
             && self.document.visit.mask_edit.is_none()
             && self.document.analysis_review.is_none()
             && !self.document.visit.adjustment_layers.confirming()
@@ -208,13 +221,18 @@ impl Editor {
     ) -> Result<(), Error> {
         let project_before = self.history_snapshot();
         let id = self
+            .document
+            .visit
             .current_source
             .ok_or(Error::InvalidParameter("no selected source"))?;
-        let source = self.document.project.source(id)?;
+        let source = self.document.state.project.source(id)?;
         let before = source.grade_snapshot()?;
         let target = self.adjustment_layer_target();
         let mut candidate = source.clone();
-        self.overlay_adjustment_layer_settings(&mut candidate, self.adjustment_layer_settings);
+        self.overlay_adjustment_layer_settings(
+            &mut candidate,
+            self.document.visit.adjustment_layer_settings,
+        );
         edit(
             candidate
                 .adjustment_layers
@@ -222,7 +240,11 @@ impl Editor {
         )?;
         let after = candidate.grade_snapshot()?;
         self.validate_source_candidate(&candidate)?;
-        self.document.project.source_mut(id)?.adjustment_layers = candidate.adjustment_layers;
+        self.document
+            .state
+            .project
+            .source_mut(id)?
+            .adjustment_layers = candidate.adjustment_layers;
         self.document.visit.adjustment_layers.selected = match target {
             Target::Layer(layer) => Some((id, layer)),
             Target::None => None,
@@ -265,6 +287,8 @@ impl Editor {
 
     fn order_drag(&self, id: AdjustmentLayerId) -> Result<OrderDrag, Error> {
         let source = self
+            .document
+            .visit
             .current_source
             .ok_or(Error::InvalidParameter("no selected source"))?;
         let layers = self
@@ -289,7 +313,8 @@ impl Editor {
     }
 
     fn reorder_adjustment(&mut self, drag: OrderDrag, slot: usize) -> Result<(), Error> {
-        if drag.key.loaded != self.id || Some(drag.key.source) != self.current_source {
+        if drag.key.loaded != self.id || Some(drag.key.source) != self.document.visit.current_source
+        {
             return Err(Error::InvalidParameter(
                 "adjustment source changed during drag",
             ));
@@ -318,7 +343,7 @@ impl Editor {
         if !self.adjustment_layer_actions_available() || self.tab != 1 {
             return;
         }
-        let Some(source) = self.current_source else {
+        let Some(source) = self.document.visit.current_source else {
             return;
         };
         let result = match action {
@@ -406,7 +431,7 @@ impl Editor {
             .as_ref()
             .is_some_and(|drag| {
                 drag.key.loaded != self.id
-                    || Some(drag.key.source) != self.current_source
+                    || Some(drag.key.source) != self.document.visit.current_source
                     || self.tab != 1
                     || self.fullscreen.is_some()
                     || !(self.tab == 1)
@@ -421,11 +446,11 @@ impl Editor {
 
     pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
         self.tab == 1
-            && !self.document.dust.cleanup
-            && self.pick.is_none()
+            && !self.document.visit.dust.cleanup
+            && self.document.picking.kind.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
-            && self.flat_edit.is_none()
+            && self.document.flat_edit.is_none()
             && self.document.visit.mask_edit.is_none()
             && self.document.analysis_review.is_none()
             && self.document.visit.adjustment_layers.owns_delete
@@ -455,8 +480,10 @@ impl Editor {
     ) -> bool {
         let target = self.adjustment_layer_target();
         let records = self
+            .document
+            .visit
             .current_source
-            .and_then(|id| self.document.project.source(id).ok())
+            .and_then(|id| self.document.state.project.source(id).ok())
             .and_then(|source| source.adjustment_layers.as_ref())
             .map(|layers| layers.layers.clone())
             .unwrap_or_default();
@@ -465,12 +492,12 @@ impl Editor {
             Target::Layer(id) => records.iter().find(|record| record.id == id),
         };
         let mut adjustment = selected.map(|record| record.adjustment);
-        let mut photo = selected.map_or(self.adjustment_layer_settings, |record| {
+        let mut photo = selected.map_or(self.document.visit.adjustment_layer_settings, |record| {
             record.adjustment.photo
         });
         let before = (photo, adjustment);
         let available = self.adjustment_layer_actions_available()
-            && !self.document.dust.cleanup
+            && !self.document.visit.dust.cleanup
             && ui.is_enabled();
         let mut action = None;
         let mut rename_finish = None;
@@ -521,7 +548,7 @@ impl Editor {
                             if icons::button(
                                 ui,
                                 icons::Icon::AddGlobalAdjustmentLayer,
-                                available && !self.source,
+                                available && !self.document.source,
                                 "Add global",
                                 "Add a whole-image adjustment layer",
                             )
@@ -543,7 +570,7 @@ impl Editor {
                                     "Add linear gradient",
                                 ),
                             ] {
-                                if icons::button(ui, icon, available && !self.source, name, help)
+                                if icons::button(ui, icon, available && !self.document.source, name, help)
                                     .clicked()
                                 {
                                     creation = Some(radial);
@@ -566,7 +593,7 @@ impl Editor {
                             ui.push_id(record.id, |ui| {
                                 if let Some((source, id, text)) =
                                     &mut self.document.visit.adjustment_layers.rename
-                                    && Some(*source) == self.current_source
+                                    && Some(*source) == self.document.visit.current_source
                                     && *id == record.id
                                 {
                                     let rename_id = ui.make_persistent_id("rename-input");
@@ -618,7 +645,7 @@ impl Editor {
 
                                     let key = OrderKey {
                                         loaded: self.id,
-                                        source: self.current_source.unwrap(),
+                                        source: self.document.visit.current_source.unwrap(),
                                         id: record.id,
                                     };
                                     row.dnd_set_drag_payload(key);
@@ -637,7 +664,7 @@ impl Editor {
                                         && let Some(payload) =
                                             destination.dnd_hover_payload::<OrderKey>()
                                         && payload.loaded == self.id
-                                        && Some(payload.source) == self.current_source
+                                        && Some(payload.source) == self.document.visit.current_source
                                     {
                                         let below = ui.input(|input| {
                                             input
@@ -673,7 +700,7 @@ impl Editor {
                         if let Some(adjustment) = &mut adjustment {
                             ui.add_space(6.);
                             ui.add_enabled_ui(adjustment.enabled, |ui| {
-                                ui.push_id(("mask-input", self.current_source, target), |ui| {
+                                ui.push_id(("mask-input", self.document.visit.current_source, target), |ui| {
                                     ui.add_enabled_ui(adjustment.strength > 0., |ui| {
                                         let mut invert = adjustment.invert;
                                         if adjustment.mask
@@ -739,23 +766,26 @@ impl Editor {
 
         let reveal = std::mem::take(&mut self.document.visit.adjustment_layers.reveal_controls);
         let pick = ui
-            .push_id(("photo-input", self.current_source, target), |ui| {
-                ui.add_enabled_ui(editable, |ui| {
-                    if reveal {
-                        ui.scroll_to_cursor(Some(egui::Align::Min));
-                    }
-                    controls::photographic_exposure(ui, &mut photo);
-                    controls::photographic_colour(
-                        ui,
-                        &mut photo,
-                        can_pick
-                            && selected.is_some_and(|record| {
-                                record.adjustment.enabled && record.adjustment.strength > 0.
-                            }),
-                    )
-                })
-                .inner
-            })
+            .push_id(
+                ("photo-input", self.document.visit.current_source, target),
+                |ui| {
+                    ui.add_enabled_ui(editable, |ui| {
+                        if reveal {
+                            ui.scroll_to_cursor(Some(egui::Align::Min));
+                        }
+                        controls::photographic_exposure(ui, &mut photo);
+                        controls::photographic_colour(
+                            ui,
+                            &mut photo,
+                            can_pick
+                                && selected.is_some_and(|record| {
+                                    record.adjustment.enabled && record.adjustment.strength > 0.
+                                }),
+                        )
+                    })
+                    .inner
+                },
+            )
             .inner;
         if (photo, adjustment) != before {
             match target {
@@ -841,8 +871,8 @@ impl Editor {
             self.document.visit.adjustment_layers.deletion = None;
         } else if choice == Some(presentation::DialogChoice::Confirm) {
             self.document.visit.adjustment_layers.deletion = None;
-            if self.current_source != Some(source.id)
-                || self.document.project.source(source.id).ok() != Some(&source)
+            if self.document.visit.current_source != Some(source.id)
+                || self.document.state.project.source(source.id).ok() != Some(&source)
             {
                 self.status = "Adjustment changed; deletion cancelled".into();
                 return;

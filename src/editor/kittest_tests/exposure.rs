@@ -14,36 +14,37 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
     let file = crate::exposure_fixture::neutral_dng(1.3);
     editor_harness_with_thumbnails(true, |mut h, capture| {
         h.update(|editor| {
-            editor.input = crate::processing::InputSettings::Digital;
-            editor.target = OutputTarget::Srgb;
+            editor.document.input = crate::processing::InputSettings::Digital;
+            editor.document.target = OutputTarget::Srgb;
             // Zero grain amplitude keeps the constant-patch oracle; MTF still needs padding.
-            editor.film_emulation.enabled = film_enabled;
-            editor.film_emulation.amount = 0.;
+            editor.document.film_emulation.enabled = film_enabled;
+            editor.document.film_emulation.amount = 0.;
             editor.sync_document();
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().to_owned()], cx));
         wait_for(&mut h, |editor| {
             !editor.busy
                 && editor.document_pending.is_none()
-                && editor.working.support_ready()
+                && editor.document.visit.working_view.support_ready()
                 && editor
+                    .document
                     .thumbnails
-                    .ready_count(&editor.document, editor.target)
+                    .ready_count(&editor.document, editor.document.target)
                     == 1
         });
         h.event(egui::Event::PointerGone);
         h.step();
         h.render().unwrap();
         let image = h.read(|editor| {
-            assert!(!editor.source);
+            assert!(!editor.document.source);
             let support = crate::pixel_pipeline::PixelPipeline::film(
-                editor.film_emulation,
+                editor.document.film_emulation,
                 editor
                     .source_composition(
                         editor
                             .document
                             .project
-                            .source(editor.current_source.unwrap())
+                            .source(editor.document.visit.current_source.unwrap())
                             .unwrap(),
                     )
                     .crop()
@@ -57,8 +58,8 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 support != crate::processing_support::Support::NONE,
                 film_enabled
             );
-            assert_eq!(editor.roll.exposure, 0.);
-            assert_eq!(editor.adjustment_layer_settings.exposure, 0.);
+            assert_eq!(editor.document.roll.exposure, 0.);
+            assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
             let reference = editor
                 .document
                 .visit
@@ -73,7 +74,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 crate::exposure_reference::ReferenceExposure::Matched(_)
             ));
             assert!((reference.ev() - 1.3).abs() < 0.03, "{reference:?}");
-            editor.last_layout.unwrap().0.image.center()
+            editor.document.visit.last_layout.unwrap().0.image.center()
         });
         let card = h
             .get_by_label(file.path().file_name().unwrap().to_str().unwrap())
@@ -103,14 +104,20 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.step();
         wait_for(&mut h, |editor| {
             assert!(
-                editor.original.refinement_error.is_none(),
+                editor
+                    .document
+                    .visit
+                    .grade
+                    .original
+                    .refinement_error
+                    .is_none(),
                 "{}",
                 editor.status
             );
-            editor.working.reference_ready()
+            editor.document.visit.working_view.reference_ready()
         });
         h.render().unwrap();
-        let point = h.read(|editor| editor.last_layout.unwrap().0.image.center());
+        let point = h.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center());
         {
             let pixels = capture.borrow();
             let actual = pixels.pixels
@@ -128,18 +135,24 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.step();
         wait_for(&mut h, |editor| {
             assert!(
-                editor.original.refinement_error.is_none(),
+                editor
+                    .document
+                    .visit
+                    .grade
+                    .original
+                    .refinement_error
+                    .is_none(),
                 "{}",
                 editor.status
             );
-            editor.original.settled.is_some()
+            editor.document.visit.grade.original.settled.is_some()
         });
         h.event(egui::Event::PointerGone);
         h.step();
         h.render().unwrap();
         let point = h.read(|editor| {
-            assert_eq!(editor.pick, Some(Pick::Wb));
-            editor.last_layout.unwrap().0.image.center()
+            assert_eq!(editor.document.picking.kind, Some(Pick::Wb));
+            editor.document.visit.last_layout.unwrap().0.image.center()
         });
         let pixels = capture.borrow();
         let actual = pixels.pixels
@@ -160,26 +173,33 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
     editor_harness(|mut h, _| {
         h.enter(|editor, cx| editor.add_raws(vec![first.path().to_owned()], cx));
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document_pending.is_none() && editor.working.support_ready()
+            !editor.busy
+                && editor.document_pending.is_none()
+                && editor.document.visit.working_view.support_ready()
         });
         let (selected, native, development) = h.read(|editor| {
-            assert!(editor.input.is_negative());
+            assert!(editor.document.input.is_negative());
             let ready = editor.document.visit.ready.as_ref().unwrap();
             assert!(ready.reference.as_ref().is_none());
             (
-                editor.current_source,
+                editor.document.visit.current_source,
                 ready.developed.clone(),
                 ready.record.development.clone(),
             )
         });
         h.enter(|editor, cx| editor.add_raws(vec![second], cx));
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document_pending.is_none() && editor.working.support_ready()
+            !editor.busy
+                && editor.document_pending.is_none()
+                && editor.document.visit.working_view.support_ready()
         });
         h.render().unwrap();
         h.read(|editor| {
-            assert_eq!(editor.input, crate::processing::InputSettings::Digital);
-            assert_eq!(editor.current_source, selected);
+            assert_eq!(
+                editor.document.input,
+                crate::processing::InputSettings::Digital
+            );
+            assert_eq!(editor.document.visit.current_source, selected);
             let ready = editor.document.visit.ready.as_ref().unwrap();
             assert_eq!(
                 ready.record.development, development,
@@ -194,9 +214,9 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
                 .as_ref()
                 .expect("Digital readiness must include preparation");
             assert!((reference.ev() - 1.3).abs() < 0.03, "{reference:?}");
-            assert!(!editor.source);
-            assert_eq!(editor.roll.exposure, 0.);
-            assert_eq!(editor.adjustment_layer_settings.exposure, 0.);
+            assert!(!editor.document.source);
+            assert_eq!(editor.document.roll.exposure, 0.);
+            assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
         });
     });
 }
@@ -230,7 +250,7 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
     .unwrap();
     let document: crate::editor::document_scope::DocumentScope = document.into();
     crate::photo_preparation::native(
-        Some(&document.cache),
+        None,
         &document.exposure_slot(&document.exposures, id),
         document.project.input,
         native.source(),
@@ -267,10 +287,11 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
             wait_for(&mut h, |editor| {
                 !editor.busy
                     && editor.document_pending.is_none()
-                    && editor.working.support_ready()
+                    && editor.document.visit.working_view.support_ready()
                     && editor
+                        .document
                         .thumbnails
-                        .ready_count(&editor.document, editor.target)
+                        .ready_count(&editor.document, editor.document.target)
                         == 1
             });
             h.event(egui::Event::PointerGone);
@@ -292,7 +313,7 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
                         ))
                     );
                 }
-                editor.last_layout.unwrap().0.image.center()
+                editor.document.visit.last_layout.unwrap().0.image.center()
             });
             let card = h
                 .get_by_label(file.path().file_name().unwrap().to_str().unwrap())
@@ -365,10 +386,10 @@ fn cold_open_admits_selected_layers_only_after_source_normalization() {
         open_project(&mut h, path.clone());
         h.read(|editor| {
             assert!(
-                editor.document.project.order.is_empty(),
+                editor.document.state.project.order.is_empty(),
                 "the unsafe normalized selected grade must not replace the accepted document"
             );
-            assert!(editor.current_source.is_none());
+            assert!(editor.document.visit.current_source.is_none());
         });
     });
 }

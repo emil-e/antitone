@@ -8,7 +8,7 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.sync_document();
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             editor.save_project(
                 "project.json".into(),
                 crate::project::Save::New,
@@ -20,7 +20,7 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
             editor.save_result(id, Err("permission denied".into()), cx);
             assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Save);
             assert_eq!(editor.transition, Some(Transition::Close));
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             assert!(editor.document.dirty());
             assert!(editor.document_failure.is_none());
             editor.status = "Unrelated progress or success".into();
@@ -44,7 +44,7 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
             assert!(editor.failure.is_none());
             assert_eq!(editor.transition, Some(Transition::Close));
             assert!(!editor.allow_close);
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             let labels = app_frame(editor, &context, vec![]);
             assert!(labels.iter().any(|(label, _)| label == "Save changes"));
             assert!(editor.document_pending.is_none());
@@ -57,9 +57,9 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.sync_document();
-    let before = editor.document.project.clone();
-    let source = editor.current_source;
-    let view = (editor.viewport, editor.source);
+    let before = editor.document.state.project.clone();
+    let source = editor.document.visit.current_source;
+    let view = (editor.document.visit.viewport, editor.document.source);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
             e.export(
@@ -69,9 +69,9 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
                 cx,
             )
         });
-        assert!(app.read(|e| e.export_operation.pending.is_some()));
+        assert!(app.read(|e| e.document.export_operation.pending.is_some()));
         app.run_until(Duration::from_secs(5), |e| {
-            e.export_operation.pending.is_none()
+            e.document.export_operation.pending.is_none()
         });
         app.read(|editor| {
             assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
@@ -84,11 +84,11 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
                     && editor.document_pending.is_none()
                     && editor.document_failure.is_none()
             );
-            assert!(editor.flat_edit.is_none());
-            assert_eq!(editor.document.project, before);
-            assert_eq!(editor.current_source, source);
-            assert_eq!(editor.source, view.1);
-            assert_eq!(editor.viewport.zoom, view.0.zoom);
+            assert!(editor.document.flat_edit.is_none());
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.document.visit.current_source, source);
+            assert_eq!(editor.document.source, view.1);
+            assert_eq!(editor.document.visit.viewport.zoom, view.0.zoom);
         });
     });
 }
@@ -97,9 +97,9 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
 fn unavailable_reference_services_restore_working_context_and_ignore_late_acceptance() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    editor.source = false;
+    editor.document.source = false;
     editor.sync_document();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     let visit = editor.document.visit.view;
     let path = editor.document.visit.ready.as_ref().unwrap().path.clone();
     let mut reference = fixture();
@@ -125,11 +125,11 @@ fn unavailable_reference_services_restore_working_context_and_ignore_late_accept
         FailureKind::FlatCorrection
     );
     assert!(!editor.busy && editor.document_pending.is_none() && editor.document_failure.is_none());
-    assert!(editor.flat_edit.is_none() && editor.pick.is_none());
+    assert!(editor.document.flat_edit.is_none() && editor.document.picking.kind.is_none());
     assert_ne!(editor.document.visit.view, visit);
     assert_eq!(editor.document.visit.ready.as_ref().unwrap().path, path);
-    assert!(!editor.source);
-    assert_eq!(editor.document.project, before);
+    assert!(!editor.document.source);
+    assert_eq!(editor.document.state.project, before);
     editor.document_prepared(request, Err("late completion".into()));
     assert_eq!(
         editor.failure.as_ref().unwrap().details,
@@ -165,9 +165,12 @@ fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             editor.start_document(
-                Preparation::Correction(editor.document.capture(), editor.current_source),
+                Preparation::Correction(
+                    editor.document.capture(),
+                    editor.document.visit.current_source,
+                ),
                 cx,
             );
             assert!(editor.busy && editor.document_pending.is_some());
@@ -179,7 +182,7 @@ fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
                 editor.failure.as_ref().unwrap().kind,
                 FailureKind::FlatCorrection
             );
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
             assert!(!editor.busy);
             editor.export_result(editor.id, Ok("unrelated-success.tiff".into()));
             assert_eq!(
@@ -187,7 +190,10 @@ fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
                 "unsupported GPU range"
             );
             editor.start_document(
-                Preparation::Correction(editor.document.capture(), editor.current_source),
+                Preparation::Correction(
+                    editor.document.capture(),
+                    editor.document.visit.current_source,
+                ),
                 cx,
             );
             assert!(editor.busy && editor.document_pending.is_some());
@@ -197,14 +203,14 @@ fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
                 Ok(Box::new(Prepared {
                     document: editor.document.capture(),
                     ready: editor.document.visit.ready.clone(),
-                    selected: editor.current_source,
+                    selected: editor.document.visit.current_source,
                     reuse_ready: true,
                     correction: None,
                     preserve_view: true,
                 })),
             );
             assert!(editor.failure.is_none());
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
         });
     });
 }
@@ -215,7 +221,7 @@ fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
     add_ready_fixture(&mut editor);
     let reference = editor.document.visit.ready.as_ref().unwrap().clone();
     crate::editor::tests::paused_reference_fixture(&mut editor, reference, None);
-    editor.region = Some(
+    editor.document.picking.region = Some(
         Coverage::new(
             [[20.25, 20.], [40.25, 20.], [40.25, 40.], [20.25, 40.]]
                 .map(crate::geometry::SourcePoint),
@@ -223,16 +229,19 @@ fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
         .unwrap(),
     );
     editor.sync_document();
-    let before = editor.document.project.clone();
-    let region = editor.region;
+    let before = editor.document.state.project.clone();
+    let region = editor.document.picking.region;
     editor.apply_flat_edit(&UiContext::render_only());
     let failure = editor.failure.as_ref().unwrap();
     assert_eq!(failure.kind, FailureKind::FlatSupport);
     assert_eq!(failure.presentation().severity, Severity::Warning);
-    assert_eq!(editor.region, region);
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.picking.region, region);
+    assert_eq!(editor.document.state.project, before);
     assert!(!editor.busy && editor.document_pending.is_none());
-    assert!(editor.flat_edit.as_ref().unwrap().task.is_none() && editor.document_pending.is_none());
+    assert!(
+        editor.document.flat_edit.as_ref().unwrap().task.is_none()
+            && editor.document_pending.is_none()
+    );
     editor.resolve_failure(FailureKind::Export);
     assert!(editor.failure.is_some());
     editor.resolve_failure(FailureKind::FlatCorrection);
@@ -246,15 +255,15 @@ fn export_failure_is_persistent_stale_results_cannot_replace_it_and_matching_suc
         app.enter(|editor, cx| {
             add_ready_fixture(editor);
             editor.sync_document();
-            let before = editor.document.project.clone();
+            let before = editor.document.state.project.clone();
             editor.export(
                 "output.exr".into(),
                 OutputFormat::Exr(ExrPrecision::Half),
                 Overwrite::Refuse,
                 cx,
             );
-            assert!(editor.export_operation.pending.is_some());
-            let request = editor.export_operation.pending.unwrap();
+            assert!(editor.document.export_operation.pending.is_some());
+            let request = editor.document.export_operation.pending.unwrap();
             editor.export_result(request + 1, Err("stale".into()));
             assert!(editor.failure.is_none() && editor.busy);
             editor.export_result(request, Err("choose full-float EXR".into()));
@@ -272,18 +281,18 @@ fn export_failure_is_persistent_stale_results_cannot_replace_it_and_matching_suc
                 Overwrite::Refuse,
                 cx,
             );
-            assert!(editor.export_operation.pending.is_some());
+            assert!(editor.document.export_operation.pending.is_some());
             assert!(editor.failure.is_some());
-            let pending = editor.export_operation.pending;
+            let pending = editor.document.export_operation.pending;
             editor.export_result(request, Ok("old-output.exr".into()));
             assert!(editor.busy && editor.failure.is_some());
-            assert_eq!(editor.export_operation.pending, pending);
+            assert_eq!(editor.document.export_operation.pending, pending);
             editor.export_result(
-                editor.export_operation.pending.unwrap(),
+                editor.document.export_operation.pending.unwrap(),
                 Ok("output.exr".into()),
             );
             assert!(editor.failure.is_none());
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
         });
     });
 }
@@ -293,7 +302,7 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.sync_document();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     editor.report_failure(FailureKind::Export, "disk full".into());
     let context = egui::Context::default();
     app_frame(&mut editor, &context, vec![]);
@@ -317,7 +326,9 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
         );
     }
     assert!(editor.failure.is_some());
-    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+    assert!(
+        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+    );
     let point = labels
         .iter()
         .find(|(label, _)| label == "OK")
@@ -328,6 +339,8 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
         app_frame(&mut editor, &context, pointer(point, pressed));
     }
     assert!(editor.failure.is_none());
-    assert_eq!(editor.document.project, before);
-    assert!(editor.document_pending.is_none() && editor.export_operation.pending.is_none());
+    assert_eq!(editor.document.state.project, before);
+    assert!(
+        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
+    );
 }

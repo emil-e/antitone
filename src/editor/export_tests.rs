@@ -22,8 +22,8 @@ fn export_completion_cannot_retire_new_source_or_document_operations() {
                     Overwrite::Refuse,
                     cx,
                 );
-                assert!(editor.export_operation.pending.is_some());
-                let export = editor.export_operation.pending.unwrap();
+                assert!(editor.document.export_operation.pending.is_some());
+                let export = editor.document.export_operation.pending.unwrap();
                 if document {
                     editor.start_document(Preparation::New, cx);
                 } else {
@@ -36,13 +36,13 @@ fn export_completion_cannot_retire_new_source_or_document_operations() {
                 });
                 let status = editor.status.clone();
                 let title = editor.tasks.view().unwrap().title;
-                let project = editor.document.project.clone();
+                let project = editor.document.state.project.clone();
                 editor.export_result(export, Ok("captured.exr".into()));
                 assert!(editor.busy);
-                assert!(editor.export_operation.pending.is_none());
+                assert!(editor.document.export_operation.pending.is_none());
                 assert_eq!(editor.status, status);
                 assert_eq!(editor.tasks.view().unwrap().title, title);
-                assert_eq!(editor.document.project, project);
+                assert_eq!(editor.document.state.project, project);
                 if document {
                     editor.document_prepared(
                         editor.document_pending.unwrap(),
@@ -76,7 +76,8 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);
-        editor.thumbnails = Thumbnails::default();
+        editor.document.thumbnails =
+            (Thumbnails::default()).with_sources(editor.document.cache.clone());
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(30),
@@ -84,21 +85,27 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
         );
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         assert_eq!(
-            editor.document.project.development().unwrap().contract,
+            editor
+                .document
+                .state
+                .project
+                .development()
+                .unwrap()
+                .contract,
             crate::project::DNG_DEVELOPMENT_CONTRACT
         );
         assert!(
-            editor.document.project.sources[0]
+            editor.document.state.project.sources[0]
                 .development
                 .dng_development
                 .is_some()
         );
         editor.set_dmin(Some(DVec3::splat(0.75)));
         editor.set_dmax(Some(DVec3::splat(0.01)));
-        editor.roll = RollSettings::default();
+        editor.document.roll = RollSettings::default();
         // Exercise the real full-resolution source while keeping generated files tiny.
         // These declared anchors are plumbing inputs, not a grade of this camera photograph.
-        editor.crop = Some(crate::crop::Crop {
+        editor.document.visit.crop = Some(crate::crop::Crop {
             center: [1024., 1024.],
             size: [32, 32],
             angle: 0.,
@@ -120,7 +127,7 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
             "{}",
             editor.status
         );
-        assert_eq!(editor.document.project, saved.project);
+        assert_eq!(editor.document.state.project, saved.project);
         for (name, format) in [
             ("m9.tif", OutputFormat::Tiff(OutputTarget::Srgb)),
             ("m9.exr", OutputFormat::Exr(ExrPrecision::Full)),
@@ -157,7 +164,8 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = Editor::new(&device, &queue);
-        editor.thumbnails = Thumbnails::default();
+        editor.document.thumbnails =
+            (Thumbnails::default()).with_sources(editor.document.cache.clone());
         editor = crate::editor::tests::complete_document_operation(
             editor,
             Duration::from_secs(30),
@@ -174,14 +182,14 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
         editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
         editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
-        editor.roll = RollSettings::default();
-        editor.adjustment_layer_settings = AdjustmentLayerSettings {
+        editor.document.roll = RollSettings::default();
+        editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings {
             contrast: 0.8,
             saturation: 1.3,
             ..Default::default()
         };
         editor.sync_document();
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         let directory = tempfile::tempdir().unwrap();
         for (name, format) in [
             ("srgb.tif", OutputFormat::Tiff(OutputTarget::Srgb)),
@@ -192,10 +200,12 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
             let path = directory.path().join(name);
             editor = wait(editor, |editor, cx| {
                 editor.export(path.clone(), format, Overwrite::Refuse, cx);
-                assert!(editor.busy && editor.export_operation.pending.is_some());
+                assert!(editor.busy && editor.document.export_operation.pending.is_some());
             });
             assert!(editor.failure.is_none(), "{}", editor.status);
-            assert!(editor.export_operation.pending.is_none() && editor.tasks.view().is_none());
+            assert!(
+                editor.document.export_operation.pending.is_none() && editor.tasks.view().is_none()
+            );
             match format {
                 OutputFormat::Tiff(target) => {
                     let mut decoder = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
@@ -216,14 +226,14 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
                     assert!(image.attributes.chromaticities.is_some());
                 }
             }
-            assert_eq!(editor.document.project, before);
+            assert_eq!(editor.document.state.project, before);
         }
         let source = directory.path().join("srgb.tif");
         let expected = tiff_pixels(&source);
         let captured = directory.path().join("captured.tif");
-        let mut edited = editor.document.project.clone();
+        let mut edited = editor.document.state.project.clone();
         edited
-            .source_mut(editor.current_source.unwrap())
+            .source_mut(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers
             .as_mut()
@@ -239,16 +249,19 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
                 Overwrite::Refuse,
                 cx,
             );
-            assert!(editor.export_operation.pending.is_some());
+            assert!(editor.document.export_operation.pending.is_some());
             // Later accepted edits/source identity cannot change the captured file recipe.
-            editor.adjustment_layer_settings.exposure = 0.75;
+            editor.document.visit.adjustment_layer_settings.exposure = 0.75;
             editor.sync_document();
             editor.id += 7;
         });
         assert!(editor.failure.is_none(), "{}", editor.status);
         assert_eq!(tiff_pixels(&captured), expected);
-        assert_eq!(editor.document.project, edited);
-        assert_eq!(editor.adjustment_layer_settings.exposure, 0.75);
+        assert_eq!(editor.document.state.project, edited);
+        assert_eq!(
+            editor.document.visit.adjustment_layer_settings.exposure,
+            0.75
+        );
         // A refused destination remains intact even after the visible authority and grade change.
         let bytes = std::fs::read(&source).unwrap();
         editor = wait(editor, |editor, cx| {
@@ -261,6 +274,6 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
         });
         assert!(editor.failure.is_some());
         assert_eq!(std::fs::read(&source).unwrap(), bytes);
-        assert_eq!(editor.document.project, edited);
+        assert_eq!(editor.document.state.project, edited);
     });
 }

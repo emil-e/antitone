@@ -77,10 +77,12 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 harness.step();
                 harness.step();
                 let preferences = harness.read(|editor| editor.preferences.clone());
-                let project = harness.read(|editor| editor.document.project.clone());
-                let viewport = harness.read(|editor| editor.viewport);
-                let source = harness.read(|editor| (editor.source, editor.source_exposure));
-                let workspace = harness.read(|editor| editor.last_layout.unwrap().0.canvas);
+                let project = harness.read(|editor| editor.document.state.project.clone());
+                let viewport = harness.read(|editor| editor.document.visit.viewport);
+                let source =
+                    harness.read(|editor| (editor.document.source, editor.source_exposure));
+                let workspace =
+                    harness.read(|editor| editor.document.visit.last_layout.unwrap().0.canvas);
                 harness.get_by_label("Fullscreen viewing").click();
                 harness.step();
                 harness.read(|editor| assert!(editor.fullscreen.is_some()));
@@ -94,14 +96,15 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                         "fullscreen hides {label}"
                     );
                 }
-                let canvas = harness.read(|editor| editor.last_layout.unwrap().0.canvas);
+                let canvas =
+                    harness.read(|editor| editor.document.visit.last_layout.unwrap().0.canvas);
                 assert_eq!(canvas, egui::Rect::from_min_size(egui::Pos2::ZERO, size));
                 assert!(canvas.width() > workspace.width() && canvas.height() > workspace.height());
                 let exit = harness.get_by_label("Exit fullscreen").rect();
                 assert!(canvas.contains_rect(exit));
                 harness.get_by_label("View source").click();
                 harness.step();
-                harness.read(|editor| assert!(editor.source));
+                harness.read(|editor| assert!(editor.document.source));
                 harness.get_by_label("Source inspection").click();
                 harness.step();
                 workflow::enter_numeric(&mut harness, "Exposure", "1.234567");
@@ -112,9 +115,9 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 });
                 harness.get_by_label("100%").click();
                 harness.step();
-                harness.read(|editor| assert_eq!(editor.viewport.zoom, Some(1.)));
+                harness.read(|editor| assert_eq!(editor.document.visit.viewport.zoom, Some(1.)));
                 key(&mut harness, egui::Key::Z);
-                harness.read(|editor| assert!(editor.viewport.zoom.is_none()));
+                harness.read(|editor| assert!(editor.document.visit.viewport.zoom.is_none()));
                 let png = harness.render().unwrap();
                 save_capture(&png, &format!("fullscreen-{layout}-{density}x-offscreen"));
                 harness.get_by_label("Exit fullscreen").click();
@@ -130,11 +133,18 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 harness.try_run_realtime().unwrap();
                 harness.read(|editor| assert!(editor.fullscreen.is_none()));
                 assert!(harness.query_by_label("Scopes").is_some());
-                harness.read(|editor| assert_eq!(editor.viewport, viewport));
+                harness.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
                 harness.read(|editor| assert_eq!(editor.preferences, preferences));
-                harness.read(|editor| assert_eq!(editor.document.project, project));
-                harness.read(|editor| assert_eq!((editor.source, editor.source_exposure), source));
-                harness.read(|editor| assert_eq!(editor.last_layout.unwrap().0.canvas, workspace));
+                harness.read(|editor| assert_eq!(editor.document.state.project, project));
+                harness.read(|editor| {
+                    assert_eq!((editor.document.source, editor.source_exposure), source)
+                });
+                harness.read(|editor| {
+                    assert_eq!(
+                        editor.document.visit.last_layout.unwrap().0.canvas,
+                        workspace
+                    )
+                });
             });
         }
     }
@@ -163,7 +173,7 @@ fn fullscreen_shortcuts_respect_numeric_popup_and_tool_ownership() {
         harness.read(|editor| assert!(editor.fullscreen.is_none()));
         key(&mut harness, egui::Key::Escape);
         let draft = tools::crop_draft(&mut harness);
-        let project = harness.read(|editor| editor.document.project.clone());
+        let project = harness.read(|editor| editor.document.state.project.clone());
         key(&mut harness, egui::Key::F);
         harness.run();
         reveal(&mut harness);
@@ -194,7 +204,7 @@ fn fullscreen_shortcuts_respect_numeric_popup_and_tool_ownership() {
                 draft
             )
         });
-        harness.read(|editor| assert_eq!(editor.document.project, project));
+        harness.read(|editor| assert_eq!(editor.document.state.project, project));
     });
 }
 
@@ -207,7 +217,7 @@ fn fullscreen_overlay_autohides_reveals_and_retains_editing_and_keyboard_access(
         let fullscreen = harness.get_by_label("Fullscreen viewing").rect();
         let source = harness.get_by_label("View source").rect();
         assert!(zoom.right() <= fullscreen.left() && fullscreen.right() <= source.left());
-        let project = harness.read(|editor| editor.document.project.clone());
+        let project = harness.read(|editor| editor.document.state.project.clone());
         key(&mut harness, egui::Key::F);
         reveal(&mut harness);
         harness.event(egui::Event::PointerMoved(egui::pos2(400., 250.)));
@@ -255,6 +265,6 @@ fn fullscreen_overlay_autohides_reveals_and_retains_editing_and_keyboard_access(
         harness.update(|editor| editor.fullscreen_changed(false));
         harness.step();
         harness.read(|editor| assert!(editor.fullscreen.is_none()));
-        harness.read(|editor| assert_eq!(editor.document.project, project));
+        harness.read(|editor| assert_eq!(editor.document.state.project, project));
     });
 }

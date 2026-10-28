@@ -236,13 +236,18 @@ impl Editor {
             .document
             .project
             .source(
-                self.current_source
+                self.document
+                    .visit
+                    .current_source
                     .ok_or(Error::InvalidParameter("no selected source"))?,
             )?
             .clone();
-        self.overlay_adjustment_layer_settings(&mut source, self.adjustment_layer_settings);
-        source.orientation = self.photo_orientation;
-        source.crop = self.crop;
+        self.overlay_adjustment_layer_settings(
+            &mut source,
+            self.document.visit.adjustment_layer_settings,
+        );
+        source.orientation = self.document.visit.photo_orientation;
+        source.crop = self.document.visit.crop;
         Ok(source)
     }
 
@@ -251,8 +256,9 @@ impl Editor {
             return None;
         };
         self.document
+            .state
             .project
-            .source(self.current_source?)
+            .source(self.document.visit.current_source?)
             .ok()?
             .adjustment_layers
             .as_ref()?
@@ -291,14 +297,14 @@ impl Editor {
             && self.tab == 1
             && !self.busy
             && self.document.visit.ready.is_some()
-            && self.input.ready()
-            && !self.source
-            && self.pick.is_none()
+            && self.document.input.ready()
+            && !self.document.source
+            && self.document.picking.kind.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
-            && self.flat_edit.is_none()
+            && self.document.flat_edit.is_none()
             && self.document.analysis_review.is_none()
-            && !self.document.dust.cleanup
+            && !self.document.visit.dust.cleanup
             && !self.document.visit.adjustment_layers.confirming()
             && self.fullscreen.is_none()
     }
@@ -322,11 +328,11 @@ impl Editor {
     fn begin_mask(&mut self, kind: Kind, id: Option<AdjustmentLayerId>) {
         if self.busy
             || self.document.visit.ready.is_none()
-            || self.source
-            || self.pick.is_some()
+            || self.document.source
+            || self.document.picking.kind.is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
-            || self.flat_edit.is_some()
+            || self.document.flat_edit.is_some()
             || self.document.visit.mask_edit.is_some()
             || self.document.visit.adjustment_layers.confirming()
             || self.document.analysis_review.is_some()
@@ -366,8 +372,8 @@ impl Editor {
                 self.document.visit.mask_edit = Some(MaskEdit {
                     loaded: self.id,
                     source,
-                    roll: self.roll,
-                    input: self.input,
+                    roll: self.document.roll,
+                    input: self.document.input,
                     id,
                     above: match self.adjustment_layer_target() {
                         adjustment_layers::Target::Layer(id) => Some(id),
@@ -375,7 +381,7 @@ impl Editor {
                     },
                     mask,
                     preview: None,
-                    compare: self.working.compare,
+                    compare: self.document.visit.working_view.compare,
                     kind,
                     feather: match mask {
                         Some(AdjustmentLayerCoverage::Radial { feather, .. }) => feather,
@@ -384,7 +390,7 @@ impl Editor {
                     drag: None,
                     error: None,
                 });
-                self.working.compare = false;
+                self.document.visit.working_view.compare = false;
                 self.status = format!("Draw {} · Escape cancels", kind.title().to_lowercase());
             }
             Err(error) => self.status = format!("Mask unavailable: {error}"),
@@ -394,15 +400,15 @@ impl Editor {
     fn mask_is_current(&self, edit: &MaskEdit) -> bool {
         edit.loaded == self.id
             && self.mask_source().ok().as_ref() == Some(&edit.source)
-            && self.roll == edit.roll
-            && self.input == edit.input
+            && self.document.roll == edit.roll
+            && self.document.input == edit.input
     }
 
     pub(super) fn finish_mask(&mut self, accept: bool) {
         let Some(mut edit) = self.document.visit.mask_edit.take() else {
             return;
         };
-        self.working.compare = edit.compare;
+        self.document.visit.working_view.compare = edit.compare;
         if !accept || !(self.tab == 1) {
             self.status = "Mask gesture cancelled".into();
             return;
@@ -437,7 +443,7 @@ impl Editor {
                     edit.preview = None;
                     edit.drag = None;
                     edit.error = Some(error.to_string());
-                    self.working.compare = false;
+                    self.document.visit.working_view.compare = false;
                     self.document.visit.mask_edit = Some(edit);
                 }
             }
@@ -607,11 +613,11 @@ impl Editor {
         if !self.adjustment_layer_overlays_visible()
             || self.fullscreen.is_some()
             || self.document.analysis_review.is_some()
-            || self.pick.is_some()
+            || self.document.picking.kind.is_some()
             || self.document.visit.crop_edit.is_some()
-            || self.source
+            || self.document.source
             || self.tab != 1
-            || self.document.dust.cleanup
+            || self.document.visit.dust.cleanup
         {
             return;
         }

@@ -27,6 +27,9 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
         let source =
             ProcessingInput::from(editor.source_parameters(editor.source_exposure).unwrap());
         let signature = editor
+            .document
+            .visit
+            .grade
             .original
             .signature
             .as_ref()
@@ -59,7 +62,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
 }
 
 fn select_area(h: &mut Harness<'_, Editor>, picture: bool) {
-    let geometry = h.read(|editor| editor.last_layout.unwrap().0);
+    let geometry = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
     let point = h.read(|editor| {
         (0..21)
             .flat_map(|y| {
@@ -115,19 +118,19 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
     select_area(harness, true);
     harness.get_by_label("Fit").click();
     harness.step();
-    let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
+    let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
     let start = geometry.screen_point(egui::pos2(area.x as f32, area.y as f32));
     let end = geometry.screen_point(egui::pos2(
         (area.x + area.width) as f32,
         (area.y + area.height) as f32,
     ));
-    let region = harness.read(|editor| editor.region);
+    let region = harness.read(|editor| editor.document.picking.region);
     if let Some(region) = region {
         let bounds = geometry.screen_coverage(region);
         if bounds.min.distance(start) > 0.01 {
             drag(harness, bounds.min, start);
         }
-        let region = harness.read(|editor| editor.region.unwrap());
+        let region = harness.read(|editor| editor.document.picking.region.unwrap());
         drag(harness, geometry.screen_coverage(region).max, end);
     } else {
         drag(harness, start, end);
@@ -135,6 +138,8 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.read(|editor| {
         assert_eq!(
             editor
+                .document
+                .picking
                 .region
                 .unwrap()
                 .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area),
@@ -144,7 +149,7 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
 }
 
 fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
-    let mut project = harness.read(|editor| editor.document.project.clone());
+    let mut project = harness.read(|editor| editor.document.state.project.clone());
     stage(harness, "Rendering");
     for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
         select_target(harness, target);
@@ -155,17 +160,23 @@ fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
         };
         super::workflow::wait_settled(harness);
         harness.read(|editor| {
-            let view = editor.working.displayed.as_ref().unwrap();
+            let view = editor
+                .document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .unwrap();
             assert_eq!(
                 [view.image.linear.width(), view.image.linear.height()],
                 view.spec.frame.output
             );
             assert!(view.spec.frame.output.into_iter().all(|size| size > 0));
-            assert!(!editor.source);
+            assert!(!editor.document.source);
         });
         let timing =
             harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-        harness.update(|editor| editor.selection_timing = Some(timing.clone()));
+        harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
         harness.step();
         let png = harness.render().unwrap();
         assert!(timing.ready_was_painted());
@@ -180,7 +191,7 @@ fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
                 }
             ),
         );
-        harness.read(|editor| assert_eq!(editor.document.project, project));
+        harness.read(|editor| assert_eq!(editor.document.state.project, project));
     }
     stage(harness, "Roll");
 }
@@ -188,31 +199,32 @@ fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
 fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str) {
     harness.update(|editor| {
         editor.set_gamma(0.7);
-        let crate::processing::InputSettings::Negative { dmin, dmax, .. } = &mut editor.input
+        let crate::processing::InputSettings::Negative { dmin, dmax, .. } =
+            &mut editor.document.input
         else {
             panic!("Analyze fixture must use Negative");
         };
         dmin.get_or_insert(DVec3::new(0.2, 0.15, 0.1));
         dmax.get_or_insert(DVec3::new(0.008, 0.005, 0.002));
-        editor.source = false;
-        editor.roll_orientation.turn_clockwise();
-        editor.photo_orientation.flips.horizontal = true;
-        editor.crop = Some(
+        editor.document.source = false;
+        editor.document.roll_orientation.turn_clockwise();
+        editor.document.visit.photo_orientation.flips.horizontal = true;
+        editor.document.visit.crop = Some(
             Crop::from_region(picture)
                 .straightened(editor.document.visit.ready.as_ref().unwrap().area, 0.05)
                 .unwrap(),
         );
-        editor.adjustment_layer_settings.exposure = 0.5;
-        editor.adjustment_layer_settings.wb = Balance {
+        editor.document.visit.adjustment_layer_settings.exposure = 0.5;
+        editor.document.visit.adjustment_layer_settings.wb = Balance {
             warmth: 0.1,
             tint: -0.05,
         };
-        editor.adjustment_layer_settings.contrast = 1.2;
+        editor.document.visit.adjustment_layer_settings.contrast = 1.2;
         let ids = adjustment_layers::install_layers(editor);
         let mut layers = editor
             .document
             .project
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers
             .clone()
@@ -220,7 +232,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         layers.next_id = 40;
         layers.layers[0].adjustment.photo.exposure = 0.25;
         layers.layers[1].adjustment.enabled = false;
-        for id in editor.document.project.order.clone() {
+        for id in editor.document.state.project.order.clone() {
             editor
                 .document
                 .project
@@ -248,24 +260,24 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
             .unwrap();
     });
     harness.step();
-    let selected = harness.read(|editor| editor.current_source);
-    let before = harness.read(|editor| editor.document.project.clone());
-    let correction = harness.read(|editor| editor.correction.clone());
+    let selected = harness.read(|editor| editor.document.visit.current_source);
+    let before = harness.read(|editor| editor.document.state.project.clone());
+    let correction = harness.read(|editor| editor.document.correction.clone());
     show_confirmation(harness);
     draw_picture(harness, picture);
-    harness.read(|editor| assert_eq!(editor.document.project, before));
+    harness.read(|editor| assert_eq!(editor.document.state.project, before));
     harness.get_by_label("Cancel").click();
     harness.step();
     harness.read(|editor| assert!(editor.document.analysis_review.is_none()));
     harness.read(|editor| assert!(editor.document.analysis_pending.is_none()));
     harness.read(|editor| assert!(editor.status.contains("areas and grade unchanged")));
-    harness.read(|editor| assert_eq!(editor.document.project, before));
+    harness.read(|editor| assert_eq!(editor.document.state.project, before));
 
     show_confirmation(harness);
     // Keep fitting queued at physical admission until the Cancel control is exercised.
     let admission = crate::background::testing::pause();
     confirm(harness);
-    harness.read(|editor| assert_eq!(editor.document.project, before));
+    harness.read(|editor| assert_eq!(editor.document.state.project, before));
     harness.update(|editor| editor.tasks.elapse(Duration::from_secs(1)));
     for _ in 0..3 {
         harness.step();
@@ -287,13 +299,13 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                 .revision,
             "Cancel must retire the captured fit before physical admission is released"
         );
-        assert_eq!(editor.document.project, before);
+        assert_eq!(editor.document.state.project, before);
     });
     drop(admission);
     wait_for(harness, |editor| !editor.busy);
     harness.read(|editor| assert!(editor.document.analysis_pending.is_none()));
     harness.read(|editor| assert_eq!(editor.status, "Analysis cancelled"));
-    harness.read(|editor| assert_eq!(editor.document.project, before));
+    harness.read(|editor| assert_eq!(editor.document.state.project, before));
 
     show_confirmation(harness);
     for id in &before.order {
@@ -313,7 +325,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         draw_picture(harness, picture);
     }
     confirm(harness);
-    harness.read(|editor| assert_eq!(editor.document.project, before));
+    harness.read(|editor| assert_eq!(editor.document.state.project, before));
     wait_for(harness, |editor| !editor.busy);
     harness.read(|editor| assert!(editor.document.analysis_pending.is_none()));
     harness.read(|editor| assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status));
@@ -324,7 +336,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         )
     });
     harness.read(|editor| {
-        let after = &editor.document.project;
+        let after = &editor.document.state.project;
         assert_eq!(after.order, before.order);
         assert!(after.analysis_area.is_none());
         assert_eq!(after.analysis_regions.len(), after.order.len());
@@ -342,7 +354,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         );
         assert_eq!(after.orientation, before.orientation);
         assert_eq!(after.flat_field(), before.flat_field());
-        assert_eq!(editor.current_source, selected);
+        assert_eq!(editor.document.visit.current_source, selected);
         for (mut source, prior) in after.sources.clone().into_iter().zip(&before.sources) {
             if after.order.contains(&source.id) {
                 assert_eq!(
@@ -379,7 +391,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         if let Some(correction) = correction {
             assert!(Arc::ptr_eq(
                 &correction,
-                editor.correction.as_ref().unwrap()
+                editor.document.correction.as_ref().unwrap()
             ));
         } else {
             assert!(
@@ -426,7 +438,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
             .unwrap();
     });
 
-    let failed = harness.read(|editor| editor.document.project.clone());
+    let failed = harness.read(|editor| editor.document.state.project.clone());
     // Default and adjusted Photos both review areas; only adjusted Photos show the reset warning.
     show_confirmation(harness);
     draw_picture(
@@ -446,8 +458,8 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
             editor.status
         )
     });
-    harness.read(|editor| assert_eq!(editor.document.project, failed));
-    harness.read(|editor| assert_eq!(editor.current_source, selected));
+    harness.read(|editor| assert_eq!(editor.document.state.project, failed));
+    harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
     harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
     harness.read(|editor| assert!(editor.preference_store.is_none()));
 }
@@ -470,7 +482,7 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
                     .replaces_photos
             )
         });
-        let before = h.read(|editor| editor.document.project.clone());
+        let before = h.read(|editor| editor.document.state.project.clone());
         let ids = before.order.clone();
         assert!(h.query_by_label("Tool warning").is_none());
         assert!(
@@ -543,7 +555,7 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
         h.get_by_label("Cancel").click();
         h.step();
         wait_for(&mut h, |e| !e.busy);
-        h.read(|editor| assert_eq!(editor.document.project, before));
+        h.read(|editor| assert_eq!(editor.document.state.project, before));
     });
 }
 
@@ -554,14 +566,17 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.update(|editor| editor.adjustment_layer_settings.exposure = 1.25);
+        harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 1.25);
         harness.update(|editor| editor.sync_document());
-        let before = harness.read(|editor| editor.document.project.clone());
-        let first = harness.read(|editor| editor.current_source);
+        let before = harness.read(|editor| editor.document.state.project.clone());
+        let first = harness.read(|editor| editor.document.visit.current_source);
         let scopes_visible = harness.read(|editor| editor.scopes.visible);
         show_confirmation(&mut harness);
         wait_for(&mut harness, |e| {
-            e.thumbnails.ready_count(&e.document, e.target) == 2
+            e.document
+                .thumbnails
+                .ready_count(&e.document, e.document.target)
+                == 2
         });
         for (layout, size) in [
             ("normal", egui::vec2(1100., 800.)),
@@ -578,7 +593,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                         picture
                     )
                 });
-                harness.read(|editor| assert!(editor.source));
+                harness.read(|editor| assert!(editor.document.source));
                 harness.read(|editor| assert!(!editor.scopes.visible));
                 harness
                     .read(|editor| assert_eq!(editor.preferences.scopes_visible, scopes_visible));
@@ -600,7 +615,8 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                     harness.read(|editor| {
                         assert!(
                             rect.min.x >= 0.
-                                && rect.max.x <= editor.last_layout.unwrap().0.canvas.max.x
+                                && rect.max.x
+                                    <= editor.document.visit.last_layout.unwrap().0.canvas.max.x
                                 && rect.max.y <= size.y,
                             "{layout}: {rect:?}"
                         )
@@ -625,7 +641,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                         if picture { "picture" } else { "opening" }
                     ),
                 );
-                harness.read(|editor| assert_eq!(editor.document.project, before));
+                harness.read(|editor| assert_eq!(editor.document.state.project, before));
             }
             stage(&mut harness, "Photo");
             for role in [
@@ -657,7 +673,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                     .accesskit_node()
                     .is_disabled()
             );
-            harness.read(|editor| assert_eq!(editor.document.project, before));
+            harness.read(|editor| assert_eq!(editor.document.state.project, before));
             stage(&mut harness, "Roll");
         }
         assert_eq!(
@@ -670,9 +686,17 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         harness.run();
         let prior = harness.read(|editor| editor.review_areas(first.unwrap()).unwrap().clone());
         assert!(prior.picture_geometry.is_some() && !prior.picture_edited);
-        let q = harness.read(|editor| editor.region.unwrap().corners().map(|p| p.0));
+        let q = harness.read(|editor| {
+            editor
+                .document
+                .picking
+                .region
+                .unwrap()
+                .corners()
+                .map(|p| p.0)
+        });
         let p = prior.picture.unwrap()[0];
-        let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
+        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
         drag(
             &mut harness,
             geometry.screen_point(egui::pos2(q[0][0] as f32, q[0][1] as f32)),
@@ -681,12 +705,18 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         let edited = harness.read(|editor| editor.review_areas(first.unwrap()).unwrap().clone());
         assert!(edited.opening_edited && !edited.picture_edited);
         assert_ne!(edited.picture, prior.picture);
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
         select_area(&mut harness, true);
         harness.run();
         harness.read(|editor| {
             assert_eq!(
-                editor.region.unwrap().corners().map(|p| p.0),
+                editor
+                    .document
+                    .picking
+                    .region
+                    .unwrap()
+                    .corners()
+                    .map(|p| p.0),
                 editor
                     .review_areas(first.unwrap())
                     .unwrap()
@@ -699,11 +729,16 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                 .source_epoch
                 .load(std::sync::atomic::Ordering::Relaxed)
         });
-        let original_revision = harness.read(|editor| editor.original.revision());
+        let (original_generation, original_revision) = harness.read(|editor| {
+            (
+                editor.document.visit.grade.original.generation.clone(),
+                editor.document.visit.grade.original.revision(),
+            )
+        });
         harness.get_by_label("roll-1.dng").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
-        harness.read(|editor| assert_ne!(editor.current_source, first));
+        harness.read(|editor| assert_ne!(editor.document.visit.current_source, first));
         harness.read(|editor| {
             assert_ne!(
                 editor
@@ -712,25 +747,33 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                 source_epoch
             )
         });
-        harness.read(|editor| assert!(editor.original.revision() > original_revision));
+        harness.read(|editor| {
+            assert!(!Arc::ptr_eq(
+                &editor.document.visit.grade.original.generation,
+                &original_generation
+            ));
+            assert!(
+                original_generation.load(std::sync::atomic::Ordering::Relaxed) > original_revision
+            );
+        });
         harness
             .read(|editor| assert!(matches!(editor.scope_request(), Err("Positive grade only"))));
         harness.read(|editor| {
             assert!(
                 !editor
-                    .review_areas(editor.current_source.unwrap())
+                    .review_areas(editor.document.visit.current_source.unwrap())
                     .unwrap()
                     .opening_edited
             )
         });
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.get_by_label("Cancel").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
-        harness.read(|editor| assert_eq!(editor.current_source, first));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, first));
         harness.read(|editor| assert_eq!(editor.scopes.visible, scopes_visible));
         harness.read(|editor| assert_eq!(editor.preferences.scopes_visible, scopes_visible));
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
     });
 }
 
@@ -778,7 +821,7 @@ fn analyze_widgets_keep_real_correction_and_both_settled_targets() {
         wait_for(&mut harness, |editor| {
             !editor.busy && editor.document_pending.is_none()
         });
-        harness.read(|editor| assert!(editor.correction.is_some(), "{}", editor.status));
+        harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
         exercise_analyze(
             &mut harness,
             Rect {

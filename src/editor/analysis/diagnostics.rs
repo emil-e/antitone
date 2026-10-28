@@ -42,7 +42,7 @@ fn write_preview(
 }
 
 fn render_roll(editor: &Editor, output: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
-    let project = &editor.document.project;
+    let project = &editor.document.state.project;
     let calibration = project.calibration()?.ok_or("no installed calibration")?;
     let picture = rect(project.analysis_area.ok_or("no installed picture area")?);
     let wb = project.development().ok_or("no development")?.fixed_wb;
@@ -168,19 +168,19 @@ fn diagnose_sample_rolls() {
                     Duration::from_secs(300),
                     |e, cx| e.begin_flat_edit(reference.clone(), None, cx),
                 );
-                if editor.region.is_some() {
+                if editor.document.picking.region.is_some() {
                     editor = crate::editor::tests::complete_reference_operation(
                         editor,
                         Duration::from_secs(300),
                         |e, cx| e.apply_flat_edit(cx),
                     );
-                    prepared = editor.correction.is_some();
+                    prepared = editor.document.correction.is_some();
                 } else {
                     prepared = false;
                 }
             }
-            editor.document.project.analysis_area = case.area;
-            let before = editor.document.project.clone();
+            editor.document.state.project.analysis_area = case.area;
+            let before = editor.document.state.project.clone();
             let started = std::time::Instant::now();
             if prepared {
                 editor = wait(editor, |editor, cx| editor.begin_analysis(cx));
@@ -210,7 +210,7 @@ fn diagnose_sample_rolls() {
                     assert_eq!(&after, prior);
                 }
             } else {
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.state.project, before);
             }
             let render = if installed {
                 render_roll(&editor, &directory)
@@ -225,7 +225,7 @@ fn diagnose_sample_rolls() {
                 "name": case.name, "sources": case.sources, "reference": case.reference,
                 "explicit_area": case.area, "status": editor.status, "installed": installed,
                 "seconds_analysis_and_render": started.elapsed().as_secs_f64(),
-                "project": editor.document.project, "frames": frames, "render_error": render_error,
+                "project": editor.document.state.project, "frames": frames, "render_error": render_error,
                 "preview_contract": "384px original nearest-centres; actual InputPipeline and CPU ACES 100-nit sRGB; not area-averaged settled/export acceptance",
             });
             fs::write(

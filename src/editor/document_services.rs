@@ -20,7 +20,7 @@ pub(super) struct Request {
     pub work: Preparation,
     pub source: Option<(u64, Ready)>,
     pub correction: Option<Arc<Correction>>,
-    pub cache: Option<Arc<crate::source::SourceCache>>,
+    pub sources: Option<Arc<dyn crate::source::SourceProvider>>,
     pub exposures: Option<Arc<crate::exposure_metadata::Store>>,
 }
 
@@ -62,7 +62,7 @@ pub(super) fn candidate(
         work,
         source: previous,
         correction: previous_correction,
-        cache,
+        sources,
         exposures,
     } = request;
     let preserve_view = matches!(
@@ -144,7 +144,7 @@ pub(super) fn candidate(
                 &document,
                 id,
                 correction.clone(),
-                cache.clone(),
+                sources.clone(),
                 exposures.as_deref(),
             )
         })
@@ -166,7 +166,7 @@ fn source_request(
     document: &Document,
     id: SourceId,
     correction: Option<Arc<Correction>>,
-    cache: Option<Arc<crate::source::SourceCache>>,
+    sources: Option<Arc<dyn crate::source::SourceProvider>>,
     exposures: Option<&crate::exposure_metadata::Store>,
 ) -> Result<source::Request, Error> {
     let path = document.source_path(id)?;
@@ -189,7 +189,7 @@ fn source_request(
         path,
         expected: Some(expected),
         wb,
-        cache,
+        sources,
         file,
         correction,
     })
@@ -201,10 +201,11 @@ pub(super) struct PreparationServices(pub source::Services);
 impl PreparationServices {
     pub async fn prepare(
         self,
-        request: Request,
+        mut request: Request,
         cancelled: crate::cancellation::Cancellation,
         progress: impl FnMut(usize, usize) + Send + 'static,
     ) -> Result<Prepared, String> {
+        let sources = request.sources.take();
         let exposures = request.exposures.clone();
         let device = self.0.device.clone();
         let retired = cancelled.clone();
@@ -223,7 +224,8 @@ impl PreparationServices {
         if cancelled.is_cancelled() {
             return Err("Document preparation retired".into());
         }
-        if let Some(source) = source {
+        if let Some(mut source) = source {
+            source.sources = sources;
             prepared.ready = Some(self.0.clone().prepare(source, cancelled).await?);
         }
         if let Some(id) = prepared.selected

@@ -10,7 +10,7 @@ fn pick_patch(harness: &mut Harness<'_, Editor>, action: &str, area: Rect) {
     harness.get_by_label("Apply").click();
     harness.step();
     wait_for(harness, |e| !e.busy);
-    harness.read(|editor| assert!(editor.pick.is_none(), "{}", editor.status));
+    harness.read(|editor| assert!(editor.document.picking.kind.is_none(), "{}", editor.status));
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
         harness.get_by_label("Apply").click();
         harness.step();
         harness.run_until(Duration::from_secs(20), |e| !e.busy);
-        harness.read(|e| assert!(e.correction.is_some(), "{}", e.status));
+        harness.read(|e| assert!(e.document.correction.is_some(), "{}", e.status));
         harness.set_size(egui::vec2(1100., 1100.));
         harness.update(|e| {
             e.preferences
@@ -61,9 +61,9 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
         let (old_gamma, selected, viewport, correction) = harness.read(|e| {
             (
                 e.gamma(),
-                e.current_source,
-                e.viewport,
-                e.document.project.flat_field().cloned(),
+                e.document.visit.current_source,
+                e.document.visit.viewport,
+                e.document.state.project.flat_field().cloned(),
             )
         });
         let desired = old_gamma * 0.99;
@@ -85,22 +85,22 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
         harness.step();
         harness.read(|e| {
             assert!((e.gamma() - desired).abs() < 1e-12, "{}", e.status);
-            assert_eq!(e.document.project.input.gamma(), e.gamma());
+            assert_eq!(e.document.state.project.input.gamma(), e.gamma());
             assert!(e.busy && e.document_pending.is_some());
         });
         harness.run_until(Duration::from_secs(20), |e| !e.busy);
         harness.read(|e| {
-            assert!(e.document.project.flat_field().is_none());
+            assert!(e.document.state.project.flat_field().is_none());
             assert!(e.source_context().unwrap().correction.is_none());
-            assert_eq!(e.current_source, selected);
-            assert_eq!(e.viewport, viewport);
-            assert!((e.document.project.input.gamma() - desired).abs() < 1e-12);
+            assert_eq!(e.document.visit.current_source, selected);
+            assert_eq!(e.document.visit.viewport, viewport);
+            assert!((e.document.state.project.input.gamma() - desired).abs() < 1e-12);
         });
         harness.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
         harness.run_until(Duration::from_secs(20), |e| !e.busy);
         harness.read(|e| {
-            assert_eq!(e.document.project.flat_field(), correction.as_ref());
-            assert!((e.document.project.input.gamma() - desired).abs() < 1e-12);
+            assert_eq!(e.document.state.project.flat_field(), correction.as_ref());
+            assert!((e.document.state.project.input.gamma() - desired).abs() < 1e-12);
         });
     });
 }
@@ -114,8 +114,8 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("illuminated-patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
-        let before = harness.read(|editor| editor.document.project.clone());
-        let selected = harness.read(|editor| editor.current_source);
+        let before = harness.read(|editor| editor.document.state.project.clone());
+        let selected = harness.read(|editor| editor.document.visit.current_source);
         harness.get_by_label("Flat-field correction").click();
         harness.step();
         assert!(
@@ -134,8 +134,8 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         wait_settled(&mut harness);
-        let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
-        let original = harness.read(|editor| editor.region.unwrap());
+        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let original = harness.read(|editor| editor.document.picking.region.unwrap());
         assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
         assert!(
             geometry
@@ -149,7 +149,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             center,
             center + egui::vec2(geometry.scale * 8., 0.),
         );
-        let moved = harness.read(|editor| editor.region.unwrap());
+        let moved = harness.read(|editor| editor.document.picking.region.unwrap());
         assert_ne!(moved, original);
         let corner = geometry.screen_coverage(moved).right_bottom();
         drag(
@@ -159,6 +159,8 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         );
         let shrunk = harness.read(|editor| {
             editor
+                .document
+                .picking
                 .region
                 .unwrap()
                 .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area)
@@ -172,12 +174,12 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         assert!(shrunk.width < moved.width && shrunk.height < moved.height);
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.project, before));
-        harness.read(|editor| assert_eq!(editor.current_source, selected));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
         wait_for(&mut harness, |e| !e.busy);
-        let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
-        let region = harness.read(|editor| editor.region.unwrap());
+        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let region = harness.read(|editor| editor.document.picking.region.unwrap());
         drag(
             &mut harness,
             geometry.screen_coverage(region).right_bottom(),
@@ -186,6 +188,8 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         );
         let accepted = harness.read(|editor| {
             editor
+                .document
+                .picking
                 .region
                 .unwrap()
                 .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area)
@@ -194,18 +198,18 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.get_by_label("Apply").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.correction.is_some(), "{}", editor.status));
-        harness.read(|editor| assert_eq!(editor.document.project.order, before.order));
-        harness.read(|editor| assert_eq!(editor.document.project.dmin(), before.dmin()));
-        harness.read(|editor| assert_eq!(editor.document.project.dmax(), before.dmax()));
+        harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
+        harness.read(|editor| assert_eq!(editor.document.state.project.order, before.order));
+        harness.read(|editor| assert_eq!(editor.document.state.project.dmin(), before.dmin()));
+        harness.read(|editor| assert_eq!(editor.document.state.project.dmax(), before.dmax()));
         let settings =
-            harness.read(|editor| editor.document.project.flat_field().cloned().unwrap());
-        let configured = harness.read(|editor| editor.document.project.clone());
+            harness.read(|editor| editor.document.state.project.flat_field().cloned().unwrap());
+        let configured = harness.read(|editor| editor.document.state.project.clone());
         harness.get_by_label("Pick Dmin (film base)").scroll_to_me();
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.pick, Some(Pick::Dmin)));
+        harness.read(|editor| assert_eq!(editor.document.picking.kind, Some(Pick::Dmin)));
         harness.step();
         assert!(
             harness
@@ -215,7 +219,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         );
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.project, configured));
+        harness.read(|editor| assert_eq!(editor.document.state.project, configured));
         assert_eq!(
             settings.map.area(),
             [accepted.x, accepted.y, accepted.width, accepted.height]
@@ -230,8 +234,16 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
                     .reference_only
             )
         });
-        harness
-            .read(|editor| assert!(!editor.document.project.order.contains(&settings.reference)));
+        harness.read(|editor| {
+            assert!(
+                !editor
+                    .document
+                    .state
+                    .project
+                    .order
+                    .contains(&settings.reference)
+            )
+        });
         let wb = harness.read(|editor| {
             editor
                 .document
@@ -275,7 +287,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.read(|editor| assert_eq!(editor.dmin(), Some(dmin.1)));
         pick_patch(&mut harness, "Pick Dmax", dmax.0);
         harness.read(|editor| assert_eq!(editor.dmax(), Some(dmax.1)));
-        let (editor_input, _roll) = harness.read(|editor| (editor.input(), editor.roll));
+        let (editor_input, _roll) = harness.read(|editor| (editor.input(), editor.document.roll));
         let (region, balance) = patches
             .iter()
             .find_map(|(r, _)| scan.roll_neutral(*r, &editor_input).ok().map(|b| (*r, b)))
@@ -295,8 +307,8 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         let (editor_input, roll, photo) = harness.read(|editor| {
             (
                 editor.input(),
-                editor.roll,
-                editor.adjustment_layer_settings,
+                editor.document.roll,
+                editor.document.visit.adjustment_layer_settings,
             )
         });
         let (region, balance) = patches
@@ -315,7 +327,8 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             .expect("usable corrected photo-neutral patch");
         stage(&mut harness, "Photo");
         pick_patch(&mut harness, "Pick neutral for white balance", region);
-        harness.read(|editor| assert_eq!(editor.adjustment_layer_settings.wb, balance));
+        harness
+            .read(|editor| assert_eq!(editor.document.visit.adjustment_layer_settings.wb, balance));
         harness.update(|editor| {
             adjustment_layers::install_layers(editor);
             editor
@@ -329,7 +342,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
                 .validate_document_candidate(&editor.document)
                 .unwrap();
         });
-        if harness.read(|editor| editor.source) {
+        if harness.read(|editor| editor.document.source) {
             harness.get_by_label("View source").click();
             harness.step();
         }
@@ -338,13 +351,13 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             select_target(&mut harness, target);
             wait_settled(&mut harness);
             wait_for(&mut harness, |e| {
-                e.thumbnails.ready_count(&e.document, target) > 0
+                e.document.thumbnails.ready_count(&e.document, target) > 0
             });
-            let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
+            let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
             assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
             let timing =
                 harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-            harness.update(|editor| editor.selection_timing = Some(timing.clone()));
+            harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
             harness.step();
             let png = harness.render().unwrap();
             assert!(timing.ready_was_painted());
@@ -372,27 +385,33 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         set_layout(&mut harness, egui::vec2(600., 600.), 315.);
         harness.get_by_label("100%").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.viewport.zoom, Some(1.)));
+        harness.read(|editor| assert_eq!(editor.document.visit.viewport.zoom, Some(1.)));
         stage(&mut harness, "Roll");
         harness.get_by_label("Enabled").scroll_to_me();
         harness.try_run_realtime().unwrap();
-        let viewport = harness.read(|editor| editor.viewport);
-        let corrected = harness.read(|editor| editor.document.project.clone());
+        let viewport = harness.read(|editor| editor.document.visit.viewport);
+        let corrected = harness.read(|editor| editor.document.state.project.clone());
         for enabled in [false, true] {
             harness.get_by_label("Enabled").click();
             harness.step();
             wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-            harness.read(|editor| assert_eq!(editor.correction.is_some(), enabled));
-            harness.read(|editor| assert!(editor.source));
+            harness.read(|editor| assert_eq!(editor.document.correction.is_some(), enabled));
+            harness.read(|editor| assert!(editor.document.source));
             harness.read(|editor| assert_eq!(editor.source_exposure, 2.));
-            harness.read(|editor| assert_eq!(editor.viewport, viewport));
+            harness.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
             let mut expected = corrected.clone();
             expected.flat_field_mut().unwrap().enabled = enabled;
-            harness.read(|editor| assert_eq!(editor.document.project, expected));
+            harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         }
         wait_settled(&mut harness);
         harness.read(|editor| {
-            let rendered = editor.working.displayed.as_ref().unwrap();
+            let rendered = editor
+                .document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .unwrap();
             let frame = rendered.spec.frame;
             assert!(
                 frame.bounds().unwrap().width
@@ -442,7 +461,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
         save_existing_project(&mut harness);
-        let saved = harness.read(|editor| editor.document.project.clone());
+        let saved = harness.read(|editor| editor.document.state.project.clone());
         stage(&mut harness, "Roll");
         harness
             .get_by_label("Reset Flat-field correction")
@@ -451,10 +470,10 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.correction.is_none()));
+        harness.read(|editor| assert!(editor.document.correction.is_none()));
         let mut cleared = saved.clone();
         cleared.set_flat_field(None);
-        harness.read(|editor| assert_eq!(editor.document.project, cleared));
+        harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
         open_project(
             &mut harness,
             directory.path().join("correction.antitone.json"),
@@ -462,16 +481,19 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.get_by_label("Discard changes").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert_eq!(editor.document.project, saved));
+        harness.read(|editor| assert_eq!(editor.document.state.project, saved));
         harness.read(|editor| {
             assert_eq!(
-                editor.correction.as_ref().unwrap().settings.map,
+                editor.document.correction.as_ref().unwrap().settings.map,
                 settings.map
             )
         });
         wait_settled(&mut harness);
         wait_for(&mut harness, |e| {
-            e.thumbnails.ready_count(&e.document, e.target) > 0
+            e.document
+                .thumbnails
+                .ready_count(&e.document, e.document.target)
+                > 0
         });
         set_layout(&mut harness, egui::vec2(800., 600.), 270.);
         harness
@@ -481,7 +503,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
-        harness.read(|editor| assert_eq!(editor.document.project, cleared));
+        harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
         assert!(
             !harness
                 .get_by_label("Set up…")
@@ -506,39 +528,38 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.get_by_label("Fit").click();
         harness.step();
         wait_settled(&mut harness);
-        let geometry = harness.read(|editor| editor.last_layout.unwrap().0);
+        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
         assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
         harness.read(|editor| {
             assert!(
-                geometry
-                    .canvas
-                    .expand(0.1)
-                    .contains_rect(geometry.screen_coverage(editor.region.unwrap()))
+                geometry.canvas.expand(0.1).contains_rect(
+                    geometry.screen_coverage(editor.document.picking.region.unwrap())
+                )
             )
         });
         let png = harness.render().unwrap();
         save_capture(&png, "correction-setup-narrow-offscreen");
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.project, cleared));
-        harness.read(|editor| assert_eq!(editor.current_source, selected));
+        harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         harness.get_by_label("Apply").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
         harness.read(|editor| {
-            assert!(editor.correction.is_some(), "{}", editor.status);
+            assert!(editor.document.correction.is_some(), "{}", editor.status);
             let mut expected = cleared.clone();
             let mut reference = saved.source(settings.reference).unwrap().clone();
             reference.id = SourceId(expected.next_source_id);
             expected.next_source_id += 1;
-            let reapplied = editor.document.project.flat_field().cloned().unwrap();
+            let reapplied = editor.document.state.project.flat_field().cloned().unwrap();
             assert_eq!(reapplied.reference, reference.id);
             expected.sources.push(reference);
             expected.set_flat_field(Some(reapplied));
             expected.validate().unwrap();
-            assert_eq!(editor.document.project, expected);
+            assert_eq!(editor.document.state.project, expected);
         });
         std::fs::remove_file(&reference).unwrap();
         open_project(
@@ -548,8 +569,8 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.get_by_label("Discard changes").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert_eq!(editor.document.project, saved));
-        harness.read(|editor| assert!(editor.correction.is_some()));
+        harness.read(|editor| assert_eq!(editor.document.state.project, saved));
+        harness.read(|editor| assert!(editor.document.correction.is_some()));
         harness
             .get_by_label("Reset Flat-field correction")
             .scroll_to_me();
@@ -558,8 +579,8 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
         harness.read(|editor| {
-            assert_eq!(editor.document.project, cleared);
-            assert!(editor.correction.is_none());
+            assert_eq!(editor.document.state.project, cleared);
+            assert!(editor.document.correction.is_none());
             assert!(editor.document.visit.ready.is_some());
             assert!(editor.failure.is_none(), "{}", editor.status);
         });

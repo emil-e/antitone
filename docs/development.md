@@ -163,7 +163,7 @@ cargo test --locked --features raw,gpu,export,project,ocio-reference \
 cargo build --locked --release --features editor --bin antitone
 ```
 
-Check captured service output separately from UI decisions/activity, and distinguish numerical correspondence from exact serialization: GPU/scalar comparisons allow justified rounding differences, while encoder tests require exact supplied-sample serialization. Check reconstruction and reopened files as well as intermediate arithmetic. The [output guide](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns processing and resource boundaries. For batches, check source-specific pixels/grades, cold acquisition after cache closure, per-photo failure continuation, prior-output protection and publication races. Composed checks cover scope/target isolation, numeric commits, modal cancellation and reachable narrow-layout actions:
+Check captured service output separately from UI decisions/activity, and distinguish numerical correspondence from exact serialization: GPU/scalar comparisons allow justified rounding differences, while encoder tests require exact supplied-sample serialization. Check reconstruction and reopened files as well as intermediate arithmetic. The [output guide](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns processing and resource boundaries. For batches, check source-specific pixels/grades, cold acquisition without document-cache reuse, per-photo failure continuation, prior-output protection and publication races. Composed checks cover scope/target isolation, numeric commits, modal cancellation and reachable narrow-layout actions:
 
 ```sh
 ANTITONE_UI_CAPTURE="$PWD/.cache/ui-captures" \

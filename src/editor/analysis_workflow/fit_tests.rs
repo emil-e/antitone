@@ -46,8 +46,8 @@ fn gated() -> (
 fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and_grade_together() {
     let scheduler = source_loading::SourceLoader::new();
     let mut editor = fixture(scheduler.clone());
-    let first = editor.current_source.unwrap();
-    let other = editor.document.project.order[1];
+    let first = editor.document.visit.current_source.unwrap();
+    let other = editor.document.state.project.order[1];
     editor.select_roll_photo(
         1,
         egui::Modifiers::COMMAND,
@@ -55,9 +55,9 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
     );
     editor.tab = 2;
     editor.scopes.visible = true;
-    editor.viewport.zoom = Some(0.5);
-    let viewport = editor.viewport;
-    let before = editor.document.project.clone();
+    editor.document.visit.viewport.zoom = Some(0.5);
+    let viewport = editor.document.visit.viewport;
+    let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         review(app);
         app.enter(|e, access| {
@@ -65,33 +65,36 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
         });
         app.run_until(LIMIT, |e| !e.busy);
         app.read(|e| {
-            assert_eq!(e.current_source, Some(other));
+            assert_eq!(e.document.visit.current_source, Some(other));
             assert_eq!(
-                e.document.pick_return.as_ref().unwrap().path,
+                e.document.picking.return_to.as_ref().unwrap().path,
                 e.document.source_path(first).unwrap()
             );
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
         });
         confirm(app);
         app.run_until(LIMIT, |e| e.document.analysis_pending.is_none() && !e.busy);
         app.read(|e| {
             assert!(e.status.starts_with("Analyzed 2"), "{}", e.status);
-            assert_eq!(e.current_source, Some(first));
+            assert_eq!(e.document.visit.current_source, Some(first));
             assert!(e.document.visit.ready.is_some());
-            assert!(e.document.analysis_review.is_none() && e.document.pick_return.is_none());
-            assert_eq!(e.viewport, viewport);
+            assert!(e.document.analysis_review.is_none() && e.document.picking.return_to.is_none());
+            assert_eq!(e.document.visit.viewport, viewport);
             assert_eq!(e.tab, 2);
             assert!(e.scopes.visible);
-            assert!(e.roll_selection.contains(first) && e.roll_selection.contains(other));
-            assert_eq!(e.document.project.analysis_regions.len(), 2);
-            assert_ne!(e.document.project.dmin(), before.dmin());
+            assert!(
+                e.document.roll_selection.contains(first)
+                    && e.document.roll_selection.contains(other)
+            );
+            assert_eq!(e.document.state.project.analysis_regions.len(), 2);
+            assert_ne!(e.document.state.project.dmin(), before.dmin());
             assert!(e.history_label(Direction::Undo).is_some());
         });
         app.enter(|e, access| {
             e.restore_history(Direction::Undo, access);
         });
         app.run_until(LIMIT, |e| !e.busy);
-        app.read(|e| assert_eq!(e.document.project, before));
+        app.read(|e| assert_eq!(e.document.state.project, before));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -100,13 +103,14 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
 fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibrated_roll() {
     let scheduler = source_loading::SourceLoader::new();
     let mut editor = fixture(scheduler.clone());
-    let crate::processing::InputSettings::Negative { dmin, dmax, .. } = &mut editor.input else {
+    let crate::processing::InputSettings::Negative { dmin, dmax, .. } = &mut editor.document.input
+    else {
         panic!("authored scan roll must use Negative");
     };
     *dmin = None;
     *dmax = None;
     editor.sync_document();
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     assert!(!before.input.ready());
     assert!(before.input.calibration().is_none());
     with_application(editor, |app| {
@@ -129,12 +133,12 @@ fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibra
                     .max_element()
                     <= 2. / 65535.
             );
-            assert!(e.input.ready());
-            assert_eq!(e.document.project.analysis_regions.len(), 2);
+            assert!(e.document.input.ready());
+            assert_eq!(e.document.state.project.analysis_regions.len(), 2);
         });
         app.enter(|e, access| e.restore_history(Direction::Undo, access));
         app.run_until(LIMIT, |e| !e.busy);
-        app.read(|e| assert_eq!(e.document.project, before));
+        app.read(|e| assert_eq!(e.document.state.project, before));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -143,7 +147,7 @@ fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibra
 fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cpu_work() {
     let (scheduler, enabled, starts, release) = gated();
     let editor = fixture(scheduler.clone());
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         review(app);
         enabled.store(true, Ordering::Relaxed);
@@ -152,7 +156,7 @@ fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cp
         app.update(Editor::cancel_analysis);
         app.run_until(LIMIT, |e| e.document.analysis_pending.is_none() && !e.busy);
         app.read(|e| {
-            assert_eq!(e.document.project, before);
+            assert_eq!(e.document.state.project, before);
             assert!(e.document.analysis_review.is_none());
             assert!(e.tasks.view().is_none());
             assert!(e.history_label(Direction::Undo).is_none());
@@ -170,7 +174,7 @@ fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cp
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());
         release.send(()).unwrap();
         drop(probe);
-        app.read(|e| assert_eq!(e.document.project, before));
+        app.read(|e| assert_eq!(e.document.state.project, before));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -200,7 +204,8 @@ fn fitting_document_and_application_retirement_cannot_publish_late_results() {
                 app.pump();
                 app.read(|e| {
                     assert!(
-                        e.document.analysis_review.is_none() && e.document.pick_return.is_none()
+                        e.document.analysis_review.is_none()
+                            && e.document.picking.return_to.is_none()
                     )
                 });
             }
@@ -225,12 +230,12 @@ fn live_edits_during_fit_discard_the_entire_candidate_without_installing_reviewe
             e.set_gamma(0.8);
             e.sync_document();
         });
-        let edited = app.read(|e| e.document.project.clone());
+        let edited = app.read(|e| e.document.state.project.clone());
         release.send(()).unwrap();
         app.run_until(LIMIT, |e| e.document.analysis_pending.is_none() && !e.busy);
         app.read(|e| {
-            assert_eq!(e.document.project, edited);
-            assert!(e.document.project.analysis_regions.is_empty());
+            assert_eq!(e.document.state.project, edited);
+            assert!(e.document.state.project.analysis_regions.is_empty());
             assert!(e.document.analysis_review.is_none());
             assert!(e.status.contains("discarded"), "{}", e.status);
         });
@@ -253,14 +258,14 @@ fn new_document_supersedes_a_queued_fit_without_consuming_its_areas_or_history()
         app.pump();
         app.read(|e| {
             assert!(e.document.analysis_pending.is_none() && e.document.analysis_review.is_none());
-            assert!(e.document.pick_return.is_none());
+            assert!(e.document.picking.return_to.is_none());
             assert!(e.document_pending.is_some());
         });
         drop(admission);
         app.run_until(LIMIT, |e| !e.busy);
         app.read(|e| {
-            assert!(e.document.project.order.is_empty());
-            assert!(e.document.project.analysis_regions.is_empty());
+            assert!(e.document.state.project.order.is_empty());
+            assert!(e.document.state.project.analysis_regions.is_empty());
             assert!(e.history_label(Direction::Undo).is_none());
         });
     });

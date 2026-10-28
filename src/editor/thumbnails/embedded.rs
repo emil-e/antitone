@@ -11,7 +11,7 @@ struct Request {
     key: SourceKey,
     path: PathBuf,
     source: Source,
-    store: Arc<crate::source::SourceCache>,
+    sources: Option<Arc<dyn crate::source::SourceProvider>>,
 }
 
 enum Completion {
@@ -19,6 +19,7 @@ enum Completion {
     Stopped,
 }
 
+#[cfg(test)]
 struct Work {
     request: Request,
     cancelled: Arc<AtomicBool>,
@@ -26,49 +27,58 @@ struct Work {
 }
 
 #[derive(Clone)]
-struct Services {
-    commands: mpsc::Sender<Work>,
+enum Services {
+    Production,
+    #[cfg(test)]
+    Controlled(mpsc::Sender<Work>),
 }
 
 impl Services {
-    fn new() -> Self {
-        let (commands, receiver) = mpsc::channel::<Work>();
-        std::thread::spawn(move || {
-            while let Ok(work) = receiver.recv() {
-                let started = std::time::Instant::now();
-                let active = || !work.cancelled.load(Ordering::Relaxed);
-                let image = load(&work.request, &active);
-                log::debug!(
-                    source_id = work.request.key.id.0,
-                    available = matches!(&image, Ok(Some(_))),
-                    failed = image.is_err(),
-                    cancelled = !active(),
-                    seconds = started.elapsed().as_secs_f64();
-                    "embedded_preview"
-                );
-                // A departed waiter cannot stop this shared resource worker.
-                let _ = work.reply.send(image);
-            }
-        });
-        Self { commands }
-    }
-
     async fn load(self, request: Request, cancelled: Arc<AtomicBool>) -> Completion {
-        let (reply, result) = futures_channel::oneshot::channel();
-        if self
-            .commands
-            .send(Work {
-                request,
-                cancelled,
-                reply,
-            })
-            .is_err()
-        {
-            return Completion::Stopped;
-        }
-        match result.await {
-            Ok(image) => Completion::Image(image),
-            Err(_) => Completion::Stopped,
+        match self {
+            #[cfg(test)]
+            Self::Controlled(commands) => {
+                let (reply, result) = futures_channel::oneshot::channel();
+                if commands
+                    .send(Work {
+                        request,
+                        cancelled,
+                        reply,
+                    })
+                    .is_err()
+                {
+                    return Completion::Stopped;
+                }
+                match result.await {
+                    Ok(image) => Completion::Image(image),
+                    Err(_) => Completion::Stopped,
+                }
+            }
+            Self::Production => {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Completion::Image(Ok(None));
+                }
+                let Some(sources) = request.sources else {
+                    return Completion::Stopped;
+                };
+                let key = crate::source::SourceKey::for_load(
+                    &request.path,
+                    request.key.file,
+                    &request.source.development,
+                );
+                let preview = sources.load_preview(key).await;
+                match crate::background::run(move || {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return Ok(None);
+                    }
+                    preview.map(|preview| preview.map(|preview| colour_image(&preview)))
+                })
+                .await
+                {
+                    Ok(image) => Completion::Image(image),
+                    Err(_) => Completion::Stopped,
+                }
+            }
         }
     }
 }
@@ -108,6 +118,15 @@ pub(super) struct EmbeddedPreviews {
     budget: usize,
 }
 
+impl EmbeddedPreviews {
+    pub(super) fn for_document(&self) -> Self {
+        Self {
+            services: self.services.clone(),
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for EmbeddedPreviews {
     fn default() -> Self {
         Self {
@@ -125,7 +144,7 @@ impl Default for EmbeddedPreviews {
 impl EmbeddedPreviews {
     pub(super) fn new() -> Self {
         Self {
-            services: Some(Services::new()),
+            services: Some(Services::Production),
             ..Default::default()
         }
     }
@@ -135,13 +154,6 @@ impl EmbeddedPreviews {
         if let Some(pending) = &self.pending {
             pending.cancelled.store(true, Ordering::Relaxed);
         }
-    }
-
-    pub(super) fn reset_demand(&mut self) {
-        self.cancel();
-        self.pending = None;
-        self.wanted.clear();
-        self.entries.clear();
     }
 
     fn entry_bytes(key: &SourceKey, texture: &Option<egui::TextureHandle>) -> usize {
@@ -193,7 +205,8 @@ impl EmbeddedPreviews {
 
     fn begin(
         &mut self,
-        document: &super::document_scope::DocumentScope,
+        document: &Document,
+        sources: Option<Arc<dyn crate::source::SourceProvider>>,
     ) -> Option<(Request, Arc<AtomicBool>)> {
         if !self.allowed || self.pending.is_some() || self.services.is_none() {
             return None;
@@ -216,7 +229,7 @@ impl EmbeddedPreviews {
                 key: key.clone(),
                 path: path.clone(),
                 source,
-                store: document.cache.clone(),
+                sources,
             },
             cancelled,
         ))
@@ -227,7 +240,7 @@ impl EmbeddedPreviews {
         ticket: u64,
         key: SourceKey,
         image: Completion,
-        document: &super::document_scope::DocumentScope,
+        document: &Document,
         context: &egui::Context,
     ) {
         if !self
@@ -316,26 +329,35 @@ impl Editor {
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) {
-        self.thumbnails.embedded.request_visible(wanted, allowed);
-        self.thumbnails.sync_image_budget();
+        self.document
+            .thumbnails
+            .embedded
+            .request_visible(wanted, allowed);
+        self.document.thumbnails.sync_image_budget();
         self.acquire_embedded(context, cx);
     }
 
     fn acquire_embedded(&mut self, context: &egui::Context, cx: &UiContext<'_, Self>) {
         if self.fullscreen.is_some() || !self.thumbnail_work_allowed() {
-            self.thumbnails.embedded.cancel();
+            self.document.thumbnails.embedded.cancel();
             return;
         }
         if self.document.embedded_preview.is_some() {
             return;
         }
-        let Some((request, cancelled)) = self.thumbnails.embedded.begin(&self.document) else {
+        let sources = self.document.thumbnails.acquisition();
+        let Some((request, cancelled)) = self
+            .document
+            .thumbnails
+            .embedded
+            .begin(&self.document.state, sources)
+        else {
             return;
         };
         let ticket = request.ticket;
         let key = request.key.clone();
         let fallback_key = key.clone();
-        let services = self.thumbnails.embedded.services.clone().unwrap();
+        let services = self.document.thumbnails.embedded.services.clone().unwrap();
         let retire = Retire(cancelled.clone());
         let stopped = cancelled.clone();
         let workflow_context = context.clone();
@@ -352,23 +374,23 @@ impl Editor {
                     return;
                 }
                 let pending = editor.document.embedded_preview.take().unwrap();
-                editor.thumbnails.embedded.complete(
+                editor.document.thumbnails.embedded.complete(
                     ticket,
                     key,
                     image,
-                    &editor.document,
+                    &editor.document.state,
                     &workflow_context,
                 );
                 drop(pending);
-                editor.thumbnails.sync_image_budget();
+                editor.document.thumbnails.sync_image_budget();
                 editor.acquire_embedded(&workflow_context, &cx);
             });
         }) else {
-            self.thumbnails.embedded.complete(
+            self.document.thumbnails.embedded.complete(
                 ticket,
                 fallback_key,
                 Completion::Stopped,
-                &self.document,
+                &self.document.state,
                 context,
             );
             return;
@@ -381,26 +403,33 @@ impl Editor {
     }
 }
 
-fn current(key: &SourceKey, document: &super::document_scope::DocumentScope) -> bool {
-    !document.cache.is_closed()
-        && document
-            .project
-            .source(key.id)
-            .ok()
-            .zip(document.source_path(key.id).ok())
-            .is_some_and(|(source, path)| {
-                !source.reference_only && SourceKey::new(source, document.file_key(&path)) == *key
-            })
+fn current(key: &SourceKey, document: &Document) -> bool {
+    document
+        .project
+        .source(key.id)
+        .ok()
+        .zip(document.source_path(key.id).ok())
+        .is_some_and(|(source, path)| {
+            !source.reference_only && SourceKey::new(source, document.file_key(&path)) == *key
+        })
 }
 
+#[cfg(test)]
 fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::ColorImage>, String> {
     if !active() {
         return Ok(None);
     }
 
-    let preview = request.store.preview(&request.key.file, || {
-        crate::embedded_preview::read(&request.path, &request.source.development)
-    })?;
+    let preview = match &request.sources {
+        Some(sources) => {
+            pollster::block_on(sources.load_preview(crate::source::SourceKey::for_load(
+                &request.path,
+                request.key.file.clone(),
+                &request.source.development,
+            )))
+        }
+        None => crate::embedded_preview::read(&request.path, &request.source.development),
+    }?;
 
     if !active() {
         return Ok(None);

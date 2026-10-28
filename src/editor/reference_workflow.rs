@@ -27,7 +27,8 @@ impl Editor {
             self.reference_previewed(id, Err("Application stopped".into()));
             return;
         };
-        self.flat_edit
+        self.document
+            .flat_edit
             .as_mut()
             .expect("live reference session")
             .task = Some(task);
@@ -51,7 +52,7 @@ impl Editor {
             .await
             .map(Box::new);
             cx.update(|editor| {
-                if editor.flat_edit.is_none() || editor.document_pending != Some(id) {
+                if editor.document.flat_edit.is_none() || editor.document_pending != Some(id) {
                     return;
                 }
                 editor.document_prepared(id, result);
@@ -61,7 +62,8 @@ impl Editor {
             self.document_prepared(id, Err("Application stopped".into()));
             return;
         };
-        self.flat_edit
+        self.document
+            .flat_edit
             .as_mut()
             .expect("live reference session")
             .task = Some(task);
@@ -69,13 +71,13 @@ impl Editor {
 
     pub(super) fn reference_previewed(&mut self, id: u64, result: Result<FlatPreview, String>) {
         if id != self.id
-            || self.flat_edit.is_none()
+            || self.document.flat_edit.is_none()
             || self.document_pending.is_some()
-            || self.pick != Some(Pick::Flat)
+            || self.document.picking.kind != Some(Pick::Flat)
         {
             return;
         }
-        let session = self.flat_edit.as_mut().unwrap();
+        let session = self.document.flat_edit.as_mut().unwrap();
         session.task = None;
         self.tasks.finish(TaskRequest::Reference(id));
         self.busy = false;
@@ -83,12 +85,14 @@ impl Editor {
             Ok(preview) => {
                 session.reference = Some(preview);
                 let reference = session.reference.as_ref().unwrap();
-                self.region = self
+                self.document.picking.region = self
+                    .document
+                    .picking
                     .region
                     .or(reference.region.map(super::Coverage::rectangle));
                 self.document.visit.ready = Some(reference.ready.clone());
                 self.resolve_failure(FailureKind::FlatReference);
-                self.status = if self.region.is_some() {
+                self.status = if self.document.picking.region.is_some() {
                     "Proposed illuminated rectangle: adjust edges, then Apply."
                 } else {
                     "Illuminated area is ambiguous; draw a rectangle around the usable light."

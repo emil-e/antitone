@@ -27,33 +27,35 @@ fn editor(
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut editor = crate::editor::tests::fixture();
-        editor.document = document.into();
-        editor.set_dmin(editor.document.project.dmin().map(DVec3::from_array));
-        editor.set_dmax(editor.document.project.dmax().map(DVec3::from_array));
-        editor.roll = editor.document.project.roll;
-        editor.roll_orientation = editor.document.project.orientation;
-        editor.thumbnails = Thumbnails::with_developments(
+        editor.document = editor.document.replacement(document);
+        editor.set_dmin(editor.document.state.project.dmin().map(DVec3::from_array));
+        editor.set_dmax(editor.document.state.project.dmax().map(DVec3::from_array));
+        editor.document.roll = editor.document.state.project.roll;
+        editor.document.roll_orientation = editor.document.state.project.orientation;
+        editor.document.thumbnails = (Thumbnails::with_developments(
             device,
             queue,
             Arc::default(),
             Some(disk::DiskCache::at(disk.to_owned())),
             scheduler.clone(),
-        );
-        editor.thumbnails.set_limits(cache_limits::CacheLimits {
-            cpu_bytes: 0,
-            gpu_bytes: 0,
-        });
+        ))
+        .with_sources(editor.document.cache.clone());
         editor
+            .document
             .thumbnails
-            .bind_sources(editor.document.cache.clone(), &editor.document);
-        editor.original.last_edit = std::time::Instant::now() - Duration::from_secs(1);
+            .set_limits(cache_limits::CacheLimits {
+                cpu_bytes: 0,
+                gpu_bytes: 0,
+            });
+        editor.document.visit.grade.original.last_edit =
+            std::time::Instant::now() - Duration::from_secs(1);
         editor.developments = Some(scheduler);
         editor
     })
 }
 
 fn begin(editor: &mut Editor, access: &crate::application::UiContext<'_, Editor>, demand: Demand) {
-    editor.thumbnails.demand = demand;
+    editor.document.thumbnails.demand = demand;
     editor.advance_thumbnail_demand(access);
 }
 
@@ -101,16 +103,17 @@ fn visible_then_eager_demand_finishes_without_paint_at_zero_optional_limits() {
             !editor.document.thumbnail_work.pending()
         });
         app.read(|editor| {
-            assert_eq!(editor.thumbnails.attempted_sources.len(), 3);
+            assert_eq!(editor.document.thumbnails.attempted_sources.len(), 3);
             assert_eq!(
                 editor
+                    .document
                     .thumbnails
-                    .ready_count(&editor.document, editor.target),
+                    .ready_count(&editor.document, editor.document.target),
                 1
             );
-            assert!(editor.thumbnails.pending.is_none());
+            assert!(editor.document.thumbnails.pending.is_none());
             assert_eq!(editor.document.cache.charges().retained, 0);
-            for id in &editor.document.project.order {
+            for id in &editor.document.state.project.order {
                 let key = tests::key(&editor.document, *id);
                 assert!(
                     disk::DiskCache::at(disk.path().to_owned())
@@ -157,11 +160,15 @@ fn composed_editor_registers_visible_work_then_uses_completed_proper_card_callba
         app.read(|editor| {
             assert_eq!(
                 editor
+                    .document
                     .thumbnails
-                    .ready_count(&editor.document, editor.target),
+                    .ready_count(&editor.document, editor.document.target),
                 2
             );
-            assert!(editor.document.visit.ready.is_none() && editor.pending_preview.is_none());
+            assert!(
+                editor.document.visit.ready.is_none()
+                    && editor.document.visit.pending_preview.is_none()
+            );
         });
         let mut output = app.enter(|editor, access| {
             context.run_ui(
@@ -197,7 +204,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
     let scheduler = source_loading::SourceLoader::new();
     let mut editor = editor(document, disk.path(), scheduler.clone());
     let (commands, requests) = mpsc::channel();
-    editor.thumbnails.services = Some(Services { commands });
+    editor.document.thumbnails.services = Some(Services::Controlled(commands));
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Visible(ids[..2].to_vec())));
         app.pump();
@@ -207,12 +214,13 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
             !editor.document.thumbnail_work.pending()
         });
         app.read(|editor| {
-            assert!(editor.thumbnails.services.is_none());
-            assert!(editor.thumbnails.pending.is_none());
+            assert!(editor.document.thumbnails.services.is_none());
+            assert!(editor.document.thumbnails.pending.is_none());
             for id in &ids[..2] {
                 let key = tests::key(&editor.document, *id);
                 assert!(
                     editor
+                        .document
                         .thumbnails
                         .cache
                         .entries
@@ -225,11 +233,12 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
             }
         });
         app.enter(|editor, cx| {
-            editor.thumbnails.demand = Demand::Visible(vec![ids[2]]);
+            editor.document.thumbnails.demand = Demand::Visible(vec![ids[2]]);
             editor.advance_thumbnail_demand(cx);
             let key = tests::key(&editor.document, ids[2]);
             assert!(
                 editor
+                    .document
                     .thumbnails
                     .cache
                     .entries
@@ -239,7 +248,7 @@ fn a_closed_producer_retires_its_request_and_reports_failure_for_current_and_lat
                             .as_ref()
                             .is_err_and(|error| error.contains("worker stopped")))
             );
-            assert!(editor.thumbnails.pending.is_none());
+            assert!(editor.document.thumbnails.pending.is_none());
             assert!(!editor.document.thumbnail_work.pending());
         });
         assert!(
@@ -262,10 +271,10 @@ fn hidden_document_demand_completes_cpu_disk_work_without_gpu_residency_or_paint
             !editor.document.thumbnail_work.pending()
         });
         app.read(|editor| {
-            assert_eq!(editor.thumbnails.attempted_sources.len(), 3);
-            assert!(editor.thumbnails.cache.entries.is_empty());
+            assert_eq!(editor.document.thumbnails.attempted_sources.len(), 3);
+            assert!(editor.document.thumbnails.cache.entries.is_empty());
             assert_eq!(editor.document.cache.charges().retained, 0);
-            for id in &editor.document.project.order {
+            for id in &editor.document.state.project.order {
                 let key = tests::key(&editor.document, *id);
                 assert!(
                     disk::DiskCache::at(disk.path().to_owned())
@@ -289,11 +298,19 @@ fn retiring_visible_gpu_demand_keeps_document_cpu_completion_and_disk_publicatio
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Visible(vec![first])));
         app.pump();
-        starts.recv_timeout(Duration::from_secs(5)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while starts.try_recv().is_err() {
+            app.pump();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "native acquisition did not start"
+            );
+            std::thread::yield_now();
+        }
         app.update(|editor| {
-            editor.thumbnails.cancel();
-            editor.thumbnails.demand = Demand::Hidden;
-            editor.thumbnails.refresh_hidden_memory();
+            editor.document.thumbnails.cancel();
+            editor.document.thumbnails.demand = Demand::Hidden;
+            editor.document.thumbnails.refresh_hidden_memory();
         });
         assert!(app.read(|editor| editor.document.thumbnail_work.pending()));
         release.send(()).unwrap();
@@ -302,8 +319,14 @@ fn retiring_visible_gpu_demand_keeps_document_cpu_completion_and_disk_publicatio
         });
         app.read(|editor| {
             let key = tests::key(&editor.document, first);
-            assert!(editor.thumbnails.attempted_sources.contains(&key.source));
-            assert!(editor.thumbnails.cache.entries.is_empty());
+            assert!(
+                editor
+                    .document
+                    .thumbnails
+                    .attempted_sources
+                    .contains(&key.source)
+            );
+            assert!(editor.document.thumbnails.cache.entries.is_empty());
             assert!(
                 disk::DiskCache::at(disk.path().to_owned())
                     .load(&key.source)
@@ -326,29 +349,34 @@ fn document_replacement_retires_old_publication_without_stopping_the_shared_work
     let (scheduler, starts, release, calls) = gated(&first);
     let disk = tempfile::tempdir().unwrap();
     let editor = editor(first, disk.path(), scheduler.clone());
-    let old_store = editor.document.cache.clone();
+    let old_store = Arc::downgrade(&editor.document.cache);
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Hidden));
         app.pump();
-        starts.recv_timeout(Duration::from_secs(5)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while starts.try_recv().is_err() {
+            app.pump();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "native acquisition did not start"
+            );
+            std::thread::yield_now();
+        }
         app.enter(|editor, access| {
-            editor.document = second.into();
-            editor
-                .thumbnails
-                .bind_sources(editor.document.cache.clone(), &editor.document);
+            editor.document = editor.document.replacement(second);
             begin(editor, access, Demand::Hidden);
         });
         app.pump();
-        assert!(old_store.is_closed());
+        assert!(old_store.upgrade().is_none());
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(30), |editor| {
             !editor.document.thumbnail_work.pending()
         });
         app.read(|editor| {
-            let current = tests::key(&editor.document, editor.document.project.order[0]);
+            let current = tests::key(&editor.document, editor.document.state.project.order[0]);
             assert_eq!(
-                editor.thumbnails.attempted_sources,
+                editor.document.thumbnails.attempted_sources,
                 vec![current.source.clone()]
             );
             assert!(
@@ -357,7 +385,7 @@ fn document_replacement_retires_old_publication_without_stopping_the_shared_work
                     .unwrap()
                     .is_some()
             );
-            assert!(editor.thumbnails.cache.entries.is_empty());
+            assert!(editor.document.thumbnails.cache.entries.is_empty());
         });
         assert!(
             disk::DiskCache::at(disk.path().to_owned())
@@ -401,10 +429,7 @@ fn document_retirement_drops_thumbnail_demand_queued_behind_unrelated_native_wor
             std::thread::sleep(Duration::from_millis(1));
         }
         app.update(|editor| {
-            editor.document = Document::default().into();
-            editor
-                .thumbnails
-                .bind_sources(editor.document.cache.clone(), &editor.document);
+            editor.document = editor.document.replacement(Document::default());
         });
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while scheduler.waiter_count() != 1 {
@@ -431,16 +456,24 @@ fn application_retirement_drops_waiters_but_running_native_work_finishes_before_
     let (scheduler, starts, release, calls) = gated(&document);
     let disk = tempfile::tempdir().unwrap();
     let editor = editor(document, disk.path(), scheduler.clone());
-    let store = editor.document.cache.clone();
+    let store = Arc::downgrade(&editor.document.cache);
     with_application(editor, |app| {
         app.enter(|editor, access| begin(editor, access, Demand::Hidden));
         app.pump();
-        starts.recv_timeout(Duration::from_secs(5)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while starts.try_recv().is_err() {
+            app.pump();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "native acquisition did not start"
+            );
+            std::thread::yield_now();
+        }
         app.close_execution();
         assert_eq!(calls.load(Ordering::Relaxed), 1);
-        app.read(|editor| assert!(editor.thumbnails.attempted_sources.is_empty()));
+        app.read(|editor| assert!(editor.document.thumbnails.attempted_sources.is_empty()));
     });
-    assert!(store.is_closed());
+    assert!(store.upgrade().is_none());
     release.send(()).unwrap();
     scheduler.close_and_wait().unwrap();
     assert!(

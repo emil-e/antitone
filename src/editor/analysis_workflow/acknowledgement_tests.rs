@@ -30,7 +30,7 @@ fn start_cpu(
             loaded: editor.id,
             revision,
             document: editor.document.capture(),
-            selected: editor.current_source.unwrap(),
+            selected: editor.document.visit.current_source.unwrap(),
             film: None,
             local_support: false,
             picture: None,
@@ -58,7 +58,7 @@ fn start_cpu(
         let retire = stopped.cancel_on_drop();
         let services = Services::new(
             editor.source_services.as_ref().unwrap(),
-            editor.document.cache.clone(),
+            editor.source_provider().unwrap(),
             editor.document.exposures.clone(),
         );
         let task = access

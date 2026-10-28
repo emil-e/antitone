@@ -69,11 +69,11 @@ pub(super) struct FlatPreview {
 
 impl Editor {
     pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        let editing = self.pick == Some(Pick::Flat);
-        let settings = self.document.project.flat_field();
+        let editing = self.document.picking.kind == Some(Pick::Flat);
+        let settings = self.document.state.project.flat_field();
         let configured = settings.is_some();
         let available = !self.busy
-            && self.pick.is_none()
+            && self.document.picking.kind.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.visit.mask_edit.is_none();
@@ -100,7 +100,7 @@ impl Editor {
                     return;
                 }
                 ui.add_enabled_ui(available, |ui| {
-                    if let Some(settings) = self.document.project.flat_field() {
+                    if let Some(settings) = self.document.state.project.flat_field() {
                         let path = self.document.source_path(settings.reference).ok();
                         let mut enabled = settings.enabled;
                         if ui.checkbox(&mut enabled, "Enabled").changed() {
@@ -143,7 +143,7 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) {
         if self.busy
-            || self.pick.is_some()
+            || self.document.picking.kind.is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
@@ -151,22 +151,21 @@ impl Editor {
             return;
         }
         self.sync_document();
-        self.thumbnails.cancel();
+        self.document.thumbnails.cancel();
         let context = FlatEdit {
             working: self.document.visit.ready.take(),
             reference: None,
-            viewport: self.viewport,
-            source: self.source,
+            viewport: self.document.visit.viewport,
+            source: self.document.source,
             task: None,
         };
-        self.flat_edit = Some(context);
-        self.pick = Some(Pick::Flat);
-        self.region = region.map(Coverage::rectangle);
-        self.source = true;
-        self.viewport.fit();
-        self.invalidate_original();
+        self.document.flat_edit = Some(context);
+        self.document.picking.kind = Some(Pick::Flat);
+        self.document.source = true;
         self.id = self.request_id();
         self.replace_photo_scope(self.id);
+        self.document.picking.region = region.map(Coverage::rectangle);
+        self.document.visit.viewport.fit();
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.busy = true;
@@ -180,11 +179,15 @@ impl Editor {
         let expected = self
             .document
             .find_source(&path)
-            .and_then(|id| self.document.project.source(id).ok())
+            .and_then(|id| self.document.state.project.source(id).ok())
             .cloned();
         // A retained record is either an ordered photo or the current flat-field reference;
         // both belong to the current stage. Use its saved decode identity when present.
-        let wb = self.document.project.acquisition_wb(expected.as_ref());
+        let wb = self
+            .document
+            .state
+            .project
+            .acquisition_wb(expected.as_ref());
         let file = self.document.file_key(&path);
         source::Request {
             reference: expected.as_ref().map_or_else(Arc::default, |source| {
@@ -196,7 +199,7 @@ impl Editor {
             wb,
             expected,
             file,
-            cache: Some(self.document.cache.clone()),
+            sources: self.source_provider(),
             correction: None,
         }
     }
@@ -204,10 +207,11 @@ impl Editor {
     pub(super) fn reference_input(
         &self,
     ) -> Result<Option<super::reference_services::Acceptance>, &'static str> {
-        let Some(coverage) = self.region else {
+        let Some(coverage) = self.document.picking.region else {
             return Ok(None);
         };
         let Some(reference) = self
+            .document
             .flat_edit
             .as_ref()
             .and_then(|edit| edit.reference.as_ref())
@@ -219,22 +223,22 @@ impl Editor {
             .exact_rectangle(ready.area)
             .ok_or("Flat-field support must be an integer source rectangle")?;
         Ok(Some(super::reference_services::Acceptance {
-            cache: self.document.cache.clone(),
+            sources: self.source_provider(),
             region,
             document: self.document.capture(),
-            selected: self.current_source,
+            selected: self.document.visit.current_source,
             source: source::Context {
                 source: ready.developed.clone(),
                 reference: ready.reference.clone(),
                 correction: None,
             },
             record: ready.record.clone(),
-            correction: self.correction.clone(),
+            correction: self.document.correction.clone(),
         }))
     }
 
     pub(super) fn finish_flat_edit(&mut self) {
-        let Some(context) = self.flat_edit.take() else {
+        let Some(context) = self.document.flat_edit.take() else {
             return;
         };
         if self.tasks.finish(TaskRequest::Reference(self.id)) {
@@ -254,12 +258,12 @@ impl Editor {
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.document.visit.ready = context.working;
-        self.viewport = context.viewport;
-        self.source = context.source;
-        self.pick = None;
-        self.region = None;
-        self.pick_drag = None;
-        self.last_layout = None;
+        self.document.visit.viewport = context.viewport;
+        self.document.source = context.source;
+        self.document.picking.kind = None;
+        self.document.picking.region = None;
+        self.document.visit.pick_drag = None;
+        self.document.visit.last_layout = None;
         self.invalidate_original();
     }
 
@@ -323,16 +327,23 @@ impl Editor {
         calibration: Calibration,
     ) -> Result<Calibration, Error> {
         let source_floor = self
+            .document
+            .visit
             .current_source
             .map(|id| {
                 self.document
+                    .state
                     .project
                     .source(id)
                     .map(|s| s.development.input_floor)
             })
             .transpose()?
             .unwrap_or(crate::processing::CAMERA_INPUT_FLOOR);
-        let residual_gain = self.correction.as_ref().map_or(1., |c| c.maximum_gain);
+        let residual_gain = self
+            .document
+            .correction
+            .as_ref()
+            .map_or(1., |c| c.maximum_gain);
         calibration.for_source(source_floor, residual_gain)
     }
 }

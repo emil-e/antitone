@@ -4,12 +4,17 @@ use crate::viewer::readback::image_pixels;
 
 fn preview_image(editor: &Editor, input: &ProcessingInput) -> Arc<GpuImage> {
     let (_, _, frame, target, view) = editor
+        .document
+        .visit
         .preview_rendered
         .as_ref()
         .expect("shared provisional renderer");
     assert_eq!(view.processing, input.signature());
-    assert_eq!(*target, editor.target);
-    assert_eq!(frame.composition, editor.last_layout.unwrap().0.composition);
+    assert_eq!(*target, editor.document.target);
+    assert_eq!(
+        frame.composition,
+        editor.document.visit.last_layout.unwrap().0.composition
+    );
     assert!(
         !view.in_flight(),
         "draw must submit and complete the provisional view"
@@ -74,11 +79,8 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
             development.clone(),
         )
         .unwrap();
-    editor
-        .thumbnails
-        .bind_sources(editor.document.cache.clone(), &editor.document);
-    editor.thumbnails.seed(
-        editor.document.project.source(id).unwrap(),
+    editor.document.thumbnails.seed(
+        editor.document.state.project.source(id).unwrap(),
         FileKey::new(&path),
         proxy(),
     );
@@ -164,8 +166,9 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.initialize_viewer(&device, &queue);
-                editor.thumbnails =
-                    Thumbnails::with_disk(device.clone(), queue.clone(), Arc::default(), None);
+                editor.document.thumbnails =
+                    (Thumbnails::with_disk(device.clone(), queue.clone(), Arc::default(), None))
+                        .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("selected.ARW");
                 let id = add_source(editor, path.clone());
                 editor
@@ -175,15 +178,15 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                     .unwrap()
                     .orientation
                     .turn_clockwise();
-                editor.document.project.source_mut(id).unwrap().crop =
+                editor.document.state.project.source_mut(id).unwrap().crop =
                     Some(Crop::from_region(Rect {
                         x: 120,
                         y: 70,
                         width: 600,
                         height: 400,
                     }));
-                editor.roll.exposure = 1.25;
-                editor.adjustment_layer_settings.exposure = 0.75;
+                editor.document.roll.exposure = 1.25;
+                editor.document.visit.adjustment_layer_settings.exposure = 0.75;
                 editor
                     .document
                     .project
@@ -194,14 +197,14 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                     .unwrap()
                     .layers[0]
                     .adjustment
-                    .photo = editor.adjustment_layer_settings;
+                    .photo = editor.document.visit.adjustment_layer_settings;
                 editor.sync_document();
-                let before = editor.document.project.clone();
+                let before = editor.document.state.project.clone();
 
                 editor.load(path, cx);
                 assert!(editor.document.visit.source.pending());
                 assert!(editor.document.visit.ready.is_none());
-                assert!(editor.pending_preview.is_some());
+                assert!(editor.document.visit.pending_preview.is_some());
                 assert!(editor.busy);
                 assert!(editor.scope_input().is_err());
 
@@ -213,14 +216,14 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                     Overwrite::Refuse,
                     &UiContext::render_only(),
                 );
-                assert!(editor.pick.is_none());
+                assert!(editor.document.picking.kind.is_none());
                 assert!(editor.document.visit.crop_edit.is_none());
-                assert!(editor.export_operation.pending.is_none());
+                assert!(editor.document.export_operation.pending.is_none());
                 assert!(
-                    editor.original.refining.is_none()
+                    editor.document.visit.grade.original.refining.is_none()
                         && editor.document.visit.grade.task.is_none()
                         && editor.document.visit.measurement.is_none()
-                        && editor.export_operation.pending.is_none()
+                        && editor.document.export_operation.pending.is_none()
                 );
 
                 let context = egui::Context::default();
@@ -230,21 +233,39 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                     Default::default(),
                 );
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                    editor.target = target;
+                    editor.document.target = target;
                     for source in [false, true] {
-                        editor.source = source;
+                        editor.document.source = source;
                         editor.source_exposure = 2.;
                         let output = frame(editor, &context);
                         let cached_caption = output.shapes.iter().any(|shape| match &shape.shape {
                             egui::Shape::Text(text) => {
                                 text.galley.job.text.contains(" · Cached preview")
-                                    && text.pos.y >= editor.last_layout.unwrap().0.canvas.bottom()
+                                    && text.pos.y
+                                        >= editor
+                                            .document
+                                            .visit
+                                            .last_layout
+                                            .unwrap()
+                                            .0
+                                            .canvas
+                                            .bottom()
                             }
                             _ => false,
                         });
                         assert!(editor.document.visit.ready.is_none());
-                        assert!(editor.pending_preview.is_some());
-                        assert_eq!(editor.last_layout.unwrap().0.composition.size(), [400, 600]);
+                        assert!(editor.document.visit.pending_preview.is_some());
+                        assert_eq!(
+                            editor
+                                .document
+                                .visit
+                                .last_layout
+                                .unwrap()
+                                .0
+                                .composition
+                                .size(),
+                            [400, 600]
+                        );
                         draw(&device, &queue, &context, &mut renderer, output);
                         assert!(cached_caption);
 
@@ -253,9 +274,9 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                         } else {
                             editor
                                 .positive_processing(
-                                    editor.input,
-                                    editor.roll,
-                                    editor.adjustment_layer_settings,
+                                    editor.document.input,
+                                    editor.document.roll,
+                                    editor.document.visit.adjustment_layer_settings,
                                 )
                                 .unwrap()
                         };
@@ -268,18 +289,18 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                                     && pixel[3] > 0.)
                         );
                         assert!(
-                            editor.original.refining.is_none()
+                            editor.document.visit.grade.original.refining.is_none()
                                 && editor.document.visit.grade.task.is_none()
                                 && editor.document.visit.measurement.is_none()
-                                && editor.export_operation.pending.is_none(),
+                                && editor.document.export_operation.pending.is_none(),
                             "pending preview scheduled authoritative work"
                         );
                     }
                 }
 
-                editor.target = OutputTarget::DisplayP3;
+                editor.document.target = OutputTarget::DisplayP3;
                 editor.sync_document();
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.state.project, before);
             });
         });
     });
@@ -292,11 +313,12 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
         let directory = tempfile::tempdir().unwrap();
         let mut editor = super::super::tests::fixture();
         let renderers = Arc::new(crate::renderer::RendererCache::default());
-        editor.thumbnails =
-            Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
+        editor.document.thumbnails =
+            (Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None))
+                .with_sources(editor.document.cache.clone());
         let path = directory.path().join("selected.ARW");
         let id = add_source(&mut editor, path.clone());
-        let source = editor.document.project.source(id).unwrap();
+        let source = editor.document.state.project.source(id).unwrap();
         let image = proxy()
             .image(
                 &renderers.get(&device, &queue).unwrap(),
@@ -314,14 +336,14 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
                     .selected_view()
                     .unwrap()
                     .1
-                    .image(editor.target)
+                    .image(editor.document.target)
                     .unwrap();
                 assert!(!Arc::ptr_eq(&image, &selected));
 
                 let mut encoder = device.create_command_encoder(&Default::default());
                 let source = editor.source_parameters(2.).unwrap();
                 let positive = editor
-                    .positive_parameters(editor.input, editor.roll)
+                    .positive_parameters(editor.document.input, editor.document.roll)
                     .unwrap();
                 assert!(selected.prepare(&device, &mut encoder, source));
                 assert!(image.prepare(&device, &mut encoder, positive));
@@ -342,7 +364,9 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.initialize_viewer(&device, &queue);
-                editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
+                editor.document.thumbnails =
+                    (Thumbnails::with_disk(device, queue, Arc::default(), None))
+                        .with_sources(editor.document.cache.clone());
                 let a = directory.path().join("a.ARW");
                 let b = directory.path().join("b.ARW");
                 add_source(editor, a.clone());
@@ -353,22 +377,25 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                 editor.load(b.clone(), cx);
                 let second = editor.id;
                 editor.source_result(first, Err("obsolete".into()));
-                assert_eq!(editor.current_source, Some(b_id));
+                assert_eq!(editor.document.visit.current_source, Some(b_id));
                 assert!(editor.busy);
-                assert!(editor.pending_preview.is_some());
+                assert!(editor.document.visit.pending_preview.is_some());
                 assert!(editor.document.visit.ready.is_none());
 
                 editor.source_result(second, Err("current load failed".into()));
                 assert!(!editor.busy);
-                assert!(editor.pending_preview.is_none());
-                assert!(editor.selection_timing.is_none());
+                assert!(editor.document.visit.pending_preview.is_none());
+                assert!(editor.document.visit.selection_timing.is_none());
                 assert_eq!(editor.status, "current load failed");
 
                 editor.load(b.clone(), cx);
-                assert!(editor.pending_preview.is_some());
-                assert_eq!(editor.current_source, Some(b_id));
+                assert!(editor.document.visit.pending_preview.is_some());
+                assert_eq!(editor.document.visit.current_source, Some(b_id));
                 editor.start_document(Preparation::New, cx);
-                assert!(editor.pending_preview.is_none() && editor.selection_timing.is_none());
+                assert!(
+                    editor.document.visit.pending_preview.is_none()
+                        && editor.document.visit.selection_timing.is_none()
+                );
                 assert!(editor.busy && editor.document_pending.is_some());
             });
         });
@@ -383,15 +410,17 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
         let editor = super::super::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
+                editor.document.thumbnails =
+                    (Thumbnails::with_disk(device, queue, Arc::default(), None))
+                        .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("selected.ARW");
                 let id = add_source(editor, path.clone());
                 editor.load(path.clone(), cx);
-                assert!(editor.pending_preview.is_some());
+                assert!(editor.document.visit.pending_preview.is_some());
                 assert!(editor.document.visit.ready.is_none());
                 assert!(editor.busy);
-                editor.thumbnails.seed(
-                    editor.document.project.source(id).unwrap(),
+                editor.document.thumbnails.seed(
+                    editor.document.state.project.source(id).unwrap(),
                     editor.document.file_key(&path),
                     proxy(),
                 );
@@ -406,7 +435,7 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
                     .validate_document_candidate(&editor.document)
                     .unwrap();
                 editor.load(path.clone(), cx);
-                assert!(editor.pending_preview.is_none());
+                assert!(editor.document.visit.pending_preview.is_none());
 
                 assert_eq!(
                     editor
@@ -429,13 +458,14 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
         let editor = super::super::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.thumbnails =
-                    Thumbnails::with_disk(device.clone(), queue, Arc::default(), None);
+                editor.document.thumbnails =
+                    (Thumbnails::with_disk(device.clone(), queue, Arc::default(), None))
+                        .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("corrected.ARW");
                 let id = add_source(editor, path.clone());
                 editor.sync_document();
-                let source = editor.document.project.source(id).unwrap().clone();
-                editor.document.project.set_flat_field(Some(
+                let source = editor.document.state.project.source(id).unwrap().clone();
+                editor.document.state.project.set_flat_field(Some(
                     crate::project::FlatFieldSettings::new(
                         &source,
                         Arc::new(
@@ -448,10 +478,17 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
                         ),
                     ),
                 ));
-                editor.correction = Correction::prepare(&device, &editor.document, None).unwrap();
-                let before = editor.document.project.clone();
+                editor.document.correction =
+                    Correction::prepare(&device, &editor.document, None).unwrap();
+                let before = editor.document.state.project.clone();
                 editor.load(path, cx);
-                let proxy = &editor.pending_preview.as_ref().unwrap().proxy;
+                let proxy = &editor
+                    .document
+                    .visit
+                    .pending_preview
+                    .as_ref()
+                    .unwrap()
+                    .proxy;
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
                     assert_eq!(
                         proxy.image(target).unwrap().source_revision(),
@@ -459,10 +496,10 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
                         "correction belongs to the immutable initial source, not a later write"
                     );
                 }
-                assert_eq!(editor.document.project, before);
-                editor.correction = None;
+                assert_eq!(editor.document.state.project, before);
+                editor.document.correction = None;
                 editor.validate_pending_preview();
-                assert!(editor.pending_preview.is_none());
+                assert!(editor.document.visit.pending_preview.is_none());
                 assert!(editor.busy);
                 assert!(editor.document.visit.ready.is_none());
                 assert!(editor.document.visit.source.pending());
@@ -480,46 +517,62 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.initialize_viewer(&device, &queue);
-                editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
+                editor.document.thumbnails =
+                    (Thumbnails::with_disk(device, queue, Arc::default(), None))
+                        .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("selected.ARW");
                 let id = add_source(editor, path.clone());
                 editor.load(path.clone(), cx);
                 editor
+                    .document
                     .thumbnails
                     .apply_budgets(memory::CacheBudgets::for_memory(
                         48 << 30,
                         memory::Pressure::Critical,
                     ));
-                assert_eq!(editor.thumbnails.sources.proxy_count(), 1);
+                assert_eq!(editor.document.thumbnails.sources.proxy_count(), 1);
                 editor.validate_pending_preview();
-                assert!(editor.pending_preview.is_some());
+                assert!(editor.document.visit.pending_preview.is_some());
                 let ready = Ready {
                     reference: None,
                     developed: crate::editor::tests::developed_fixture(),
                     file: thumbnails::FileKey::new(&path),
                     thumbnail: None,
                     path,
-                    area: editor.pending_preview.as_ref().unwrap().area(),
+                    area: editor
+                        .document
+                        .visit
+                        .pending_preview
+                        .as_ref()
+                        .unwrap()
+                        .area(),
                     analysis_support: None,
-                    proxy: editor.pending_preview.as_ref().unwrap().proxy.clone(),
-                    record: editor.document.project.source(id).unwrap().clone(),
+                    proxy: editor
+                        .document
+                        .visit
+                        .pending_preview
+                        .as_ref()
+                        .unwrap()
+                        .proxy
+                        .clone(),
+                    record: editor.document.state.project.source(id).unwrap().clone(),
                 };
                 editor.source_result(editor.id, Ok(Box::new(ready)));
                 assert!(editor.document.visit.ready.is_some());
-                assert!(editor.pending_preview.is_some());
+                assert!(editor.document.visit.pending_preview.is_some());
                 assert!(!editor.busy);
                 assert!(editor.selected_view().unwrap().2);
-                editor.source = false;
+                editor.document.source = false;
                 editor
                     .view_processing(
                         editor.input(),
-                        editor.roll,
-                        editor.adjustment_layer_settings,
+                        editor.document.roll,
+                        editor.document.visit.adjustment_layer_settings,
                     )
                     .unwrap();
                 assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
-                editor.last_layout = Some((
-                    editor.viewport.layout(
+                editor.document.visit.last_layout = Some((
+                    editor.document.visit.viewport.layout(
                         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
                         editor.document.visit.ready.as_ref().unwrap().area,
                         1.,
@@ -546,17 +599,19 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
                 let renderers = Arc::new(crate::renderer::RendererCache::default());
-                editor.thumbnails =
-                    Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
+                editor.document.thumbnails =
+                    (Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None))
+                        .with_sources(editor.document.cache.clone());
                 editor.initialize_viewer(&device, &queue);
                 let path = directory.path().join("local.ARW");
                 let id = add_source(editor, path.clone());
 
                 let source_key = SourceKey::new(
-                    editor.document.project.source(id).unwrap(),
+                    editor.document.state.project.source(id).unwrap(),
                     FileKey::new(&path),
                 );
                 let retained = editor
+                    .document
                     .thumbnails
                     .sources
                     .get_proxy(&source_key.store_key_at(&path).unwrap())
@@ -590,14 +645,14 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
 
                 editor.load(path.clone(), cx);
                 assert!(editor.document.visit.source.pending());
-                assert!(editor.pending_preview.is_some());
+                assert!(editor.document.visit.pending_preview.is_some());
                 assert!(editor.busy);
                 assert!(editor.document.visit.ready.is_none());
                 let captured = editor
                     .positive_processing(
-                        editor.input,
-                        editor.roll,
-                        editor.adjustment_layer_settings,
+                        editor.document.input,
+                        editor.document.roll,
+                        editor.document.visit.adjustment_layer_settings,
                     )
                     .unwrap();
                 let context = egui::Context::default();
@@ -607,18 +662,18 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                     Default::default(),
                 );
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                    editor.target = target;
+                    editor.document.target = target;
                     let selected = editor
                         .selected_view()
                         .unwrap()
                         .1
-                        .image(editor.target)
+                        .image(editor.document.target)
                         .unwrap();
                     let source_revision = selected.source_revision();
                     let mut positive_pixels = None;
 
                     for source_mode in [false, true] {
-                        editor.source = source_mode;
+                        editor.document.source = source_mode;
                         editor.source_exposure = 2.;
                         draw(
                             &device,
@@ -628,7 +683,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                             frame(editor, &context),
                         );
                         let positive = editor
-                            .thumbnail_parameters(editor.document.project.source(id).unwrap())
+                            .thumbnail_parameters(editor.document.state.project.source(id).unwrap())
                             .unwrap();
                         assert_eq!(positive.signature(), captured.signature());
                         let expected = if source_mode {
@@ -648,13 +703,13 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                             positive_pixels = Some(actual);
                         }
                         assert!(
-                            editor.original.refining.is_none()
+                            editor.document.visit.grade.original.refining.is_none()
                                 && editor.document.visit.grade.task.is_none(),
                             "cached preview must not schedule full-source work"
                         );
                     }
 
-                    editor.source = false;
+                    editor.document.source = false;
                     editor
                         .document
                         .project
@@ -674,7 +729,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                         frame(editor, &context),
                     );
                     let edited = editor
-                        .thumbnail_parameters(editor.document.project.source(id).unwrap())
+                        .thumbnail_parameters(editor.document.state.project.source(id).unwrap())
                         .unwrap();
                     assert_ne!(edited.signature(), captured.signature());
                     let mut encoder = device.create_command_encoder(&Default::default());
@@ -695,6 +750,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                     assert_eq!(selected.source_revision(), source_revision);
                     assert!(Arc::ptr_eq(
                         &editor
+                            .document
                             .thumbnails
                             .sources
                             .get_proxy(&source_key.store_key_at(&path).unwrap())
@@ -729,15 +785,20 @@ fn roll_sampling_load_does_not_admit_pending_working_preview() {
         let editor = super::super::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             app.enter(|editor, cx| {
-                editor.thumbnails = Thumbnails::with_disk(device, queue, Arc::default(), None);
+                editor.document.thumbnails =
+                    (Thumbnails::with_disk(device, queue, Arc::default(), None))
+                        .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("reference.ARW");
                 let id = add_source(editor, path);
-                editor.pick = Some(Pick::Dmin);
+                editor.document.picking.kind = Some(Pick::Dmin);
                 editor.pick_roll_source(id, cx);
-                assert!(editor.pending_preview.is_none() && editor.selection_timing.is_none());
+                assert!(
+                    editor.document.visit.pending_preview.is_none()
+                        && editor.document.visit.selection_timing.is_none()
+                );
                 assert!(editor.document.visit.ready.is_none());
                 assert!(editor.busy);
-                assert_eq!(editor.pick, Some(Pick::Dmin));
+                assert_eq!(editor.document.picking.kind, Some(Pick::Dmin));
                 assert!(editor.document.visit.source.pending());
             });
         });

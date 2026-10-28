@@ -11,12 +11,12 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
             editor.set_gamma(0.75);
-            editor.adjustment_layer_settings.exposure = 0.5;
+            editor.document.visit.adjustment_layer_settings.exposure = 0.5;
             editor.scopes.visible = false;
             editor.sync_document();
         });
-        let project = harness.read(|editor| editor.document.project.clone());
-        let source = harness.read(|editor| editor.current_source);
+        let project = harness.read(|editor| editor.document.state.project.clone());
+        let source = harness.read(|editor| editor.document.visit.current_source);
         for scale in [1., 2.] {
             harness
                 .input_mut()
@@ -36,14 +36,14 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
                     ("rendering", "Rendering"),
                     ("picker", "Roll"),
                 ] {
-                    if harness.read(|editor| editor.pick.is_some()) {
+                    if harness.read(|editor| editor.document.picking.kind.is_some()) {
                         harness.enter(|editor, cx| editor.finish_pick(cx));
                     }
                     harness
                         .get_by_role_and_label(egui::accesskit::Role::Tab, stage)
                         .click();
                     harness.step();
-                    harness.update(|editor| editor.source = scene == "photo");
+                    harness.update(|editor| editor.document.source = scene == "photo");
                     if scene == "picker" {
                         harness.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
                     }
@@ -93,8 +93,8 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
                                 .is_disabled()
                         );
                     }
-                    harness.read(|editor| assert_eq!(editor.document.project, project));
-                    harness.read(|editor| assert_eq!(editor.current_source, source));
+                    harness.read(|editor| assert_eq!(editor.document.state.project, project));
+                    harness.read(|editor| assert_eq!(editor.document.visit.current_source, source));
                     let png = harness.render().unwrap();
                     assert_eq!(
                         png.dimensions(),

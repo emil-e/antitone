@@ -168,17 +168,19 @@ impl Editor {
     }
 
     pub(super) fn look_render_failure(&self) -> Option<Error> {
-        if self.source
-            || self.pick.is_some()
-            || self.flat_edit.is_some()
-            || self.document.pick_return.is_some()
+        if self.document.source
+            || self.document.picking.kind.is_some()
+            || self.document.flat_edit.is_some()
+            || self.document.picking.return_to.is_some()
             || self.document.analysis_review.is_some()
         {
             return None;
         }
-        let id = self.document.project.output.look.as_ref()?.lut().id();
+        let id = self.document.state.project.output.look.as_ref()?.lut().id();
         if let Some(view) = self
-            .working
+            .document
+            .visit
+            .working_view
             .displayed
             .as_ref()
             .filter(|view| view.processing.look_id() == Some(id))
@@ -187,7 +189,7 @@ impl Editor {
         }
         self.selected_view()?
             .1
-            .image(self.target)
+            .image(self.document.target)
             .ok()?
             .look_failure(id)
     }
@@ -209,9 +211,9 @@ impl Editor {
 
     pub(super) fn clear_look(&mut self) {
         self.retire_look();
-        if self.document.project.output.look.is_some() {
+        if self.document.state.project.output.look.is_some() {
             let before = self.history_snapshot();
-            self.document.project.output.look = None;
+            self.document.state.project.output.look = None;
             self.invalidate_original();
             self.record_edit(before, "Creative look", None);
         }
@@ -234,7 +236,7 @@ impl Editor {
         match result {
             Ok(Some(asset)) => {
                 let before = self.history_snapshot();
-                self.document.project.output.look = Some(asset);
+                self.document.state.project.output.look = Some(asset);
                 self.remember_current_look();
                 self.invalidate_original();
                 self.record_edit(before, "Creative look", None);
@@ -250,25 +252,32 @@ impl Editor {
         let allowed = (!self.busy || self.document.look.is_some())
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
-            && self.flat_edit.is_none()
+            && self.document.flat_edit.is_none()
             && self.document.analysis_review.is_none()
             && self.document.visit.mask_edit.is_none();
         let loaded_names = loaded_names(&self.loaded_looks);
-        let name = self.document.project.output.look.as_ref().map_or_else(
-            || "None".into(),
-            |asset| {
-                if matches!(asset.origin(), LookOrigin::Imported)
-                    && let Some(index) = self
-                        .loaded_looks
-                        .iter()
-                        .position(|entry| entry.lut().id() == asset.lut().id())
-                {
-                    loaded_names[index].clone()
-                } else {
-                    asset_name(asset).to_owned()
-                }
-            },
-        );
+        let name = self
+            .document
+            .state
+            .project
+            .output
+            .look
+            .as_ref()
+            .map_or_else(
+                || "None".into(),
+                |asset| {
+                    if matches!(asset.origin(), LookOrigin::Imported)
+                        && let Some(index) = self
+                            .loaded_looks
+                            .iter()
+                            .position(|entry| entry.lut().id() == asset.lut().id())
+                    {
+                        loaded_names[index].clone()
+                    } else {
+                        asset_name(asset).to_owned()
+                    }
+                },
+            );
         let source = self
             .document
             .project
@@ -276,7 +285,7 @@ impl Editor {
             .look
             .as_deref()
             .and_then(asset_builtin);
-        let changed = self.document.project.output.look.is_some();
+        let changed = self.document.state.project.output.look.is_some();
         let mut choice = None;
         let mut clear = false;
         let mut import = false;
@@ -293,63 +302,69 @@ impl Editor {
                     default_open: Some(true),
                 },
                 |ui| {
-                    let response =
-                        presentation::inspector_dropdown(
-                            ui,
-                            "creative-look",
-                            "Look",
-                            &name,
-                            |ui| {
-                                if ui.selectable_label(!changed, "None").clicked() {
-                                    clear = true;
+                    let response = presentation::inspector_dropdown(
+                        ui,
+                        "creative-look",
+                        "Look",
+                        &name,
+                        |ui| {
+                            if ui.selectable_label(!changed, "None").clicked() {
+                                clear = true;
+                            }
+                            for builtin in Builtin::ALL {
+                                let selected = self
+                                    .document
+                                    .state
+                                    .project
+                                    .output
+                                    .look
+                                    .as_ref()
+                                    .is_some_and(|asset| asset.origin() == &builtin.origin());
+                                if ui
+                                    .selectable_label(selected, builtin.name())
+                                    .on_hover_text(source_note(builtin))
+                                    .clicked()
+                                    && !selected
+                                {
+                                    choice = Some(Source::Builtin(builtin));
                                 }
-                                for builtin in Builtin::ALL {
-                                    let selected =
-                                        self.document.project.output.look.as_ref().is_some_and(
-                                            |asset| asset.origin() == &builtin.origin(),
-                                        );
+                            }
+                            if !self.loaded_looks.is_empty() {
+                                ui.separator();
+                                ui.small("Loaded LUTs");
+                                for (asset, name) in self.loaded_looks.iter().zip(&loaded_names) {
+                                    let selected = self
+                                        .document
+                                        .state
+                                        .project
+                                        .output
+                                        .look
+                                        .as_ref()
+                                        .is_some_and(|current| {
+                                            matches!(current.origin(), LookOrigin::Imported)
+                                                && current.lut().id() == asset.lut().id()
+                                        });
                                     if ui
-                                        .selectable_label(selected, builtin.name())
-                                        .on_hover_text(source_note(builtin))
+                                        .push_id(asset.lut().id(), |ui| {
+                                            ui.selectable_label(selected, name)
+                                        })
+                                        .inner
                                         .clicked()
                                         && !selected
                                     {
-                                        choice = Some(Source::Builtin(builtin));
+                                        choice = Some(Source::Loaded(asset.clone()));
                                     }
                                 }
-                                if !self.loaded_looks.is_empty() {
-                                    ui.separator();
-                                    ui.small("Loaded LUTs");
-                                    for (asset, name) in self.loaded_looks.iter().zip(&loaded_names)
-                                    {
-                                        let selected =
-                                            self.document.project.output.look.as_ref().is_some_and(
-                                                |current| {
-                                                    matches!(current.origin(), LookOrigin::Imported)
-                                                        && current.lut().id() == asset.lut().id()
-                                                },
-                                            );
-                                        if ui
-                                            .push_id(asset.lut().id(), |ui| {
-                                                ui.selectable_label(selected, name)
-                                            })
-                                            .inner
-                                            .clicked()
-                                            && !selected
-                                        {
-                                            choice = Some(Source::Loaded(asset.clone()));
-                                        }
-                                    }
-                                }
-                                ui.separator();
-                                ui.small("ACEScct / AP1 (D60) input and output");
-                                ui.small("No output-rendering or colour-conversion LUTs");
-                                if ui.selectable_label(false, "Load LUT…").clicked() {
-                                    import = true;
-                                    ui.close();
-                                }
-                            },
-                        );
+                            }
+                            ui.separator();
+                            ui.small("ACEScct / AP1 (D60) input and output");
+                            ui.small("No output-rendering or colour-conversion LUTs");
+                            if ui.selectable_label(false, "Load LUT…").clicked() {
+                                import = true;
+                                ui.close();
+                            }
+                        },
+                    );
                     if let Some(builtin) = source {
                         response.response.on_hover_text(source_note(builtin));
                     }

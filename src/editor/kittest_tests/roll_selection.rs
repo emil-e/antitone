@@ -30,13 +30,14 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         harness.get_by_label("Apply").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
-        harness.read(|editor| assert!(editor.correction.is_some(), "{}", editor.status));
-        let ids = harness.read(|editor| editor.document.project.order.clone());
+        harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
+        let ids = harness.read(|editor| editor.document.state.project.order.clone());
         let project_path = directory.path().join("roll.antitone.json");
         harness.update(|e| {
             e.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
             e.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
             e.document
+                .state
                 .project
                 .source_mut(ids[0])
                 .unwrap()
@@ -47,14 +48,14 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 .adjustment
                 .photo
                 .exposure = 0.123456789012345;
-            e.adjustment_layer_settings.exposure = 0.123456789012345;
+            e.document.visit.adjustment_layer_settings.exposure = 0.123456789012345;
             e.sync_document();
             *e.document = e
                 .document
                 .save(&project_path, crate::project::Save::New)
                 .unwrap();
         });
-        let before = harness.read(|editor| editor.document.project.clone());
+        let before = harness.read(|editor| editor.document.state.project.clone());
         let saved_bytes = std::fs::read(&project_path).unwrap();
         harness.get_by_label("photo-2.dng").click();
         harness.step();
@@ -63,12 +64,12 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             .get_by_label("photo-0.dng")
             .click_modifiers(egui::Modifiers::COMMAND);
         harness.step();
-        harness.read(|editor| assert_eq!(editor.current_source, Some(ids[2])));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[2])));
         for (name, active) in [("photo-0.dng", ids[0]), ("photo-2.dng", ids[2])] {
             harness.get_by_label(name).click();
             harness.step();
             wait_for(&mut harness, |e| !e.busy);
-            harness.read(|editor| assert_eq!(editor.current_source, Some(active)));
+            harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(active)));
             for selected in ["photo-0.dng", "photo-2.dng"] {
                 assert_eq!(
                     harness.get_by_label(selected).accesskit_node().toggled(),
@@ -88,17 +89,17 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 });
             }
             let request = harness.read(|editor| editor.id);
-            let viewport = harness.read(|editor| editor.viewport);
+            let viewport = harness.read(|editor| editor.document.visit.viewport);
             harness.key_press_modifiers(
                 egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
                 egui::Key::A,
             );
             harness.step();
-            harness.read(|editor| assert_eq!(editor.current_source, Some(ids[2])));
+            harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[2])));
             harness.read(|editor| {
                 assert_eq!(editor.id, request, "shortcut does not dispatch a reload")
             });
-            harness.read(|editor| assert_eq!(editor.viewport, viewport));
+            harness.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
             assert_eq!(
                 harness
                     .get_by_label("photo-0.dng")
@@ -118,7 +119,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 .click_modifiers(egui::Modifiers::COMMAND);
             harness.step();
         }
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.read(|editor| assert!(!editor.document.dirty()));
         assert_eq!(
             harness
@@ -147,13 +148,13 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         harness.step();
         harness.step();
         request_removal(&mut harness, "photo-2.dng");
-        harness.read(|editor| assert!(editor.removal_pending.is_some()));
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert!(editor.document.removal_pending.is_some()));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.step();
         save_capture(&harness.render().unwrap(), "roll-remove-confirm-offscreen");
         harness.key_press(egui::Key::Escape);
         harness.step();
-        harness.read(|editor| assert!(editor.removal_pending.is_none()));
+        harness.read(|editor| assert!(editor.document.removal_pending.is_none()));
         harness.read(|editor| assert!(!editor.document.dirty()));
         request_removal(&mut harness, "photo-2.dng");
         harness.get_by_label("Remove photos").click();
@@ -167,9 +168,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         expected
             .analysis_regions
             .retain(|entry| entry.source != ids[0] && entry.source != ids[2]);
-        harness.read(|editor| assert_eq!(editor.document.project, expected));
-        harness.read(|editor| assert_eq!(editor.current_source, Some(ids[4])));
-        harness.read(|editor| assert_eq!(editor.selected, 2));
+        harness.read(|editor| assert_eq!(editor.document.state.project, expected));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[4])));
+        harness.read(|editor| assert_eq!(editor.document.selected, 2));
         harness.read(|editor| assert!(editor.document.dirty()));
         assert_eq!(std::fs::read(&project_path).unwrap(), saved_bytes);
         save_existing_project(&mut harness);
@@ -180,7 +181,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             .get_by_label("photo-4.dng")
             .click_modifiers(egui::Modifiers::SHIFT);
         harness.step();
-        harness.read(|editor| assert_eq!(editor.current_source, Some(ids[1])));
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[1])));
         for name in ["photo-1.dng", "photo-3.dng", "photo-4.dng"] {
             assert_eq!(
                 harness.get_by_label(name).accesskit_node().toggled(),
@@ -188,10 +189,13 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             );
         }
         harness.update(|editor| {
-            editor.thumbnails.set_limits(cache_limits::CacheLimits {
-                cpu_bytes: 0,
-                gpu_bytes: 0,
-            })
+            editor
+                .document
+                .thumbnails
+                .set_limits(cache_limits::CacheLimits {
+                    cpu_bytes: 0,
+                    gpu_bytes: 0,
+                })
         });
         harness.read(|editor| assert!(editor.document.cache.protected_bytes() > 0));
         request_removal(&mut harness, "photo-1.dng");
@@ -201,11 +205,14 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         let reference = before.flat_field().unwrap().reference;
         expected.sources.retain(|source| source.id == reference);
         expected.analysis_regions.clear();
-        harness.read(|editor| assert_eq!(editor.document.project, expected));
+        harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         harness.read(|editor| {
-            assert!(editor.document.visit.ready.is_none() && editor.current_source.is_none())
+            assert!(
+                editor.document.visit.ready.is_none()
+                    && editor.document.visit.current_source.is_none()
+            )
         });
-        harness.read(|editor| assert!(editor.correction.is_some()));
+        harness.read(|editor| assert!(editor.document.correction.is_some()));
         wait_for(&mut harness, |e| {
             let charges = e.document.cache.charges();
             charges.retained == 0 && charges.leased_only == 0
@@ -217,18 +224,21 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         wait_for(&mut harness, |e| !e.busy);
         open_project(&mut harness, project_path);
         wait_for(&mut harness, |e| !e.busy);
-        harness.read(|editor| assert_eq!(editor.document.project, expected));
-        harness.read(|editor| assert!(editor.correction.is_some()));
+        harness.read(|editor| assert_eq!(editor.document.state.project, expected));
+        harness.read(|editor| assert!(editor.document.correction.is_some()));
         harness.read(|editor| {
-            assert!(editor.document.visit.ready.is_none() && editor.current_source.is_none())
+            assert!(
+                editor.document.visit.ready.is_none()
+                    && editor.document.visit.current_source.is_none()
+            )
         });
         harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
         wait_for(&mut harness, |e| !e.busy);
-        let new_id = harness.read(|editor| editor.current_source.unwrap());
+        let new_id = harness.read(|editor| editor.document.visit.current_source.unwrap());
         assert_ne!(new_id, ids[0]);
         harness.read(|editor| {
-            assert_eq!(editor.document.project.order, vec![new_id]);
-            let source = editor.document.project.source(new_id).unwrap();
+            assert_eq!(editor.document.state.project.order, vec![new_id]);
+            let source = editor.document.state.project.source(new_id).unwrap();
             assert_eq!(source.path, paths[0]);
             assert_eq!(
                 source.adjustment_layers.as_ref().unwrap().layers[0]
@@ -238,7 +248,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 0.
             );
             assert!(source.repairs.repairs().is_empty());
-            assert_eq!(editor.document.project.sources.len(), 2);
+            assert_eq!(editor.document.state.project.sources.len(), 2);
             assert!(
                 editor
                     .document
@@ -247,7 +257,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                     .unwrap()
                     .reference_only
             );
-            assert_eq!(editor.adjustment_layer_settings.exposure, 0.);
+            assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
         });
         harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
         for (path, bytes) in paths.iter().zip(originals) {
@@ -287,7 +297,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         assert!(harness.ctx.text_edit_focused());
         harness.key_press(egui::Key::Backspace);
         harness.step();
-        harness.read(|editor| assert!(editor.removal_pending.is_none()));
+        harness.read(|editor| assert!(editor.document.removal_pending.is_none()));
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::A,
@@ -303,17 +313,17 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.get_by_label("patches.dng").focus();
         harness.step();
         assert!(harness.get_by_label("patches.dng").is_focused());
-        let before = harness.read(|editor| editor.document.project.clone());
+        let before = harness.read(|editor| editor.document.state.project.clone());
         harness.key_press(egui::Key::Backspace);
         harness.step();
-        harness.read(|editor| assert!(editor.removal_pending.is_some()));
-        let pending = harness.read(|editor| editor.removal_pending.clone());
+        harness.read(|editor| assert!(editor.document.removal_pending.is_some()));
+        let pending = harness.read(|editor| editor.document.removal_pending.clone());
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::A,
         );
         harness.step();
-        harness.read(|editor| assert_eq!(editor.removal_pending, pending));
+        harness.read(|editor| assert_eq!(editor.document.removal_pending, pending));
         assert_eq!(
             harness.get_by_label("other.dng").accesskit_node().toggled(),
             Some(egui::accesskit::Toggled::True)
@@ -322,11 +332,11 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.step();
         harness.read(|editor| {
             assert!(
-                editor.removal_pending.is_none(),
+                editor.document.removal_pending.is_none(),
                 "Cancel is the safe initial action"
             )
         });
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
         // The menu bar is native, so the menu tables carry what a File menu offers.
         let offers_removal = |entries: &[crate::platform::menu::Entry]| {
             entries.iter().any(|entry| matches!(
@@ -347,11 +357,11 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.step();
         harness.read(|editor| {
             assert!(
-                editor.removal_pending.is_some(),
+                editor.document.removal_pending.is_some(),
                 "Delete reopens removal after a cancelled one"
             )
         });
-        let reopened = harness.read(|editor| editor.removal_pending.clone());
+        let reopened = harness.read(|editor| editor.document.removal_pending.clone());
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::A,
@@ -359,7 +369,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.step();
         harness.read(|editor| {
             assert_eq!(
-                editor.removal_pending, reopened,
+                editor.document.removal_pending, reopened,
                 "the dialog owns the shortcut"
             )
         });
@@ -369,7 +379,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         );
         harness.key_press(egui::Key::Escape);
         harness.step();
-        harness.read(|editor| assert!(editor.removal_pending.is_none(), "Escape cancels"));
+        harness.read(|editor| assert!(editor.document.removal_pending.is_none(), "Escape cancels"));
         harness.get_by_label("patches.dng").click_secondary();
         harness.step();
         harness.step();
@@ -382,7 +392,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         save_capture(&harness.render().unwrap(), "roll-remove-context-offscreen");
         harness.get_by_label("Remove selected photos…").click();
         harness.step();
-        harness.read(|editor| assert!(editor.removal_pending.is_some()));
+        harness.read(|editor| assert!(editor.document.removal_pending.is_some()));
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.update(|editor| editor.begin_crop());
@@ -400,8 +410,8 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
             Some(egui::accesskit::Toggled::True),
             "crop draft retains selection"
         );
-        harness.read(|editor| assert!(editor.removal_pending.is_none()));
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert!(editor.document.removal_pending.is_none()));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.set_size(egui::vec2(640., 560.));
@@ -411,7 +421,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         save_capture(&harness.render().unwrap(), "roll-remove-narrow-offscreen");
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.project, before));
+        harness.read(|editor| assert_eq!(editor.document.state.project, before));
     });
 }
 
@@ -429,7 +439,7 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
     editor_harness_with_thumbnails(true, |mut h, _| {
         h.enter(|editor, cx| editor.add_raws(paths, cx));
         wait_for(&mut h, |e| !e.busy);
-        let first = h.read(|e| e.current_source.unwrap());
+        let first = h.read(|e| e.document.visit.current_source.unwrap());
         let crop = crate::crop::Crop::from_region(crate::raw::Rect {
             x: 88,
             y: 148,
@@ -449,7 +459,7 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
         h.update(|e| {
             e.set_dmin(Some(DVec3::splat(0.8)));
             e.set_dmax(Some(DVec3::splat(0.02)));
-            e.crop = Some(crop);
+            e.document.visit.crop = Some(crop);
             e.sync_document();
         });
         h.step();
@@ -459,15 +469,34 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
         h.get_by_label("roll-0.dng").click();
         h.step();
         h.read(|e| {
-            assert_eq!(e.crop, Some(crop));
-            assert_eq!(e.document.project.source(first).unwrap().crop, Some(crop));
-            assert!(e.pending_preview.is_some());
-            assert_eq!(e.pending_preview.as_ref().unwrap().composition.crop(), crop);
+            assert_eq!(e.document.visit.crop, Some(crop));
+            assert_eq!(
+                e.document.state.project.source(first).unwrap().crop,
+                Some(crop)
+            );
+            assert!(e.document.visit.pending_preview.is_some());
+            assert_eq!(
+                e.document
+                    .visit
+                    .pending_preview
+                    .as_ref()
+                    .unwrap()
+                    .composition
+                    .crop(),
+                crop
+            );
         });
         wait_for(&mut h, |e| !e.busy);
         h.read(|e| {
             assert_eq!(
-                e.preview_rendered.as_ref().unwrap().2.composition.crop(),
+                e.document
+                    .visit
+                    .preview_rendered
+                    .as_ref()
+                    .unwrap()
+                    .2
+                    .composition
+                    .crop(),
                 crop
             );
         });

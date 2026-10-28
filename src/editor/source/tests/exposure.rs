@@ -36,7 +36,7 @@ fn digital_acquisition_resolves_before_ready_reuses_native_work_and_leaves_other
         path: first.path().to_owned(),
         wb: Some(first_record.development.decode.fixed_wb),
         expected: Some(document.project.source(first_id).unwrap().clone()),
-        cache: Some(document.cache.clone()),
+        sources: Some(scheduler.provider(Some(document.cache.clone()))),
         correction: None,
     };
     let developed = request(&document).load(&scheduler, &|| false).unwrap();
@@ -119,15 +119,15 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
     let first = preview_fixture::neutral_dng(0.3);
     let second = preview_fixture::neutral_dng(2.25);
     let mut editor = Editor::state();
-    editor.input = InputSettings::Digital;
-    editor.document.project.input = InputSettings::Digital;
+    editor.document.input = InputSettings::Digital;
+    editor.document.state.project.input = InputSettings::Digital;
     editor
         .document
         .import(&[first.path().to_owned(), second.path().to_owned()])
         .unwrap();
-    editor.current_source = Some(editor.document.project.order[0]);
-    let id = editor.document.project.order[1];
-    let expected = editor.document.project.source(id).unwrap().clone();
+    editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
+    let id = editor.document.state.project.order[1];
+    let expected = editor.document.state.project.source(id).unwrap().clone();
     Request {
         reference: editor
             .document
@@ -136,7 +136,9 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
         input: InputSettings::Digital,
         path: second.path().to_owned(),
         wb: Some(expected.development.decode.fixed_wb),
-        cache: Some(editor.document.cache.clone()),
+        sources: Some(
+            source_loading::SourceLoader::new().provider(Some(editor.document.cache.clone())),
+        ),
         expected: Some(expected),
         correction: None,
     }
@@ -153,8 +155,8 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
         adapter.request_device(&Default::default()).await.unwrap()
     });
     editor.initialize_viewer(&device, &queue);
-    editor.roll.exposure = 16.;
-    editor.document.project.roll = editor.roll;
+    editor.document.roll.exposure = 16.;
+    editor.document.state.project.roll = editor.document.roll;
     let mut locals = crate::project::AdjustmentLayers::default();
     for exposure in [16., 16., 16., 16., 16., 4.] {
         locals
@@ -185,7 +187,7 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
     editor
         .validate_document_candidate(&editor.document)
         .expect("accepted controls must fit with the known baseline");
-    let mut offscreen = editor.document.project.source(id).unwrap().clone();
+    let mut offscreen = editor.document.state.project.source(id).unwrap().clone();
     offscreen
         .adjustment_layers
         .as_mut()
@@ -205,7 +207,7 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
     crate::editor::processing::validate_source(
         Some(&device),
         InputSettings::Digital,
-        editor.roll,
+        editor.document.roll,
         &offscreen,
     )
     .expect("the zero-start control must fit; only the known baseline makes this stack unsafe");
@@ -215,12 +217,12 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
         .unwrap();
     let native = glam::DMat3::from_cols_array_2d(&offscreen.development.camera_to_ap1);
     assert!(((normalized.x_axis.length() / native.x_axis.length()).log2() - 2.25).abs() < 0.03);
-    let before = editor.document.project.clone();
+    let before = editor.document.state.project.clone();
     assert!(editor.validate_source_candidate(&offscreen).is_err());
     let mut candidate = editor.document.clone();
     candidate.project.source_mut(id).unwrap().adjustment_layers = offscreen.adjustment_layers;
     assert!(editor.validate_document_candidate(&candidate).is_err());
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.state.project, before);
     assert!(editor.document.visit.ready.is_none());
 }
 

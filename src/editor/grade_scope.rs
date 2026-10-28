@@ -3,12 +3,12 @@ mod tests;
 
 use super::{ProcessingInput, ProcessingSignature};
 
-/// Active photographic content and its purpose-bound original reconstruction.
-/// Published images and reusable constants are retained by their presenters/caches,
-/// not by a departed continuation. Target, look and view are output demands.
+/// Active photographic content and its original-reconstruction state and continuation.
+/// Target, look and view changes supersede output demands within this owner.
 #[derive(Default)]
 pub(super) struct GradeScope {
     processing: Option<ProcessingSignature>,
+    pub original: super::OriginalView,
     pub task: Option<async_executor::Task<()>>,
 }
 
@@ -38,7 +38,6 @@ impl GradeScope {
 impl super::Editor {
     pub(super) fn observe_grade(&mut self, input: &ProcessingInput) {
         if !self.document.visit.grade.matches(input) {
-            self.invalidate_original();
             self.document.visit.grade = GradeScope::new(input);
         }
     }

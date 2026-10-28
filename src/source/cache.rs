@@ -7,7 +7,7 @@ use crate::{
 };
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{Arc, Mutex, Weak},
 };
 
 /// Optional retained ownership and evicted-but-leased storage, not process footprint.
@@ -113,15 +113,6 @@ impl KeyRef<'_> {
     }
 }
 
-impl ResourceKey {
-    fn as_ref(&self) -> KeyRef<'_> {
-        match self {
-            Self::Source(key) => KeyRef::Source(key),
-            Self::Preview(file) => KeyRef::Preview(file),
-        }
-    }
-}
-
 struct Entry {
     key: ResourceKey,
     resource: Borrowed,
@@ -134,7 +125,6 @@ struct State {
     protected: Vec<SourceKey>,
     budget: u64,
     bytes: u64,
-    closed: bool,
 }
 
 impl State {
@@ -202,42 +192,28 @@ impl State {
     }
 }
 
-type PreviewResult = Result<Option<Arc<Preview>>, String>;
-type PreviewFlight = OnceLock<PreviewResult>;
-type PreviewLease = (FileKey, Weak<PreviewFlight>, Weak<Preview>);
-
-/// Document-scoped optional physical pixel retention. Active leases survive eviction/closure.
+/// Document-scoped optional physical pixel retention. Active leases survive its destruction.
 pub struct SourceCache {
     state: Mutex<State>,
-    preview_flights: Mutex<Vec<PreviewLease>>,
 }
 
 impl SourceCache {
     pub fn new(budget: u64) -> Self {
         Self {
-            preview_flights: Mutex::new(Vec::new()),
-
             state: Mutex::new(State {
                 entries: VecDeque::new(),
                 protected: Vec::new(),
                 budget,
                 bytes: 0,
-                closed: false,
             }),
         }
     }
-
-    // Interpretation can reuse captured storage even after optional reuse closes;
-    // independent export still owns its source lease and canonical reference.
 
     fn get_resource(&self, key: KeyRef<'_>, kind: Kind) -> Option<Owned> {
         let mut removed = Vec::new();
         let result = {
             let mut state = self.state.lock().unwrap();
             state.prune();
-            if state.closed {
-                return None;
-            }
             let index = state
                 .entries
                 .iter()
@@ -269,78 +245,40 @@ impl SourceCache {
         }
     }
 
-    /// Worker-only preview acquisition: extraction/decoding is single-flight, and decoded
-    /// data competes with native/proxy ownership in this store's byte budget.
-    pub(crate) fn preview(
+    #[cfg(all(feature = "editor", test))]
+    pub(crate) async fn preview(
         &self,
-        file: &FileKey,
-        load: impl FnOnce() -> PreviewResult,
-    ) -> PreviewResult {
-        let key = ResourceKey::Preview(file.clone());
-
-        if let Some(Owned::Preview(preview)) = self.get_resource(key.as_ref(), Kind::Preview) {
+        loader: &super::PreviewLoader,
+        file: FileKey,
+        read: impl FnOnce() -> super::PreviewResult + Send + 'static,
+    ) -> super::PreviewResult {
+        if let Some(preview) = self.get_preview(&file) {
             return Ok(Some(preview));
         }
-        let flight = {
-            let mut flights = self.preview_flights.lock().unwrap();
-            flights.retain(|(_, flight, ready)| {
-                flight.strong_count() != 0 || ready.strong_count() != 0
-            });
-            match flights
-                .iter()
-                .find(|(key, _, _)| key == file)
-                .and_then(|(_, weak, ready)| {
-                    weak.upgrade().or_else(|| {
-                        ready
-                            .upgrade()
-                            .map(|preview| Arc::new(OnceLock::from(Ok(Some(preview)))))
-                    })
-                }) {
-                Some(flight) => flight,
-                None => {
-                    let flight = Arc::new(OnceLock::new());
-                    if let Some((_, pending, _)) =
-                        flights.iter_mut().find(|(key, _, _)| key == file)
-                    {
-                        *pending = Arc::downgrade(&flight);
-                    } else {
-                        flights.push((file.clone(), Arc::downgrade(&flight), Weak::new()));
-                    }
-                    flight
-                }
-            }
-        };
-        let result = flight
-            .get_or_init(|| {
-                // Another producer may have completed between the first lookup and flight admission.
-                if let Some(Owned::Preview(preview)) =
-                    self.get_resource(key.as_ref(), Kind::Preview)
-                {
-                    Ok(Some(preview))
-                } else {
-                    load()
-                }
-            })
-            .clone()?;
-
-        if let Some(preview) = &result {
-            if let Some((_, _, ready)) = self
-                .preview_flights
-                .lock()
-                .unwrap()
-                .iter_mut()
-                .find(|(key, _, _)| key == file)
-            {
-                *ready = Arc::downgrade(preview);
-            }
-            self.publish_resource(
-                key,
-                Owned::Preview(preview.clone()),
-                preview.retained_bytes(),
-            )
-            .map_err(|e| e.to_string())?;
+        let result = loader.load(file.clone(), read).await;
+        if let Ok(Some(preview)) = &result
+            && let Err(error) = self.publish_preview(file, preview.clone())
+        {
+            log::warn!(error = error.to_string().as_str(); "preview_cache_publication_failed");
         }
-        Ok(result)
+        result
+    }
+
+    pub(crate) fn get_preview(&self, file: &FileKey) -> Option<Arc<Preview>> {
+        match self.get_resource(KeyRef::Preview(file), Kind::Preview)? {
+            Owned::Preview(preview) => Some(preview),
+            _ => unreachable!(),
+        }
+    }
+
+    pub(crate) fn publish_preview(
+        &self,
+        file: FileKey,
+        preview: Arc<Preview>,
+    ) -> Result<(), Error> {
+        let bytes = preview.retained_bytes();
+        self.publish_resource(ResourceKey::Preview(file), Owned::Preview(preview), bytes)?;
+        Ok(())
     }
 
     /// Unavailable allocation accounting disables admission, not authoritative processing.
@@ -362,7 +300,7 @@ impl SourceCache {
     }
 
     /// Explicit nonzero source charges support callers/tests with their own accounting boundary.
-    /// Duplicate completion returns the existing lease; None means stale/closed.
+    /// Duplicate completion returns the existing lease.
     pub fn publish(
         &self,
         key: SourceKey,
@@ -423,9 +361,6 @@ impl SourceCache {
         let result = {
             let mut state = self.state.lock().unwrap();
             state.prune();
-            if state.closed {
-                return Ok(None);
-            }
             let index = state
                 .entries
                 .iter()
@@ -513,16 +448,10 @@ impl SourceCache {
         let mut removed = Vec::new();
         {
             let mut state = self.state.lock().unwrap();
-            if !state.closed {
-                state.protected = keys;
-            }
+            state.protected = keys;
             state.trim(&mut removed);
         }
         drop(removed);
-    }
-
-    pub fn is_closed(&self) -> bool {
-        self.state.lock().unwrap().closed
     }
 
     #[cfg(all(test, feature = "editor"))]
@@ -537,12 +466,11 @@ impl SourceCache {
 
     pub fn can_retain(&self, extra: u64) -> bool {
         let state = self.state.lock().unwrap();
-        !state.closed
-            && state
-                .charges()
-                .retained
-                .checked_add(extra)
-                .is_some_and(|bytes| bytes <= state.budget)
+        state
+            .charges()
+            .retained
+            .checked_add(extra)
+            .is_some_and(|bytes| bytes <= state.budget)
     }
 
     pub fn charges(&self) -> Charges {
@@ -553,36 +481,6 @@ impl SourceCache {
 
     pub fn protected_bytes(&self) -> u64 {
         self.state.lock().unwrap().protected_bytes()
-    }
-
-    pub fn close(&self) {
-        let mut removed = Vec::new();
-        {
-            let mut state = self.state.lock().unwrap();
-            state.closed = true;
-            state.protected.clear();
-            state.budget = 0;
-            state.trim(&mut removed);
-        }
-
-        drop(removed);
-    }
-}
-
-#[cfg(feature = "editor")]
-impl SourceCache {
-    /// Cache closure ends reuse/publication, not an independent load’s authority.
-    pub async fn load_source(
-        &self,
-        provider: &impl super::SourceProvider,
-        key: SourceKey,
-        priority: super::Priority,
-    ) -> Result<Arc<DevelopedSource>, Error> {
-        if let Some(source) = self.get(&key) {
-            return Ok(source);
-        }
-        let source = provider.load_source(key.clone(), priority).await?;
-        Ok(self.publish_source(key, source.clone())?.unwrap_or(source))
     }
 }
 

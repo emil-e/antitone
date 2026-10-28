@@ -37,7 +37,7 @@ fn round_trip(mut editor: Editor, before: &Project, after: &Project) -> Editor {
             assert!(e.busy && e.document_pending.is_some(), "undo must start");
         },
     );
-    assert_eq!(&editor.document.project, before, "{}", editor.status);
+    assert_eq!(&editor.document.state.project, before, "{}", editor.status);
     editor = crate::editor::tests::complete_document_operation(
         editor,
         Duration::from_secs(60),
@@ -46,7 +46,7 @@ fn round_trip(mut editor: Editor, before: &Project, after: &Project) -> Editor {
             assert!(e.busy && e.document_pending.is_some(), "redo must start");
         },
     );
-    assert_eq!(&editor.document.project, after, "{}", editor.status);
+    assert_eq!(&editor.document.state.project, after, "{}", editor.status);
     editor
 }
 
@@ -61,7 +61,8 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
         .expect("history worker test requires Metal");
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let mut editor = Editor::new(&device, &queue);
-    editor.thumbnails = Thumbnails::default();
+    editor.document.thumbnails =
+        (Thumbnails::default()).with_sources(editor.document.cache.clone());
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
     let empty = editor.history_snapshot();
     editor = crate::editor::tests::complete_document_operation(
@@ -70,31 +71,31 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
         |editor, cx| editor.add_raws(vec![root.join("roll-0.dng"), root.join("roll-1.dng")], cx),
     );
     assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
-    let imported = editor.document.project.clone();
+    let imported = editor.document.state.project.clone();
     editor = round_trip(editor, &empty, &imported);
     assert!(editor.document.visit.ready.is_some());
     // Calibration is fixture setup; accepted picks have independent controller coverage.
     editor.set_dmin(Some(DVec3::splat(0.2)));
     editor.set_dmax(Some(DVec3::splat(0.005)));
-    editor.source = false;
+    editor.document.source = false;
     editor.tab = 1;
     let before_crop = editor.history_snapshot();
     editor.begin_crop();
     editor.document.visit.crop_edit.as_mut().unwrap().draft.size = [256, 256];
     editor.finish_crop(false);
     assert_eq!(
-        editor.document.project, before_crop,
+        editor.document.state.project, before_crop,
         "cancelled crops are not edits"
     );
     editor.begin_crop();
     editor.document.visit.crop_edit.as_mut().unwrap().draft.size = [256, 256];
     editor.finish_crop(true);
-    let cropped = editor.document.project.clone();
+    let cropped = editor.document.state.project.clone();
     editor = round_trip(editor, &before_crop, &cropped);
 
     editor.begin_dust_cleanup();
     let active = editor.document.visit.ready.as_ref().unwrap().area;
-    let geometry = editor.viewport.layout_composition(
+    let geometry = editor.document.visit.viewport.layout_composition(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
         Composition::new(active, Default::default(), Default::default()).unwrap(),
         1.,
@@ -106,10 +107,13 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
         geometry.screen_point(egui::pos2(200., 200.)),
         false,
     );
-    assert_eq!(editor.document.project, cropped, "painting is a draft");
+    assert_eq!(
+        editor.document.state.project, cropped,
+        "painting is a draft"
+    );
     editor.commit_dust_mask();
     assert_eq!(
-        editor.document.project, cropped,
+        editor.document.state.project, cropped,
         "search is still a proposal"
     );
     let owner = std::cell::RefCell::new(Some(editor));
@@ -117,21 +121,21 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
         app.enter(|e, cx| e.start_dust_searches(cx));
         app.run_until(Duration::from_secs(30), |e| {
-            !e.dust_search_pending() && e.document.dust.pending_request().is_none()
+            !e.dust_search_pending() && e.document.visit.dust.pending_request().is_none()
         });
         app.close_execution();
     }
     let mut editor = owner.into_inner().unwrap();
-    let repaired = editor.document.project.clone();
-    let id = editor.current_source.unwrap();
+    let repaired = editor.document.state.project.clone();
+    let id = editor.document.visit.current_source.unwrap();
     assert_eq!(repaired.source(id).unwrap().repairs.repairs().len(), 1);
     editor = round_trip(editor, &cropped, &repaired);
     assert!(
-        editor.document.dust.cleanup,
+        editor.document.visit.dust.cleanup,
         "undo/redo between strokes must keep the tool usable"
     );
     editor.delete_selected_dust_repair();
-    let deleted = editor.document.project.clone();
+    let deleted = editor.document.state.project.clone();
     assert!(deleted.source(id).unwrap().repairs.repairs().is_empty());
     editor = round_trip(editor, &repaired, &deleted);
     editor.finish_dust_cleanup();
@@ -154,7 +158,7 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
             Ok(())
         })
         .unwrap();
-    let local = editor.document.project.clone();
+    let local = editor.document.state.project.clone();
     editor = round_trip(editor, &deleted, &local);
     assert_eq!(
         editor
@@ -170,7 +174,7 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
         2
     );
 
-    editor.document.project.analysis_area = Some([96, 96, 320, 320]);
+    editor.document.state.project.analysis_area = Some([96, 96, 320, 320]);
     let before_analysis = editor.history_snapshot();
     editor = crate::editor::tests::complete_analysis_operation(
         editor,
@@ -178,7 +182,7 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
         |editor, cx| editor.begin_analysis(cx),
     );
     assert!(editor.status.starts_with("Analyzed"), "{}", editor.status);
-    let analyzed = editor.document.project.clone();
+    let analyzed = editor.document.state.project.clone();
     assert_ne!(analyzed, before_analysis);
     drop(round_trip(editor, &before_analysis, &analyzed));
 }
@@ -247,24 +251,27 @@ fn accept_history(editor: Editor, direction: Direction) -> Editor {
 fn accepted_history_restores_exact_settings_and_activates_the_edited_photo_without_rewinding_navigation()
  {
     let mut editor = controller();
-    let ids = editor.document.project.order.clone();
+    let ids = editor.document.state.project.order.clone();
     let before = editor.history_snapshot();
-    editor.adjustment_layer_settings.exposure = 7.123456789012345;
+    editor.document.visit.adjustment_layer_settings.exposure = 7.123456789012345;
     editor.record_edit(before.clone(), "Photo exposure", Some(ids[0]));
-    let after = editor.document.project.clone();
-    editor.current_source = Some(ids[1]);
-    editor.adjustment_layer_settings = AdjustmentLayerSettings::default();
-    editor.viewport.zoom = Some(1.75);
-    let viewport = editor.viewport;
+    let after = editor.document.state.project.clone();
+    editor.document.visit.current_source = Some(ids[1]);
+    editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings::default();
+    editor.document.visit.viewport.zoom = Some(1.75);
+    let viewport = editor.document.visit.viewport;
     editor = accept_history(editor, Direction::Undo);
-    assert_eq!(editor.document.project, before);
-    assert_eq!(editor.current_source, Some(ids[0]));
-    assert_eq!(editor.adjustment_layer_settings.exposure, 0.);
-    assert_eq!(editor.viewport, viewport);
+    assert_eq!(editor.document.state.project, before);
+    assert_eq!(editor.document.visit.current_source, Some(ids[0]));
+    assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
+    assert_eq!(editor.document.visit.viewport, viewport);
     editor = accept_history(editor, Direction::Redo);
-    assert_eq!(editor.document.project, after);
-    assert_eq!(editor.adjustment_layer_settings.exposure, 7.123456789012345);
-    assert_eq!(editor.viewport, viewport);
+    assert_eq!(editor.document.state.project, after);
+    assert_eq!(
+        editor.document.visit.adjustment_layer_settings.exposure,
+        7.123456789012345
+    );
+    assert_eq!(editor.document.visit.viewport, viewport);
 }
 
 #[test]
@@ -319,8 +326,8 @@ fn save_as_rebases_both_sides_of_history_and_preserves_the_written_dirty_baselin
     let mut editor = controller();
     editor.document.path = Some(old.clone());
     let before = editor.history_snapshot();
-    editor.adjustment_layer_settings.exposure = 1.;
-    editor.record_edit(before, "Exposure", editor.current_source);
+    editor.document.visit.adjustment_layer_settings.exposure = 1.;
+    editor.record_edit(before, "Exposure", editor.document.visit.current_source);
     let saved = editor.document.save(&new, crate::project::Save::New);
     // The destination directory is intentionally absent: ordinary failed writes do not
     // rebase either history or the live document.
@@ -338,7 +345,7 @@ fn save_as_rebases_both_sides_of_history_and_preserves_the_written_dirty_baselin
         |e, cx| e.save_project(new.clone(), crate::project::Save::Replace, None, cx),
     );
     assert!(!editor.document.dirty());
-    let source = editor.current_source.unwrap();
+    let source = editor.document.visit.current_source.unwrap();
     let locator = editor.document.source_path(source).unwrap();
     editor = accept_history(editor, Direction::Undo);
     assert!(editor.document.dirty());
@@ -346,7 +353,7 @@ fn save_as_rebases_both_sides_of_history_and_preserves_the_written_dirty_baselin
     assert_eq!(editor.document.source_path(source).unwrap(), locator);
     editor = accept_history(editor, Direction::Redo);
     assert!(!editor.document.dirty());
-    assert_eq!(editor.document.project, baseline);
+    assert_eq!(editor.document.state.project, baseline);
     assert_eq!(editor.document.history.undo.len(), 1);
 }
 
@@ -365,18 +372,18 @@ fn save_completion_baselines_only_the_written_snapshot_and_undo_can_return_to_it
         |e, cx| {
             e.save_project(path, crate::project::Save::Replace, None, cx);
             let before = e.history_snapshot();
-            e.roll.exposure = 0.375;
+            e.document.roll.exposure = 0.375;
             e.record_edit(before, "Roll exposure", None);
         },
     );
     assert_eq!(written.project.roll.exposure, 0.);
     assert!(editor.document.dirty());
-    assert_eq!(editor.roll.exposure, 0.375);
+    assert_eq!(editor.document.roll.exposure, 0.375);
     editor = accept_history(editor, Direction::Undo);
     assert!(!editor.document.dirty());
     editor = accept_history(editor, Direction::Redo);
     assert!(editor.document.dirty());
-    assert_eq!(editor.roll.exposure, 0.375);
+    assert_eq!(editor.document.roll.exposure, 0.375);
 }
 
 #[test]
@@ -389,29 +396,29 @@ fn accepted_calibration_is_one_entry_and_an_invalid_pick_preserves_redo() {
         Ok(Measurement::Reference(DVec3::splat(0.25))),
         &crate::application::UiContext::render_only(),
     );
-    let picked = editor.document.project.clone();
+    let picked = editor.document.state.project.clone();
     assert_ne!(picked, before);
     assert_eq!(editor.document.history.undo.len(), 1);
     editor = accept_history(editor, Direction::Undo);
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.state.project, before);
     editor.measurement_result(
         editor.document.visit.view,
         Pick::Dmin,
         Ok(Measurement::Reference(DVec3::splat(0.0001))),
         &crate::application::UiContext::render_only(),
     );
-    assert_eq!(editor.document.project, before);
+    assert_eq!(editor.document.state.project, before);
     assert!(editor.document.history.undo.is_empty());
     assert_eq!(editor.document.history.redo.len(), 1);
     editor = accept_history(editor, Direction::Redo);
-    assert_eq!(editor.document.project, picked);
+    assert_eq!(editor.document.state.project, picked);
 }
 
 #[test]
 fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() {
     let mut editor = controller();
     let before = editor.history_snapshot();
-    editor.roll.exposure = 0.5;
+    editor.document.roll.exposure = 0.5;
     editor.record_edit(before, "Roll exposure", None);
     editor = crate::editor::tests::complete_document_operation(
         editor,
@@ -422,7 +429,7 @@ fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() 
         },
     );
     assert_eq!(editor.document.history.undo.len(), 1);
-    assert_eq!(editor.roll.exposure, 0.5);
+    assert_eq!(editor.document.roll.exposure, 0.5);
     editor = crate::editor::tests::complete_document_operation(
         editor,
         Duration::from_secs(60),
@@ -443,7 +450,7 @@ fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() 
 
 fn finish_controls(editor: &mut Editor) {
     let context = egui::Context::default();
-    let photo = editor.current_source;
+    let photo = editor.document.visit.current_source;
     let mut output = context.run_ui(Default::default(), |ui| editor.record_controls(photo, ui));
     output.textures_delta.clear();
 }
@@ -478,7 +485,7 @@ fn unchanged_control_passes_do_not_clone_projects_and_local_edits_capture_their_
     assert!(
         editor.document.history.undo[0]
             .after
-            .source(editor.current_source.unwrap())
+            .source(editor.document.visit.current_source.unwrap())
             .unwrap()
             .adjustment_layers
             .is_some()
@@ -497,7 +504,7 @@ fn scalar_control_edits_materialize_exact_before_and_after_projects_only_after_a
     let original = editor.history_snapshot();
     editor.history_snapshot_clones = 0;
     editor.begin_control_history("Photo settings");
-    editor.adjustment_layer_settings.exposure = 7.123456789012345;
+    editor.document.visit.adjustment_layer_settings.exposure = 7.123456789012345;
     assert_eq!(
         editor.history_snapshot_clones, 0,
         "capture contains only small control values"
@@ -505,7 +512,7 @@ fn scalar_control_edits_materialize_exact_before_and_after_projects_only_after_a
     finish_controls(&mut editor);
     assert_eq!(editor.history_snapshot_clones, 2);
     assert_eq!(editor.document.history.undo[0].before, original);
-    let source = editor.current_source.unwrap();
+    let source = editor.document.visit.current_source.unwrap();
     assert_eq!(
         editor.document.history.undo[0]
             .after
@@ -536,32 +543,42 @@ fn film_emulation_controls_are_saved_dirty_and_undoable_rendering_state() {
     editor.document.accept_save(saved);
     let before = editor.history_snapshot();
     editor.begin_control_history("Rendering settings");
-    editor.film_emulation = FilmEmulationPreset::Fine.settings();
+    editor.document.film_emulation = FilmEmulationPreset::Fine.settings();
     finish_controls(&mut editor);
     assert!(editor.document.dirty());
     let entry = &editor.document.history.undo[0];
     assert_eq!(entry.before, before);
-    assert_eq!(entry.after.output.film_emulation, editor.film_emulation);
+    assert_eq!(
+        entry.after.output.film_emulation,
+        editor.document.film_emulation
+    );
     let written = serde_json::to_string(&entry.after).unwrap();
     let reopened: Project = serde_json::from_str(&written).unwrap();
-    assert_eq!(reopened.output.film_emulation, editor.film_emulation);
+    assert_eq!(
+        reopened.output.film_emulation,
+        editor.document.film_emulation
+    );
     editor = accept_history(editor, Direction::Undo);
-    assert_eq!(editor.film_emulation, before.output.film_emulation);
+    assert_eq!(editor.document.film_emulation, before.output.film_emulation);
     assert!(!editor.document.dirty());
     editor = accept_history(editor, Direction::Redo);
-    assert_eq!(editor.film_emulation, FilmEmulationPreset::Fine.settings());
+    assert_eq!(
+        editor.document.film_emulation,
+        FilmEmulationPreset::Fine.settings()
+    );
 }
 
 #[test]
 fn busy_decisions_and_drafts_cannot_dispatch_document_history() {
     let mut editor = controller();
     let before = editor.history_snapshot();
-    editor.roll.exposure = 1.;
+    editor.document.roll.exposure = 1.;
     editor.record_edit(before, "Exposure", None);
     for blocked in 0..4 {
         editor.busy = blocked == 0;
-        editor.pick = (blocked == 1).then_some(Pick::Dmin);
-        editor.removal_pending = (blocked == 2).then_some(vec![editor.current_source.unwrap()]);
+        editor.document.picking.kind = (blocked == 1).then_some(Pick::Dmin);
+        editor.document.removal_pending =
+            (blocked == 2).then_some(vec![editor.document.visit.current_source.unwrap()]);
         editor.transition = (blocked == 3).then_some(Transition::New);
         editor.restore_history(Direction::Undo, &UiContext::render_only());
         assert!(editor.document_pending.is_none());
@@ -573,18 +590,18 @@ fn busy_decisions_and_drafts_cannot_dispatch_document_history() {
 fn failed_and_stale_restoration_preserve_state_and_history_until_acceptance() {
     let mut editor = crate::editor::tests::fixture();
     let before = editor.history_snapshot();
-    editor.roll.exposure = 1.;
+    editor.document.roll.exposure = 1.;
     editor.record_edit(before, "Exposure", None);
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.restore_history(Direction::Undo, cx);
             let request = editor.document_pending.unwrap();
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             editor.document_prepared(request + 1, Err("stale".into()));
             assert_eq!(editor.document_pending, Some(request));
             editor.document_prepared(request, Err("missing RAW".into()));
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.document.history.undo.len(), 1);
             assert!(editor.document.history.redo.is_empty());
             assert!(!editor.busy);

@@ -43,7 +43,7 @@ fn observed() -> (source_loading::SourceLoader, Arc<AtomicUsize>) {
 fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_consumers_edits() {
     let (scheduler, starts) = observed();
     let editor = fixture(scheduler.clone());
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     let dirty = editor.document.dirty();
     let undo = editor.history_label(history::Direction::Undo);
     with_application(editor, |app| {
@@ -55,7 +55,7 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
             assert!(editor.document.analysis_preparing.is_none());
             assert!(editor.document.analysis_pending.is_none());
             assert!(editor.document.analysis_review.is_none());
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.document.dirty(), dirty);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
             let regions = editor.document.spatial.ready();
@@ -87,7 +87,7 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.read(|editor| {
             assert_eq!(*editor.document.spatial.ready(), *regions);
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert!(
                 editor.document.auto_crop_edit.is_some(),
                 "{}",
@@ -114,7 +114,7 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
                 editor.status
             );
             assert_eq!(*editor.document.spatial.ready(), *regions);
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
         });
     });
@@ -125,7 +125,7 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
 fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses_them() {
     let (scheduler, starts) = observed();
     let editor = fixture(scheduler.clone());
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     let undo = editor.history_label(history::Direction::Undo);
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_analysis(cx));
@@ -139,7 +139,7 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
                 "{}",
                 editor.status
             );
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
             assert_eq!(
                 editor
@@ -162,7 +162,7 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.read(|editor| {
             assert_eq!(*editor.document.spatial.ready(), *regions);
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert!(
                 editor.document.auto_crop_edit.is_some(),
                 "{}",
@@ -179,7 +179,7 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
 fn queued_shared_preparation_cancels_without_native_work_or_accepted_changes() {
     let (scheduler, starts) = observed();
     let editor = fixture(scheduler.clone());
-    let accepted = editor.document.project.clone();
+    let accepted = editor.document.state.project.clone();
     let admission = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_analysis(cx));
@@ -191,7 +191,7 @@ fn queued_shared_preparation_cancels_without_native_work_or_accepted_changes() {
             assert!(editor.document.analysis_preparing.is_none());
             assert!(editor.document.analysis_review.is_none());
             assert!(!editor.busy);
-            assert_eq!(editor.document.project, accepted);
+            assert_eq!(editor.document.state.project, accepted);
             assert!(editor.tasks.view().is_none());
         });
         assert_eq!(starts.load(Ordering::SeqCst), 0);
@@ -289,13 +289,13 @@ fn document_retirement_cancels_publication_without_blocking_unrelated_cpu_work()
                     .unwrap()
                     .cancelled
                     .clone(),
-                editor.document.cache.clone(),
+                Arc::downgrade(&editor.document.cache),
             )
         });
         app.update(|editor| editor.document = Document::default().into());
         app.pump();
         assert!(cancelled.is_cancelled());
-        assert!(snapshot.is_closed());
+        assert!(snapshot.upgrade().is_none());
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
@@ -341,4 +341,112 @@ fn application_retirement_cancels_shared_continuation_before_native_cleanup_retu
         release.send(()).unwrap();
     });
     scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn retiring_a_photo_discards_its_crop_consumer_but_keeps_shared_regions_for_the_document() {
+    let (scheduler, starts, release) = paused();
+    let editor = fixture(scheduler.clone());
+    // Declared geometry isolates continuation ownership from blind detector abstentions.
+    let metadata = consumers::declared(&editor);
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.begin_crop();
+            assert!(editor.document.visit.crop_edit.is_some());
+            editor.request_auto_crop(auto_crop::Target::Photo, cx);
+        });
+        await_native(app, &starts);
+        let request = app.read(|editor| editor.document.spatial_preparing.as_ref().unwrap().id);
+        let replacement_draft = app.update(|editor| {
+            let ready = editor.document.visit.ready.clone().unwrap();
+            let visit = editor.request_id();
+            editor.replace_photo_scope(visit);
+            assert!(editor.document.spatial_preparing.is_some());
+            editor.document.visit.ready = Some(ready);
+            editor.busy = false;
+            editor.begin_crop();
+            editor.busy = true;
+            let draft = &mut editor.document.visit.crop_edit.as_mut().unwrap().draft;
+            draft.size = [17, 19];
+            *draft
+        });
+        app.enter(|editor, cx| editor.spatial_result(request, Ok(Some(metadata)), cx));
+        release.send(()).unwrap();
+        app.update(|editor| {
+            assert!(!editor.document.spatial.ready().groups.is_empty());
+            assert_eq!(
+                editor.document.visit.crop_edit.as_ref().unwrap().draft,
+                replacement_draft,
+                "a departed consumer retargeted the replacement visit's draft"
+            );
+            editor.auto_crop_sources(
+                auto_crop::Target::Photo,
+                vec![editor.document.visit.current_source.unwrap()],
+            );
+            assert_ne!(
+                editor.document.visit.crop_edit.as_ref().unwrap().draft,
+                replacement_draft,
+                "the control must provide a usable proposal, not merely an unavailable no-op"
+            );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn failed_or_rejected_photo_region_preparation_can_retry_in_the_same_crop_visit() {
+    for rejected_publication in [false, true] {
+        let (scheduler, starts, release) = paused();
+        let editor = fixture(scheduler.clone());
+        let metadata = consumers::declared(&editor);
+        with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                editor.begin_crop();
+                editor.request_auto_crop(auto_crop::Target::Photo, cx);
+            });
+            await_native(app, &starts);
+            let (first, visit, before) = app.read(|editor| {
+                (
+                    editor.document.spatial_preparing.as_ref().unwrap().id,
+                    editor.document.visit.view,
+                    editor.document.visit.crop_edit.as_ref().unwrap().draft,
+                )
+            });
+            app.enter(|editor, cx| {
+                if rejected_publication {
+                    editor.document.spatial.cancel();
+                    editor.spatial_result(first, Ok(Some(metadata.clone())), cx);
+                } else {
+                    editor.spatial_result(
+                        first,
+                        Err("authored region preparation failure".into()),
+                        cx,
+                    );
+                }
+                assert!(editor.document.spatial_preparing.is_none());
+                assert_eq!(
+                    editor.document.visit.crop_edit.as_ref().unwrap().draft,
+                    before
+                );
+                editor.request_auto_crop(auto_crop::Target::Photo, cx);
+                let retry = editor
+                    .document
+                    .spatial_preparing
+                    .as_ref()
+                    .expect("a terminal failure stranded the crop consumer and blocked retry")
+                    .id;
+                assert_ne!(retry, first);
+                assert_eq!(editor.document.visit.view, visit);
+                editor.spatial_result(retry, Ok(Some(metadata.clone())), cx);
+                assert!(editor.document.spatial_preparing.is_none());
+                assert_ne!(
+                    editor.document.visit.crop_edit.as_ref().unwrap().draft,
+                    before,
+                    "retry must consume a usable proposal, not merely register another request"
+                );
+            });
+            release.send(()).unwrap();
+        });
+        scheduler.close_and_wait().unwrap();
+    }
 }

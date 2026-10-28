@@ -13,7 +13,7 @@ fn running_regions_sampling_and_fitting_are_modal_cancellable_and_restore_the_wo
         let mut editor = with_document_services(fixture());
         add_ready_fixture(&mut editor);
         editor.sync_document();
-        let before = editor.document.project.clone();
+        let before = editor.document.state.project.clone();
         let admission = crate::background::testing::pause();
         with_application(editor, |app| {
             app.enter(|editor, cx| {
@@ -74,7 +74,7 @@ fn running_regions_sampling_and_fitting_are_modal_cancellable_and_restore_the_wo
                 assert!(editor.document.spatial_preparing.is_none());
                 assert!(editor.document.analysis_preparing.is_none());
                 assert!(editor.document.analysis_pending.is_none());
-                assert_eq!(editor.document.project, before);
+                assert_eq!(editor.document.state.project, before);
             });
             app_frame(app, &context, vec![]);
             let labels = app_frame(app, &context, vec![]);

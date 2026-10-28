@@ -220,13 +220,13 @@ impl Editor {
         let context_changed = request.input != self.input()
             || reference_changed
             || request.context.correction.as_ref().map(|c| &c.settings)
-                != self.correction.as_ref().map(|c| &c.settings);
+                != self.document.correction.as_ref().map(|c| &c.settings);
         if context_changed {
             // Keep the released support, but score it in the new interpretation.
             let mut retry = request;
             retry.id = self.request_id();
             retry.input = self.input();
-            retry.context.correction = self.correction.clone();
+            retry.context.correction = self.document.correction.clone();
             retry.context.reference = if retry.input.is_negative() {
                 None
             } else {
@@ -284,7 +284,7 @@ impl Editor {
         };
         match result {
             Ok(repair) => {
-                if select && self.document.dust.mask_draft.is_none() {
+                if select && self.document.visit.dust.mask_draft.is_none() {
                     self.document.dust.selected.insert(request.source, repair);
                 }
                 self.dust_repair_changed(request.source, repair);

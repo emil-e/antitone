@@ -94,7 +94,7 @@ impl Editor {
             .fetch_add(1, Ordering::Relaxed)
             + 1;
         let id = self.request_id();
-        self.thumbnails.cancel();
+        self.document.thumbnails.cancel();
         self.tasks.begin(Task::AnalysisAreas(id));
         let pending = Pending::new(id, request.clone());
         let cancelled = pending.cancelled.clone();
@@ -104,7 +104,7 @@ impl Editor {
         let services = self.source_services.as_ref().map(|source| {
             Services::new(
                 source,
-                self.document.cache.clone(),
+                source.provider(Some(self.document.cache.clone())),
                 self.document.exposures.clone(),
             )
         });
@@ -151,7 +151,7 @@ impl Editor {
             .fetch_add(1, Ordering::Relaxed)
             + 1;
         let id = self.request_id();
-        self.thumbnails.cancel();
+        self.document.thumbnails.cancel();
         self.cancel_original_pending();
         self.tasks.begin(Task::Analyze(id));
         self.tasks.report(
@@ -169,7 +169,7 @@ impl Editor {
         let services = self.source_services.as_ref().map(|source| {
             Services::new(
                 source,
-                self.document.cache.clone(),
+                source.provider(Some(self.document.cache.clone())),
                 self.document.exposures.clone(),
             )
         });

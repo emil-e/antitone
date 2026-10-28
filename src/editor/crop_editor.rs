@@ -109,7 +109,7 @@ impl Editor {
     pub(super) fn begin_crop(&mut self) {
         self.finish_dust_cleanup();
         if self.busy
-            || self.pick.is_some()
+            || self.document.picking.kind.is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
@@ -121,8 +121,8 @@ impl Editor {
         };
         self.finish_adjustment_layer_interaction();
         self.document.visit.crop_edit = Some(CropEdit {
-            draft: self.crop.unwrap_or(Crop::from_region(area)),
-            viewport: self.viewport,
+            draft: self.document.visit.crop.unwrap_or(Crop::from_region(area)),
+            viewport: self.document.visit.viewport,
             ratio: None,
             drag: None,
             layout: None,
@@ -130,8 +130,8 @@ impl Editor {
             auto_problem: None,
             reveal_controls: true,
         });
-        self.viewport.fit();
-        self.last_layout = None;
+        self.document.visit.viewport.fit();
+        self.document.visit.last_layout = None;
         self.invalidate_original();
         self.status = "Crop draft; changes are not applied".into();
     }
@@ -146,8 +146,8 @@ impl Editor {
         edit.draft = crop;
         edit.ratio = None;
         edit.layout = None;
-        self.viewport.fit();
-        self.last_layout = None;
+        self.document.visit.viewport.fit();
+        self.document.visit.last_layout = None;
         self.invalidate_original();
     }
 
@@ -167,15 +167,16 @@ impl Editor {
             edit.draft
                 .region(active)
                 .expect("crop draft is constrained");
-            self.crop = (edit.draft != Crop::from_region(active)).then_some(edit.draft);
-            self.viewport.fit();
+            self.document.visit.crop =
+                (edit.draft != Crop::from_region(active)).then_some(edit.draft);
+            self.document.visit.viewport.fit();
             self.status = "Crop applied".into();
-            self.record_edit(before, "Crop", self.current_source);
+            self.record_edit(before, "Crop", self.document.visit.current_source);
         } else {
-            self.viewport = edit.viewport;
+            self.document.visit.viewport = edit.viewport;
             self.status = "Crop cancelled; composition unchanged".into();
         }
-        self.last_layout = None;
+        self.document.visit.last_layout = None;
         self.invalidate_original();
     }
 
@@ -184,20 +185,27 @@ impl Editor {
         use presentation::{ToolButton, ToolShelf};
 
         let cropping = self.document.visit.crop_edit.is_some();
-        let dusting = self.document.dust.cleanup;
+        let dusting = self.document.visit.dust.cleanup;
         let auto_cropping = self.document.auto_crop_edit.is_some();
         let tool_active = cropping
             || dusting
             || auto_cropping
-            || self.flat_edit.is_some()
+            || self.document.flat_edit.is_some()
             || self.document.visit.mask_edit.is_some();
         let ready = !self.busy && self.document.visit.ready.is_some();
-        let commands_enabled = ready && !tool_active && self.pick.is_none();
-        let crop_enabled =
-            cropping || auto_cropping || ready && self.pick.is_none() && !tool_active;
+        let commands_enabled = ready && !tool_active && self.document.picking.kind.is_none();
+        let crop_enabled = cropping
+            || auto_cropping
+            || ready && self.document.picking.kind.is_none() && !tool_active;
         let dust_enabled = dusting
-            || ready && self.input.ready() && !self.source && self.pick.is_none() && !tool_active;
+            || ready
+                && self.document.input.ready()
+                && !self.document.source
+                && self.document.picking.kind.is_none()
+                && !tool_active;
         let repairs_changed = self
+            .document
+            .visit
             .current_source
             .and_then(|source| self.dust_repairs(source))
             .is_some_and(|set| !set.repairs().is_empty());
@@ -256,7 +264,7 @@ impl Editor {
                 cropping || auto_cropping,
             )
             .enabled(crop_enabled)
-            .changed(self.crop.is_some())
+            .changed(self.document.visit.crop.is_some())
             .show(ui)
             .clicked()
             {
@@ -288,12 +296,20 @@ impl Editor {
 
     pub(super) fn apply_photo_tool_action(&mut self, action: ToolAction) {
         let before = self.history_snapshot();
-        let orientation = self.photo_orientation;
+        let orientation = self.document.visit.photo_orientation;
         match action {
-            ToolAction::TurnLeft => self.photo_orientation.turn_counterclockwise(),
-            ToolAction::TurnRight => self.photo_orientation.turn_clockwise(),
-            ToolAction::FlipHorizontal => self.photo_orientation.flips.horizontal ^= true,
-            ToolAction::FlipVertical => self.photo_orientation.flips.vertical ^= true,
+            ToolAction::TurnLeft => self
+                .document
+                .visit
+                .photo_orientation
+                .turn_counterclockwise(),
+            ToolAction::TurnRight => self.document.visit.photo_orientation.turn_clockwise(),
+            ToolAction::FlipHorizontal => {
+                self.document.visit.photo_orientation.flips.horizontal ^= true
+            }
+            ToolAction::FlipVertical => {
+                self.document.visit.photo_orientation.flips.vertical ^= true
+            }
             ToolAction::Crop => {
                 if self.document.auto_crop_edit.is_some() {
                     self.finish_auto_crop(false);
@@ -304,17 +320,21 @@ impl Editor {
                 }
             }
             ToolAction::Dust => {
-                if self.document.dust.cleanup {
+                if self.document.visit.dust.cleanup {
                     self.finish_dust_cleanup();
                 } else {
                     self.begin_dust_cleanup();
                 }
             }
         }
-        if orientation != self.photo_orientation {
-            self.viewport.fit();
+        if orientation != self.document.visit.photo_orientation {
+            self.document.visit.viewport.fit();
         }
-        self.record_edit(before, "Photo orientation", self.current_source);
+        self.record_edit(
+            before,
+            "Photo orientation",
+            self.document.visit.current_source,
+        );
     }
 
     pub(super) fn crop_controls(&mut self, ui: &mut egui::Ui) {
@@ -347,11 +367,16 @@ impl Editor {
             .as_ref()
             .expect("crop retains its source")
             .area;
-        let full = Composition::new(area, self.roll_orientation, self.photo_orientation).unwrap();
+        let full = Composition::new(
+            area,
+            self.document.roll_orientation,
+            self.document.visit.photo_orientation,
+        )
+        .unwrap();
         let composition = Composition::with_crop(
             area,
-            self.roll_orientation,
-            self.photo_orientation,
+            self.document.roll_orientation,
+            self.document.visit.photo_orientation,
             Some(edit.draft),
         )
         .unwrap();
@@ -472,19 +497,19 @@ impl Editor {
             edit.draft = Crop::from_region(area);
             edit.ratio = None;
             edit.drag = None;
-            self.viewport.fit();
+            self.document.visit.viewport.fit();
         } else if edit.draft != previous {
             edit.drag = None;
             if let Some(layout) = edit.layout {
                 let next = Composition::with_crop(
                     area,
-                    self.roll_orientation,
-                    self.photo_orientation,
+                    self.document.roll_orientation,
+                    self.document.visit.photo_orientation,
                     Some(edit.draft),
                 )
                 .unwrap();
                 reframe_crop(
-                    &mut self.viewport,
+                    &mut self.document.visit.viewport,
                     layout,
                     next,
                     ui.ctx().pixels_per_point(),
@@ -624,8 +649,8 @@ impl Editor {
                             let size = original.composition.size().map(|v| v as f32);
                             let next = Composition::with_crop(
                                 original.composition.area(),
-                                self.roll_orientation,
-                                self.photo_orientation,
+                                self.document.roll_orientation,
+                                self.document.visit.photo_orientation,
                                 Some(crop),
                             )
                             .unwrap()
@@ -645,8 +670,8 @@ impl Editor {
             }
             layout.composition = Composition::with_crop(
                 layout.composition.area(),
-                self.roll_orientation,
-                self.photo_orientation,
+                self.document.roll_orientation,
+                self.document.visit.photo_orientation,
                 Some(edit.draft),
             )
             .unwrap();
@@ -686,8 +711,11 @@ impl Editor {
             ui.ctx().set_cursor_icon(cursor);
         }
         // The painted layout is the editing viewport: retain it, not a new Fit of the crop.
-        self.viewport
-            .reframe(layout, layout.composition, ui.ctx().pixels_per_point());
+        self.document.visit.viewport.reframe(
+            layout,
+            layout.composition,
+            ui.ctx().pixels_per_point(),
+        );
         edit.layout = Some(layout);
         layout
     }

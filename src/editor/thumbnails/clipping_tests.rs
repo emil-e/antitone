@@ -193,7 +193,7 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     editor.initialize_viewer(&device, &queue);
                     *editor.document = super::tests::fixture();
                     if let Some(contrast) = contrast {
-                        for source in &mut editor.document.project.sources {
+                        for source in &mut editor.document.state.project.sources {
                             source.adjustment_layers.as_mut().unwrap().layers[0]
                                 .adjustment
                                 .photo = AdjustmentLayerSettings {
@@ -210,9 +210,9 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                     }
                     editor.busy = true;
                     editor.preferences.filmstrip_height = height;
-                    let before = editor.document.project.clone();
-                    for id in editor.document.project.order.clone() {
-                        editor.thumbnails.cache.insert(
+                    let before = editor.document.state.project.clone();
+                    for id in editor.document.state.project.order.clone() {
+                        editor.document.thumbnails.cache.insert(
                             super::tests::key(&editor.document, id),
                             Ok(Product::camera(image.clone())),
                         );
@@ -318,7 +318,7 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                         [true, true],
                         "must exercise both scroll edges at {height}pt / {scale}x"
                     );
-                    assert_eq!(editor.document.project, before);
+                    assert_eq!(editor.document.state.project, before);
                     assert_eq!(editor.preferences.filmstrip_height, height);
                 }
             }

@@ -165,12 +165,12 @@ impl Editor {
             return;
         }
         if self.id != request.loaded
-            || self.pick.is_some()
+            || self.document.picking.kind.is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
-            || self.current_source != Some(request.selected)
-            || self.document.project != request.document.project
+            || self.document.visit.current_source != Some(request.selected)
+            || self.document.state.project != request.document.project
             || self.document.path != request.document.path
         {
             self.status = "Analysis areas discarded: document or settings changed".into();
@@ -203,7 +203,7 @@ impl Editor {
                 self.scopes.visible = false;
                 self.begin_pick(Pick::Analysis, cx);
                 self.refresh_review_region();
-                self.viewport.fit();
+                self.document.visit.viewport.fit();
                 self.status = "Review sampling areas".into();
             }
             Ok(None) => self.status = "Analysis-area preparation cancelled; grade unchanged".into(),
@@ -235,11 +235,11 @@ impl Editor {
             .approved
             .entries
             .iter_mut()
-            .find(|r| Some(r.source) == self.current_source)
+            .find(|r| Some(r.source) == self.document.visit.current_source)
         else {
             return;
         };
-        let Some(region) = self.region else {
+        let Some(region) = self.document.picking.region else {
             return;
         };
         let quad = region.corners().map(|p| p.0);
@@ -269,12 +269,14 @@ impl Editor {
     }
 
     pub(super) fn refresh_review_region(&mut self) {
-        self.region = self
+        self.document.picking.region = self
             .document
             .analysis_review
             .as_ref()
             .and_then(|r| {
-                self.current_source
+                self.document
+                    .visit
+                    .current_source
                     .and_then(|id| r.approved.entries.iter().find(|e| e.source == id))
                     .and_then(|e| {
                         if r.picture {
@@ -285,7 +287,7 @@ impl Editor {
                     })
             })
             .and_then(|q| Areas::coverage(q).ok());
-        self.pick_drag = None;
+        self.document.visit.pick_drag = None;
     }
 
     pub(super) fn browse_analysis_review(&mut self, id: SourceId, cx: &UiContext<'_, Self>) {
@@ -321,13 +323,19 @@ impl Editor {
         let Some(review) = &self.document.analysis_review else {
             return;
         };
-        if self.pick != Some(Pick::Analysis)
+        if self.document.picking.kind != Some(Pick::Analysis)
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
             || self.id != review.loaded
-            || self.current_source != self.document.project.order.get(self.selected).copied()
-            || self.document.project != review.request.document.project
+            || self.document.visit.current_source
+                != self
+                    .document
+                    .project
+                    .order
+                    .get(self.document.selected)
+                    .copied()
+            || self.document.state.project != review.request.document.project
             || self.document.path != review.request.document.path
             || self.document.analysis_generation.load(Ordering::Relaxed) != review.request.revision
         {
@@ -337,7 +345,7 @@ impl Editor {
         }
         let mut request = review.request.clone();
         request.loaded = self.id;
-        request.selected = self.current_source.expect("review source");
+        request.selected = self.document.visit.current_source.expect("review source");
         request.areas = Some(review.approved.clone());
         if let Err(error) = verify(&request) {
             self.status = format!("Cannot analyze: {error}. Grade unchanged.");
@@ -352,7 +360,7 @@ impl Editor {
         point: egui::Pos2,
     ) -> Option<bool> {
         let review = self.document.analysis_review.as_ref()?;
-        let areas = self.review_areas(self.current_source?)?;
+        let areas = self.review_areas(self.document.visit.current_source?)?;
         for (picture, quad) in [(false, areas.opening), (true, areas.picture)] {
             if let Some(quad) = quad
                 && let Ok(coverage) = Areas::coverage(quad)
@@ -443,12 +451,16 @@ impl Editor {
             return;
         };
         let other = self
+            .document
+            .visit
             .current_source
             .and_then(|id| self.review_areas(id))
             .and_then(|a| if review.picture { a.opening } else { a.picture })
             .and_then(|q| Areas::coverage(q).ok());
         let painter = ui.painter().with_clip_rect(canvas);
         if let Some(material) = self
+            .document
+            .visit
             .current_source
             .and_then(|id| self.review_areas(id))
             .and_then(|a| a.material.as_ref())
@@ -494,7 +506,7 @@ impl Editor {
                 }
             }
         }
-        for (coverage, active) in [(other, false), (self.region, true)] {
+        for (coverage, active) in [(other, false), (self.document.picking.region, true)] {
             let Some(coverage) = coverage else {
                 continue;
             };

@@ -2,7 +2,6 @@ use super::*;
 use crate::{
     dust_repair::{RepairId, RepairOrigin, SupportMask},
     processing::{Calibration, InputSettings, Pipeline, RollSettings},
-    source::SourceCache,
 };
 use glam::DVec3;
 
@@ -30,7 +29,7 @@ fn repair_sampling_sees_factory_normalized_ap1_but_negative_and_native_samples_d
         "fixture must contain an actual sensor defect, not merely a mask"
     );
     let prepared = crate::photo_preparation::native(
-        Some(&SourceCache::new(0)),
+        None,
         &std::sync::OnceLock::new(),
         InputSettings::Digital,
         scan.source(),

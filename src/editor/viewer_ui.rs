@@ -16,9 +16,11 @@ impl Editor {
             );
         }
         let source = self
+            .document
+            .visit
             .current_source
-            .and_then(|id| self.document.project.source(id).ok())
-            .or_else(|| self.document.project.sources.first());
+            .and_then(|id| self.document.state.project.source(id).ok())
+            .or_else(|| self.document.state.project.sources.first());
         match source {
             Some(source) => self.source_parameters_for(source, exposure),
             None => self.source_preview_parameters(Default::default(), exposure),
@@ -38,7 +40,7 @@ impl Editor {
         preview: crate::raw::SourcePreview,
         exposure: f64,
     ) -> Result<ProcessingParameters, Error> {
-        let transform = if self.input.is_negative() {
+        let transform = if self.document.input.is_negative() {
             preview.transform(self.source_white_balance)
         } else {
             glam::DMat3::IDENTITY
@@ -59,7 +61,7 @@ impl Editor {
         if self.document.auto_crop_edit.is_some() {
             return Some((icons::Icon::Crop, "Auto-crop"));
         }
-        self.pick.map(|pick| match pick {
+        self.document.picking.kind.map(|pick| match pick {
             Pick::Dmin => (icons::Icon::Pick, "Dmin"),
             Pick::Dmax => (icons::Icon::Pick, "Dmax"),
             Pick::Gamma => (icons::Icon::Pick, "Gamma neutral"),
@@ -74,7 +76,7 @@ impl Editor {
         if self.document.auto_crop_edit.is_some() {
             return self.auto_crop_problem(id);
         }
-        if self.current_source == Some(id)
+        if self.document.visit.current_source == Some(id)
             && let Some(edit) = &self.document.visit.crop_edit
         {
             return edit.auto_problem.as_deref();
@@ -84,6 +86,8 @@ impl Editor {
 
     fn viewer_warning(&self) -> Option<String> {
         let mut warning = self
+            .document
+            .visit
             .current_source
             .and_then(|id| self.source_tool_warning(id))
             .map(str::to_owned);
@@ -137,7 +141,7 @@ impl Editor {
                 .mask_edit
                 .as_ref()
                 .is_some_and(MaskEdit::creating);
-        let dust_session = !fullscreen && self.document.dust.cleanup && !self.source;
+        let dust_session = !fullscreen && self.document.visit.dust.cleanup && !self.document.source;
         let tool = (!fullscreen && !dust_session)
             .then(|| self.viewer_tool())
             .flatten();
@@ -150,6 +154,8 @@ impl Editor {
             done_enabled: !self.busy,
         });
         let has_repairs = self
+            .document
+            .visit
             .current_source
             .and_then(|id| self.dust_repairs(id))
             .is_some_and(|repairs| !repairs.repairs().is_empty());
@@ -157,9 +163,9 @@ impl Editor {
 
         let mut cancel = false;
         let mut apply = false;
-        let calibrated = self.input.ready();
+        let calibrated = self.document.input.ready();
         if !calibrated {
-            self.source = true;
+            self.document.source = true;
         }
 
         let navigating = self.document.visit.ready.is_some()
@@ -186,7 +192,7 @@ impl Editor {
             apply_enabled: if self.document.auto_crop_edit.is_some() {
                 self.auto_crop_editable()
             } else {
-                navigating && review_ready && (cropping || self.region.is_some())
+                navigating && review_ready && (cropping || self.document.picking.region.is_some())
             },
         });
 
@@ -208,34 +214,34 @@ impl Editor {
             }
             ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP;
             icons::row(ui, |ui| {
-                let target = if self.target == OutputTarget::DisplayP3 {
+                let target = if self.document.target == OutputTarget::DisplayP3 {
                     "Display P3"
                 } else {
                     "sRGB"
                 };
-                let quality = if self.pending_preview.is_some() {
+                let quality = if self.document.visit.pending_preview.is_some() {
                     " · Cached preview"
-                } else if self.source || self.document.visit.ready.is_none() {
+                } else if self.document.source || self.document.visit.ready.is_none() {
                     ""
-                } else if self.working.enabled() && tool.is_none() {
+                } else if self.document.visit.working_view.enabled() && tool.is_none() {
                     if look_error.is_some() {
                         " · Look unavailable"
-                    } else if self.working.error.is_some() {
+                    } else if self.document.visit.working_view.error.is_some() {
                         " · View unavailable"
-                    } else if self.working.compare && self.original.refinement_error == Some(self.original.revision()) {
+                    } else if self.document.visit.working_view.compare && self.document.visit.grade.original.refinement_error == Some(self.document.visit.grade.original.revision()) {
                         " · Reference unavailable"
-                    } else if self.working.compare && self.working.reference_ready() {
+                    } else if self.document.visit.working_view.compare && self.document.visit.working_view.reference_ready() {
                         " · Original reference"
-                    } else if self.working.compare {
+                    } else if self.document.visit.working_view.compare {
                         " · Preparing reference"
-                    } else if self.working.displayed.is_none() {
+                    } else if self.document.visit.working_view.displayed.is_none() {
                         " · Acquiring view"
                     } else {
                         ""
                     }
-                } else if self.original.refining.is_some() {
+                } else if self.document.visit.grade.original.refining.is_some() {
                     " · Refining"
-                } else if self.original.settled.is_none() {
+                } else if self.document.visit.grade.original.settled.is_none() {
                     " · Approximate"
                 } else {
                     ""
@@ -270,7 +276,7 @@ impl Editor {
                         >= trailing_width
                             + presentation::CONTROL_HEIGHT
                             + VIEWER_ITEM_GAP
-                            + if self.source { 224. } else { 192. };
+                            + if self.document.source { 224. } else { 192. };
                 if icons::button(
                     ui,
                     Icon::Fit,
@@ -284,14 +290,14 @@ impl Editor {
                 )
                 .clicked()
                 {
-                    self.viewport.fit();
+                    self.document.visit.viewport.fit();
                 }
                 let layout = if cropping {
                     self.document.visit.crop_edit.as_ref().and_then(|edit| edit.layout)
                 } else {
                     None
                 }
-                .or(self.last_layout.map(|(layout, _)| layout));
+                .or(self.document.visit.last_layout.map(|(layout, _)| layout));
                 let zoom = layout.map_or("—".into(), |layout| {
                     format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point())
                 });
@@ -341,7 +347,7 @@ impl Editor {
                         icons::toggle(
                             ui,
                             Icon::Source,
-                            &mut self.source,
+                            &mut self.document.source,
                             "View source",
                             if calibrated {
                                 "Switch between the positive grade and developed source."
@@ -351,19 +357,19 @@ impl Editor {
                         );
                     });
                 }
-                if !self.source && tool.is_none() && self.working.enabled() {
+                if !self.document.source && tool.is_none() && self.document.visit.working_view.enabled() {
                     ui.add_enabled_ui(inspecting, |ui| {
                         icons::toggle(
                             ui,
                             Icon::Inspection,
-                            &mut self.working.compare,
+                            &mut self.document.visit.working_view.compare,
                             "Original-resolution reference",
                             "Compare with original-resolution processing; export is unchanged.",
                         );
                     });
                 }
                 let inspection_id = ui.make_persistent_id("source-inspection-popup");
-                if self.source {
+                if self.document.source {
                     let exposure = format!("Source {:+.2} EV", self.source_exposure);
                     let inspection = icons::button(
                         ui,
@@ -380,7 +386,7 @@ impl Editor {
                             ui.set_width(240.);
                             ui.label(egui::RichText::new("Source inspection").strong());
                             ui.add_enabled_ui(navigating, |ui| {
-                                if self.input.is_negative() {
+                                if self.document.input.is_negative() {
                                     use crate::raw::SourceWhiteBalance;
                                     presentation::labelled_row(ui, "Viewing WB", None, |ui, _| {
                                         ui.selectable_value(
@@ -427,7 +433,7 @@ impl Editor {
                     if TextAction::new("Details").toolbar(60.).name("Look rendering details").show(ui).clicked() {
                         self.report_failure(FailureKind::LookRendering,error.to_string());
                     }
-                } else if let Some(error) = &self.working.error {
+                } else if let Some(error) = &self.document.visit.working_view.error {
                     ui.colored_label(egui::Color32::LIGHT_RED, "View unavailable")
                         .on_hover_text(error);
                 }
@@ -465,7 +471,7 @@ impl Editor {
                                 && self.tab == 1
                                 && !dust_session
                                 && !cropping
-                                && self.pick.is_none()
+                                && self.document.picking.kind.is_none()
                         }) {
                             ui.separator();
                             ui.small(help);
@@ -501,7 +507,7 @@ impl Editor {
                                 "Drag either area's corners to resize, or its interior to move. Click a label when outlines coincide.",
                             );
                             ui.small("Enter analyzes · Escape cancels");
-                        } else if !fullscreen && let Some(kind) = self.pick {
+                        } else if !fullscreen && let Some(kind) = self.document.picking.kind {
                             ui.separator();
                             ui.small(
                                 "Click a patch or drag an area; drag its edges/corners to resize.",
