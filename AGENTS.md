@@ -22,7 +22,7 @@ Follow the global collaboration instructions. Roadmaps and plans provide context
 
 For substantive changes, fetch first and branch from the latest `origin/main` — merges happen on GitHub, so a local `main` ref may be behind — and work in a separate worktree under `.worktrees`, or resume the existing worktree for that task. Keep task edits and verification artifacts in that worktree, isolated from other agents, and preserve unrelated changes. Small one-off edits and read-only investigations do not require a new worktree or task plan.
 
-Maintain the task's implementation plan in `WORK_PLAN.md` at the worktree root. Record agreed scope, acceptance, remaining steps, blockers and next actions; keep it current and include it in checkpoint commits so another session can resume. When a task runs directly in main rather than a task worktree, keep `WORK_PLAN.md` untracked instead: checkpoint commits there become shared history, and a session plan is not part of it.
+Keep task execution, handoff and follow-up notes local and untracked, including `WORK_PLAN.md` in task worktrees. Record agreed scope, acceptance, remaining steps, blockers and next actions there when useful for resuming work; exclude workspace notes from checkpoint and delivery commits. Document lasting implementation knowledge in the owning contributor guide when it helps contributors understand the system, not merely to preserve agent context.
 
 At substantial milestones and before integration, refresh current guidance and inspect relevant changes on main.
 
