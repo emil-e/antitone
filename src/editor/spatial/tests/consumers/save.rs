@@ -7,45 +7,46 @@ fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_
         let mut editor = fixture(scheduler.clone());
         let metadata = supplied(&mut editor);
         editor.document.spatial = crate::spatial_metadata::Store::default();
+        let reply = programmed(&mut editor);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pending.antitone");
+        // Only the physical write is parked: the programmed preparation uses its normal async producer.
+        let write = crate::background::testing::pause();
         with_application(editor, |app| {
             app.enter(|editor, cx| {
                 if analyze {
-                    editor.request_analysis(cx)
+                    editor.request_analysis(cx);
                 } else {
-                    editor.request_auto_crop(auto_crop::Target::Roll, cx)
+                    editor.review_crop_proposals(
+                        editor.document.project.order.clone(),
+                        "Whole roll",
+                        cx,
+                    );
                 }
-                let request = editor.document.spatial_preparing.as_ref().unwrap().id;
                 editor.save_project(path.clone(), Save::New, None, cx);
-                // Finish shared preparation while the captured write is still queued. The
-                // opposite completion order is exercised with the real native phase gate.
-                editor.spatial_result(request, Ok(Some(metadata.clone())), cx);
-                assert!(editor.document.spatial_preparing.is_none());
-                assert!(editor.document.spatial_consumer.is_some());
+            });
+            app.pump();
+            assert!(app.read(|editor| editor.document_pending.is_some()));
+            reply.send(Ok(Some(metadata.clone()))).unwrap();
+            app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
+            app.read(|editor| {
+                assert!(editor.document_pending.is_some());
                 assert!(editor.document.auto_crop_edit.is_none());
                 assert!(editor.document.analysis_preparing.is_none());
                 assert_eq!(*editor.document.spatial.ready(), metadata);
             });
+            drop(write);
             app.run_until(LIMIT, |editor| {
-                editor.document_pending.is_none() && !editor.busy
+                editor.document_pending.is_none()
+                    && !editor.busy
+                    && if analyze {
+                        editor.document.analysis_review.is_some()
+                    } else {
+                        editor.document.auto_crop_edit.is_some()
+                    }
             });
             app.read(|editor| {
-                assert!(editor.document.spatial_consumer.is_none());
                 assert!(editor.failure.is_none(), "{}", editor.status);
-                if analyze {
-                    assert!(
-                        editor.document.analysis_review.is_some(),
-                        "{}",
-                        editor.status
-                    )
-                } else {
-                    assert!(
-                        editor.document.auto_crop_edit.is_some(),
-                        "{}",
-                        editor.status
-                    )
-                }
                 assert_eq!(*editor.document.spatial.ready(), metadata);
                 assert!(
                     editor
@@ -71,21 +72,25 @@ fn failed_overlapping_save_keeps_the_consumer_until_failure_acknowledgement() {
     let mut editor = fixture(scheduler.clone());
     let metadata = supplied(&mut editor);
     editor.document.spatial = crate::spatial_metadata::Store::default();
+    let reply = programmed(&mut editor);
     let accepted = editor.document.state.project.clone();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("existing.antitone");
     std::fs::write(&path, b"existing destination").unwrap();
+    let write = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.request_auto_crop(auto_crop::Target::Roll, cx);
-            let request = editor.document.spatial_preparing.as_ref().unwrap().id;
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
             editor.save_project(path.clone(), Save::New, None, cx);
-            editor.spatial_result(request, Ok(Some(metadata.clone())), cx);
         });
+        app.pump();
+        reply.send(Ok(Some(metadata.clone()))).unwrap();
+        app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
+        drop(write);
         app.run_until(LIMIT, |editor| editor.document_pending.is_none());
         app.read(|editor| {
             assert!(editor.failure.is_some());
-            assert!(editor.document.spatial_consumer.is_some());
+            assert!(editor.document.auto_crop_operation.is_some());
             assert!(editor.document.auto_crop_edit.is_none());
         });
         let context = egui::Context::default();
@@ -101,14 +106,9 @@ fn failed_overlapping_save_keeps_the_consumer_until_failure_acknowledgement() {
                 modifiers: egui::Modifiers::NONE,
             }],
         );
+        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit.is_some());
         app.read(|editor| {
             assert!(editor.failure.is_none());
-            assert!(editor.document.spatial_consumer.is_none());
-            assert!(
-                editor.document.auto_crop_edit.is_some(),
-                "{}",
-                editor.status
-            );
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(*editor.document.spatial.ready(), metadata);
         });

@@ -129,9 +129,12 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
     let before = editor.document.state.project.clone();
     let target = before.order[0];
     with_application(editor, |app| {
-        app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Roll, cx));
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+        });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.enter(|editor, _| editor.finish_auto_crop(true));
+        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit.is_none());
         let accepted = app.read(|editor| {
             let crop = editor
                 .document

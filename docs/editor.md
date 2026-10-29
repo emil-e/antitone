@@ -30,7 +30,7 @@ Photo's **Auto-crop** button proposes the current photo's crop and straightening
 
 [Shared preparation](spatial-metadata.md) can infer nominal picture bounds from credible edges and common dimensions. Missing film alone does not veto that frame; unresolved geometry or conflicting picture evidence abstains and keeps previous crops. Photos that merely fall outside the captured selection are not failures; abstentions carry a warning cue with their specific reason. [Geometry](geometry.md#automatic-framing-consumes-measurements-not-sampling-support) explains the evidence boundary and inward margin.
 
-Proposals remain drafts: margin edits do not modify accepted crops or dirty the project, and Apply installs all proposed values atomically after revalidation — a stale target rejects the batch instead of silently shrinking its scope. Only applied crops persist; the margin is reused within this editor instance, not saved as a project setting.
+A document-owned [Auto-crop action](../src/editor/auto_crop/operation.rs) awaits preparation and review, then validates and records the batch. Margin edits leave accepted crops and dirty state unchanged; Apply captures the reviewed proposals and installs them atomically after revalidation — a stale target rejects the batch instead of silently shrinking its scope. Only applied crops persist; the margin is reused within this editor instance, not saved as a project setting.
 
 ### Provisional dust cleanup
 

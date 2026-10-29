@@ -1366,7 +1366,17 @@ impl Editor {
                             )
                             .clicked()
                         {
-                            self.document.auto_crop_requested = Some(auto_crop::Target::Selected);
+                            self.document.auto_crop_requested = Some(auto_crop::Action::Batch {
+                                photos: self
+                                    .document
+                                    .project
+                                    .order
+                                    .iter()
+                                    .copied()
+                                    .filter(|id| self.document.roll_selection.contains(*id))
+                                    .collect(),
+                                scope: "Entry selection",
+                            });
                             ui.close();
                         }
                         if ui

@@ -1,14 +1,18 @@
 use super::*;
 use crate::{auto_crop as framing, project::SourceDevelopment, scan_regions::PictureGeometry};
+mod operation;
 mod overlay;
+pub(super) use operation::Operation;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Target {
-    Photo,
-    Roll,
-    Selected,
+pub(super) enum Action {
+    Photo(SourceId),
+    Batch {
+        photos: Vec<SourceId>,
+        scope: &'static str,
+    },
 }
 
+#[derive(Clone)]
 struct Entry {
     source: SourceId,
     proposal: Crop,
@@ -21,9 +25,10 @@ struct Entry {
     spatial: Option<Arc<crate::spatial_metadata::Metadata>>,
 }
 
+#[derive(Clone)]
 pub(super) struct Draft {
     order: Vec<SourceId>,
-    target: Target,
+    scope: &'static str,
     attempted: usize,
     summary: String,
     entries: Vec<Entry>,
@@ -37,6 +42,14 @@ pub(super) struct Draft {
 }
 
 impl Draft {
+    fn valid(&self, editor: &Editor) -> bool {
+        self.belongs_to(editor)
+            && !self.entries.is_empty()
+            && self.entries.iter().all(|entry| {
+                entry.current(editor) && !self.problems.iter().any(|(id, _)| *id == entry.source)
+            })
+    }
+
     fn belongs_to(&self, editor: &Editor) -> bool {
         self.order == editor.document.state.project.order
             && self
@@ -122,40 +135,25 @@ impl Editor {
     }
 
     pub(super) fn auto_crop_valid(&self) -> bool {
-        self.document.auto_crop_edit.as_ref().is_some_and(|d| {
-            d.belongs_to(self)
-                && !d.entries.is_empty()
-                && d.entries
-                    .iter()
-                    .all(|e| e.current(self) && !d.problems.iter().any(|(id, _)| *id == e.source))
-        })
+        self.document
+            .auto_crop_edit
+            .as_ref()
+            .is_some_and(|draft| draft.valid(self))
     }
 
     pub(super) fn auto_crop_editable(&self) -> bool {
         !self.busy
+            && self
+                .document
+                .auto_crop_operation
+                .as_ref()
+                .is_none_or(|op| op.apply.is_some())
             && self.fullscreen.is_none()
             && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.flat_edit.is_none()
             && !self.document.visit.dust.cleanup
             && self.auto_crop_valid()
-    }
-
-    pub(super) fn auto_crop_action(&mut self, ui: &mut egui::Ui, target: Target, label: &str) {
-        let available = if target == Target::Photo {
-            !self.busy
-                && self.document.visit.crop_edit.is_some()
-                && self.document.visit.canvas.ready.is_some()
-        } else {
-            self.auto_crop_entry_available()
-        };
-        if presentation::TextAction::new(label)
-            .enabled(available)
-            .show(ui)
-            .clicked()
-        {
-            self.document.auto_crop_requested = Some(target);
-        }
     }
 
     pub(super) fn auto_crop_controls(&mut self, ui: &mut egui::Ui) {
@@ -169,19 +167,12 @@ impl Editor {
             ui.scroll_to_cursor(Some(egui::Align::Min));
         }
         let edit = self.document.auto_crop_edit.as_ref().unwrap();
-        let scope = match edit.target {
-            Target::Photo => unreachable!("photo proposals belong to manual Crop"),
-            Target::Roll => format!(
-                "Whole roll · {}/{} proposals",
-                edit.entries.len(),
-                edit.attempted
-            ),
-            Target::Selected => format!(
-                "Entry selection · {}/{} proposals",
-                edit.entries.len(),
-                edit.attempted
-            ),
-        };
+        let scope = format!(
+            "{} · {}/{} proposals",
+            edit.scope,
+            edit.entries.len(),
+            edit.attempted
+        );
         let mut show = edit.show_outline;
         let has_proposals = !edit.entries.is_empty();
         let mut margin = self.auto_crop_margin;
@@ -336,15 +327,16 @@ impl Editor {
         })
     }
 
-    fn auto_crop_photo(&mut self) {
-        if self.busy || self.fullscreen.is_some() || self.document.visit.crop_edit.is_none() {
+    fn auto_crop_photo(&mut self, photo: SourceId) {
+        if self.busy
+            || self.fullscreen.is_some()
+            || self.document.visit.crop_edit.is_none()
+            || self.document.visit.current_source != Some(photo)
+        {
             return;
         }
-        let Some(id) = self.document.visit.current_source else {
-            return;
-        };
         self.sync_document();
-        match self.crop_proposal(id) {
+        match self.crop_proposal(photo) {
             Ok(entry) => {
                 self.initialize_crop_frame(
                     entry
@@ -362,54 +354,15 @@ impl Editor {
         }
     }
 
-    pub(super) fn request_auto_crop(&mut self, target: Target, cx: &UiContext<'_, Self>) {
-        let available = if target == Target::Photo {
-            !self.busy
-                && self.document.visit.crop_edit.is_some()
-                && self.document.visit.canvas.ready.is_some()
-        } else {
-            self.auto_crop_entry_available()
-        };
-        if !available {
-            return;
-        }
-        let sources = self.auto_crop_source_ids(target);
-        self.request_spatial(spatial::Consumer::AutoCrop { target, sources }, cx);
-    }
-
-    fn auto_crop_source_ids(&self, target: Target) -> Vec<SourceId> {
-        self.document
-            .state
-            .project
-            .order
-            .iter()
-            .copied()
-            .filter(|id| match target {
-                Target::Photo => Some(*id) == self.document.visit.current_source,
-                Target::Roll => true,
-                Target::Selected => self.document.roll_selection.contains(*id),
-            })
-            .collect()
-    }
-
-    #[cfg(test)]
-    pub(super) fn auto_crop(&mut self, target: Target) {
-        self.auto_crop_sources(target, self.auto_crop_source_ids(target));
-    }
-
-    pub(super) fn auto_crop_sources(&mut self, target: Target, ids: Vec<SourceId>) {
-        if target == Target::Photo {
-            self.auto_crop_photo();
-            return;
-        }
+    pub(super) fn begin_auto_crop_review(&mut self, photos: Vec<SourceId>, scope: &'static str) {
         if !self.auto_crop_entry_available() {
             return;
         }
         self.sync_document();
-        let attempted = ids.len();
+        let attempted = photos.len();
         let mut entries = Vec::new();
         let mut problems = Vec::new();
-        for id in ids {
+        for id in photos {
             let result = self.crop_proposal(id);
             match result {
                 Ok(e) => entries.push(e),
@@ -425,7 +378,7 @@ impl Editor {
             self.finish_adjustment_layer_interaction();
             self.document.auto_crop_edit = Some(Draft {
                 order: self.document.state.project.order.clone(),
-                target,
+                scope,
                 attempted,
                 summary: String::new(),
                 entries,
@@ -514,82 +467,106 @@ impl Editor {
     }
 
     pub(super) fn finish_auto_crop(&mut self, apply: bool) {
-        if apply && self.busy {
+        if !apply {
+            self.document.auto_crop_operation = None;
+            self.status = "Auto-crop cancelled; previous crops unchanged".into();
+            self.end_auto_crop_review(false);
             return;
         }
-        let Some(edit) = &self.document.auto_crop_edit else {
+        if self.busy {
+            return;
+        }
+        let Some(edit) = self.document.auto_crop_edit.as_ref() else {
             return;
         };
-        if apply {
-            if edit.entries.is_empty() {
-                self.status = "Auto-crop has no proposals to apply".into();
-                return;
+        if edit.entries.is_empty() {
+            self.status = "Auto-crop has no proposals to apply".into();
+            return;
+        }
+        let snapshot = edit.clone();
+        if let Some(apply) = self
+            .document
+            .auto_crop_operation
+            .as_mut()
+            .and_then(|op| op.apply.take())
+        {
+            let _ = apply.send(snapshot);
+        }
+    }
+
+    fn commit_auto_crop(&mut self, edit: &Draft) -> bool {
+        if self.busy {
+            return false;
+        }
+        let mut failed_source = None;
+        let candidate = (|| -> Result<_, Error> {
+            if !edit.valid(self) {
+                return Err(Error::UnusableSample(
+                    "document, crops or measurements changed",
+                ));
             }
-            let mut failed_source = None;
-            let candidate = (|| -> Result<_, Error> {
-                if !self.auto_crop_valid() {
-                    return Err(Error::UnusableSample(
-                        "document, crops or measurements changed",
-                    ));
-                }
-                let ready = self.document.capture().ready_spatial_metadata();
-                if edit.entries.iter().any(|entry| {
-                    entry
-                        .spatial
-                        .as_ref()
-                        .is_some_and(|metadata| **metadata != ready)
-                }) {
-                    return Err(Error::UnusableSample(
-                        "shared region dependencies changed since the proposal",
-                    ));
-                }
-                let mut candidate = self.document.state.project.clone();
-                for entry in &edit.entries {
-                    failed_source = Some(entry.source);
-                    if !self.loaded_crop_source_current(entry.source, &entry.file) {
-                        return Err(Error::UnusableSample("a source changed since the proposal"));
-                    }
-                    if let Some(crop) = entry.draft {
-                        crop.region(entry.development.active_area.into())?;
-                    }
-                    candidate.source_mut(entry.source)?.crop = entry.draft;
-                }
-                failed_source = None;
-                candidate.validate()?;
-                Ok(candidate)
-            })();
-            match candidate {
-                Ok(candidate) => {
-                    let count = edit.entries.len();
-                    let before = self.history_snapshot();
-                    self.document.state.project = candidate;
-                    if let Some(id) = self.document.visit.current_source {
-                        self.document.visit.crop = self
-                            .document
-                            .project
-                            .source(id)
-                            .expect("active source")
-                            .crop;
-                    }
-                    self.record_edit(before, "Auto-crop", None);
-                    self.status = format!("Auto-crop applied to {count} photos");
-                }
-                Err(error) => {
-                    let reason = reason(error);
-                    if let Some(id) = failed_source {
-                        self.record_crop_problem(id, reason.clone());
-                    }
-                    self.status =
-                        format!("Auto-crop not applied: {reason}. Cancel and start again.");
-                    return;
-                }
+            let ready = self.document.capture().ready_spatial_metadata();
+            if edit.entries.iter().any(|entry| {
+                entry
+                    .spatial
+                    .as_ref()
+                    .is_some_and(|metadata| **metadata != ready)
+            }) {
+                return Err(Error::UnusableSample(
+                    "shared region dependencies changed since the proposal",
+                ));
             }
-        } else {
-            self.status = "Auto-crop cancelled; previous crops unchanged".into();
+            let mut candidate = self.document.state.project.clone();
+            for entry in &edit.entries {
+                failed_source = Some(entry.source);
+                if !self.loaded_crop_source_current(entry.source, &entry.file) {
+                    return Err(Error::UnusableSample("a source changed since the proposal"));
+                }
+                if let Some(crop) = entry.draft {
+                    crop.region(entry.development.active_area.into())?;
+                }
+                candidate.source_mut(entry.source)?.crop = entry.draft;
+            }
+            failed_source = None;
+            candidate.validate()?;
+            Ok(candidate)
+        })();
+        match candidate {
+            Ok(candidate) => {
+                let count = edit.entries.len();
+                let before = self.history_snapshot();
+                self.document.state.project = candidate;
+                if let Some(id) = self.document.visit.current_source {
+                    self.document.visit.crop = self
+                        .document
+                        .project
+                        .source(id)
+                        .expect("active source")
+                        .crop;
+                }
+                self.record_edit(before, "Auto-crop", None);
+                self.status = format!("Auto-crop applied to {count} photos");
+            }
+            Err(error) => {
+                let reason = reason(error);
+                if let Some(id) = failed_source {
+                    self.record_crop_problem(id, reason.clone());
+                }
+                self.status = format!("Auto-crop not applied: {reason}. Cancel and start again.");
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn end_auto_crop_review(&mut self, applied: bool) {
+        if self.document.auto_crop_edit.is_none() {
+            return;
         }
         let edit = self.document.auto_crop_edit.take().unwrap();
         self.document.source = edit.source_view;
-        if !apply && self.document.visit.current_source == edit.origin {
+        if !applied && self.document.visit.current_source == edit.origin {
             self.document.visit.canvas.viewport = edit.viewport;
         } else {
             self.document.visit.canvas.viewport.fit();

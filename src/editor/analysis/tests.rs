@@ -1136,7 +1136,11 @@ mod review_tests;
 
 #[test]
 fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
-    let mut editor = ready_state();
+    let mut editor = super::super::tests::with_document_services(ready_state());
+    let (reply, receive) = futures_channel::oneshot::channel();
+    editor.document.spatial_reply = Some(receive);
+    let metadata = editor.document.capture().ready_spatial_metadata();
+    let hold = crate::background::testing::pause();
     editor.tab = 1;
     for section in [
         "photo-composition",
@@ -1201,19 +1205,12 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
             )
         });
         click_label(app, &ctx, "Analyze");
+        reply.send(Ok(Some(metadata))).unwrap();
+        app.run_until(Duration::from_secs(10), |e| {
+            e.document.analysis_preparing.is_some()
+        });
         app.read(|e| {
-            let request = e
-                .document
-                .analysis_preparing
-                .as_ref()
-                .map(|pending| &pending.request)
-                .or_else(|| {
-                    e.document
-                        .spatial_preparing
-                        .as_ref()
-                        .and_then(spatial::Pending::analysis_request)
-                })
-                .expect("captured Analyze request");
+            let request = &e.document.analysis_preparing.as_ref().unwrap().request;
             let snapshot = &request.document;
             assert_eq!(
                 snapshot
@@ -1231,6 +1228,8 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
             );
             assert!(e.document.analysis_pending.is_none());
         });
+        app.update(Editor::cancel_analysis);
+        drop(hold);
     });
 }
 

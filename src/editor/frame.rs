@@ -493,8 +493,13 @@ impl Editor {
         } else if analyze {
             // Inspect the validated, focus-committed Photo state before confirming a reset.
             self.request_analysis(cx);
-        } else if let Some(target) = auto_crop {
-            self.request_auto_crop(target, cx);
+        } else if let Some(action) = auto_crop {
+            match action {
+                auto_crop::Action::Photo(photo) => self.propose_photo_crop(photo, cx),
+                auto_crop::Action::Batch { photos, scope } => {
+                    self.review_crop_proposals(photos, scope, cx)
+                }
+            }
             ui.ctx().request_repaint();
         }
     }
@@ -506,7 +511,7 @@ impl Editor {
         dialog_escape_available: bool,
     ) {
         if self.failure.is_some() {
-            self.feedback_dialog(ui.ctx(), dialog_escape_available, cx);
+            self.feedback_dialog(ui.ctx(), dialog_escape_available);
             return;
         }
         self.document_dialogs(ui.ctx(), dialog_escape_available, cx);

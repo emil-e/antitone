@@ -39,6 +39,8 @@ impl Editor {
         }
         self.finish_flat_edit();
         self.cancel_spatial();
+        self.finish_auto_crop(false);
+        self.document.analysis_regions = None;
         self.retire_pick_actions();
         self.document.history.finish_group();
         self.history_pending = match &work {

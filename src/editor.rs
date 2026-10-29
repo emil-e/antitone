@@ -819,7 +819,9 @@ impl Editor {
         self.candidate_operation = document_workflow::State::default();
         self.finish_flat_edit();
         self.retire_look();
-        self.finish_auto_crop(false);
+        if self.document.auto_crop_edit.is_some() {
+            self.finish_auto_crop(false);
+        }
         self.finish_dust_cleanup();
         self.reset_repairs_pending = replacement;
         if self.document.analysis_preparing.take().is_some() {

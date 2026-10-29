@@ -84,7 +84,7 @@ impl Editor {
             self.busy = true;
             self.status = "Preparing film and picture regions…".into();
         } else {
-            self.resume_spatial_consumer(cx);
+            self.resume_region_actions();
         }
     }
 }
