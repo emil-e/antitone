@@ -1,7 +1,5 @@
 //! Immutable sparse neutral-AP1 repairs; originals and unmodified view sources remain untouched.
 use super::*;
-#[cfg(feature = "editor")]
-use crate::frame_raster::FrameRaster;
 use crate::{dust_repair::EvaluatedRepair, geometry::SourceRegion};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -16,7 +14,7 @@ pub(super) struct Pixel {
 pub(crate) struct Patch {
     pub evaluated: Arc<EvaluatedRepair>,
     buffer: Option<wgpu::Buffer>,
-    region: SourceRegion,
+    pub(crate) region: SourceRegion,
     bound: DVec3,
 }
 
@@ -80,7 +78,7 @@ impl Patch {
         values
     }
 
-    fn buffer_for(
+    pub(crate) fn buffer_for(
         &self,
         device: &wgpu::Device,
         region: SourceRegion,
@@ -219,13 +217,13 @@ impl std::fmt::Debug for Snapshot {
     }
 }
 
+#[cfg(test)]
 pub(crate) struct Kernels {
     #[cfg(feature = "editor")]
     neutral: wgpu::ComputePipeline,
-    #[cfg(feature = "editor")]
-    copy: wgpu::ComputePipeline,
 }
 
+#[cfg(test)]
 impl Kernels {
     #[cfg(not(feature = "editor"))]
     pub async fn new(
@@ -250,7 +248,6 @@ impl Kernels {
         };
         let result = Self {
             neutral: pipeline("repair_neutral"),
-            copy: pipeline("repair_copy"),
         };
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
@@ -259,6 +256,7 @@ impl Kernels {
     }
 
     /// Grade only support pixels with the same operators as the selected original kernel.
+    #[cfg(test)]
     pub fn original(
         &self,
         device: &wgpu::Device,
@@ -308,80 +306,10 @@ impl Kernels {
         }
         Ok(())
     }
-
-    /// Copy only physical footprints touched by exact support, preserving every other bit.
-    #[cfg(feature = "editor")]
-    #[allow(clippy::too_many_arguments)]
-    pub fn copy_regions(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        output: &wgpu::Buffer,
-        source: (&wgpu::Buffer, ([u32; 2], [u32; 2])),
-        frame: FrameRaster,
-        window: ([u32; 2], [u32; 2]),
-        repairs: &Snapshot,
-    ) -> Result<(), Error> {
-        let bounds = frame.processing_bounds()?;
-        let affine = frame.affine_in(bounds)?;
-        for patch in &repairs.0 {
-            let r = patch.region;
-            if !intersects(r, bounds) {
-                continue;
-            }
-            let mut bytes = bytemuck::cast_slice(&[
-                bounds.x,
-                bounds.y,
-                frame.output[0],
-                frame.output[1],
-                r.x,
-                r.y,
-                r.width,
-                r.height,
-                window.0[0],
-                window.0[1],
-                window.1[0],
-                window.1[1],
-                (source.1).0[0],
-                (source.1).0[1],
-                (source.1).1[0],
-                (source.1).1[1],
-            ])
-            .to_vec();
-            for pair in affine {
-                bytes.extend_from_slice(bytemuck::cast_slice(&[pair[0], pair[1], 0., 0.]));
-            }
-            let area = frame.composition.area();
-            bytes.extend_from_slice(bytemuck::cast_slice(&[
-                area.x as i32 - bounds.x as i32,
-                area.y as i32 - bounds.y as i32,
-                area.width as i32,
-                area.height as i32,
-            ]));
-            let view = uniform(device, &bytes);
-            let Some(buffer) = patch.buffer_for(device, patch.region)? else {
-                continue;
-            };
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("exact support footprint copy"),
-                layout: &self.copy.get_bind_group_layout(0),
-                entries: &[
-                    entry(1, output),
-                    entry(12, &buffer),
-                    entry(14, &view),
-                    entry(15, source.0),
-                ],
-            });
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.copy);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(window.1[0].div_ceil(8), window.1[1].div_ceil(8), 1);
-        }
-        Ok(())
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn encode_original(
     pipeline: &wgpu::ComputePipeline,
     device: &wgpu::Device,
@@ -444,6 +372,7 @@ fn encode_original(
     Ok(())
 }
 
+#[cfg(test)]
 fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
@@ -452,6 +381,7 @@ fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
     })
 }
 
+#[cfg(test)]
 fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,

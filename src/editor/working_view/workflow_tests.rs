@@ -282,8 +282,7 @@ fn support_growth_during_submission_cancels_obsolete_units_before_publishing_lat
             assert!(!e.document.visit.working_view.support_ready());
             let state = e.document.visit.working_view.mailbox.0.lock().unwrap();
             assert!(
-                state.neutral_detail.is_none()
-                    && state.neutral_underlay.is_none()
+                state.neutral.as_ref().is_none_or(|cache| cache.is_empty())
                     && state.underlay.is_none(),
                 "partially acquired buffers must remain private"
             );
@@ -422,16 +421,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
         });
         let neutral = app.read(|e| {
             assert!(e.document.visit.working_view.source.as_ref().unwrap().spec == spec);
-            e.document
-                .visit
-                .working_view
-                .mailbox
-                .0
-                .lock()
-                .unwrap()
-                .neutral_detail
-                .clone()
-                .unwrap()
+            e.document.visit.working_view.neutral_source().unwrap()
         });
         app.enter(|e, access| {
             e.document.target = OutputTarget::Srgb;
@@ -447,19 +437,9 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
                 e.document.visit.working.task.is_none(),
                 "output-only demand must not reacquire originals"
             );
-            assert!(Arc::ptr_eq(
-                &neutral,
-                e.document
-                    .visit
-                    .working_view
-                    .mailbox
-                    .0
-                    .lock()
-                    .unwrap()
-                    .neutral_detail
-                    .as_ref()
-                    .unwrap()
-            ));
+            assert!(
+                neutral.same_pixels_as(&e.document.visit.working_view.neutral_source().unwrap())
+            );
         });
     });
     scheduler.close_and_wait().unwrap();

@@ -104,7 +104,9 @@ fn gpu_rotated_box_footprints_match_scalar_coverage_across_tiles() {
                             tile.size(),
                         );
                         let mut encoder = device.create_command_encoder(&Default::default());
-                        average.accumulate(&device, &mut encoder, &tile, [x, y]);
+                        average
+                            .accumulate(&device, &mut encoder, &tile, [x, y])
+                            .unwrap();
                         queue.submit([encoder.finish()]);
                         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                     }
@@ -122,7 +124,7 @@ fn gpu_rotated_box_footprints_match_scalar_coverage_across_tiles() {
                     mapped_at_creation: false,
                 });
                 let mut encoder = device.create_command_encoder(&Default::default());
-                average.finish(&device, &mut encoder, &result);
+                average.finish(&device, &mut encoder, &result).unwrap();
                 encoder.copy_texture_to_buffer(
                     wgpu::TexelCopyTextureInfo {
                         texture: &result,

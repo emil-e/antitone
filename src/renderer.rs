@@ -110,43 +110,38 @@ impl RendererCache {
 }
 
 pub(crate) struct RenderBinding {
-    pub group: wgpu::BindGroup,
     source: wgpu::Buffer,
-    looked: Option<(Arc<crate::gpu::look::Lut>, wgpu::Buffer)>,
-    count: u32,
-    coverage: bool,
+    reference: crate::gpu::evaluation::Reference,
+    recorded: crate::gpu::evaluation::Recorded,
 }
 impl RenderBinding {
-    pub(crate) fn look_bytes(&self) -> u64 {
-        self.looked
-            .as_ref()
-            .map_or(0, |(look, buffer)| look.byte_len() + buffer.size())
+    pub(crate) fn reference_bytes(&self) -> u64 {
+        self.reference.look().map_or(0, |look| look.byte_len()) + self.recorded.byte_len()
     }
 
     #[cfg(feature = "editor")]
     pub(crate) fn look_lut(&self) -> Option<Arc<crate::gpu::look::Lut>> {
-        self.looked.as_ref().map(|(look, _)| look.clone())
+        self.reference.look()
     }
 
-    pub fn encode_look(
+    pub fn encode(
         &self,
-        renderer: &GpuRenderer,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<Option<Arc<crate::gpu::look::Check>>, Error> {
-        let Some((look, output)) = &self.looked else {
-            return Ok(None);
-        };
-        let dispatch = renderer.look_kernel.bind(
-            device,
-            &self.source,
-            output,
-            look.clone(),
-            self.count,
-            self.coverage,
-        )?;
-        renderer.look_kernel.encode(encoder, &dispatch);
-        Ok(Some(dispatch.check))
+        let check = self
+            .reference
+            .look()
+            .map(|_| crate::gpu::look::Check::new(device));
+        let mut inputs = vec![&self.source];
+        if let Some(check) = &check {
+            inputs.push(check.status());
+        }
+        self.recorded.encode_work(device, encoder, &inputs)?;
+        if let Some(check) = &check {
+            check.encode_readback(encoder);
+        }
+        Ok(check)
     }
 }
 
@@ -163,18 +158,17 @@ pub(crate) struct TargetResources {
 pub struct GpuRenderer {
     pub(crate) kernel: ProcessingKernel,
     pub(crate) submissions: crate::gpu::SubmissionGate,
-    #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
+    #[cfg(all(
+        test,
+        any(feature = "editor", all(feature = "raw", feature = "render"))
+    ))]
     pub(crate) repairs: crate::gpu::repairs::Kernels,
     #[cfg(feature = "ui")]
     pub(crate) display: wgpu::RenderPipeline,
     targets: [TargetResources; 2],
     #[cfg(feature = "render")]
-    pub(crate) pull_programs: Arc<crate::gpu::pull::Programs>,
-    #[cfg(all(feature = "raw", feature = "render"))]
-    original_copy: std::sync::OnceLock<wgpu::RenderPipeline>,
-    look_kernel: crate::gpu::look::Kernel,
-    #[cfg(any(feature = "ui", all(feature = "raw", feature = "render")))]
-    stages: std::sync::OnceLock<Result<Arc<crate::gpu::pixel_pipeline::Kernels>, Error>>,
+    pub(crate) evaluation: crate::gpu::evaluation::Context,
+    look_validation: crate::gpu::look::Validation,
     #[cfg(test)]
     look_uploads: std::sync::atomic::AtomicU64,
     look_cache: std::sync::Mutex<
@@ -186,6 +180,10 @@ pub struct GpuRenderer {
     pub(crate) average: Arc<AveragePipelines>,
 }
 impl GpuRenderer {
+    /// Shared device-scoped evaluation and its fixed generated-value retention policy.
+    pub fn evaluation(&self) -> &crate::gpu::evaluation::Context {
+        &self.evaluation
+    }
     pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Arc<Self>, Error> {
         Self::new_with_submissions(device, queue, crate::gpu::SubmissionGate::default()).await
     }
@@ -194,12 +192,24 @@ impl GpuRenderer {
         queue: &wgpu::Queue,
         submissions: crate::gpu::SubmissionGate,
     ) -> Result<Arc<Self>, Error> {
+        Self::new_with_cache_policy(device, queue, submissions, Default::default()).await
+    }
+    pub async fn new_with_cache_policy(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: crate::gpu::SubmissionGate,
+        policy: crate::gpu::evaluation::CachePolicy,
+    ) -> Result<Arc<Self>, Error> {
         let kernel = ProcessingKernel::new(device).await?;
+        let evaluation = crate::gpu::evaluation::Context::new(device, policy);
         #[cfg(feature = "ui")]
-        let average = Arc::new(AveragePipelines::new(device).await?);
-        #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
+        let average = Arc::new(AveragePipelines::with_context(device, evaluation.clone()).await?);
+        #[cfg(all(
+            test,
+            any(feature = "editor", all(feature = "raw", feature = "render"))
+        ))]
         let repairs = crate::gpu::repairs::Kernels::new(device, &kernel).await?;
-        let look_kernel = crate::gpu::look::Kernel::new(device).await?;
+        let look_validation = crate::gpu::look::Validation::new(device).await?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image fullscreen triangle"),
@@ -214,21 +224,23 @@ impl GpuRenderer {
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
-        Ok(Arc::new(Self {
+        crate::gpu::evaluation::Reference::prewarm(&evaluation)?;
+        #[cfg(feature = "editor")]
+        crate::gpu::evaluation::Recipe::prewarm_filtered(device, &evaluation)?;
+        let renderer = Arc::new(Self {
             kernel,
             submissions,
-            #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
+            #[cfg(all(
+                test,
+                any(feature = "editor", all(feature = "raw", feature = "render"))
+            ))]
             repairs,
             #[cfg(feature = "ui")]
             display,
             targets,
             #[cfg(feature = "render")]
-            pull_programs: Arc::default(),
-            #[cfg(all(feature = "raw", feature = "render"))]
-            original_copy: std::sync::OnceLock::new(),
-            look_kernel,
-            #[cfg(any(feature = "ui", all(feature = "raw", feature = "render")))]
-            stages: std::sync::OnceLock::new(),
+            evaluation,
+            look_validation,
             #[cfg(test)]
             look_uploads: std::sync::atomic::AtomicU64::new(0),
             look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -236,31 +248,11 @@ impl GpuRenderer {
             look_reference: std::sync::OnceLock::new(),
             #[cfg(feature = "ui")]
             average,
-        }))
+        });
+        #[cfg(feature = "ui")]
+        crate::gpu::evaluation::Recipe::prewarm_resident(device, &renderer)?;
+        Ok(renderer)
     }
-    #[cfg(any(feature = "ui", all(feature = "raw", feature = "render")))]
-    pub(crate) fn pixel_kernels(
-        &self,
-        device: &wgpu::Device,
-    ) -> Result<Arc<crate::gpu::pixel_pipeline::Kernels>, Error> {
-        self.stages
-            .get_or_init(|| {
-                pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(device)).map(Arc::new)
-            })
-            .clone()
-    }
-
-    #[cfg(all(feature = "raw", feature = "render"))]
-    pub(crate) fn original_copy(&self, device: &wgpu::Device) -> &wgpu::RenderPipeline {
-        self.original_copy.get_or_init(|| {
-            crate::gpu::raster::render_pipeline(
-                device,
-                "valid linear original output",
-                include_str!("gpu/pull/copy.wgsl"),
-            )
-        })
-    }
-
     /// Native worker-only generation. No compiler, Python or OCIO runtime is involved.
     #[cfg(feature = "project")]
     pub fn bake_builtin(
@@ -359,66 +351,57 @@ impl GpuRenderer {
         dimensions: [u32; 4],
         target: OutputTarget,
         look: Option<&Arc<crate::looks::LookAsset>>,
+        destination: &wgpu::Texture,
     ) -> Result<RenderBinding, Error> {
+        use crate::gpu::evaluation::{
+            Budget, Domain, Grid, Meaning, Reference, Region, borrowed_input,
+        };
+        self.evaluation.require_device(device)?;
         let count = dimensions[0]
             .checked_mul(dimensions[1])
             .filter(|n| *n > 0)
             .ok_or(Error::InvalidParameter("invalid rendered dimensions"))?;
-        let looked = look
-            .map(|asset| {
-                let resource = self.look_resource(device, asset)?;
-                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("looked scene-linear AP1"),
-                    size: u64::from(count) * 16,
-                    usage: wgpu::BufferUsages::STORAGE,
-                    mapped_at_creation: false,
-                });
-                Ok::<_, Error>((resource, buffer))
-            })
-            .transpose()?;
-        let pixels = looked.as_ref().map_or(source, |(_, buffer)| buffer);
-        let size = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("rendered dimensions"),
-            contents: bytemuck::cast_slice(&dimensions),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let resources = self.target(target);
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("immutable look and selected-output ACES resources"),
-            layout: &resources.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: pixels.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&resources.tables[0]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&resources.tables[1]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&resources.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: size.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: resources.hues.as_entire_binding(),
-                },
-            ],
-        });
+        if source.size() < u64::from(count) * 16
+            || !source.usage().contains(wgpu::BufferUsages::STORAGE)
+        {
+            return Err(Error::InvalidParameter("invalid rendered source storage"));
+        }
+        let domain = Domain {
+            bounds: crate::geometry::SourceRegion {
+                x: 0,
+                y: 0,
+                width: dimensions[0],
+                height: dimensions[1],
+            },
+            grid: Grid {
+                coverage: dimensions[2],
+                ..Grid::axis_aligned([0.; 2], [1.; 2])
+            },
+            meaning: Meaning::Graded,
+        };
+        let reference = Reference::capture(
+            device,
+            self,
+            crate::rendering::OutputReference::DisplayReferred(target),
+            look,
+        )?;
+        let image = reference.presentation(borrowed_input(domain), self, destination)?;
+        let evaluation = self.evaluation.request(
+            image,
+            Region {
+                bounds: domain.bounds,
+                grid: domain.grid,
+            },
+            Budget {
+                tile: [dimensions[0], dimensions[1]],
+                scratch_bytes: device.limits().max_buffer_size,
+            },
+        )?;
+        let recorded = self.evaluation.record(evaluation, vec![])?;
         Ok(RenderBinding {
-            group,
             source: source.clone(),
-            looked,
-            count,
-            coverage: dimensions[2] != 0,
+            reference,
+            recorded,
         })
     }
     pub(crate) fn check_look_image(
@@ -427,7 +410,7 @@ impl GpuRenderer {
         encoder: &mut wgpu::CommandEncoder,
         image: &wgpu::Texture,
     ) -> Arc<crate::gpu::look::Check> {
-        self.look_kernel.check_rendered(device, encoder, image)
+        self.look_validation.check_rendered(device, encoder, image)
     }
     pub(crate) fn check_look_projection(
         &self,
@@ -436,7 +419,7 @@ impl GpuRenderer {
         image: &wgpu::Texture,
         mapping: crate::geometry::TextureMapping,
     ) -> Result<Arc<crate::gpu::look::Check>, Error> {
-        self.look_kernel
+        self.look_validation
             .check_projected(device, encoder, image, mapping)
     }
     pub(crate) fn target(&self, target: OutputTarget) -> &TargetResources {

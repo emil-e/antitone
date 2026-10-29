@@ -167,7 +167,10 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
             assert_eq!(source.byte_len(), u64::from(n) * 8);
             assert_eq!(
                 image.processing_byte_len(),
-                (u64::from(n) * 8, u64::from(n) * 16)
+                (
+                    u64::from(n) * 8,
+                    u64::from(n) * 16 + std::mem::size_of::<[u32; 4]>() as u64
+                )
             );
             for photographic in [false, true] {
                 for &count in counts {

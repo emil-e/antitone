@@ -1,4 +1,6 @@
-use wgpu::util::DeviceExt;
+use crate::gpu::evaluation::{
+    Binding, Domain, Fragment, Grid, Meaning, PlannedImage, Resource, Shared, Storage, Work,
+};
 #[cfg(test)]
 mod look_tests;
 pub(crate) use crate::acquisition::windows;
@@ -44,32 +46,31 @@ const FINISH: &str = r#"
 "#;
 
 pub(crate) struct AveragePipelines {
-    compute: [wgpu::ComputePipeline; 2],
+    evaluation: crate::gpu::evaluation::Context,
+    compute: [std::sync::Arc<str>; 2],
     finish: wgpu::RenderPipeline,
 }
 
 impl AveragePipelines {
     pub(crate) async fn new(device: &wgpu::Device) -> Result<Self, crate::Error> {
+        Self::with_context(
+            device,
+            crate::gpu::evaluation::Context::new(device, Default::default()),
+        )
+        .await
+    }
+    pub(crate) async fn with_context(
+        device: &wgpu::Device,
+        evaluation: crate::gpu::evaluation::Context,
+    ) -> Result<Self, crate::Error> {
+        evaluation.require_device(device)?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let affine = [
             include_str!("shaders/footprint.wgsl"),
             include_str!("shaders/affine_area.wgsl"),
         ]
         .join("\n");
-        let compute = [SHADER, affine.as_str()].map(|shader| {
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("post-render exact-area averaging"),
-                source: wgpu::ShaderSource::Wgsl(shader.into()),
-            });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("settled preview reconstruction"),
-                layout: None,
-                module: &module,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        });
+        let compute: [std::sync::Arc<str>; 2] = [SHADER.into(), affine.into()];
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("settled image copy"),
             source: wgpu::ShaderSource::Wgsl(FINISH.into()),
@@ -102,7 +103,27 @@ impl AveragePipelines {
         if let Some(error) = scope.pop().await {
             return Err(crate::Error::Gpu(error.to_string()));
         }
-        Ok(Self { compute, finish })
+        evaluation.prewarm(
+            &compute
+                .iter()
+                .map(|code| Work::Compute {
+                    code: code.clone(),
+                    entry: "main",
+                    bindings: vec![
+                        (0, Binding::Texture(Resource(0))),
+                        (1, Binding::Write(Resource(1))),
+                        (2, Binding::Uniform(Resource(2))),
+                    ],
+                    groups: [1, 1, 1],
+                    initialize: None,
+                })
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(Self {
+            evaluation,
+            compute,
+            finish,
+        })
     }
 }
 
@@ -198,10 +219,11 @@ impl AreaAverage {
         encoder: &mut wgpu::CommandEncoder,
         tile: &wgpu::Texture,
         origin: [u32; 2],
-    ) {
+    ) -> Result<(), crate::Error> {
         for window in self.windows(tile, origin) {
-            self.accumulate_window(device, encoder, tile, origin, window);
+            self.accumulate_window(device, encoder, tile, origin, window)?;
         }
+        Ok(())
     }
 
     pub(crate) fn windows(&self, tile: &wgpu::Texture, origin: [u32; 2]) -> Vec<windows::Window> {
@@ -225,9 +247,24 @@ impl AreaAverage {
         tile: &wgpu::Texture,
         origin: [u32; 2],
         (output_origin, extent): windows::Window,
-    ) {
+    ) -> Result<(), crate::Error> {
+        self.pipelines.evaluation.require_device(device)?;
         if extent.contains(&0) {
-            return;
+            return Ok(());
+        }
+        let size = [self.dimensions[2], self.dimensions[3]];
+        if (0..2).any(|i| {
+            output_origin[i]
+                .checked_add(extent[i])
+                .is_none_or(|end| end > size[i])
+        }) || !matches!(
+            tile.format().sample_type(None, None),
+            Some(wgpu::TextureSampleType::Float { .. })
+        ) || !tile.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING)
+        {
+            return Err(crate::Error::InvalidParameter(
+                "invalid reconstruction window or source texture",
+            ));
         }
         let parameters = [
             self.dimensions[0],
@@ -253,35 +290,34 @@ impl AreaAverage {
             bytes.extend_from_slice(bytemuck::cast_slice(&[0_f32; 2]));
             bytes.extend_from_slice(bytemuck::cast_slice(&parameters[8..]));
         }
-        let compute = &self.pipelines.compute[usize::from(self.affine.is_some())];
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: &bytes,
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let view = tile.create_view(&Default::default());
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &compute.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.sums.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: uniform.as_entire_binding(),
-                },
+        let mut fragment = Fragment::default();
+        let output = Self::image(
+            &mut fragment,
+            [self.dimensions[2], self.dimensions[3]],
+            Storage::Input {
+                slot: 0,
+                bytes: self.sums.size(),
+                writable: true,
+            },
+        );
+        let uniform = fragment.resource(Storage::Uniform(bytes.into()));
+        fragment.work.push(Work::Compute {
+            code: self.pipelines.compute[usize::from(self.affine.is_some())].clone(),
+            entry: "main",
+            bindings: vec![
+                (
+                    0,
+                    Binding::Shared(Shared::Texture(tile.create_view(&Default::default()))),
+                ),
+                (1, Binding::Write(output.resource)),
+                (2, Binding::Uniform(uniform)),
             ],
+            groups: [extent[0].div_ceil(8), extent[1].div_ceil(8), 1],
+            initialize: None,
         });
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(compute);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(extent[0].div_ceil(8), extent[1].div_ceil(8), 1);
+        self.pipelines
+            .evaluation
+            .encode_work(fragment, output, encoder, &[&self.sums])
     }
 
     pub fn finish(
@@ -289,43 +325,42 @@ impl AreaAverage {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         output: &wgpu::Texture,
-    ) {
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(&[self.dimensions[2], self.dimensions[3], 0, 0]),
-            usage: wgpu::BufferUsages::UNIFORM,
+    ) -> Result<(), crate::Error> {
+        self.pipelines.evaluation.require_device(device)?;
+        let size = [self.dimensions[2], self.dimensions[3]];
+        if [output.width(), output.height()] != size {
+            return Err(crate::Error::InvalidParameter(
+                "reconstruction attachment differs from output grid",
+            ));
+        }
+        let mut fragment = Fragment::default();
+        let sums = fragment.resource(Storage::Input {
+            slot: 0,
+            bytes: self.sums.size(),
+            writable: false,
         });
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.pipelines.finish.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.sums.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: uniform.as_entire_binding(),
-                },
-            ],
+        let uniform = fragment.uniform(&[size[0], size[1], 0u32, 0]);
+        let image = Self::image(&mut fragment, size, Storage::RenderTarget(output.clone()));
+        fragment.work.push(Work::Render {
+            pipeline: self.pipelines.finish.clone(),
+            layout: self.pipelines.finish.get_bind_group_layout(0),
+            bindings: vec![(0, Binding::Read(sums)), (1, uniform)],
+            target: image.resource,
         });
-        let view = output.create_view(&Default::default());
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("settled full-source-derived preview"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-        pass.set_pipeline(&self.pipelines.finish);
-        pass.set_bind_group(0, &group, &[]);
-        pass.draw(0..3, 0..1);
+        self.pipelines
+            .evaluation
+            .encode_work(fragment, image, encoder, &[&self.sums])
+    }
+    fn image(fragment: &mut Fragment, size: [u32; 2], storage: Storage) -> PlannedImage {
+        PlannedImage {
+            resource: fragment.resource(storage),
+            region: [0, 0, size[0], size[1]].into(),
+            domain: Domain {
+                bounds: [0, 0, size[0], size[1]].into(),
+                grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+                meaning: Meaning::Display,
+            },
+        }
     }
 }
 

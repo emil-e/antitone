@@ -186,11 +186,7 @@ impl Worker {
             grade,
             recipe.neutral.source_development.active_area.into(),
         )?);
-        let input = crate::gpu::ProcessingInput::from(grade)
-            .with_look(recipe.look.clone())
-            .with_film_emulation(recipe.film_emulation)
-            .with_frame_size(recipe.composition.crop().size)
-            .with_film_seed(recipe.neutral.source.0);
+        let input = crate::gpu::ProcessingInput::from(grade).with_recipe_components(recipe)?;
         let view = RenderedView::new(
             &self.device,
             source.clone(),

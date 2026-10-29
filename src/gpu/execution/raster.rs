@@ -48,8 +48,6 @@ pub(crate) struct Request<'a> {
     pub source: &'a ProcessingSource,
     pub input: &'a ProcessingInput,
     pub plan: Option<&'a Plan>,
-    #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
-    pub processing_queries: Option<(&'a wgpu::QuerySet, u32)>,
 }
 
 impl<'a> Request<'a> {
@@ -62,8 +60,6 @@ impl<'a> Request<'a> {
             source,
             input,
             plan,
-            #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
-            processing_queries: None,
         }
     }
 
@@ -96,85 +92,21 @@ impl<'a> Request<'a> {
                 ));
             }
         }
-        let prepared = self
+        let raster = self.plan.map(Raster::planned).unwrap_or_else(|| {
+            self.source
+                .geometry()
+                .map(|geometry| Raster::region(geometry.region(), geometry.size()))
+                .unwrap_or_else(|| Raster::native([0, 0, self.source.pixel_count(), 1].into()))
+        });
+        let stages = self
             .plan
-            .filter(|plan| !plan.pipeline().is_empty())
-            .map(|plan| {
-                if plan
-                    .input()
-                    .size()
-                    .into_iter()
-                    .map(u64::from)
-                    .product::<u64>()
-                    != u64::from(self.source.pixel_count())
-                {
-                    return Err(Error::InvalidParameter(
-                        "processing source layout differs from plan",
-                    ));
-                }
-                Prepared::with_programs(
-                    device,
-                    plan.pipeline(),
-                    Raster::planned(plan),
-                    None,
-                    renderer.pull_programs.clone(),
-                )
-            })
-            .transpose()?;
-        match self.input.pipeline() {
-            Some(grade) => {
-                #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
-                if let Some(queries) = self.processing_queries {
-                    renderer.kernel.encode_grade_with_query(
-                        device,
-                        encoder,
-                        self.source,
-                        working,
-                        grade,
-                        queries,
-                    )?;
-                } else {
-                    renderer
-                        .kernel
-                        .encode_grade(device, encoder, self.source, working, grade)?;
-                }
-                #[cfg(not(all(test, target_os = "macos", feature = "raw", feature = "export")))]
-                renderer
-                    .kernel
-                    .encode_grade(device, encoder, self.source, working, grade)?;
-            }
-            None => renderer.kernel.encode(
-                device,
-                encoder,
-                self.source,
-                working,
-                self.input.parameters(),
-            ),
-        }
-        #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
-        if !self.input.repairs.0.is_empty() {
-            let geometry = self.source.geometry().ok_or_else(|| {
-                Error::Gpu("repair rendering needs original source geometry".into())
-            })?;
-            if geometry.region().width == geometry.size()[0]
-                && geometry.region().height == geometry.size()[1]
-            {
-                renderer.repairs.original(
-                    device,
-                    encoder,
-                    &renderer.kernel,
-                    working,
-                    self.input,
-                    geometry,
-                )?;
-            }
-        }
-
-        if let Some(prepared) = &prepared {
-            renderer
-                .pixel_kernels(device)?
-                .encode(device, encoder, prepared, working)?;
-        }
-        Ok(prepared)
+            .map(|plan| plan.pipeline().clone())
+            .unwrap_or_default();
+        let recipe = crate::gpu::evaluation::Recipe::with_stages(self.input, stages);
+        let root = recipe.resident(device, renderer, self.source, raster)?;
+        let prepared =
+            Prepared::from_composition(device, raster, root, None, renderer.evaluation.clone())?;
+        prepared.encode_from(device, encoder, &self.source.input, working)?;
+        Ok(Some(prepared))
     }
 }

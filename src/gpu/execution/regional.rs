@@ -1,14 +1,13 @@
 //! Original-source layers with bounded lazy processing and affine reconstruction.
 use crate::{
     Error,
-    gpu::{GpuFlatField, ProcessingInput, SubmissionGate, pull},
+    gpu::{GpuFlatField, ProcessingInput, SubmissionGate, evaluation},
     renderer::GpuRenderer,
     rendering::{OutputReference, OutputTarget},
     resample::AreaAverage,
     scan::Scan,
 };
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "regional_tests.rs"]
 mod tests;
@@ -73,7 +72,7 @@ pub(crate) fn execute(
         ));
     }
     let started = std::time::Instant::now();
-    let root = pull::original_chain(
+    let root = evaluation::original_chain(
         device,
         renderer,
         scan,
@@ -83,15 +82,18 @@ pub(crate) fn execute(
         &input.pixel_pipeline()?,
     )?;
     let tile_size = [512, 128];
-    let job = pull::Job::new(
+    let region = evaluation::Region {
+        bounds: demand.area,
+        grid: root.domain.grid,
+    };
+    let evaluation = renderer.evaluation.request(
         root,
-        demand.area,
-        pull::Budget {
+        region,
+        evaluation::Budget {
             tile: tile_size,
             scratch_bytes: (32 << 20).min(device.limits().max_buffer_size),
         },
-    )?
-    .with_policy(pull::Policy::Composed);
+    )?;
     let average = if let Some(frame) = demand.frame {
         AreaAverage::new_affine_shared(device, renderer.average.clone(), frame)?
     } else {
@@ -113,12 +115,11 @@ pub(crate) fn execute(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    let copy = renderer.original_copy(device);
-    let mut executor = pull::Executor::with_programs(renderer.pull_programs.clone());
-    for plan in job.plans() {
+    let mut executor = renderer.evaluation.executor();
+    for plan in evaluation.plans() {
         if cancelled() {
             return Ok(None);
         }
@@ -137,8 +138,14 @@ pub(crate) fn execute(
             &plan,
             &cancelled,
             |encoder, image, pixels| {
-                copy_to_texture(device, encoder, copy, pixels, image.size(), &tile);
-                average.accumulate_window(device, encoder, &tile, origin, first);
+                evaluation::acquire::copy_sized(
+                    &renderer.evaluation,
+                    encoder,
+                    pixels,
+                    image.size(),
+                    &tile,
+                )?;
+                average.accumulate_window(device, encoder, &tile, origin, first)?;
                 Ok(())
             },
         )?;
@@ -150,23 +157,35 @@ pub(crate) fn execute(
                 return Ok(None);
             }
             let mut encoder = device.create_command_encoder(&Default::default());
-            average.accumulate_window(device, &mut encoder, &tile, origin, window);
-            wait_for(device, gate.submit(queue, [encoder.finish()]))?;
+            average.accumulate_window(device, &mut encoder, &tile, origin, window)?;
+            if renderer
+                .evaluation
+                .submit(queue, gate, encoder, &cancelled)?
+                .is_none()
+            {
+                return Ok(None);
+            }
         }
     }
     if cancelled() {
         return Ok(None);
     }
     let mut encoder = device.create_command_encoder(&Default::default());
-    average.finish(device, &mut encoder, output);
+    average.finish(device, &mut encoder, output)?;
     let look_check = input
         .look()
         .map(|_| renderer.check_look_image(device, &mut encoder, output));
-    let submission = gate.submit(queue, [encoder.finish()]);
-    if let Some(check) = &look_check {
-        check.begin(|| {});
+    if renderer
+        .evaluation
+        .submit_with(queue, gate, encoder, &cancelled, || {
+            if let Some(check) = &look_check {
+                check.begin(|| {});
+            }
+        })?
+        .is_none()
+    {
+        return Ok(None);
     }
-    wait_for(device, submission)?;
     if let Some(check) = &look_check {
         check
             .result()
@@ -181,59 +200,4 @@ pub(crate) fn execute(
         seconds=started.elapsed().as_secs_f64();"settled_preview"
     );
     Ok(Some(Completed { look_check }))
-}
-fn copy_to_texture(
-    device: &wgpu::Device,
-    encoder: &mut wgpu::CommandEncoder,
-    pipeline: &wgpu::RenderPipeline,
-    pixels: &wgpu::Buffer,
-    size: [u32; 2],
-    texture: &wgpu::Texture,
-) {
-    let dimensions = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("valid original copy dimensions"),
-        contents: bytemuck::cast_slice(&[size[0], size[1], 0, 0]),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("valid original output copy"),
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: pixels.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: dimensions.as_entire_binding(),
-            },
-        ],
-    });
-    let view = texture.create_view(&Default::default());
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("linear output delivery to reconstruction"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: &view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        ..Default::default()
-    });
-    pass.set_viewport(0., 0., size[0] as f32, size[1] as f32, 0., 1.);
-    pass.set_pipeline(pipeline);
-    pass.set_bind_group(0, &group, &[]);
-    pass.draw(0..3, 0..1);
-}
-fn wait_for(device: &wgpu::Device, submission: wgpu::SubmissionIndex) -> Result<(), Error> {
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: None,
-        })
-        .map_err(|e| Error::Gpu(e.to_string()))?;
-    Ok(())
 }

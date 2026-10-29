@@ -55,12 +55,14 @@ impl Acquired {
         let initial = previous.as_ref().unwrap_or(&base);
         let mut encoder = device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&initial.pixels, 0, &pixels, 0, pixels.size());
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submissions.submit(queue, [encoder.finish()])),
-                timeout: None,
-            })
-            .map_err(|e| Error::Gpu(e.to_string()))?;
+        if base
+            .renderer
+            .evaluation
+            .submit(queue, submissions, encoder, &cancelled)?
+            .is_none()
+        {
+            return Ok(None);
+        }
         for (origin, size) in windows {
             if cancelled() {
                 return Ok(None);
@@ -90,7 +92,8 @@ impl Acquired {
             let rebuilt = rebuilt.remove(0);
             let mut encoder = device.create_command_encoder(&Default::default());
             // Restore changed footprints first; erased/deleted support returns to exact base bits.
-            base.renderer.repairs.copy_regions(
+            crate::gpu::evaluation::acquire::repair_copy(
+                &base.renderer.evaluation,
                 device,
                 &mut encoder,
                 &pixels,
@@ -99,7 +102,8 @@ impl Acquired {
                 (origin, size),
                 &changed,
             )?;
-            base.renderer.repairs.copy_regions(
+            crate::gpu::evaluation::acquire::repair_copy(
+                &base.renderer.evaluation,
                 device,
                 &mut encoder,
                 &pixels,
@@ -108,12 +112,14 @@ impl Acquired {
                 (origin, size),
                 &repairs,
             )?;
-            device
-                .poll(wgpu::PollType::Wait {
-                    submission_index: Some(submissions.submit(queue, [encoder.finish()])),
-                    timeout: None,
-                })
-                .map_err(|e| Error::Gpu(e.to_string()))?;
+            if base
+                .renderer
+                .evaluation
+                .submit(queue, submissions, encoder, &cancelled)?
+                .is_none()
+            {
+                return Ok(None);
+            }
         }
         if cancelled() {
             return Ok(None);

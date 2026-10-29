@@ -31,7 +31,29 @@ impl PartialEq for Request {
     }
 }
 
+// Numerical source provenance and representation, independent of requested support and ticket.
+#[derive(Clone)]
+struct NeutralContent(Request);
+impl PartialEq for NeutralContent {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.same_source(&other.0)
+            && self.0.repairs == other.0.repairs
+            && self.0.plan.sampling() == other.0.plan.sampling()
+    }
+}
+impl std::fmt::Debug for NeutralContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NeutralContent")
+            .field("area", &self.0.area)
+            .field("sampling", &self.0.plan.sampling())
+            .field("inspection", &self.0.inspection)
+            .finish_non_exhaustive()
+    }
+}
 impl Request {
+    pub(crate) fn cache_key(&self) -> crate::gpu::evaluation::RetainedKey {
+        crate::gpu::evaluation::RetainedKey::new(NeutralContent(self.clone()))
+    }
     pub(crate) fn frame(&self) -> FrameRaster {
         self.plan.output()
     }

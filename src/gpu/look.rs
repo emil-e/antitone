@@ -11,7 +11,114 @@ use wgpu::util::DeviceExt;
 
 pub struct Kernel {
     pipeline: wgpu::ComputePipeline,
-    validation: wgpu::ComputePipeline,
+    validation: Validation,
+}
+
+pub(crate) struct Validation {
+    pipeline: wgpu::ComputePipeline,
+}
+impl Validation {
+    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let validation_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("rendered look admission"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("../shaders/footprint.wgsl"),
+                    include_str!("../shaders/look_validation.wgsl")
+                )
+                .into(),
+            ),
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("rendered look admission"),
+            layout: None,
+            module: &validation_shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        if let Some(error) = scope.pop().await {
+            return Err(Error::Gpu(error.to_string()));
+        }
+        Ok(Self { pipeline })
+    }
+    pub fn check_rendered(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        image: &wgpu::Texture,
+    ) -> Arc<Check> {
+        self.check_projected(
+            device,
+            encoder,
+            image,
+            crate::geometry::TextureMapping::IDENTITY,
+        )
+        .expect("a nonempty texture has a finite identity footprint")
+    }
+
+    /// Check only texels with positive contribution to the requested source footprint.
+    pub fn check_projected(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        image: &wgpu::Texture,
+        mapping: crate::geometry::TextureMapping,
+    ) -> Result<Arc<Check>, Error> {
+        let size = [image.width() as f32, image.height() as f32];
+        let values = [
+            mapping.origin[0] * size[0],
+            mapping.origin[1] * size[1],
+            mapping.x_axis[0] * size[0],
+            mapping.x_axis[1] * size[1],
+            mapping.y_axis[0] * size[0],
+            mapping.y_axis[1] * size[1],
+            0.,
+            0.,
+        ];
+        let determinant = values[2] * values[5] - values[3] * values[4];
+        if values.iter().any(|value| !value.is_finite())
+            || !determinant.is_finite()
+            || determinant == 0.
+        {
+            return Err(Error::Gpu("invalid look admission footprint".into()));
+        }
+        let check = Check::new(device);
+        let parameters = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("look admission footprint"),
+            contents: bytemuck::cast_slice(&values),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let view = image.create_view(&Default::default());
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rendered look admission"),
+            layout: &self.pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: check.status.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: parameters.as_entire_binding(),
+                },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(image.width().div_ceil(8), image.height().div_ceil(8), 1);
+        }
+        encoder.copy_buffer_to_buffer(&check.status, 0, &check.readback, 0, 8);
+        Ok(check)
+    }
 }
 
 pub struct Lut {
@@ -97,7 +204,7 @@ pub struct Check {
 }
 
 impl Check {
-    fn new(device: &wgpu::Device) -> Arc<Self> {
+    pub(crate) fn new(device: &wgpu::Device) -> Arc<Self> {
         Arc::new(Self {
             status: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("look admission status"),
@@ -113,6 +220,15 @@ impl Check {
             started: AtomicBool::new(false),
             result: Arc::new(Mutex::new(None)),
         })
+    }
+
+    #[cfg(feature = "render")]
+    pub(crate) fn status(&self) -> &wgpu::Buffer {
+        &self.status
+    }
+    #[cfg(feature = "render")]
+    pub(crate) fn encode_readback(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.copy_buffer_to_buffer(&self.status, 0, &self.readback, 0, 8);
     }
 
     /// Start mapping only after the encoder containing the check has been submitted.
@@ -187,31 +303,12 @@ impl Kernel {
             compilation_options: Default::default(),
             cache: None,
         });
-        let validation_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("rendered look admission"),
-            source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{}\n{}",
-                    include_str!("../shaders/footprint.wgsl"),
-                    include_str!("../shaders/look_validation.wgsl")
-                )
-                .into(),
-            ),
-        });
-        let validation = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("rendered look admission"),
-            layout: None,
-            module: &validation_shader,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Self {
             pipeline,
-            validation,
+            validation: Validation::new(device).await?,
         })
     }
 
@@ -221,16 +318,8 @@ impl Kernel {
         encoder: &mut wgpu::CommandEncoder,
         image: &wgpu::Texture,
     ) -> Arc<Check> {
-        self.check_projected(
-            device,
-            encoder,
-            image,
-            crate::geometry::TextureMapping::IDENTITY,
-        )
-        .expect("a nonempty texture has a finite identity footprint")
+        self.validation.check_rendered(device, encoder, image)
     }
-
-    /// Check only texels with positive contribution to the requested source footprint.
     pub fn check_projected(
         &self,
         device: &wgpu::Device,
@@ -238,57 +327,8 @@ impl Kernel {
         image: &wgpu::Texture,
         mapping: crate::geometry::TextureMapping,
     ) -> Result<Arc<Check>, Error> {
-        let size = [image.width() as f32, image.height() as f32];
-        let values = [
-            mapping.origin[0] * size[0],
-            mapping.origin[1] * size[1],
-            mapping.x_axis[0] * size[0],
-            mapping.x_axis[1] * size[1],
-            mapping.y_axis[0] * size[0],
-            mapping.y_axis[1] * size[1],
-            0.,
-            0.,
-        ];
-        let determinant = values[2] * values[5] - values[3] * values[4];
-        if values.iter().any(|value| !value.is_finite())
-            || !determinant.is_finite()
-            || determinant == 0.
-        {
-            return Err(Error::Gpu("invalid look admission footprint".into()));
-        }
-        let check = Check::new(device);
-        let parameters = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("look admission footprint"),
-            contents: bytemuck::cast_slice(&values),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let view = image.create_view(&Default::default());
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rendered look admission"),
-            layout: &self.validation.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: check.status.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: parameters.as_entire_binding(),
-                },
-            ],
-        });
-        {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.validation);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(image.width().div_ceil(8), image.height().div_ceil(8), 1);
-        }
-        encoder.copy_buffer_to_buffer(&check.status, 0, &check.readback, 0, 8);
-        Ok(check)
+        self.validation
+            .check_projected(device, encoder, image, mapping)
     }
 
     pub fn bind(

@@ -279,10 +279,10 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         ready(&mut h, 2);
         h.read(|editor| assert!(Arc::ptr_eq(&same, &editor.dust_evaluations(sig)[0])));
         h.read(|editor| {
-            assert!(Arc::ptr_eq(
-                &initial_neutral,
-                &editor.document.visit.working_view.neutral_source().unwrap()
-            ))
+            assert!(
+                initial_neutral
+                    .same_pixels_as(&editor.document.visit.working_view.neutral_source().unwrap())
+            )
         });
         h.read(|editor| {
             assert!(

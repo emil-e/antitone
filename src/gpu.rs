@@ -1,12 +1,12 @@
 use bytemuck::Zeroable;
 use std::{num::NonZeroU64, sync::Arc};
 
+#[cfg(feature = "render")]
+pub mod evaluation;
 #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
 pub(crate) mod execution;
 mod flat;
 pub mod look;
-#[cfg(feature = "render")]
-pub mod pull;
 #[cfg(all(feature = "raw", feature = "render"))]
 pub(crate) mod rgb16;
 #[cfg(all(test, feature = "render"))]
@@ -567,9 +567,10 @@ impl ProcessingSource {
 }
 
 pub struct ProcessingKernel {
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     module: wgpu::ShaderModule,
     pipeline: wgpu::ComputePipeline,
+    #[cfg(test)]
     repair: wgpu::ComputePipeline,
     output_binding: u32,
     output_stride: u64,
@@ -625,6 +626,7 @@ impl ProcessingKernel {
             compilation_options: Default::default(),
             cache: None,
         });
+        #[cfg(test)]
         let repair = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("source-coordinate repair grading"),
             layout: None,
@@ -637,9 +639,10 @@ impl ProcessingKernel {
             return Err(Error::Gpu(error.to_string()));
         }
         Ok(Self {
-            #[cfg(feature = "editor")]
+            #[cfg(all(test, feature = "editor"))]
             module,
             pipeline,
+            #[cfg(test)]
             repair,
             output_binding: 1,
             output_stride: 16,
@@ -691,29 +694,6 @@ impl ProcessingKernel {
             (&grade.grade.buffer, &grade.grade.context),
             #[cfg(test)]
             (None, None),
-        );
-        Ok(())
-    }
-
-    #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
-    pub(crate) fn encode_grade_with_query(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        source: &ProcessingSource,
-        output: &wgpu::Buffer,
-        grade: &GpuPipeline,
-        queries: (&wgpu::QuerySet, u32),
-    ) -> Result<(), Error> {
-        grade.require_source(source)?;
-        self.encode_resources(
-            device,
-            encoder,
-            source,
-            output,
-            grade.parameters,
-            (&grade.grade.buffer, &grade.grade.context),
-            (Some(queries), None),
         );
         Ok(())
     }

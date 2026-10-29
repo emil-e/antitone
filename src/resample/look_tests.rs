@@ -56,8 +56,10 @@ fn look_failures_survive_reconstruction_only_for_positive_weight_samples() {
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
             let mut encoder = device.create_command_encoder(&Default::default());
-            average.accumulate(&device, &mut encoder, &source, [0, 0]);
-            average.finish(&device, &mut encoder, &output);
+            average
+                .accumulate(&device, &mut encoder, &source, [0, 0])
+                .unwrap();
+            average.finish(&device, &mut encoder, &output).unwrap();
             let validation = check.check_rendered(&device, &mut encoder, &output);
             let submission = queue.submit([encoder.finish()]);
             validation.begin(|| {});

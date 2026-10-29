@@ -30,7 +30,7 @@ fn candidate(
     RenderedView::new(device, source, &input, OutputTarget::Srgb, previous).unwrap()
 }
 
-fn field(view: &RenderedView) -> &Arc<crate::gpu::pull::RetainedBuffer> {
+fn field(view: &RenderedView) -> &Arc<crate::gpu::evaluation::RetainedBuffer> {
     view.graded.as_ref().unwrap().stages.field().unwrap()
 }
 
@@ -309,6 +309,79 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         for y in 0..size[1] - 8 {
             for x in 0..size[0] - 8 {
                 assert_eq!(a[(y + 8) * size[0] + x + 8], b[y * size[0] + x]);
+            }
+        }
+    });
+}
+
+#[test]
+fn film_emulation_cache_off_and_an_insufficient_budget_preserve_rendered_pixels() {
+    pollster::block_on(async {
+        let (device, queue, renderer, kernels) = context().await;
+        let baseline = configured_probe(&device, &renderer, &kernels, ProbeConfig::default(), 17);
+        baseline.ensure_submitted(
+            &device,
+            &queue,
+            &Default::default(),
+            &egui::Context::default(),
+        );
+        let expected = read(&device, &queue, &baseline.graded.as_ref().unwrap().pixels);
+        assert!(field(&baseline).ready());
+        let no_grain = configured_probe(
+            &device,
+            &renderer,
+            &kernels,
+            ProbeConfig {
+                amount: 0.,
+                ..Default::default()
+            },
+            17,
+        );
+        no_grain.ensure_submitted(
+            &device,
+            &queue,
+            &Default::default(),
+            &egui::Context::default(),
+        );
+        let control = read(&device, &queue, &no_grain.graded.as_ref().unwrap().pixels);
+        assert!(
+            expected
+                .iter()
+                .zip(control)
+                .any(|(a, b)| (a[0] - b[0]).abs() > 1e-4),
+            "fixture must detect omitted grain"
+        );
+        for bytes in [0, 1] {
+            let uncached_renderer = crate::renderer::GpuRenderer::new_with_cache_policy(
+                &device,
+                &queue,
+                Default::default(),
+                crate::gpu::evaluation::CachePolicy {
+                    generated_bytes: bytes,
+                },
+            )
+            .await
+            .unwrap();
+            for _ in 0..2 {
+                let view = configured_probe(
+                    &device,
+                    &uncached_renderer,
+                    &kernels,
+                    ProbeConfig::default(),
+                    17,
+                );
+                assert!(view.graded.as_ref().unwrap().stages.field().is_none());
+                view.ensure_submitted(
+                    &device,
+                    &queue,
+                    &Default::default(),
+                    &egui::Context::default(),
+                );
+                assert_eq!(
+                    read(&device, &queue, &view.graded.as_ref().unwrap().pixels),
+                    expected
+                );
+                assert_eq!(uncached_renderer.evaluation().retained_bytes(), 0);
             }
         }
     });

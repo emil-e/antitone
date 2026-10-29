@@ -45,8 +45,8 @@ fn selected_proxy_has_one_immutable_source_and_lazy_active_target_output() {
         assert_ne!(a.working, b.working);
         assert_eq!(
             proxy.byte_len(),
-            source_bytes + u64::from(count) * 32,
-            "only active output is proxy-owned; held consumers are separate"
+            source_bytes + u64::from(count) * 32 + std::mem::size_of::<[u32; 4]>() as u64,
+            "one active working/target pair plus its captured dimensions; held consumers are separate"
         );
         assert!(
             srgb.write_source(&queue, &vec![[0; 4]; count as usize])
