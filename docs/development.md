@@ -117,7 +117,7 @@ cargo test --locked --features editor --lib editor::look_workflow::
 
 # Reference-session and lazy-support completion, retirement and correction transactions without painting.
 cargo test --locked --features editor --lib -- \
-  editor::reference_workflow:: editor::support_workflow::
+  editor::flat:: editor::support_workflow::
 
 # Effective grade ownership, physical support and purpose-bound reconstruction without painting.
 cargo test --locked --features editor --lib -- \

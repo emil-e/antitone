@@ -318,7 +318,7 @@ impl Editor {
                 self.document.source = !self.document.input.ready();
                 self.document.visit.dust.cleanup = cleanup.is_some()
                     && !self.document.source
-                    && self.document.visit.ready.is_some();
+                    && self.document.visit.canvas.ready.is_some();
                 if let Some(show_masks) = cleanup {
                     self.document.visit.dust.show_masks = show_masks;
                 }

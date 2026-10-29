@@ -250,17 +250,18 @@ fn reference_admission_respects_budget_inspection_and_explicit_comparison() {
     editor
         .document
         .visit
+        .canvas
         .grade
         .original
         .generation
         .store(23, std::sync::atomic::Ordering::Relaxed);
-    editor.document.visit.grade.original.refining = Some((23, view));
+    editor.document.visit.canvas.grade.original.refining = Some((23, view));
     assert!(!editor.admit_view_reference(frame));
-    assert_eq!(editor.document.visit.grade.original.revision(), 24);
+    assert_eq!(editor.document.visit.canvas.grade.original.revision(), 24);
 
     assert!(!editor.admit_view_reference(frame));
     assert_eq!(
-        editor.document.visit.grade.original.revision(),
+        editor.document.visit.canvas.grade.original.revision(),
         24,
         "cancel an admitted reference once"
     );

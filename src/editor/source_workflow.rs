@@ -81,7 +81,7 @@ impl Editor {
         self.document.visit.support = Default::default();
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
-        self.document.visit.selection_timing = None;
+        self.document.visit.canvas.selection_timing = None;
         if self.document.analysis_pending.take().is_some() {
             self.cancel_analysis();
         }
@@ -121,16 +121,16 @@ impl Editor {
             .and_then(|id| self.document.state.project.source(id).ok())
             .and_then(|source| source.crop);
         self.document.visit.crop_edit = None;
-        self.document.visit.last_layout = None;
+        self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
-        self.document.visit.viewport.fit();
+        self.document.visit.canvas.viewport.fit();
         self.document.export_dialog = None;
         self.document.export_summary = None;
         self.document.visit.return_notice = None;
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
-        self.document.visit.ready = None;
-        self.document.visit.selection_timing =
+        self.document.visit.canvas.ready = None;
+        self.document.visit.canvas.selection_timing =
             selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
         self.document.source = self
             .document
@@ -214,7 +214,7 @@ impl Editor {
         if result.is_err() {
             self.document.visit.pending_preview = None;
         }
-        if let Some(timing) = &self.document.visit.selection_timing {
+        if let Some(timing) = &self.document.visit.canvas.selection_timing {
             log::debug!(
                 request = view,
                 success = result.is_ok(),
@@ -271,7 +271,7 @@ impl Editor {
                     );
                 }
                 self.document.cache_ready(&ready);
-                self.document.visit.ready = Some(*ready);
+                self.document.visit.canvas.ready = Some(*ready);
             }
             Err(error) => {
                 log::warn!(
@@ -280,7 +280,7 @@ impl Editor {
                     "source_load_failed"
                 );
 
-                self.document.visit.selection_timing = None;
+                self.document.visit.canvas.selection_timing = None;
                 self.status = error;
             }
         }

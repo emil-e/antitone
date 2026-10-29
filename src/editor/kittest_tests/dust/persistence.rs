@@ -29,7 +29,7 @@ fn pending_stroke_shows_no_donor_and_accepts_one_result_after_real_search() {
             assert!(!e.file_available());
         });
         let (canvas, marked) = h.read(|e| {
-            let geometry = e.document.visit.last_layout.unwrap().0;
+            let geometry = e.active_canvas().last_layout.unwrap().0;
             let stroke = &e.pending_dust_strokes()[0];
             let [x, y] = stroke.support.origin();
             let [width, height] = stroke.support.size();
@@ -154,7 +154,7 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
         let timing = h.update(|e| {
             e.seed_thumbnail();
             let source = e.document.visit.current_source.unwrap();
-            let composition = e.document.visit.last_layout.unwrap().0.composition;
+            let composition = e.active_canvas().last_layout.unwrap().0.composition;
             e.document.visit.pending_preview = Some(
                 e.document
                     .thumbnails
@@ -169,9 +169,9 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
                     .expect("selected camera preview is cached"),
             );
             e.document.visit.working_view.clear();
-            e.document.visit.preview_rendered = None;
+            e.document.visit.canvas.preview_rendered = None;
             let timing = Arc::new(SelectionTiming::new(e.id, Instant::now()));
-            e.document.visit.selection_timing = Some(timing.clone());
+            e.document.visit.canvas.selection_timing = Some(timing.clone());
             timing
         });
         h.step();
@@ -181,6 +181,7 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
             let preview = &e
                 .document
                 .visit
+                .canvas
                 .preview_rendered
                 .as_ref()
                 .expect("usable placeholder")
@@ -236,7 +237,7 @@ fn repair_evaluation_failures_preserve_usable_navigation_previews() {
                 == 1
         });
         let source = h.read(|editor| editor.document.visit.current_source.unwrap());
-        let area = h.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
+        let area = h.read(|editor| editor.document.visit.canvas.ready.as_ref().unwrap().area);
         // A support touching the source edge cannot satisfy the biharmonic
         // exterior, so this is an evaluation failure rather than mask rejection.
         let repair = h.update(|editor| {
@@ -373,7 +374,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             point[0] as f32 + offset[0] as f32 + 0.5,
             point[1] as f32 + offset[1] as f32 + 0.5,
         );
-        let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         drag(
             &mut h,
             layout.screen_point(start),
@@ -462,7 +463,13 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         // The reference must match the complete processing intent, including admitted repairs.
         wait_for(&mut h, |e| {
             assert!(
-                e.document.visit.grade.original.refinement_error.is_none(),
+                e.document
+                    .visit
+                    .canvas
+                    .grade
+                    .original
+                    .refinement_error
+                    .is_none(),
                 "{}",
                 e.status
             );
@@ -493,6 +500,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 &editor
                     .document
                     .visit
+                    .canvas
                     .grade
                     .original
                     .settled

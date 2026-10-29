@@ -264,7 +264,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             }
         }
         assert_eq!(editor.document.dirty(), dirty);
-        let area = editor.document.visit.ready.as_ref().unwrap().area;
+        let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
         let border = editor
             .document
             .project
@@ -364,7 +364,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
         }
         let before = directory.path().join("repaired.tif");
         let bytes = std::fs::read(&before).unwrap();
-        let area = editor.document.visit.ready.as_ref().unwrap().area;
+        let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
         let repairs = &mut editor
             .document
             .state

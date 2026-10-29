@@ -10,7 +10,6 @@ impl Pick {
             Self::Gamma => calibration::GAMMA,
             Self::RollWb => white_balance::ROLL,
             Self::Wb => white_balance::LAYER,
-            Self::Flat => flat::DISPLAY,
             Self::Analysis => analysis::AREA_DISPLAY,
         }
     }
@@ -62,7 +61,7 @@ impl Editor {
             Pick::Gamma => calibration::pick_gamma(self, cx),
             Pick::RollWb => white_balance::pick_roll(self, cx),
             Pick::Wb => white_balance::pick_layer(self, cx),
-            Pick::Flat | Pick::Analysis => return,
+            Pick::Analysis => return,
         };
         match result {
             Ok(task) => {

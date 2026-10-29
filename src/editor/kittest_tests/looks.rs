@@ -70,7 +70,7 @@ fn fixture_editor_gpu<R>(
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
         wait_for(&mut harness, |editor| {
-            !editor.busy && editor.document.visit.ready.is_some()
+            !editor.busy && editor.document.visit.canvas.ready.is_some()
         });
         harness.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
@@ -361,6 +361,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                     editor
                         .document
                         .visit
+                        .canvas
                         .grade
                         .original
                         .refinement_error
@@ -376,6 +377,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                     editor
                         .document
                         .visit
+                        .canvas
                         .grade
                         .original
                         .settled
@@ -475,7 +477,17 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
 fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restores_pixels() {
     fn pixels(harness: &Harness<'_, Editor>, capture: &Rc<RefCell<FloatCapture>>) -> Vec<[f32; 4]> {
         let positions = [
-            harness.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center()),
+            harness.read(|editor| {
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .last_layout
+                    .unwrap()
+                    .0
+                    .image
+                    .center()
+            }),
             harness.get_by_label("roll-0.dng").rect().center(),
             harness.get_by_label("roll-1.dng").rect().center(),
         ];
@@ -527,7 +539,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
 
     fixture_editor_gpu(|mut harness, capture, device, queue| {
         let source = harness.read(|editor| editor.document.visit.current_source.unwrap());
-        let area = harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
+        let area = harness.read(|editor| editor.document.visit.canvas.ready.as_ref().unwrap().area);
         let repair = harness.update(|editor| {
             editor
                 .document
@@ -822,7 +834,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             wait_for(&mut reopened, |editor| {
                 !editor.busy
                     && editor.document_pending.is_none()
-                    && editor.document.visit.ready.is_some()
+                    && editor.document.visit.canvas.ready.is_some()
             });
             reopened.read(|editor| assert!(editor.failure.is_none()));
             reopened.read(|editor| assert_eq!(editor.loaded_looks.len(), 1));
@@ -833,7 +845,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             wait_for(&mut harness, |editor| {
                 !editor.busy
                     && editor.document_pending.is_none()
-                    && editor.document.visit.ready.is_some()
+                    && editor.document.visit.canvas.ready.is_some()
             });
             harness.read(|editor| assert!(editor.failure.is_none()));
             harness.read(|editor| assert_eq!(editor.loaded_looks.len(), 2));
@@ -906,7 +918,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                 wait_for(&mut reopened, |editor| {
                     !editor.busy
                         && editor.document_pending.is_none()
-                        && editor.document.visit.ready.is_some()
+                        && editor.document.visit.canvas.ready.is_some()
                 });
                 reopened.read(|editor| assert!(editor.failure.is_none()));
                 reopened.read(|editor| {
@@ -1029,6 +1041,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
                 editor
                     .document
                     .visit
+                    .canvas
                     .grade
                     .original
                     .refinement_error
@@ -1039,12 +1052,20 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
             editor
                 .document
                 .visit
+                .canvas
                 .grade
                 .original
                 .signature
                 .as_ref()
                 .is_some_and(|signature| signature.0.look_id().is_none())
-                && editor.document.visit.grade.original.settled.is_some()
+                && editor
+                    .document
+                    .visit
+                    .canvas
+                    .grade
+                    .original
+                    .settled
+                    .is_some()
         });
         harness.read(|editor| assert!(editor.look_render_failure().is_none()));
         harness.read(|editor| {

@@ -70,7 +70,7 @@ fn fixture() -> Editor {
         });
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
-        let area = editor.document.visit.ready.as_ref().unwrap().area;
+        let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
         editor.document.visit.crop = Some(Crop {
             center: [
                 f64::from(area.x) + f64::from(area.width) / 2.,
@@ -192,7 +192,16 @@ fn superseded_export_discards_old_output_and_publishes_the_captured_replacement(
 fn application_retirement_signals_stop_but_keeps_the_export_source_until_cleanup() {
     let editor = fixture();
     let (starts, release) = hold_first_submission(&editor);
-    let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
+    let source = Arc::downgrade(
+        &editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed,
+    );
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("retired.tif");
     with_application(editor, |app| {
@@ -318,7 +327,16 @@ fn captured_service_writes_after_ui_ownership_ends_and_preserves_destinations_on
 fn document_retirement_cancels_export_while_the_physical_call_keeps_its_inputs() {
     let editor = fixture();
     let (starts, release) = hold_first_submission(&editor);
-    let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
+    let source = Arc::downgrade(
+        &editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed,
+    );
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("retired-document.tif");
     with_application(editor, |app| {

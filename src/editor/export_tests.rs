@@ -83,7 +83,11 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
             Duration::from_secs(30),
             |editor, cx| editor.add_raws(vec![path], cx),
         );
-        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        );
         assert_eq!(
             editor
                 .document
@@ -123,7 +127,7 @@ fn supplied_m9_editor_import_save_open_and_bounded_exports() {
             |editor, cx| editor.start_document(Preparation::Open(project_path), cx),
         );
         assert!(
-            editor.document.visit.ready.is_some() && editor.failure.is_none(),
+            editor.document.visit.canvas.ready.is_some() && editor.failure.is_none(),
             "{}",
             editor.status
         );
@@ -179,7 +183,11 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
                 )
             },
         );
-        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        );
         editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
         editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
         editor.document.roll = RollSettings::default();
@@ -209,7 +217,7 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
             match format {
                 OutputFormat::Tiff(target) => {
                     let mut decoder = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
-                    let area = editor.document.visit.ready.as_ref().unwrap().area;
+                    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
                     let size = [area.width, area.height];
                     assert_eq!(decoder.dimensions().unwrap(), (size[0], size[1]));
                     assert_eq!(

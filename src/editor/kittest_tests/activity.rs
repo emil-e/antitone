@@ -33,7 +33,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
         wait_for(&mut harness, |editor| {
             !editor.busy && editor.document_pending.is_none()
         });
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
+        harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
         harness.update(|editor| editor.sync_document());
         let before = harness.read(|editor| editor.document.state.project.clone());
         for (layout, size) in [
@@ -110,8 +110,8 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     .click();
                 harness.step();
                 harness.read(|editor| assert_eq!(editor.tab, old_tab));
-                let old_view = harness.read(|editor| editor.document.visit.viewport);
-                let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+                let old_view = harness.read(|editor| editor.document.visit.canvas.viewport);
+                let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
                 let point = geometry.image.center_bottom() - egui::vec2(0., 10.);
                 harness.hover_at(point);
                 for pressed in [true, false] {
@@ -123,7 +123,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     });
                     harness.step();
                 }
-                harness.read(|editor| assert_eq!(editor.document.visit.viewport, old_view));
+                harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, old_view));
                 harness.key_press(egui::Key::Escape);
                 harness.step();
                 harness.read(|editor| assert!(editor.tasks.blocks_workspace()));
@@ -134,7 +134,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             }
             for (name, task, pick) in [
                 ("raw", Task::Photo(id), None),
-                ("reference", Task::Reference(id), Some(Pick::Flat.display())),
+                ("reference", Task::Reference(id), Some(flat::DISPLAY)),
                 (
                     "measurement",
                     Task::Measurement(id, "Dmin"),
@@ -154,13 +154,13 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     });
                 }
                 let ready = if name == "raw" || name == "reference" {
-                    harness.update(|editor| editor.document.visit.ready.take())
+                    harness.update(|editor| editor.document.visit.canvas.ready.take())
                 } else {
                     None
                 };
                 render_case(&mut harness, &format!("{name}-{layout}"));
                 if let Some(ready) = ready {
-                    harness.update(|editor| editor.document.visit.ready = Some(ready));
+                    harness.update(|editor| editor.document.visit.canvas.ready = Some(ready));
                 }
                 harness.update(|editor| editor.document.visit.picking.display = None);
                 harness.update(|editor| editor.set_pick_region(None));

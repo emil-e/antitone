@@ -23,7 +23,7 @@ fn setup(path: &str) -> Editor {
 }
 
 fn patch(editor: &Editor) -> crate::coverage::Coverage {
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     crate::coverage::Coverage::rectangle(Rect {
         x: area.x + 8,
         y: area.y + 8,

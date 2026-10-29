@@ -160,7 +160,11 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         harness.enter(|editor, cx| editor.add_raws(paths.clone(), cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| {
-            assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            );
             assert!(
                 editor
                     .document
@@ -261,7 +265,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         native_file_action(&mut harness, crate::platform::menu::Action::New);
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.state.project.development().is_none()));
-        harness.read(|editor| assert!(editor.document.visit.ready.is_none()));
+        harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_none()));
         harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| {
@@ -294,6 +298,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                 editor
                     .document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .unwrap()
@@ -310,7 +315,9 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             wait_settled(&mut harness);
             let timing =
                 harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-            harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
+            harness.update(|editor| {
+                editor.document.visit.canvas.selection_timing = Some(timing.clone())
+            });
             harness.step();
             let png = harness.render().unwrap();
             assert!(timing.ready_was_painted());
@@ -353,8 +360,17 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         wait_settled(&mut harness);
         assert_eq!(compare_pixel(&harness), adjusted_pixel_edited);
         let selected = harness.read(|editor| editor.document.visit.current_source);
-        let ready =
-            harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().proxy.clone());
+        let ready = harness.read(|editor| {
+            editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .proxy
+                .clone()
+        });
         for (name, id, missing) in [
             ("changed", ids[1], false),
             ("missing", ids[1], true),
@@ -388,6 +404,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                     editor
                         .document
                         .visit
+                        .canvas
                         .ready
                         .as_ref()
                         .unwrap()
@@ -429,7 +446,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         harness.read(|editor| assert_eq!(editor.document.state.project, dirty));
         harness.read(|editor| assert!(editor.document.dirty()));
         harness.read(|editor| assert_eq!(editor.transition, Some(files::Transition::New)));
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
+        harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
         harness.read(|editor| assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Save));
         harness.get_by_label("OK").click();
         harness.step();

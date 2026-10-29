@@ -79,7 +79,7 @@ fn visible_authored_previews_advance_and_install_without_another_paint() {
                     .unwrap();
                 assert_eq!(texture.size(), [8, 16]);
             }
-            assert!(editor.document.visit.ready.is_none());
+            assert!(editor.document.visit.canvas.ready.is_none());
             assert!(!editor.document.thumbnails.embedded.pending());
         });
     });
@@ -142,7 +142,7 @@ fn composed_editor_registers_visible_demand_then_uses_completed_camera_textures(
         }
         app.read(|editor| {
             assert!(
-                editor.document.visit.ready.is_none()
+                editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.pending_preview.is_none()
             )
         });

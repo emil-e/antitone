@@ -326,13 +326,19 @@ fn workload(
                     if app.read(|e| !e.busy) && ready.is_none() {
                         ready = Some(selection_start.elapsed().as_secs_f64());
                     }
-                    if app.read(|e| e.document.visit.ready.is_none() && !e.busy) {
+                    if app.read(|e| e.document.visit.canvas.ready.is_none() && !e.busy) {
                         return Err(
                             app.read(|e| format!("source preparation failed: {}", e.status))
                         );
                     }
                     if app.read(|e| {
-                        e.document.visit.grade.original.refinement_error.is_some()
+                        e.document
+                            .visit
+                            .canvas
+                            .grade
+                            .original
+                            .refinement_error
+                            .is_some()
                             || e.document.visit.working_view.error.is_some()
                     }) {
                         return Err(app.read(|e| format!("refinement failed: {}", e.status)));
@@ -371,7 +377,7 @@ fn workload(
             Ok(())
         })();
         app.update(|editor| {
-            editor.document.visit.grade.original.invalidate();
+            editor.document.visit.canvas.grade.original.invalidate();
             editor.document.visit.working_view.clear();
             editor.source_epoch.fetch_add(1, Ordering::Relaxed);
             editor.document = super::document::Document::default().into();

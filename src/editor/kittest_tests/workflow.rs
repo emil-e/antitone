@@ -31,7 +31,13 @@ pub(super) fn calibrated_workflow<R>(
     editor_harness(|mut harness, capture| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng"), dmax, photo], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            )
+        });
         harness.read(|editor| assert!(editor.calibration().is_none()));
         for (name, action, point, expected) in [
             (
@@ -50,6 +56,7 @@ pub(super) fn calibrated_workflow<R>(
                     editor
                         .document
                         .visit
+                        .canvas
                         .ready
                         .as_ref()
                         .unwrap()
@@ -67,7 +74,7 @@ pub(super) fn calibrated_workflow<R>(
             assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
             // Keep the support inside the uniform swatch, including the demosaicer's
             // neighbours: the authored 32-pixel ramps can influence selection edges.
-            let layout = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             let first = layout.screen_point(point - egui::vec2(8., 8.));
             let last = layout.screen_point(point + egui::vec2(8., 8.));
             harness.hover_at(first);
@@ -117,6 +124,7 @@ pub(super) fn calibrated_workflow<R>(
                 editor
                     .document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .unwrap()
@@ -166,11 +174,11 @@ pub(super) fn calibrated_workflow<R>(
 pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
     wait_for(harness, |e| {
         assert!(
-            e.document.visit.grade.original.refinement_error.is_none(),
+            e.active_canvas().grade.original.refinement_error.is_none(),
             "{}",
             e.status
         );
-        if e.document.visit.working_view.revision().is_some() {
+        if e.document.flat_edit.is_none() && e.document.visit.working_view.revision().is_some() {
             let expected = if e.document.source {
                 e.source_parameters(e.source_exposure)
                     .map(ProcessingInput::from)
@@ -196,21 +204,19 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                                 || e.document.visit.working_view.reference_ready())
                     })
         } else {
-            e.document
-                .visit
+            e.active_canvas()
                 .grade
                 .original
                 .signature
                 .as_ref()
                 .is_some_and(|s| s.1 == e.document.target)
-                && e.document
-                    .visit
+                && e.active_canvas()
                     .grade
                     .original
                     .settled
                     .as_ref()
                     .is_some_and(|(revision, _, _)| {
-                        *revision == e.document.visit.grade.original.revision()
+                        *revision == e.active_canvas().grade.original.revision()
                     })
         }
     });
@@ -224,11 +230,16 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| {
-            assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            );
             assert_eq!(
                 editor
                     .document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .unwrap()
@@ -276,7 +287,7 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
                     }
                     harness.render().unwrap();
                     let geometry =
-                        harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+                        harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
                     let output = capture.borrow();
                     for [x, y] in [[96, 32], [32, 160], [224, 32]] {
                         let point = geometry.screen_point(egui::pos2(x as f32, y as f32));
@@ -310,13 +321,41 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
                     }
                 }
                 harness.read(|editor| {
-                    assert!(editor.document.visit.grade.original.signature.is_none())
+                    assert!(
+                        editor
+                            .document
+                            .visit
+                            .canvas
+                            .grade
+                            .original
+                            .signature
+                            .is_none()
+                    )
                 });
                 harness.read(|editor| {
-                    assert!(editor.document.visit.grade.original.refining.is_none())
+                    assert!(
+                        editor
+                            .document
+                            .visit
+                            .canvas
+                            .grade
+                            .original
+                            .refining
+                            .is_none()
+                    )
                 });
-                harness
-                    .read(|editor| assert!(editor.document.visit.grade.original.settled.is_none()));
+                harness.read(|editor| {
+                    assert!(
+                        editor
+                            .document
+                            .visit
+                            .canvas
+                            .grade
+                            .original
+                            .settled
+                            .is_none()
+                    )
+                });
                 let mut expected = project.clone();
                 expected.output.tiff = if target == OutputTarget::Srgb {
                     crate::project::TiffTarget::Srgb
@@ -341,7 +380,9 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
             wait_settled(&mut harness);
             let timing =
                 harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-            harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
+            harness.update(|editor| {
+                editor.document.visit.canvas.selection_timing = Some(timing.clone())
+            });
             harness.step();
             let png = harness.render().unwrap();
             assert!(timing.ready_was_painted());
@@ -377,7 +418,9 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
             select_target(&mut harness, target);
             let timing =
                 harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-            harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
+            harness.update(|editor| {
+                editor.document.visit.canvas.selection_timing = Some(timing.clone())
+            });
             harness.step();
             let png = harness.render().unwrap();
             assert!(timing.ready_was_painted());
@@ -385,6 +428,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
                 editor
                     .document
                     .visit
+                    .canvas
                     .last_layout
                     .unwrap()
                     .0
@@ -436,7 +480,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         set_layout(&mut harness, egui::vec2(800., 600.), 315.);
         harness.get_by_label("100%").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.visit.viewport.zoom, Some(1.)));
+        harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.)));
         wait_settled(&mut harness);
         let frame = harness.read(|editor| {
             editor
@@ -458,7 +502,15 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         harness.read(|editor| {
             assert!(
                 frame.bounds().unwrap().width
-                    < editor.document.visit.ready.as_ref().unwrap().area.width
+                    < editor
+                        .document
+                        .visit
+                        .canvas
+                        .ready
+                        .as_ref()
+                        .unwrap()
+                        .area
+                        .width
             )
         });
         let png = harness.render().unwrap();
@@ -490,6 +542,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
                 editor
                     .document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .unwrap()
@@ -499,7 +552,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
                 "working-photo.dng"
             )
         });
-        harness.read(|editor| assert_eq!(editor.document.visit.viewport.zoom, Some(1.)));
+        harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.)));
         harness.read(|editor| assert!(!editor.document.source));
         harness.read(|editor| assert!(editor.active_pick().is_none()));
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
@@ -518,7 +571,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
             let reference = editor.document.find_source(&fixture("patches.dng"));
             assert_eq!(editor.document.visit.current_source, reference);
             assert_eq!(
-                editor.document.visit.ready.as_ref().unwrap().path,
+                editor.document.visit.canvas.ready.as_ref().unwrap().path,
                 fixture("patches.dng")
             );
             reference
@@ -564,6 +617,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
             editor
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .unwrap()
@@ -571,7 +625,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                 .adjustment_layers
                 .clone()
         });
-        let area = harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
+        let area = harness.read(|editor| editor.document.visit.canvas.ready.as_ref().unwrap().area);
         let mut layers = AdjustmentLayers::default();
         for exposure in [0.5, -0.25] {
             layers
@@ -645,6 +699,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                     editor
                         .document
                         .visit
+                        .canvas
                         .ready
                         .as_ref()
                         .unwrap()
@@ -710,7 +765,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
         });
         assert_eq!(first.image.processing_byte_len(), (0, 0));
         harness.read(|editor| assert!(
-        !editor.document.visit.ready.as_ref().unwrap().proxy.output_retained(),
+        !editor.document.visit.canvas.ready.as_ref().unwrap().proxy.output_retained(),
         "scopes must not recreate unused provisional storage after accepted working presentation"
     ));
         stage(&mut harness, "Photo");
@@ -740,6 +795,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                     !editor
                         .document
                         .visit
+                        .canvas
                         .ready
                         .as_ref()
                         .unwrap()
@@ -793,6 +849,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                     !editor
                         .document
                         .visit
+                        .canvas
                         .ready
                         .as_ref()
                         .unwrap()
@@ -859,7 +916,14 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
         wait_settled(&mut harness);
         harness.read(|editor| {
             assert!(
-                editor.document.visit.grade.original.signature.is_none(),
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .grade
+                    .original
+                    .signature
+                    .is_none(),
                 "normal grading does not prepare hidden original work"
             )
         });
@@ -885,6 +949,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                 &editor
                     .document
                     .visit
+                    .canvas
                     .grade
                     .original
                     .settled
@@ -957,7 +1022,18 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
         });
         harness.step();
         harness.render().unwrap();
-        harness.read(|editor| assert!(editor.document.visit.grade.original.settled.is_none()));
+        harness.read(|editor| {
+            assert!(
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .grade
+                    .original
+                    .settled
+                    .is_none()
+            )
+        });
         harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
         harness.read(|editor| {
             assert!(

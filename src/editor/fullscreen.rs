@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) struct FullscreenView {
     id: u64,
+    reference: bool,
     viewport: Viewport,
     layout: Option<(crate::viewport::CanvasLayout, f32)>,
     source: bool,
@@ -31,8 +32,7 @@ impl Editor {
         !self.fullscreen_blocked()
             && self.document.analysis_review.is_none()
             && (self.fullscreen.is_some()
-                || (self.document.visit.ready.is_some()
-                    || self.document.visit.pending_preview.is_some())
+                || self.selected_view().is_some()
                     && !(self.busy
                         && (self.active_pick().is_some() || self.document.flat_edit.is_some())))
     }
@@ -49,8 +49,9 @@ impl Editor {
             let native_before = context.input(|input| input.viewport().fullscreen == Some(true));
             self.fullscreen = Some(FullscreenView {
                 id: self.id,
-                viewport: self.document.visit.viewport,
-                layout: self.document.visit.last_layout,
+                reference: self.document.flat_edit.is_some(),
+                viewport: self.active_canvas().viewport,
+                layout: self.active_canvas().last_layout,
                 source: self.document.source,
                 source_exposure: self.source_exposure,
                 source_white_balance: self.source_white_balance,
@@ -59,7 +60,7 @@ impl Editor {
                 restored: false,
                 exiting: false,
             });
-            if self.document.visit.viewport.zoom.is_some()
+            if self.active_canvas().viewport.zoom.is_some()
                 && let Some((layout, density)) = self
                     .document
                     .visit
@@ -69,10 +70,9 @@ impl Editor {
                         edit.layout
                             .map(|layout| (layout, context.pixels_per_point()))
                     })
-                    .or(self.document.visit.last_layout)
+                    .or(self.active_canvas().last_layout)
             {
-                self.document
-                    .visit
+                self.active_canvas_mut()
                     .viewport
                     .reframe(layout, layout.composition, density);
             }
@@ -99,17 +99,18 @@ impl Editor {
 
     pub(super) fn update_fullscreen(&mut self, context: &egui::Context) {
         let native = context.input(|input| input.viewport().fullscreen);
-        let Some(view) = &mut self.fullscreen else {
+        let Some(view) = &self.fullscreen else {
             return;
         };
-        let context_changed = view.id != self.id;
+        let context_changed =
+            view.id != self.id || view.reference != self.document.flat_edit.is_some();
         let native_exit = !view.exiting && view.native_before && native == Some(false);
         let returned = view.exiting && view.restored;
         if context_changed || native_exit || returned {
             let view = self.fullscreen.take().unwrap();
             if !context_changed {
-                self.document.visit.viewport = view.viewport;
-                self.document.visit.last_layout = view.layout;
+                self.active_canvas_mut().viewport = view.viewport;
+                self.active_canvas_mut().last_layout = view.layout;
                 if self.document.input.ready() == view.calibrated {
                     self.document.source = view.source;
                 }
@@ -144,7 +145,7 @@ impl Editor {
         } else if self.fullscreen.is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
         {
-            self.document.visit.viewport.fit();
+            self.active_canvas_mut().viewport.fit();
         }
     }
 }

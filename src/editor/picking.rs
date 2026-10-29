@@ -137,15 +137,17 @@ impl Editor {
             .is_some_and(|display| display.view != View::Working);
         self.document.visit.picking.display = None;
         self.set_pick_region(None);
-        self.document.visit.pick_drag = None;
+        self.document.visit.canvas.pick_drag = None;
         if let Some(view) = view {
-            if source_tool || self.document.visit.viewport == view.anchored {
-                self.document.visit.viewport = view.viewport;
-            } else if let Some((layout, pixels_per_point)) = self.document.visit.last_layout {
-                self.document
-                    .visit
-                    .viewport
-                    .reframe(layout, layout.composition, pixels_per_point);
+            if source_tool || self.document.visit.canvas.viewport == view.anchored {
+                self.document.visit.canvas.viewport = view.viewport;
+            } else if let Some((layout, pixels_per_point)) = self.document.visit.canvas.last_layout
+            {
+                self.document.visit.canvas.viewport.reframe(
+                    layout,
+                    layout.composition,
+                    pixels_per_point,
+                );
             }
         }
         self.document.source = !self.document.input.ready() || source;
@@ -153,13 +155,13 @@ impl Editor {
 
     pub(super) fn show_picker(&mut self, display: Display) {
         self.document.thumbnails.cancel();
-        let viewport = self.document.visit.viewport;
+        let viewport = self.document.visit.canvas.viewport;
         let source = self.document.input.ready() && self.document.source;
         self.document.visit.picking.display = Some(display);
         self.set_pick_region(None);
-        self.document.visit.pick_drag = None;
+        self.document.visit.canvas.pick_drag = None;
         self.document.source = display.view != View::Working;
-        if let Some((layout, pixels_per_point)) = self.document.visit.last_layout {
+        if let Some((layout, pixels_per_point)) = self.document.visit.canvas.last_layout {
             let next = match display.view {
                 View::Native => Composition::new(
                     layout.composition.area(),
@@ -177,6 +179,7 @@ impl Editor {
             if next != layout.composition {
                 self.document
                     .visit
+                    .canvas
                     .viewport
                     .reframe(layout, next, pixels_per_point);
             }
@@ -184,7 +187,7 @@ impl Editor {
         self.document.visit.picking.view = Some(PickView {
             source,
             viewport,
-            anchored: self.document.visit.viewport,
+            anchored: self.document.visit.canvas.viewport,
         });
     }
 

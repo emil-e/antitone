@@ -78,8 +78,8 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
     with_application(editor(scheduler.clone()), |app| {
         import(app);
         let (before, visit) = app.update(|e| {
-            assert!(e.document.visit.ready.is_some(), "{}", e.status);
-            e.document.visit.viewport.zoom = Some(1.375);
+            assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
+            e.document.visit.canvas.viewport.zoom = Some(1.375);
             (e.history_snapshot(), e.document.visit.view)
         });
         begin(app, "bare-light.dng");
@@ -88,8 +88,8 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert!(e.pick_region().is_some());
-            assert!(e.source_context().unwrap().correction.is_none());
-            assert_ne!(e.document.visit.view, visit);
+            assert!(e.canvas_source_context().unwrap().correction.is_none());
+            assert_eq!(e.document.visit.view, visit);
         });
         apply(app);
         wait(app);
@@ -97,7 +97,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
             assert!(e.document.correction.is_some(), "{}", e.status);
             assert!(e.document.flat_edit.is_none() && e.document_pending.is_none());
             assert_eq!(e.document.state.project.order, before.order);
-            assert_eq!(e.document.visit.viewport.zoom, Some(1.375));
+            assert_eq!(e.document.visit.canvas.viewport.zoom, Some(1.375));
             assert_eq!(
                 (
                     e.document.state.project.dmin(),
@@ -106,10 +106,10 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
                 (before.dmin(), before.dmax())
             );
             assert_eq!(
-                e.document.visit.ready.as_ref().unwrap().path,
+                e.document.visit.canvas.ready.as_ref().unwrap().path,
                 path("illuminated-patches.dng")
             );
-            assert_ne!(e.document.visit.view, visit);
+            assert_eq!(e.document.visit.view, visit);
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
                 Some("Correction")
@@ -121,14 +121,23 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
             "estimation must consume the captured reference, not reopen it"
         );
         let accepted = app.read(|e| e.document.state.project.clone());
-        let current = app.read(|e| e.document.visit.ready.as_ref().unwrap().developed.clone());
+        let current = app.read(|e| {
+            e.document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed
+                .clone()
+        });
         begin(app, "missing-reference.dng");
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
             assert!(Arc::ptr_eq(
                 &current,
-                &e.document.visit.ready.as_ref().unwrap().developed
+                &e.document.visit.canvas.ready.as_ref().unwrap().developed
             ));
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
         });
@@ -166,7 +175,6 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
             });
             let operation = app.read(|e| e.document_pending);
             app.update(|e| {
-                e.reference_previewed(old, Err("retired".into()));
                 e.document_prepared(old, Err("retired".into()));
             });
             app.read(|e| assert_eq!(e.document_pending, operation));
@@ -182,14 +190,21 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
 }
 
 #[test]
-fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_return_context() {
+fn failed_document_change_ends_reference_setup_without_displacing_the_working_view() {
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         import(app);
         let (before, pixels, visit) = app.update(|e| {
             (
                 e.history_snapshot(),
-                e.document.visit.ready.as_ref().unwrap().developed.clone(),
+                e.document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed
+                    .clone(),
                 e.document.visit.view,
             )
         });
@@ -206,8 +221,8 @@ fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_r
             );
         });
         let operation = app.read(|e| {
-            let session = e.document.flat_edit.as_ref().unwrap();
-            assert!(session.task.is_none() && session.working.is_some());
+            assert!(e.document.flat_edit.is_none());
+            assert!(e.document.visit.canvas.ready.is_some());
             e.document_pending.unwrap()
         });
         assert_ne!(old, operation);
@@ -219,9 +234,9 @@ fn failed_document_supersession_retires_reference_acceptance_but_preserves_its_r
             assert!(e.document.flat_edit.is_none() && e.document.correction.is_none());
             assert!(Arc::ptr_eq(
                 &pixels,
-                &e.document.visit.ready.as_ref().unwrap().developed
+                &e.document.visit.canvas.ready.as_ref().unwrap().developed
             ));
-            assert_ne!(e.document.visit.view, visit);
+            assert_eq!(e.document.visit.view, visit);
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
                 Some("Import photos")
@@ -272,7 +287,8 @@ fn departed_reference_waiter_can_join_running_unpack_without_stale_publication()
         release.send(()).unwrap();
         wait(app);
         app.read(|e| {
-            assert!(e.document.visit.ready.is_some());
+            assert!(e.active_canvas().ready.is_some());
+            assert!(e.document.visit.canvas.ready.is_none());
             assert!(e.document.state.project.flat_field().is_none());
         });
     });
@@ -287,9 +303,11 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
         wait(app);
         app.update(|e| {
             let visit = e.request_id();
+            e.id = visit;
+            e.source_epoch.store(visit, Ordering::Relaxed);
             e.replace_photo_scope(visit);
-            assert!(e.document.visit.ready.is_none());
-            assert!(e.document.flat_edit.as_ref().unwrap().reference.is_some());
+            assert!(e.document.visit.canvas.ready.is_none());
+            assert!(e.document.flat_edit.as_ref().unwrap().view.ready.is_some());
         });
         apply(app);
         assert!(app.read(|e| e.document_pending.is_some()));
@@ -305,6 +323,106 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
 }
 
 #[test]
+fn ending_setup_after_apply_finishes_its_commit_activity_after_a_visit_change() {
+    let scheduler = source_loading::SourceLoader::new();
+    with_application(editor(scheduler.clone()), |app| {
+        import(app);
+        let (before, pixels, viewport, source) = app.update(|e| {
+            e.document.visit.canvas.viewport.zoom = Some(1.375);
+            (
+                e.history_snapshot(),
+                e.document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed
+                    .clone(),
+                e.document.visit.canvas.viewport,
+                e.document.source,
+            )
+        });
+        begin(app, "bare-light.dng");
+        wait(app);
+        app.read(|e| {
+            assert!(Arc::ptr_eq(
+                &pixels,
+                &e.document.visit.canvas.ready.as_ref().unwrap().developed
+            ))
+        });
+        app.enter(|e, cx| {
+            e.id = e.request_id();
+            e.source_epoch.store(e.id, Ordering::Relaxed);
+            e.replace_photo_scope(e.id);
+            e.apply_flat_edit(cx);
+            assert!(e.document_pending.is_some() && e.busy);
+            e.finish_flat_edit();
+        });
+        app.pump();
+        app.read(|e| {
+            assert!(e.document.flat_edit.is_none() && e.document_pending.is_none());
+            assert!(!e.busy && e.tasks.view().is_none());
+            assert_eq!(e.document.state.project, before);
+            assert_eq!(e.document.visit.canvas.viewport, viewport);
+            assert_eq!(e.document.source, source);
+            assert!(e.document.visit.canvas.ready.is_none());
+        });
+        begin(app, "bare-light.dng");
+        wait(app);
+        apply(app);
+        wait(app);
+        app.read(|e| assert!(e.document.correction.is_some(), "{}", e.status));
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn reference_failure_after_a_visit_change_finishes_its_own_preparation_activity() {
+    let scheduler = source_loading::SourceLoader::new();
+    with_application(editor(scheduler.clone()), |app| {
+        import(app);
+        let (before, pixels, viewport, source) = app.read(|e| {
+            (
+                e.document.state.project.clone(),
+                e.document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed
+                    .clone(),
+                e.document.visit.canvas.viewport,
+                e.document.source,
+            )
+        });
+        begin(app, "missing-reference.dng");
+        app.read(|e| {
+            assert!(Arc::ptr_eq(
+                &pixels,
+                &e.document.visit.canvas.ready.as_ref().unwrap().developed
+            ))
+        });
+        app.update(|e| {
+            e.id = e.request_id();
+            e.source_epoch.store(e.id, Ordering::Relaxed);
+            e.replace_photo_scope(e.id);
+        });
+        wait(app);
+        app.read(|e| {
+            assert!(e.document.flat_edit.is_none() && e.tasks.view().is_none());
+            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
+            assert_eq!(e.document.state.project, before);
+            assert_eq!(e.document.visit.canvas.viewport, viewport);
+            assert_eq!(e.document.source, source);
+            assert!(e.document.visit.canvas.ready.is_none());
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn invalid_measured_support_fails_without_accepting_reference_records_or_history() {
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
@@ -312,7 +430,7 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
         begin(app, "bare-light.dng");
         wait(app);
         app.update(|e| {
-            let area = e.document.visit.ready.as_ref().unwrap().area;
+            let area = e.active_canvas().ready.as_ref().unwrap().area;
             e.set_pick_region(Some(crate::coverage::Coverage::rectangle(
                 crate::raw::Rect {
                     x: area.x,
@@ -348,7 +466,15 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
 fn missing_reference_services_finish_activity_and_preserve_accepted_state() {
     let mut e = fixture();
     crate::editor::tests::add_ready_fixture(&mut e);
-    let pixels = e.document.visit.ready.as_ref().unwrap().developed.clone();
+    let pixels = e
+        .document
+        .visit
+        .canvas
+        .ready
+        .as_ref()
+        .unwrap()
+        .developed
+        .clone();
     with_application(e, |app| {
         let before = app.update(|e| e.history_snapshot());
         begin(app, "bare-light.dng");
@@ -361,10 +487,178 @@ fn missing_reference_services_finish_activity_and_preserve_accepted_state() {
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
             assert!(Arc::ptr_eq(
                 &pixels,
-                &e.document.visit.ready.as_ref().unwrap().developed
+                &e.document.visit.canvas.ready.as_ref().unwrap().developed
             ));
         });
     });
+}
+
+#[test]
+fn ending_setup_while_waiting_for_support_leaves_the_working_view_and_allows_a_new_setup() {
+    let scheduler = source_loading::SourceLoader::new();
+    with_application(editor(scheduler.clone()), |app| {
+        import(app);
+        let (before, pixels, viewport, source) = app.update(|e| {
+            e.document.visit.canvas.viewport.zoom = Some(1.375);
+            (
+                e.history_snapshot(),
+                e.document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed
+                    .clone(),
+                e.document.visit.canvas.viewport,
+                e.document.source,
+            )
+        });
+        begin(app, "bare-light.dng");
+        wait(app);
+        app.update(|e| {
+            let edit = e.document.flat_edit.as_mut().unwrap();
+            assert!(!edit.task.as_ref().unwrap().is_finished());
+            e.finish_flat_edit();
+        });
+        app.pump();
+        app.read(|e| {
+            assert!(e.document.flat_edit.is_none() && !e.busy && e.tasks.view().is_none());
+            assert_eq!(e.document.state.project, before);
+            assert_eq!(e.document.visit.canvas.viewport, viewport);
+            assert_eq!(e.document.source, source);
+            assert!(Arc::ptr_eq(
+                &pixels,
+                &e.document.visit.canvas.ready.as_ref().unwrap().developed
+            ));
+        });
+        begin(app, "bare-light.dng");
+        wait(app);
+        apply(app);
+        wait(app);
+        app.read(|e| assert!(e.document.correction.is_some(), "{}", e.status));
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn retired_setup_cleanup_does_not_end_a_new_reference_interaction() {
+    let scheduler = source_loading::SourceLoader::new();
+    with_application(editor(scheduler.clone()), |app| {
+        import(app);
+        let before = app.read(|e| e.document.state.project.clone());
+        begin(app, "bare-light.dng");
+        wait(app);
+        app.enter(|e, cx| {
+            e.finish_flat_edit();
+            e.begin_flat_edit(path("bare-light.dng"), None, cx);
+        });
+        wait(app);
+        app.read(|e| {
+            let edit = e
+                .document
+                .flat_edit
+                .as_ref()
+                .expect("replacement setup remains active");
+            assert!(edit.view.ready.is_some());
+            assert!(!edit.task.as_ref().unwrap().is_finished());
+            assert!(e.pick_region().is_some());
+            assert_eq!(e.document.state.project, before);
+        });
+        apply(app);
+        wait(app);
+        app.read(|e| assert!(e.document.correction.is_some(), "{}", e.status));
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn correction_uses_the_prepared_reference_even_if_its_file_disappears_before_apply() {
+    let directory = tempfile::tempdir().unwrap();
+    let reference = directory.path().join("captured-light.dng");
+    std::fs::copy(path("bare-light.dng"), &reference).unwrap();
+    let scheduler = source_loading::SourceLoader::new();
+    with_application(editor(scheduler.clone()), |app| {
+        app.enter(|e, cx| e.begin_flat_edit(reference.clone(), None, cx));
+        wait(app);
+        app.read(|e| assert!(e.pick_region().is_some()));
+        std::fs::remove_file(&reference).unwrap();
+        apply(app);
+        wait(app);
+        app.read(|e| {
+            assert!(e.document.correction.is_some(), "{}", e.status);
+            let settings = e.document.state.project.flat_field().unwrap();
+            let record = e.document.state.project.source(settings.reference).unwrap();
+            assert_eq!(record.path, reference);
+            assert!(record.reference_only);
+            assert_eq!(
+                e.history_label(crate::editor::history::Direction::Undo),
+                Some("Correction")
+            );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn apply_captures_support_before_the_awaiting_setup_resumes() {
+    let scheduler = source_loading::SourceLoader::new();
+    with_application(editor(scheduler.clone()), |app| {
+        import(app);
+        begin(app, "bare-light.dng");
+        wait(app);
+        let chosen = app.enter(|e, cx| {
+            let area = e.active_canvas().ready.as_ref().unwrap().area;
+            let chosen = e.pick_region().unwrap().exact_rectangle(area).unwrap();
+            e.apply_flat_edit(cx);
+            let later = crate::raw::Rect {
+                x: chosen.x + 8,
+                y: chosen.y + 8,
+                width: chosen.width - 16,
+                height: chosen.height - 16,
+            };
+            assert_ne!(chosen, later);
+            e.set_pick_region(Some(crate::coverage::Coverage::rectangle(later)));
+            chosen
+        });
+        wait(app);
+        app.read(|e| {
+            let map = &e
+                .document
+                .correction
+                .as_ref()
+                .expect("correction accepted")
+                .settings
+                .map;
+            assert_eq!(
+                map.area(),
+                [chosen.x, chosen.y, chosen.width, chosen.height]
+            );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn setup_uses_its_captured_source_capability_after_waiting_for_the_user() {
+    let scheduler = source_loading::SourceLoader::new();
+    with_application(editor(scheduler.clone()), |app| {
+        import(app);
+        begin(app, "bare-light.dng");
+        wait(app);
+        app.update(|e| e.source_services = None);
+        apply(app);
+        wait(app);
+        app.read(|e| {
+            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert!(e.document.flat_edit.is_none());
+            assert_eq!(
+                e.history_label(crate::editor::history::Direction::Undo),
+                Some("Correction")
+            );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
 }
 
 fn frame(
@@ -445,11 +739,11 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 frame(app, &context, vec![]);
             }
             let (before, selected, viewport, source) = app.update(|e| {
-                e.document.visit.viewport.zoom = Some(1.375);
+                e.document.visit.canvas.viewport.zoom = Some(1.375);
                 (
                     e.history_snapshot(),
                     e.document.visit.current_source,
-                    e.document.visit.viewport,
+                    e.document.visit.canvas.viewport,
                     e.document.source,
                 )
             });
@@ -515,7 +809,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 assert!(e.document.correction.is_some(), "{}", e.status);
                 assert!(e.document.flat_edit.is_none() && e.document_pending.is_none());
                 assert_eq!(e.document.visit.current_source, selected);
-                assert_eq!(e.document.visit.viewport, viewport);
+                assert_eq!(e.document.visit.canvas.viewport, viewport);
                 assert_eq!(e.document.source, source);
                 assert_eq!(e.document.state.project.order, before.order);
                 assert_eq!(
@@ -526,7 +820,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                     (before.dmin(), before.dmax())
                 );
                 assert_eq!(
-                    e.document.visit.ready.as_ref().unwrap().path,
+                    e.document.visit.canvas.ready.as_ref().unwrap().path,
                     path("illuminated-patches.dng")
                 );
                 assert!(
@@ -546,7 +840,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 assert!(e.document.flat_edit.is_none() && !e.busy);
                 assert_eq!(e.document.state.project, accepted);
                 assert_eq!(e.document.visit.current_source, selected);
-                assert_eq!(e.document.visit.viewport, viewport);
+                assert_eq!(e.document.visit.canvas.viewport, viewport);
                 assert_eq!(e.document.source, source);
             });
         });

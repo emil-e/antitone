@@ -128,7 +128,7 @@ fn pending_photo_navigation_keeps_multiselection_but_removal_waits_for_completio
             editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
             let first = editor.id;
             assert!(editor.document.visit.source.pending());
-            assert!(editor.busy && editor.document.visit.selection_timing.is_some());
+            assert!(editor.busy && editor.document.visit.canvas.selection_timing.is_some());
             editor.select_roll_photo(4, egui::Modifiers::COMMAND, cx);
             assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
             assert_eq!(editor.document.visit.current_source, Some(ids[0]));
@@ -227,20 +227,41 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
             expected.sources.clear();
             expected.analysis_regions.clear();
             let old_id = editor.id;
-            let ready = editor.document.visit.ready.take().unwrap();
+            let ready = editor.document.visit.canvas.ready.take().unwrap();
             let source = Arc::downgrade(&ready.developed);
             editor.request_removal();
             editor.remove_selected_photos(cx);
             assert_eq!(editor.document.state.project, expected);
             assert!(editor.document.visit.current_source.is_none());
             assert!(
-                editor.document.visit.ready.is_none()
+                editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.pending_preview.is_none()
             );
             assert!(
-                editor.document.visit.grade.original.settled.is_none()
-                    && editor.document.visit.grade.original.refining.is_none()
-                    && editor.document.visit.grade.original.signature.is_none()
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .grade
+                    .original
+                    .settled
+                    .is_none()
+                    && editor
+                        .document
+                        .visit
+                        .canvas
+                        .grade
+                        .original
+                        .refining
+                        .is_none()
+                    && editor
+                        .document
+                        .visit
+                        .canvas
+                        .grade
+                        .original
+                        .signature
+                        .is_none()
             );
             assert!(editor.document.roll_selection.ids.is_empty());
             assert_eq!(
@@ -253,7 +274,7 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
             assert!(!editor.document.visit.source.pending());
             editor.source_result(old_id, Ok(Box::new(ready)));
             assert!(
-                editor.document.visit.ready.is_none()
+                editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.current_source.is_none()
             );
             assert!(

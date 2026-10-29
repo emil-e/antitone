@@ -4,7 +4,7 @@ use super::*;
 fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_and_global_edits() {
     calibrated_workflow(|mut harness, _, _directory| {
         wait_settled(&mut harness);
-        harness.update(|editor| editor.document.visit.viewport.zoom = Some(4.));
+        harness.update(|editor| editor.document.visit.canvas.viewport.zoom = Some(4.));
         harness.step();
         wait_for(&mut harness, |e| {
             e.document.visit.working_view.support_ready()
@@ -38,8 +38,8 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
         .into_iter()
         .enumerate()
         {
-            let layout = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
-            harness.update(|editor| editor.document.visit.viewport.pan(layout, 1., delta));
+            let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
+            harness.update(|editor| editor.document.visit.canvas.viewport.pan(layout, 1., delta));
             harness.step();
             if index == 1 {
                 stage(&mut harness, "Rendering");

@@ -38,8 +38,8 @@ impl Editor {
 
     fn roll_navigation_available(&self) -> bool {
         (!self.busy
-            || self.document.visit.ready.is_none()
-                && self.document.visit.selection_timing.is_some())
+            || self.document.visit.canvas.ready.is_none()
+                && self.document.visit.canvas.selection_timing.is_some())
             && self.fullscreen.is_none()
             && self.active_pick().is_none()
             && self.document.flat_edit.is_none()
@@ -117,7 +117,7 @@ impl Editor {
             self.document.roll_selection.anchor = Some(id);
             id
         };
-        let retry = active == id && self.document.visit.ready.is_none();
+        let retry = active == id && self.document.visit.canvas.ready.is_none();
         if self.document.visit.current_source != Some(active) || retry {
             self.document.selected = self
                 .document
@@ -238,11 +238,11 @@ impl Editor {
             self.document.thumbnails.refresh_hidden_memory();
             self.document.visit.current_source = None;
             self.document.selected = 0;
-            self.document.visit.ready = None;
+            self.document.visit.canvas.ready = None;
             self.document.visit.pending_preview = None;
-            self.document.visit.selection_timing = None;
-            self.document.visit.last_layout = None;
-            self.document.visit.viewport.fit();
+            self.document.visit.canvas.selection_timing = None;
+            self.document.visit.canvas.last_layout = None;
+            self.document.visit.canvas.viewport.fit();
             self.document.visit.adjustment_layer_settings = AdjustmentLayerSettings::default();
             self.document.visit.photo_orientation = PhotoOrientation::default();
             self.document.visit.crop = None;

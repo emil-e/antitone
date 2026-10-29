@@ -1,7 +1,9 @@
 use super::*;
 use crate::processing::InputSettings;
+mod operation;
 #[cfg(test)]
 mod tests;
+mod worker;
 use crate::{
     gpu::{GpuFlatField, SourceGeometry},
     project::FlatFieldSettings,
@@ -61,14 +63,13 @@ pub(super) const DISPLAY: super::picking::Display = super::picking::Display {
     help: None,
 };
 
-/// Reference session and saved working context, independent of temporary visits.
+/// Document-owned setup and its temporary reference view.
 pub(super) struct FlatEdit {
-    pub working: Option<Ready>,
-    pub reference: Option<FlatPreview>,
+    pub view: super::canvas_view::CanvasView,
     pub region: Option<Coverage>,
-    pub viewport: Viewport,
-    pub source: bool,
     pub task: Option<async_executor::Task<()>>,
+    pub selection: Option<futures_channel::oneshot::Sender<(u64, Rect)>>,
+    pub activity: Option<TaskRequest>,
 }
 
 pub(super) struct FlatPreview {
@@ -159,28 +160,30 @@ impl Editor {
         {
             return;
         }
+        self.finish_dust_cleanup();
         self.sync_document();
         self.document.thumbnails.cancel();
+        let id = self.request_id();
+        let (selection, receive) = futures_channel::oneshot::channel();
         let context = FlatEdit {
-            working: self.document.visit.ready.take(),
-            reference: None,
+            view: Default::default(),
             region: region.map(Coverage::rectangle),
-            viewport: self.document.visit.viewport,
-            source: self.document.source,
             task: None,
+            selection: Some(selection),
+            activity: Some(TaskRequest::Reference(id)),
         };
         self.document.flat_edit = Some(context);
-        self.document.source = true;
-        self.id = self.request_id();
-        self.replace_photo_scope(self.id);
-        self.document.visit.viewport.fit();
-        self.source_epoch
-            .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.busy = true;
         self.status = "Preparing uncorrected flat-field reference…".into();
-        self.tasks.begin(Task::Reference(self.id));
+        self.tasks.begin(Task::Reference(id));
         let request = self.reference_preview_input(path);
-        self.preview_reference(request, cx);
+        if let Some(task) = operation::setup(request, self.source_services.clone(), receive, cx) {
+            self.document.flat_edit.as_mut().unwrap().task = Some(task);
+        } else {
+            self.finish_flat_edit();
+            self.status = "Application stopped".into();
+            self.report_failure(FailureKind::FlatReference, self.status.clone());
+        }
     }
 
     pub(super) fn reference_preview_input(&self, path: PathBuf) -> source::Request {
@@ -212,80 +215,53 @@ impl Editor {
         }
     }
 
-    pub(super) fn reference_input(
-        &self,
-    ) -> Result<Option<super::reference_services::Acceptance>, &'static str> {
+    pub(super) fn finish_flat_edit(&mut self) {
+        let Some(context) = self.document.flat_edit.take() else {
+            return;
+        };
+        if let Some(activity) = context.activity {
+            if self.tasks.finish(activity) {
+                self.busy = false;
+            }
+            if let TaskRequest::Document(id) = activity
+                && self.document_pending == Some(id)
+            {
+                self.document_pending = None;
+                self.document_failure = None;
+                let history = self.history_pending.take();
+                self.history_failed(history);
+            }
+        }
+    }
+
+    pub(super) fn apply_flat_edit(&mut self, _cx: &UiContext<'_, Self>) {
+        if self.busy || self.document_pending.is_some() {
+            return;
+        }
+        self.sync_document();
         let Some(coverage) = self.pick_region() else {
-            return Ok(None);
+            return;
         };
         let Some(reference) = self
             .document
             .flat_edit
             .as_ref()
-            .and_then(|edit| edit.reference.as_ref())
+            .and_then(|edit| edit.view.ready.as_ref())
         else {
-            return Ok(None);
-        };
-        let ready = &reference.ready;
-        let region = coverage
-            .exact_rectangle(ready.area)
-            .ok_or("Flat-field support must be an integer source rectangle")?;
-        Ok(Some(super::reference_services::Acceptance {
-            sources: self.source_provider(),
-            region,
-            document: self.document.capture(),
-            selected: self.document.visit.current_source,
-            source: source::Context {
-                source: ready.developed.clone(),
-                reference: ready.reference.clone(),
-                correction: None,
-            },
-            record: ready.record.clone(),
-            correction: self.document.correction.clone(),
-        }))
-    }
-
-    pub(super) fn finish_flat_edit(&mut self) {
-        let Some(context) = self.document.flat_edit.take() else {
             return;
         };
-        if self.tasks.finish(TaskRequest::Reference(self.id)) {
-            self.busy = false;
-        }
-        if self.document_pending == Some(self.id) {
-            self.document_pending = None;
-            self.document_failure = None;
-            let history = self.history_pending.take();
-            self.history_failed(history);
-            if self.tasks.finish(TaskRequest::Document(self.id)) {
-                self.busy = false;
-            }
-        }
-        self.id = self.request_id();
-        self.replace_photo_scope(self.id);
-        self.source_epoch
-            .store(self.id, std::sync::atomic::Ordering::Relaxed);
-        self.document.visit.ready = context.working;
-        self.document.visit.viewport = context.viewport;
-        self.document.source = context.source;
-        self.document.visit.pick_drag = None;
-        self.document.visit.last_layout = None;
-        self.invalidate_original();
-    }
-
-    pub(super) fn apply_flat_edit(&mut self, cx: &UiContext<'_, Self>) {
-        if self.busy || self.document_pending.is_some() {
+        let Some(region) = coverage.exact_rectangle(reference.area) else {
+            self.status = "Flat-field support must be an integer source rectangle".into();
+            self.report_failure(FailureKind::FlatSupport, self.status.clone());
             return;
-        }
-        self.sync_document();
-        let input = match self.reference_input() {
-            Ok(Some(input)) => input,
-            Ok(None) => return,
-            Err(message) => {
-                self.status = message.into();
-                self.report_failure(FailureKind::FlatSupport, self.status.clone());
-                return;
-            }
+        };
+        let Some(selection) = self
+            .document
+            .flat_edit
+            .as_mut()
+            .and_then(|edit| edit.selection.take())
+        else {
+            return;
         };
         self.history_pending = Some(history::Pending::Edit {
             before: Box::new(self.history_snapshot()),
@@ -295,9 +271,12 @@ impl Editor {
         self.busy = true;
         self.document_pending = Some(self.id);
         self.document_failure = Some(FailureKind::FlatCorrection);
+        self.document.flat_edit.as_mut().unwrap().activity = Some(TaskRequest::Document(self.id));
         self.tasks.begin(Task::Correction(self.id));
         self.status = "Estimating and validating full-resolution correction…".into();
-        self.accept_reference(input, cx);
+        if selection.send((self.id, region)).is_err() {
+            self.document_prepared(self.id, Err("Application stopped".into()));
+        }
     }
 
     pub(super) fn positive_parameters(

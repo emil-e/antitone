@@ -48,7 +48,7 @@ impl Editor {
                 "wait for donor selection before exporting",
             ));
         }
-        let Some(ready) = &self.document.visit.ready else {
+        let Some(ready) = &self.document.visit.canvas.ready else {
             return Ok(None);
         };
         if !self.document.input.ready() {

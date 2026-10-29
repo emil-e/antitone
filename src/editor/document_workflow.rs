@@ -37,6 +37,7 @@ impl Editor {
             self.status = "Wait for donor selection before changing the document".into();
             return;
         }
+        self.finish_flat_edit();
         self.cancel_spatial();
         self.retire_pick_actions();
         self.document.history.finish_group();
@@ -81,6 +82,7 @@ impl Editor {
         let source = if matches!(&work, Preparation::Import(_, _, Some(_))) {
             self.document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .map(|ready| (self.id, ready.clone()))
@@ -164,7 +166,7 @@ impl Editor {
             Ok(prepared) => {
                 let input_changed = self.document.input.is_negative()
                     != prepared.document.project.input.is_negative();
-                let flat_context = self.document.flat_edit.take();
+                self.document.flat_edit = None;
 
                 if self.reset_repairs_pending {
                     self.document.dust = dust::State::default();
@@ -251,30 +253,26 @@ impl Editor {
                     .and_then(|id| self.document.state.project.source(id).ok())
                     .and_then(|source| source.crop);
                 self.document.visit.crop_edit = None;
-                self.document.visit.last_layout = None;
+                self.document.visit.canvas.last_layout = None;
                 self.document.film_emulation = self.document.state.project.output.film_emulation;
                 self.document.target = match self.document.state.project.output.tiff {
                     crate::project::TiffTarget::Srgb => OutputTarget::Srgb,
                     crate::project::TiffTarget::DisplayP3 => OutputTarget::DisplayP3,
                 };
-                self.document.visit.ready = prepared.ready;
+                self.document.visit.canvas.ready = prepared.ready;
                 if !prepared.reuse_ready && !prepared.preserve_view {
-                    self.document.visit.viewport.fit();
+                    self.document.visit.canvas.viewport.fit();
                     self.document.source = !self.document.input.ready();
                 }
                 if input_changed {
                     self.document.source = !self.document.input.ready();
                 }
                 self.document.visit.picking = Default::default();
-                self.document.visit.pick_drag = None;
+                self.document.visit.canvas.pick_drag = None;
                 self.document.visit.return_notice = None;
                 self.document.export_dialog = None;
                 self.document.export_summary = None;
                 self.invalidate_original();
-                if let Some(context) = flat_context {
-                    self.document.visit.viewport = context.viewport;
-                    self.document.source = context.source;
-                }
                 self.status = if !input_changed && self.document.state.project.active_flat_field().is_some()
                 {
                     "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup."

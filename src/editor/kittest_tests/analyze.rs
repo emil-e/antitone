@@ -29,6 +29,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
         let signature = editor
             .document
             .visit
+            .canvas
             .grade
             .original
             .signature
@@ -38,7 +39,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
         assert_eq!(
             signature.3,
             Composition::new(
-                editor.document.visit.ready.as_ref().unwrap().area,
+                editor.document.visit.canvas.ready.as_ref().unwrap().area,
                 Default::default(),
                 Default::default()
             )
@@ -62,7 +63,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
 }
 
 fn select_area(h: &mut Harness<'_, Editor>, picture: bool) {
-    let geometry = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
+    let geometry = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
     let point = h.read(|editor| {
         (0..21)
             .flat_map(|y| {
@@ -118,7 +119,7 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
     select_area(harness, true);
     harness.get_by_label("Fit").click();
     harness.step();
-    let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+    let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
     let start = geometry.screen_point(egui::pos2(area.x as f32, area.y as f32));
     let end = geometry.screen_point(egui::pos2(
         (area.x + area.width) as f32,
@@ -140,7 +141,7 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
             editor
                 .pick_region()
                 .unwrap()
-                .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area),
+                .exact_rectangle(editor.document.visit.canvas.ready.as_ref().unwrap().area),
             Some(area)
         )
     });
@@ -174,7 +175,8 @@ fn settled_targets(harness: &mut Harness<'_, Editor>, case: &str) {
         });
         let timing =
             harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-        harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
+        harness
+            .update(|editor| editor.document.visit.canvas.selection_timing = Some(timing.clone()));
         harness.step();
         let png = harness.render().unwrap();
         assert!(timing.ready_was_painted());
@@ -209,7 +211,10 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         editor.document.visit.photo_orientation.flips.horizontal = true;
         editor.document.visit.crop = Some(
             Crop::from_region(picture)
-                .straightened(editor.document.visit.ready.as_ref().unwrap().area, 0.05)
+                .straightened(
+                    editor.document.visit.canvas.ready.as_ref().unwrap().area,
+                    0.05,
+                )
                 .unwrap(),
         );
         editor.document.visit.adjustment_layer_settings.exposure = 0.5;
@@ -318,7 +323,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         harness.get_by_label(label).click();
         harness.step();
         wait_for(harness, |editor| {
-            !editor.busy && editor.document.visit.ready.is_some()
+            !editor.busy && editor.document.visit.canvas.ready.is_some()
         });
         draw_picture(harness, picture);
     }
@@ -458,7 +463,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     });
     harness.read(|editor| assert_eq!(editor.document.state.project, failed));
     harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
-    harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
+    harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
     harness.read(|editor| assert!(editor.preference_store.is_none()));
 }
 
@@ -522,7 +527,9 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
         save_capture(&h.render().unwrap(), "analysis-missing-area-cue");
         h.get_by_label("roll-1.dng").click();
         h.step();
-        wait_for(&mut h, |e| !e.busy && e.document.visit.ready.is_some());
+        wait_for(&mut h, |e| {
+            !e.busy && e.document.visit.canvas.ready.is_some()
+        });
         h.read(|editor| assert!(editor.source_tool_warning(ids[1]).is_none()));
         assert!(
             h.get_by_label("Tool warning")
@@ -614,7 +621,16 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                         assert!(
                             rect.min.x >= 0.
                                 && rect.max.x
-                                    <= editor.document.visit.last_layout.unwrap().0.canvas.max.x
+                                    <= editor
+                                        .document
+                                        .visit
+                                        .canvas
+                                        .last_layout
+                                        .unwrap()
+                                        .0
+                                        .canvas
+                                        .max
+                                        .x
                                 && rect.max.y <= size.y,
                             "{layout}: {rect:?}"
                         )
@@ -686,7 +702,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         assert!(prior.picture_geometry.is_some() && !prior.picture_edited);
         let q = harness.read(|editor| editor.pick_region().unwrap().corners().map(|p| p.0));
         let p = prior.picture.unwrap()[0];
-        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         drag(
             &mut harness,
             geometry.screen_point(egui::pos2(q[0][0] as f32, q[0][1] as f32)),
@@ -715,8 +731,15 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         });
         let (original_generation, original_revision) = harness.read(|editor| {
             (
-                editor.document.visit.grade.original.generation.clone(),
-                editor.document.visit.grade.original.revision(),
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .grade
+                    .original
+                    .generation
+                    .clone(),
+                editor.document.visit.canvas.grade.original.revision(),
             )
         });
         harness.get_by_label("roll-1.dng").click();
@@ -733,7 +756,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         });
         harness.read(|editor| {
             assert!(!Arc::ptr_eq(
-                &editor.document.visit.grade.original.generation,
+                &editor.document.visit.canvas.grade.original.generation,
                 &original_generation
             ));
             assert!(
@@ -770,7 +793,13 @@ fn analyze_widgets_preserve_area_cancel_failure_and_both_settled_targets() {
         wait_for(&mut harness, |editor| {
             !editor.busy && editor.document_pending.is_none()
         });
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            )
+        });
         exercise_analyze(
             &mut harness,
             Rect {
@@ -796,7 +825,13 @@ fn analyze_widgets_keep_real_correction_and_both_settled_targets() {
         wait_for(&mut harness, |editor| {
             !editor.busy && editor.document_pending.is_none()
         });
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            )
+        });
         // Supply the native chooser result; map estimation/application still use production workers.
         harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
         wait_for(&mut harness, |editor| !editor.busy);

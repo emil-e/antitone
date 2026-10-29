@@ -436,7 +436,13 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
     wait_for(&mut harness, |editor| {
         !editor.busy && editor.document_pending.is_none()
     });
-    harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+    harness.read(|editor| {
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        )
+    });
     harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 1.25);
     harness.update(|editor| editor.sync_document());
     let before = harness.read(|editor| editor.document.state.project.clone());
@@ -565,7 +571,13 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
     wait_for(&mut harness, |editor| {
         !editor.busy && editor.document_pending.is_none()
     });
-    harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+    harness.read(|editor| {
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        )
+    });
     harness.update(|editor| editor.document.visit.adjustment_layer_settings.exposure = 1.25);
     harness.update(|editor| editor.sync_document());
     let directory = tempfile::tempdir().unwrap();
@@ -604,8 +616,8 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                     harness.enter(|editor, cx| editor.begin_flat_edit(fixture.clone(), None, cx));
                     wait_for(&mut harness, |editor| !editor.busy);
                     harness.read(|editor| assert!(editor.document.flat_edit.is_some()));
-                    let area =
-                        harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
+                    let area = harness
+                        .read(|editor| editor.document.visit.canvas.ready.as_ref().unwrap().area);
                     harness.update(|editor| {
                         editor.set_pick_region(Some(if kind == FailureKind::FlatSupport {
                             let x = f64::from(area.x) + 0.25;
@@ -753,7 +765,7 @@ fn wait_for_with_timeout(
                 Instant::now() < deadline,
                 "Editor wait timed out: {}; working updating={} error={:?}, dust error={:?}, evaluations={:?}, original pending={:?}, source epoch={}/{}",
                 editor.status, editor.document.visit.working_view.updating, editor.document.visit.working_view.error,
-                editor.document.visit.dust.render_error, editor.dust_signature().map(|s| editor.dust_evaluations(s).len()), editor.document.visit.grade.original.refining,
+                editor.document.visit.dust.render_error, editor.dust_signature().map(|s| editor.dust_evaluations(s).len()), editor.document.visit.canvas.grade.original.refining,
                 editor.source_epoch.load(std::sync::atomic::Ordering::Relaxed), editor.id
             )
         });
@@ -819,7 +831,11 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture.clone()], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| {
-            assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            );
             assert!(editor.dmin().is_none());
         });
         let project = harness.read(|editor| editor.document.state.project.clone());
@@ -850,6 +866,7 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
             editor
                 .document
                 .visit
+                .canvas
                 .last_layout
                 .unwrap()
                 .0
@@ -888,14 +905,15 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
             harness.read(|editor| editor.id),
             Instant::now(),
         ));
-        harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
+        harness
+            .update(|editor| editor.document.visit.canvas.selection_timing = Some(timing.clone()));
         harness.step();
         let png = harness.render().unwrap();
         assert!(
             timing.ready_was_painted(),
             "production selected-image callback did not paint"
         );
-        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let output = capture.borrow();
         assert_eq!(png.dimensions(), (output.size[0], output.size[1]));
         harness.read(|editor| {
@@ -1046,7 +1064,7 @@ fn open_project(harness: &mut Harness<'_, Editor>, path: PathBuf) {
 fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.get_by_label("Fit").click();
     harness.step();
-    let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+    let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
     harness.read(|editor| assert!(editor.pick_region().is_none()));
     drag(
         harness,
@@ -1061,7 +1079,7 @@ fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
             editor
                 .pick_region()
                 .unwrap()
-                .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area),
+                .exact_rectangle(editor.document.visit.canvas.ready.as_ref().unwrap().area),
             Some(area)
         )
     });
@@ -1091,7 +1109,13 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
         harness.enter(|editor, cx| editor.add_raws(vec![fixture], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            )
+        });
         harness.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
@@ -1165,8 +1189,9 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
                 });
                 let timing = harness
                     .read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-                harness
-                    .update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
+                harness.update(|editor| {
+                    editor.document.visit.canvas.selection_timing = Some(timing.clone())
+                });
                 harness.step();
                 let png = harness.render().unwrap();
                 assert_eq!(png.dimensions(), (size.x as u32, size.y as u32));

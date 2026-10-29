@@ -875,7 +875,7 @@ impl Editor {
             .next()
             .is_some();
         let available = !self.busy
-            && self.document.visit.ready.is_some()
+            && self.document.visit.canvas.ready.is_some()
             && self.active_pick().is_none()
             && self.document.visit.dust.donor_draft.is_none();
         let mut reset_repairs = false;
@@ -1054,7 +1054,12 @@ impl Editor {
         if self.document.visit.dust.brush_source != self.document.visit.current_source
             && let (Some(source), Some(active)) = (
                 self.document.visit.current_source,
-                self.document.visit.ready.as_ref().map(|ready| ready.area),
+                self.document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .map(|ready| ready.area),
             )
         {
             self.document.visit.dust.brush_size = initial_brush_size(active);
@@ -1240,7 +1245,7 @@ impl Editor {
             .composition
             .frame_to_source(geometry.frame_point(point))
             .0;
-        let active = self.document.visit.ready.as_ref()?.area;
+        let active = self.document.visit.canvas.ready.as_ref()?.area;
         (source[0] >= f64::from(active.x)
             && source[1] >= f64::from(active.y)
             && source[0] < f64::from(active.x + active.width)
@@ -1295,7 +1300,7 @@ impl Editor {
             .map(|repair| repair.support.clone())
             .chain(self.document.visit.dust.searches.supports(source).cloned())
             .collect::<Vec<_>>();
-        let active = self.document.visit.ready.as_ref().unwrap().area;
+        let active = self.document.visit.canvas.ready.as_ref().unwrap().area;
         let erase = temporary_erase;
         let result = brush_stroke(
             self.document.visit.dust.mask_draft.as_mut().unwrap(),
@@ -1448,7 +1453,7 @@ impl Editor {
             return None;
         }
         let effective = self.effective_dust_repair(source, repair_id)?;
-        let active = self.document.visit.ready.as_ref()?.area;
+        let active = self.document.visit.canvas.ready.as_ref()?.area;
         let target = donor_target(&effective.support, active).ok()?;
         let donor = SourceRegion {
             x: u32::try_from(i64::from(target.x) + i64::from(effective.offset[0])).ok()?,
@@ -1544,7 +1549,14 @@ impl Editor {
         let Some(position) = self.dust_source_position(geometry, point) else {
             return;
         };
-        let Some(active) = self.document.visit.ready.as_ref().map(|ready| ready.area) else {
+        let Some(active) = self
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .map(|ready| ready.area)
+        else {
             return;
         };
         let Some(support) = self
@@ -1626,6 +1638,7 @@ impl Editor {
         let result = self
             .document
             .visit
+            .canvas
             .ready
             .as_ref()
             .map(|ready| ready.area)
@@ -1986,7 +1999,7 @@ impl Editor {
         let Some(source) = self.document.visit.current_source else {
             return;
         };
-        if self.tab != 1 || self.fullscreen.is_some() || self.document.source {
+        if self.tab != 1 || self.fullscreen.is_some() || self.canvas_inspection() {
             return;
         }
         let set = self.dust_repairs(source);

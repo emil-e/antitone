@@ -161,7 +161,7 @@ fn diagnose_sample_rolls() {
                 Duration::from_secs(300),
                 |editor, cx| editor.add_raws(case.sources.clone(), cx),
             );
-            let mut prepared = editor.document.visit.ready.is_some();
+            let mut prepared = editor.document.visit.canvas.ready.is_some();
             if prepared && let Some(reference) = &case.reference {
                 editor = crate::editor::tests::complete_reference_operation(
                     editor,

@@ -11,7 +11,13 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
     editor_harness_with_thumbnails(thumbnails, |mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            )
+        });
         harness.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
@@ -34,6 +40,7 @@ fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
         editor
             .document
             .visit
+            .canvas
             .last_layout
             .unwrap()
             .0
@@ -61,7 +68,7 @@ fn capture_tool(harness: &mut Harness<'_, Editor>, name: &str, size: egui::Vec2)
         assert!(rect.top() >= 0. && rect.bottom() <= size.y);
     }
     let timing = harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-    harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
+    harness.update(|editor| editor.active_canvas_mut().selection_timing = Some(timing.clone()));
     harness.step();
     let png = harness.render().unwrap();
     assert_eq!(png.dimensions(), (size.x as u32, size.y as u32));
@@ -118,7 +125,7 @@ pub(super) fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
     harness.read(|editor| {
         assert_ne!(
             draft,
-            Crop::from_region(editor.document.visit.ready.as_ref().unwrap().area)
+            Crop::from_region(editor.document.visit.canvas.ready.as_ref().unwrap().area)
         )
     });
     draft
@@ -129,7 +136,9 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
     for angle in [0., 0.1] {
         editor_harness(|mut h, capture| {
             h.enter(|e, cx| e.add_raws(vec![fixture("patches.dng")], cx));
-            wait_for(&mut h, |e| !e.busy && e.document.visit.ready.is_some());
+            wait_for(&mut h, |e| {
+                !e.busy && e.document.visit.canvas.ready.is_some()
+            });
             h.update(|e| {
                 e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
                 e.set_dmax(Some(DVec3::splat(128. / 4031.)));
@@ -147,7 +156,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                 // Make the coarse proxy deliberately distinguishable from real originals.
                 // The original service still reads the unchanged authored RAW.
                 let services = e.source_services.as_ref().unwrap();
-                let ready = e.document.visit.ready.as_mut().unwrap();
+                let ready = e.document.visit.canvas.ready.as_mut().unwrap();
                 let renderer = services
                     .renderers
                     .get(&services.device, &services.queue)
@@ -177,17 +186,33 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             wait_for(&mut h, |e| e.active_pick().is_some());
             h.read(|e| assert_eq!(e.active_pick(), Some(kind.display())));
             wait_for(&mut h, |e| {
-                e.document.visit.grade.original.settled.is_some()
+                e.document.visit.canvas.grade.original.settled.is_some()
             });
             h.event(egui::Event::PointerGone);
             h.step();
             h.render().unwrap();
             let (layout, target, matrix, pipeline) = h.read(|e| {
-                let (_, view, _) = e.document.visit.grade.original.settled.as_ref().unwrap();
+                let (_, view, _) = e
+                    .document
+                    .visit
+                    .canvas
+                    .grade
+                    .original
+                    .settled
+                    .as_ref()
+                    .unwrap();
                 assert_eq!(view.frame.is_some(), angle != 0.);
-                let matrix = e.document.visit.ready.as_ref().unwrap().proxy.matrix();
+                let matrix = e
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .proxy
+                    .matrix();
                 (
-                    e.document.visit.last_layout.unwrap().0,
+                    e.active_canvas().last_layout.unwrap().0,
                     e.document.target,
                     matrix,
                     (!e.document.source).then(|| {
@@ -244,7 +269,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.step();
             h.read(|e| {
                 assert!(
-                    e.document.visit.grade.original.settled.is_none(),
+                    e.document.visit.canvas.grade.original.settled.is_none(),
                     "departed tool must not retain its image"
                 )
             });
@@ -424,7 +449,7 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                 wait_for(&mut harness, |editor| editor.active_pick().is_some());
                 harness.update(|editor| editor.set_pick_region(initial.map(Coverage::rectangle)));
                 harness.step();
-                let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+                let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
                 let start = geometry.screen_point(start);
                 let end = geometry.screen_point(end);
                 assert!(start.distance(end) > 8.);
@@ -441,10 +466,9 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                 harness.step();
                 harness.read(|editor| {
                     assert_eq!(
-                        editor
-                            .pick_region()
-                            .unwrap()
-                            .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area),
+                        editor.pick_region().unwrap().exact_rectangle(
+                            editor.document.visit.canvas.ready.as_ref().unwrap().area
+                        ),
                         Some(expected),
                         "oriented={oriented}, initial={initial:?}"
                     )
@@ -457,7 +481,7 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                     modifiers: egui::Modifiers::NONE,
                 });
                 harness.step();
-                harness.read(|editor| assert!(editor.document.visit.pick_drag.is_none()));
+                harness.read(|editor| assert!(editor.document.visit.canvas.pick_drag.is_none()));
                 harness.read(|editor| assert_eq!(editor.pick_region(), selection));
                 harness.read(|editor| assert_eq!(editor.document.state.project, before));
                 harness.get_by_label("Cancel").click();
@@ -474,7 +498,13 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
     editor_harness(|mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("illuminated-patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            )
+        });
         harness.get_by_label("Scopes").click();
         harness.step();
         let before = harness.read(|editor| editor.document.state.project.clone());
@@ -489,17 +519,17 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
             set_layout(&mut harness, size, width);
             harness.get_by_label("Fit").click();
             harness.step();
-            harness.read(|editor| assert_eq!(editor.active_pick(), Some(Pick::Flat.display())));
+            harness.read(|editor| assert_eq!(editor.active_pick(), Some(flat::DISPLAY)));
             harness.read(|editor| assert!(editor.document.flat_edit.is_some()));
             wait_for(&mut harness, |e| {
                 assert!(
-                    e.document.visit.grade.original.refinement_error.is_none(),
+                    e.active_canvas().grade.original.refinement_error.is_none(),
                     "{}",
                     e.status
                 );
-                e.document.visit.grade.original.settled.is_some()
+                e.active_canvas().grade.original.settled.is_some()
             });
-            let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             let support = harness.read(|editor| editor.pick_region().expect("proposed support"));
             assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
             assert!(

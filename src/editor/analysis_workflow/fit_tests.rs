@@ -55,8 +55,8 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
     );
     editor.tab = 2;
     editor.scopes.visible = true;
-    editor.document.visit.viewport.zoom = Some(0.5);
-    let viewport = editor.document.visit.viewport;
+    editor.document.visit.canvas.viewport.zoom = Some(0.5);
+    let viewport = editor.document.visit.canvas.viewport;
     let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         review(app);
@@ -73,9 +73,9 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
         app.read(|e| {
             assert!(e.status.starts_with("Analyzed 2"), "{}", e.status);
             assert_eq!(e.document.visit.current_source, Some(first));
-            assert!(e.document.visit.ready.is_some());
+            assert!(e.document.visit.canvas.ready.is_some());
             assert!(e.document.analysis_review.is_none());
-            assert_eq!(e.document.visit.viewport, viewport);
+            assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert_eq!(e.tab, 2);
             assert!(e.scopes.visible);
             assert!(
@@ -152,7 +152,11 @@ fn review_return_restores_the_selected_source_owned_layer_when_it_still_exists()
                 assert!(editor.document.analysis_review.is_none());
                 assert!(editor.active_pick().is_none());
                 assert_eq!(editor.document.visit.current_source, Some(original));
-                assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+                assert!(
+                    editor.document.visit.canvas.ready.is_some(),
+                    "{}",
+                    editor.status
+                );
                 assert_eq!(
                     editor.adjustment_layer_target(),
                     if removed {

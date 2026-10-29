@@ -68,7 +68,13 @@ fn opening_without_saved_exposure_is_independent_of_the_previous_documents_refer
                 app.enter(|e, cx| e.start_document(Preparation::Open(path.clone()), cx));
                 app.run_until(Duration::from_secs(15), |e| !e.busy);
                 app.read(|e| {
-                    let ready = e.document.visit.ready.as_ref().expect("opened source");
+                    let ready = e
+                        .document
+                        .visit
+                        .canvas
+                        .ready
+                        .as_ref()
+                        .expect("opened source");
                     values.push(ready.reference.as_ref().unwrap().clone());
                     leases.push(ready.developed.clone());
                 });
@@ -129,6 +135,7 @@ fn reopening_keeps_the_recorded_baseline_when_legacy_fingerprints_differ() {
             assert_eq!(
                 e.document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .expect("opened photo")
@@ -280,6 +287,7 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
             assert!(
                 (e.document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .unwrap()
@@ -309,6 +317,7 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
             assert!(
                 (e.document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .unwrap()

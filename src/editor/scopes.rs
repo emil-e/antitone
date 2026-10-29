@@ -283,7 +283,13 @@ impl Editor {
         if self.document.visit.crop_edit.is_some() {
             return Err("Apply crop to update scopes");
         }
-        let ready = self.document.visit.ready.as_ref().ok_or("No image")?;
+        let ready = self
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .ok_or("No image")?;
         let parameters = self
             .view_processing(
                 self.input(),
@@ -302,7 +308,11 @@ impl Editor {
             },
         )
         .map_err(|_| "Composition unavailable")?;
-        self.document.visit.last_layout.ok_or("Waiting for view")?;
+        self.document
+            .visit
+            .canvas
+            .last_layout
+            .ok_or("Waiting for view")?;
         Ok((ready, parameters, composition))
     }
 
@@ -321,9 +331,13 @@ impl Editor {
                 .require_processing(&parameters)
                 .map_err(|_| "Positive grade unavailable")?;
         }
-        let (layout, pixels_per_point) =
-            self.document.visit.last_layout.ok_or("Waiting for view")?;
-        let mut viewport = self.document.visit.viewport;
+        let (layout, pixels_per_point) = self
+            .document
+            .visit
+            .canvas
+            .last_layout
+            .ok_or("Waiting for view")?;
+        let mut viewport = self.document.visit.canvas.viewport;
         let visible = viewport
             .layout_composition(layout.canvas, composition, pixels_per_point)
             .frame_raster(pixels_per_point);

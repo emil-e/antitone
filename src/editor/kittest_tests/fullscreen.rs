@@ -78,11 +78,11 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 harness.step();
                 let preferences = harness.read(|editor| editor.preferences.clone());
                 let project = harness.read(|editor| editor.document.state.project.clone());
-                let viewport = harness.read(|editor| editor.document.visit.viewport);
+                let viewport = harness.read(|editor| editor.document.visit.canvas.viewport);
                 let source =
                     harness.read(|editor| (editor.document.source, editor.source_exposure));
                 let workspace =
-                    harness.read(|editor| editor.document.visit.last_layout.unwrap().0.canvas);
+                    harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.canvas);
                 harness.get_by_label("Fullscreen viewing").click();
                 harness.step();
                 harness.read(|editor| assert!(editor.fullscreen.is_some()));
@@ -97,7 +97,7 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                     );
                 }
                 let canvas =
-                    harness.read(|editor| editor.document.visit.last_layout.unwrap().0.canvas);
+                    harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.canvas);
                 assert_eq!(canvas, egui::Rect::from_min_size(egui::Pos2::ZERO, size));
                 assert!(canvas.width() > workspace.width() && canvas.height() > workspace.height());
                 let exit = harness.get_by_label("Exit fullscreen").rect();
@@ -115,9 +115,12 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 });
                 harness.get_by_label("100%").click();
                 harness.step();
-                harness.read(|editor| assert_eq!(editor.document.visit.viewport.zoom, Some(1.)));
+                harness.read(|editor| {
+                    assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.))
+                });
                 key(&mut harness, egui::Key::Z);
-                harness.read(|editor| assert!(editor.document.visit.viewport.zoom.is_none()));
+                harness
+                    .read(|editor| assert!(editor.document.visit.canvas.viewport.zoom.is_none()));
                 let png = harness.render().unwrap();
                 save_capture(&png, &format!("fullscreen-{layout}-{density}x-offscreen"));
                 harness.get_by_label("Exit fullscreen").click();
@@ -133,7 +136,7 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 harness.try_run_realtime().unwrap();
                 harness.read(|editor| assert!(editor.fullscreen.is_none()));
                 assert!(harness.query_by_label("Scopes").is_some());
-                harness.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
+                harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
                 harness.read(|editor| assert_eq!(editor.preferences, preferences));
                 harness.read(|editor| assert_eq!(editor.document.state.project, project));
                 harness.read(|editor| {
@@ -141,7 +144,7 @@ fn fullscreen_widgets_fill_the_canvas_and_restore_the_workspace_at_both_densitie
                 });
                 harness.read(|editor| {
                     assert_eq!(
-                        editor.document.visit.last_layout.unwrap().0.canvas,
+                        editor.active_canvas().last_layout.unwrap().0.canvas,
                         workspace
                     )
                 });

@@ -143,6 +143,7 @@ impl Editor {
         let ready = self
             .document
             .visit
+            .canvas
             .ready
             .as_ref()
             .ok_or(Error::InvalidParameter("positive source unavailable"))?;
@@ -170,7 +171,7 @@ impl Editor {
         }
         let (Some(device), Some(ready)) = (
             self.document.visit.working_view.device(),
-            &self.document.visit.ready,
+            &self.document.visit.canvas.ready,
         ) else {
             return Ok(());
         };

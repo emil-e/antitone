@@ -348,9 +348,17 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
         let epoch = editor
             .source_epoch
             .load(std::sync::atomic::Ordering::Relaxed);
-        let revision = editor.document.visit.grade.original.revision();
-        let viewport = editor.document.visit.viewport;
-        let path = editor.document.visit.ready.as_ref().unwrap().path.clone();
+        let revision = editor.document.visit.canvas.grade.original.revision();
+        let viewport = editor.document.visit.canvas.viewport;
+        let path = editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .path
+            .clone();
         editor.load(
             "different.ARW".into(),
             &crate::application::UiContext::render_only(),
@@ -368,9 +376,15 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
                 .load(std::sync::atomic::Ordering::Relaxed),
             epoch
         );
-        assert_eq!(editor.document.visit.ready.as_ref().unwrap().path, path);
-        assert_eq!(editor.document.visit.viewport, viewport);
-        assert_eq!(editor.document.visit.grade.original.revision(), revision);
+        assert_eq!(
+            editor.document.visit.canvas.ready.as_ref().unwrap().path,
+            path
+        );
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
+        assert_eq!(
+            editor.document.visit.canvas.grade.original.revision(),
+            revision
+        );
         assert_eq!(editor.document.state.project, before);
         assert!(
             !editor.document.visit.source.pending()

@@ -133,7 +133,7 @@ impl DocumentScope {
         if reuse_ready {
             return true;
         }
-        match (self.visit.ready.as_ref(), ready) {
+        match (self.visit.canvas.ready.as_ref(), ready) {
             (Some(current), Some(candidate)) => {
                 current.path == candidate.path
                     && current.file == candidate.file

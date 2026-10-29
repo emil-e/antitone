@@ -47,7 +47,7 @@ fn editor(
                 cpu_bytes: 0,
                 gpu_bytes: 0,
             });
-        editor.document.visit.grade.original.last_edit =
+        editor.document.visit.canvas.grade.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
         editor.developments = Some(scheduler);
         editor
@@ -166,7 +166,7 @@ fn composed_editor_registers_visible_work_then_uses_completed_proper_card_callba
                 2
             );
             assert!(
-                editor.document.visit.ready.is_none()
+                editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.pending_preview.is_none()
             );
         });

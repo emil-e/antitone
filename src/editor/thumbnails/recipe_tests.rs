@@ -693,7 +693,7 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
         });
         app.enter(|editor, cx| {
             editor.document.visit.working_view.clear();
-            editor.document.visit.grade.original.last_edit =
+            editor.document.visit.canvas.grade.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             editor.advance_thumbnail_demand(cx);
         });

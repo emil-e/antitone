@@ -14,7 +14,7 @@ use std::{
 };
 
 fn region(editor: &Editor) -> Coverage {
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     Coverage::rectangle(Rect {
         x: area.x + 8,
         y: area.y + 8,
@@ -166,7 +166,7 @@ fn dropping_the_caller_during_measurement_withdraws_ui_but_retains_running_input
         let call = gate.next(app);
         app.update(|editor| {
             drop(task);
-            editor.document.visit.ready = None;
+            editor.document.visit.canvas.ready = None;
         });
         app.pump();
         assert!(call.cancelled.is_cancelled());

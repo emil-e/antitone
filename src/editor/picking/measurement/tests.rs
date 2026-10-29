@@ -70,7 +70,7 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
         editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
         editor.set_dmin(Some(expected * 1.05));
         editor.set_dmax(Some(dark));
-        editor.document.visit.ready = Some(ready);
+        editor.document.visit.canvas.ready = Some(ready);
         editor.sync_document();
         editor.document.cache.set_budget(0);
         drop(scan);
@@ -83,7 +83,7 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
                 editor.set_pick_region(Some(region));
                 editor.apply_pick(&tasks);
                 assert!(editor.measurement_pending() && editor.busy);
-                editor.document.visit.ready = None;
+                editor.document.visit.canvas.ready = None;
             });
             std::fs::write(&path, b"replaced after the operation captured its input").unwrap();
             assert!(lease.upgrade().is_some());
@@ -116,7 +116,16 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
 fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
     let mut editor = crate::editor::tests::fixture();
     crate::editor::tests::add_ready_fixture(&mut editor);
-    let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
+    let source = Arc::downgrade(
+        &editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed,
+    );
     let before = editor.document.state.project.clone();
     crate::application::test_support::with_application(editor, |app| {
         let tasks = app.access();
@@ -124,14 +133,14 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
         app.pump();
         app.update(|editor| {
             editor.set_pick_region(Some(Coverage::rectangle(
-                editor.document.visit.ready.as_ref().unwrap().area,
+                editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(&tasks);
             assert!(editor.busy && editor.measurement_pending());
         });
         app.enter(|editor, cx| {
             editor.finish_pick(cx);
-            editor.document.visit.ready = None;
+            editor.document.visit.canvas.ready = None;
         });
         app.pump();
         app.read(|editor| {
@@ -151,6 +160,7 @@ fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
         editor
             .document
             .visit
+            .canvas
             .ready
             .as_ref()
             .unwrap()
@@ -202,7 +212,16 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
         let mut editor =
             crate::editor::tests::with_document_services(crate::editor::tests::fixture());
         crate::editor::tests::add_ready_fixture(&mut editor);
-        let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
+        let source = Arc::downgrade(
+            &editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed,
+        );
         let (release_next, resume_next) = mpsc::channel();
         let resume_next = Mutex::new(resume_next);
         let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
@@ -237,7 +256,7 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
                     assert!(editor.document.visit.source.pending());
                 } else {
                     editor.finish_pick(cx);
-                    editor.document.visit.ready = None;
+                    editor.document.visit.canvas.ready = None;
                 }
                 assert!(!editor.measurement_pending());
                 assert_eq!(editor.busy, replace);
@@ -274,7 +293,16 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
 fn cancelling_a_running_measurement_retains_its_source_until_physical_cleanup() {
     let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     editor.document.cache.set_budget(0);
-    let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
+    let source = Arc::downgrade(
+        &editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed,
+    );
     let before = editor.document.state.project.clone();
     let gate = testing::Gate::install(&mut editor);
     crate::application::test_support::with_application(editor, |app| {
@@ -282,14 +310,14 @@ fn cancelling_a_running_measurement_retains_its_source_until_physical_cleanup() 
         app.pump();
         app.enter(|editor, cx| {
             editor.set_pick_region(Some(Coverage::rectangle(
-                editor.document.visit.ready.as_ref().unwrap().area,
+                editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(cx);
         });
         let call = gate.next(app);
         app.enter(|editor, cx| {
             editor.finish_pick(cx);
-            editor.document.visit.ready = None;
+            editor.document.visit.canvas.ready = None;
         });
         app.pump();
         assert!(call.cancelled.is_cancelled());

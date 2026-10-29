@@ -19,7 +19,7 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
         h.enter(|editor, cx| editor.add_raws(paths, cx));
         wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
         h.update(|e| {
-            assert!(e.document.visit.ready.is_some(), "{}", e.status);
+            assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             e.set_dmax(Some(DVec3::splat(128. / 4031.)));
             e.set_gamma(0.75);
@@ -158,7 +158,7 @@ fn click_action(h: &mut Harness<'_, Editor>, label: &str) {
 
 fn prior_crop(h: &mut Harness<'_, Editor>) -> Crop {
     let crop = h.update(|e| {
-        let a = e.document.visit.ready.as_ref().unwrap().area;
+        let a = e.document.visit.canvas.ready.as_ref().unwrap().area;
         let crop = Crop::from_region(Rect {
             x: a.x + a.width / 4,
             y: a.y + a.height / 4,
@@ -195,6 +195,7 @@ fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
             editor
                 .document
                 .visit
+                .canvas
                 .last_layout
                 .unwrap()
                 .0
@@ -204,7 +205,7 @@ fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
         )
     });
     let timing = h.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-    h.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
+    h.update(|editor| editor.document.visit.canvas.selection_timing = Some(timing.clone()));
     h.step();
     h.render().unwrap();
     assert!(timing.ready_was_painted());
@@ -236,7 +237,14 @@ fn assert_lifecycle(h: &Harness<'_, Editor>, size: egui::Vec2) {
             .as_ref()
             .and_then(|e| e.layout)
             .map(|l| l.canvas)
-            .or_else(|| editor.document.visit.last_layout.map(|(l, _)| l.canvas))
+            .or_else(|| {
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .last_layout
+                    .map(|(l, _)| l.canvas)
+            })
             .unwrap()
     });
     for label in ["Apply", "Cancel"] {
@@ -294,7 +302,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             h.read(|editor| {
                 assert!(
                     editor
-                        .auto_crop_outline(editor.document.visit.last_layout.unwrap().0)
+                        .auto_crop_outline(editor.active_canvas().last_layout.unwrap().0)
                         .is_none()
                 )
             });
@@ -332,7 +340,9 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             }
             h.step();
             h.step();
-            wait_for(&mut h, |e| !e.busy && e.document.visit.ready.is_some());
+            wait_for(&mut h, |e| {
+                !e.busy && e.document.visit.canvas.ready.is_some()
+            });
             h.read(|editor| {
                 assert_eq!(
                     editor.document.visit.current_source,
@@ -351,13 +361,15 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             save_capture(&h.render().unwrap(), &format!("crop-warning-{name}"));
             h.get_by_label("crop-2.dng").click();
             h.step();
-            wait_for(&mut h, |e| !e.busy && e.document.visit.ready.is_some());
+            wait_for(&mut h, |e| {
+                !e.busy && e.document.visit.canvas.ready.is_some()
+            });
             overlay::wait_context(&mut h);
             assert!(h.query_by_label("Tool warning").is_none());
             h.read(|editor| {
                 assert!(
                     editor
-                        .auto_crop_outline(editor.document.visit.last_layout.unwrap().0)
+                        .auto_crop_outline(editor.active_canvas().last_layout.unwrap().0)
                         .is_some()
                 )
             });
