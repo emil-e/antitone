@@ -171,7 +171,7 @@ fn shared_outline_shades_outside_but_not_inside_rotated_and_reflected_frames() {
 fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_authority() {
     let (mut editor, _directory) = super::super::tests::fixture();
     let project = editor.document.state.project.clone();
-    editor.auto_crop(Target::Roll);
+    editor.begin_auto_crop_review(editor.document.project.order.clone(), "Whole roll");
     assert!(editor.auto_crop_context());
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let composition = Composition::new(

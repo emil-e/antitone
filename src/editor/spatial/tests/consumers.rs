@@ -79,7 +79,9 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
         "this must not rely on accepted Analyze evidence"
     );
     with_application(editor, |app| {
-        app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Roll, cx));
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+        });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.update(|editor| {
             assert!(editor.auto_crop_valid(), "{}", editor.status);
@@ -92,6 +94,9 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
                     .all(|s| s.crop.is_none())
             );
             editor.finish_auto_crop(true);
+        });
+        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit.is_none());
+        app.read(|editor| {
             assert!(
                 editor.document.auto_crop_edit.is_none(),
                 "{}",
@@ -162,9 +167,22 @@ fn changed_supporting_geometry_prevents_any_selected_crop_from_being_applied() {
     );
     let undo = editor.history_label(history::Direction::Undo);
     with_application(editor, |app| {
-        app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Selected, cx));
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(
+                editor
+                    .document
+                    .project
+                    .order
+                    .iter()
+                    .copied()
+                    .filter(|id| editor.document.roll_selection.contains(*id))
+                    .collect(),
+                "Entry selection",
+                cx,
+            )
+        });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
-        app.update(|editor| {
+        let accepted = app.update(|editor| {
             assert!(editor.auto_crop_valid());
             editor
                 .document
@@ -175,6 +193,16 @@ fn changed_supporting_geometry_prevents_any_selected_crop_from_being_applied() {
                 .active_area[2] -= 1;
             let accepted = editor.document.state.project.clone();
             editor.finish_auto_crop(true);
+            accepted
+        });
+        app.run_until(LIMIT, |editor| {
+            editor
+                .document
+                .auto_crop_operation
+                .as_ref()
+                .is_some_and(|op| op.apply.is_some())
+        });
+        app.read(|editor| {
             assert!(editor.document.auto_crop_edit.is_some());
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
@@ -197,7 +225,20 @@ fn selected_targets_are_captured_at_request_time_and_cancel_does_not_accept_marg
         .reconcile(&editor.document.state.project.order, Some(first));
     let admission = crate::background::testing::pause();
     with_application(editor, |app| {
-        app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Selected, cx));
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(
+                editor
+                    .document
+                    .project
+                    .order
+                    .iter()
+                    .copied()
+                    .filter(|id| editor.document.roll_selection.contains(*id))
+                    .collect(),
+                "Entry selection",
+                cx,
+            )
+        });
         app.update(|editor| {
             editor.document.roll_selection = Default::default();
             editor
@@ -248,7 +289,9 @@ fn camera_limited_picture_metadata_is_a_usable_visible_crop_without_four_measure
             .unwrap()
     );
     with_application(editor, |app| {
-        app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Roll, cx));
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+        });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.update(|editor| {
             assert!(editor.auto_crop_valid(), "{}", editor.status);
@@ -288,7 +331,9 @@ fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_prepara
     let written = editor.document.capture().save(&path, Save::New).unwrap();
     editor.document.accept_save(written);
     with_application(editor, |app| {
-        app.enter(|editor, cx| editor.request_auto_crop(auto_crop::Target::Roll, cx));
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
+        });
         await_native(app, &starts);
         let request = app.read(|editor| editor.document.spatial_preparing.as_ref().unwrap().id);
         app.read(|editor| {
@@ -329,7 +374,7 @@ fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_prepara
         app.run_until(LIMIT, |editor| {
             editor.document_pending.is_none()
                 && editor.document.spatial_preparing.is_none()
-                && editor.document.spatial_consumer.is_none()
+                && editor.document.auto_crop_edit.is_some()
         });
         app.read(|editor| {
             assert!(

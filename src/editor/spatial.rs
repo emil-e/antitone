@@ -1,10 +1,11 @@
-//! Document-owned shared preparation. Consumers own only the continuation into their tools.
+//! Document-owned region preparation, awaited independently by feature actions.
 use super::{
-    Document, Editor, SourceId, Task, TaskProgress, TaskRequest, UiContext, analysis,
+    Document, Editor, Task, TaskProgress, TaskRequest, UiContext,
     analysis_services::{Cancellation, Services},
-    auto_crop, document,
+    document,
 };
 use crate::spatial_metadata::{Metadata, Request};
+use futures_channel::oneshot;
 use std::sync::{Arc, Mutex};
 
 mod preparation;
@@ -12,30 +13,11 @@ mod preparation;
 #[cfg(test)]
 mod tests;
 
-pub(super) enum Consumer {
-    Analyze(Box<analysis::Request>),
-    AutoCrop {
-        target: auto_crop::Target,
-        sources: Vec<SourceId>,
-    },
-}
-
 pub(super) struct Pending {
     pub id: u64,
-    document: Arc<Document>,
-    request: Option<Request>,
-    consumer: Option<Consumer>,
     cancelled: Cancellation,
+    completion: Option<oneshot::Sender<Option<Arc<Metadata>>>>,
     task: Option<async_executor::Task<()>>,
-}
-
-impl Pending {
-    pub(super) fn analysis_request(&self) -> Option<&analysis::Request> {
-        match self.consumer.as_ref() {
-            Some(Consumer::Analyze(request)) => Some(request),
-            Some(Consumer::AutoCrop { .. }) | None => None,
-        }
-    }
 }
 
 impl Drop for Pending {
@@ -51,39 +33,23 @@ struct Progress {
 }
 
 impl Editor {
-    pub(super) fn request_spatial(&mut self, consumer: Consumer, cx: &UiContext<'_, Self>) {
-        if self.busy
-            || self.document.spatial_preparing.is_some()
-            || self.document.spatial_consumer.is_some()
-            || self.document.visit.spatial_consumer.is_some()
-        {
-            return;
+    pub(super) fn prepare_regions<'scope>(
+        &mut self,
+        cx: &UiContext<'scope, Self>,
+    ) -> Option<impl Future<Output = Option<Arc<Metadata>>> + use<'scope>> {
+        if self.busy || self.document.spatial_preparing.is_some() {
+            return None;
         }
         self.sync_document();
-        let Some(request) = self.document.spatial.begin() else {
-            return;
-        };
+        let request = self.document.spatial.begin()?;
         let document = Arc::new(self.document.capture());
         let id = self.request_id();
         let cancelled = Cancellation::default();
-        let consumer = if matches!(
-            &consumer,
-            Consumer::AutoCrop {
-                target: auto_crop::Target::Photo,
-                ..
-            }
-        ) {
-            self.document.visit.spatial_consumer = Some(consumer);
-            None
-        } else {
-            Some(consumer)
-        };
+        let (send, receive) = oneshot::channel();
         self.document.spatial_preparing = Some(Pending {
             id,
-            document: document.clone(),
-            request: Some(request),
-            consumer,
             cancelled: cancelled.clone(),
+            completion: Some(send),
             task: None,
         });
         self.tasks.begin(Task::Regions(id));
@@ -99,11 +65,20 @@ impl Editor {
         let progress = Arc::new(Progress::default());
         let produced = progress.clone();
         let retire = cancelled.cancel_on_drop();
-        let Some(task) = cx.spawn(move |cx| async move {
+        let captured = document.clone();
+        #[cfg(test)]
+        let programmed = self.document.spatial_reply.take();
+        let task = cx.spawn(move |cx| async move {
             let _retire = retire;
             let work = async {
+                #[cfg(test)]
+                if let Some(programmed) = programmed {
+                    return programmed
+                        .await
+                        .unwrap_or_else(|_| Err("Programmed preparation dropped".into()));
+                }
                 let services = services.ok_or_else(|| "Source services unavailable".to_owned())?;
-                preparation::prepare(document, services, cancelled, move |done, total| {
+                preparation::prepare(captured, services, cancelled, move |done, total| {
                     *produced.latest.lock().unwrap() = Some((done, total));
                     produced.changed.notify(usize::MAX);
                 })
@@ -133,40 +108,56 @@ impl Editor {
                 }
             };
             let result = futures_lite::future::or(work, reports).await;
-            cx.update(|editor| editor.spatial_result(id, result, &cx));
-        }) else {
-            self.spatial_result(id, Err("Application stopped".into()), cx);
-            return;
-        };
-        self.document
-            .spatial_preparing
-            .as_mut()
-            .expect("registered spatial request")
-            .task = Some(task);
+            cx.update(|editor| editor.regions_prepared(id, document, request, result));
+        });
+        if let Some(task) = task {
+            self.document.spatial_preparing.as_mut().unwrap().task = Some(task);
+        } else {
+            self.cancel_spatial();
+            self.status =
+                "Regions unavailable: Application stopped; accepted edits unchanged".into();
+        }
+        let resumed = self.document.spatial_resumed.clone();
+        let cx = cx.clone();
+        Some(async move {
+            let metadata = receive.await.ok().flatten()?;
+            loop {
+                let changed = resumed.listen();
+                if cx.read(|editor| {
+                    editor.busy || editor.document_pending.is_some() || editor.failure.is_some()
+                }) {
+                    changed.await;
+                    continue;
+                }
+                return cx
+                    .update(|editor| {
+                        if editor.document.capture().ready_spatial_metadata() == *metadata {
+                            Some(metadata)
+                        } else {
+                            editor.status = "Regions no longer match the supporting inputs".into();
+                            None
+                        }
+                    })
+                    .flatten();
+            }
+        })
     }
 
     pub(super) fn cancel_spatial(&mut self) {
-        let pending = self.document.spatial_preparing.take();
-        let consumer = self
-            .document
-            .spatial_consumer
-            .take()
-            .or_else(|| self.document.visit.spatial_consumer.take());
-        if pending.is_some() || consumer.is_some() {
+        if let Some(pending) = self.document.spatial_preparing.take() {
             self.document.spatial.cancel();
-            if let Some(pending) = pending {
-                self.tasks.finish(TaskRequest::Regions(pending.id));
-            }
+            self.tasks.finish(TaskRequest::Regions(pending.id));
             self.busy = self.document_pending.is_some();
             self.status = "Region preparation cancelled; accepted edits unchanged".into();
         }
     }
 
-    fn spatial_result(
+    fn regions_prepared(
         &mut self,
         id: u64,
+        document: Arc<Document>,
+        request: Request,
         result: Result<Option<Metadata>, String>,
-        cx: &UiContext<'_, Self>,
     ) {
         if !self
             .document
@@ -184,7 +175,6 @@ impl Editor {
         let metadata = match result {
             Ok(metadata) => metadata,
             Err(error) => {
-                self.document.visit.spatial_consumer = None;
                 self.document.spatial.cancel();
                 if !self.busy {
                     self.status = format!("Regions unavailable: {error}; accepted edits unchanged");
@@ -192,82 +182,36 @@ impl Editor {
                 return;
             }
         };
-        let inputs: Vec<_> = metadata
-            .groups
-            .iter()
-            .flat_map(|g| g.sources.iter().map(|s| s.input.clone()))
-            .collect();
-        let paths_match = inputs.iter().all(|input| {
+        let paths_match = metadata.groups.iter().flat_map(|g| &g.sources).all(|row| {
             match (
-                self.document.source_path(input.source),
-                pending.document.source_path(input.source),
+                self.document.source_path(row.input.source),
+                document.source_path(row.input.source),
             ) {
                 (Ok(current), Ok(captured)) => document::same_path(&current, &captured),
                 _ => false,
             }
         });
-        // Worker completion can wait for the UI driver. Recheck cheap file identities at
-        // publication so a changed supporting peer cannot lend stale dimensions to a consumer.
+        // Supporting peers must still match when their shared geometry is published.
         let current = self.document.spatial_inputs();
         let scope = &mut self.document;
         let publish = paths_match
-            && scope.spatial_code_scale() == pending.document.spatial_code_scale()
+            && scope.spatial_code_scale() == document.spatial_code_scale()
             && scope
                 .spatial
-                .publish(
-                    pending.request.take().unwrap(),
-                    metadata,
-                    &scope.state.project,
-                    &current,
-                )
+                .publish(request, metadata, &scope.state.project, &current)
                 .unwrap_or(false);
         if !publish {
-            self.document.visit.spatial_consumer = None;
             if !self.busy {
                 self.status = "Regions discarded: source inputs changed".into();
             }
             return;
         }
-        self.document.spatial_consumer = pending.consumer.take();
-        self.resume_spatial_consumer(cx);
+        if let Some(completion) = pending.completion.take() {
+            let _ = completion.send(Some(self.document.spatial.ready()));
+        }
     }
 
-    pub(super) fn resume_spatial_consumer(&mut self, cx: &UiContext<'_, Self>) {
-        if self.busy || self.document_pending.is_some() || self.failure.is_some() {
-            return;
-        }
-        let Some(consumer) = self
-            .document
-            .spatial_consumer
-            .take()
-            .or_else(|| self.document.visit.spatial_consumer.take())
-        else {
-            return;
-        };
-        if self.document.capture().ready_spatial_metadata() != *self.document.spatial.ready() {
-            self.status = "Region consumer cancelled: supporting inputs changed".into();
-            return;
-        }
-        match consumer {
-            Consumer::Analyze(mut request) => {
-                document::rebase_project(
-                    &mut request.document.project,
-                    request.document.path.as_deref(),
-                    self.document.path.as_deref(),
-                );
-                if self.id != request.loaded
-                    || self.document.visit.current_source != Some(request.selected)
-                    || self.document.state.project != request.document.project
-                {
-                    self.status = "Regions ready; analysis request no longer current".into();
-                    return;
-                }
-                request.document = self.document.capture();
-                self.prepare_analysis_review(*request, cx);
-            }
-            Consumer::AutoCrop { target, sources } => {
-                self.auto_crop_sources(target, sources);
-            }
-        }
+    pub(super) fn resume_region_actions(&self) {
+        self.document.spatial_resumed.notify(usize::MAX);
     }
 }

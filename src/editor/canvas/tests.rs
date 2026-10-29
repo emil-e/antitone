@@ -132,15 +132,8 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
                 }
             })
             .collect();
-        editor.auto_crop(auto_crop::Target::Roll);
-        assert!(editor.auto_crop_valid());
-        editor.finish_auto_crop(true);
-        assert!(
-            editor.document.auto_crop_edit.is_none(),
-            "{}",
-            editor.status
-        );
-        assert!(editor.document.visit.crop.is_some());
+        let (reply, receive) = futures_channel::oneshot::channel();
+        editor.document.spatial_reply = Some(receive);
         let first = editor
             .document
             .source_path(editor.document.state.project.order[0])
@@ -150,6 +143,25 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
             .source_path(editor.document.state.project.order[1])
             .unwrap();
         with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                editor.review_crop_proposals(
+                    editor.document.project.order.clone(),
+                    "Whole roll",
+                    cx,
+                )
+            });
+            reply.send(Ok(Some(Default::default()))).unwrap();
+            app.run_until(Duration::from_secs(20), |editor| {
+                editor.document.auto_crop_edit.is_some()
+            });
+            app.update(|editor| {
+                assert!(editor.auto_crop_valid());
+                editor.finish_auto_crop(true);
+            });
+            app.run_until(Duration::from_secs(20), |editor| {
+                editor.document.auto_crop_edit.is_none()
+            });
+            app.read(|editor| assert!(editor.document.visit.crop.is_some()));
             provisional_then_physical(app);
             app.enter(|editor, cx| editor.load(second, cx));
             app.run_until(Duration::from_secs(20), |editor| !editor.busy);

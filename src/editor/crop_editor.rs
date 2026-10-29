@@ -12,6 +12,7 @@ pub(super) struct CropEdit {
     pub(super) layout: Option<CanvasLayout>,
     pub(super) guides: bool,
     pub(super) auto_problem: Option<String>,
+    pub(super) auto_crop_task: Option<async_executor::Task<()>>,
     reveal_controls: bool,
 }
 
@@ -135,6 +136,7 @@ impl Editor {
             layout: None,
             guides: true,
             auto_problem: None,
+            auto_crop_task: None,
             reveal_controls: true,
         });
         self.document.visit.canvas.viewport.fit();
@@ -356,7 +358,14 @@ impl Editor {
                     "Crop & straighten",
                     Some(true),
                     |ui, reset| {
-                        self.auto_crop_action(ui, auto_crop::Target::Photo, "Auto-crop");
+                        let photo = self.document.visit.current_source;
+                        if presentation::TextAction::new("Auto-crop")
+                            .enabled(photo.is_some() && self.document.visit.canvas.ready.is_some())
+                            .show(ui)
+                            .clicked()
+                        {
+                            self.document.auto_crop_requested = photo.map(auto_crop::Action::Photo);
+                        }
                         self.crop_tool_controls(ui, reset);
                     },
                 );

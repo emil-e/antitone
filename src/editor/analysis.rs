@@ -363,7 +363,10 @@ impl Editor {
                     if cropping {
                         self.finish_auto_crop(false);
                     } else {
-                        self.document.auto_crop_requested = Some(auto_crop::Target::Roll);
+                        self.document.auto_crop_requested = Some(auto_crop::Action::Batch {
+                            photos: self.document.project.order.clone(),
+                            scope: "Whole roll",
+                        });
                     }
                 }
             }
@@ -406,7 +409,33 @@ impl Editor {
         let Some(request) = self.analysis_request() else {
             return;
         };
-        self.request_spatial(spatial::Consumer::Analyze(Box::new(request)), cx);
+        let Some(regions) = self.prepare_regions(cx) else {
+            return;
+        };
+        self.document.analysis_regions = cx.spawn(move |cx| async move {
+            let prepared = regions.await;
+            cx.update(|editor| {
+                editor.document.analysis_regions = None;
+                if prepared.is_none() {
+                    return;
+                }
+                let mut request = request;
+                document::rebase_project(
+                    &mut request.document.project,
+                    request.document.path.as_deref(),
+                    editor.document.path.as_deref(),
+                );
+                if editor.id != request.loaded
+                    || editor.document.visit.current_source != Some(request.selected)
+                    || editor.document.state.project != request.document.project
+                {
+                    editor.status = "Regions ready; analysis request no longer current".into();
+                    return;
+                }
+                request.document = editor.document.capture();
+                editor.prepare_analysis_review(request, &cx);
+            });
+        });
     }
 
     #[cfg(test)]
@@ -418,12 +447,7 @@ impl Editor {
     }
 
     pub(super) fn cancel_analysis(&mut self) {
-        if self
-            .document
-            .spatial_preparing
-            .as_ref()
-            .is_some_and(|pending| pending.analysis_request().is_some())
-        {
+        if self.document.analysis_regions.take().is_some() {
             self.cancel_spatial();
             return;
         }

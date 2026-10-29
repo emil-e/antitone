@@ -7,6 +7,7 @@ fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
     let mut editor = fixture(scheduler.clone());
     let peer = editor.document.state.project.order[1];
     let metadata = supplied(&mut editor);
+    let reply = programmed(&mut editor);
     editor.document.roll_selection = Default::default();
     editor.document.roll_selection.reconcile(
         &editor.document.state.project.order,
@@ -15,8 +16,18 @@ fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
     let accepted = editor.document.state.project.clone();
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.request_auto_crop(auto_crop::Target::Selected, cx);
-            let request = editor.document.spatial_preparing.as_ref().unwrap().id;
+            editor.review_crop_proposals(
+                editor
+                    .document
+                    .project
+                    .order
+                    .iter()
+                    .copied()
+                    .filter(|id| editor.document.roll_selection.contains(*id))
+                    .collect(),
+                "Entry selection",
+                cx,
+            );
             editor
                 .document
                 .project
@@ -24,11 +35,15 @@ fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
                 .unwrap()
                 .development
                 .active_area[2] -= 1;
-            editor.spatial_result(request, Ok(Some(metadata)), cx);
-            assert!(editor.document.spatial_preparing.is_none());
+        });
+        reply.send(Ok(Some(metadata))).unwrap();
+        app.run_until(LIMIT, |editor| {
+            editor.document.auto_crop_operation.is_none()
+        });
+        app.read(|editor| {
             assert!(
                 editor.document.auto_crop_edit.is_none(),
-                "stale peer dimensions must not reach a consumer"
+                "stale peer dimensions reached a consumer"
             );
             assert_eq!(
                 editor
@@ -48,7 +63,6 @@ fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
                     .is_empty()
             );
         });
-        app.pump();
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -104,10 +118,10 @@ fn save_as_rebased_relative_locators_do_not_retire_a_completed_shared_result() {
         .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))
         .unwrap();
     let path = dir.path().join("moved.antitone");
+    let reply = programmed(&mut editor);
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.request_auto_crop(auto_crop::Target::Roll, cx);
-            let request = editor.document.spatial_preparing.as_ref().unwrap().id;
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
             let written = editor.document.capture().save(&path, Save::New).unwrap();
             editor.document.accept_save(written);
             assert!(
@@ -118,7 +132,10 @@ fn save_as_rebased_relative_locators_do_not_retire_a_completed_shared_result() {
                     .iter()
                     .all(|source| source.path.is_relative())
             );
-            editor.spatial_result(request, Ok(Some(metadata.clone())), cx);
+        });
+        reply.send(Ok(Some(metadata.clone()))).unwrap();
+        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit.is_some());
+        app.read(|editor| {
             assert_eq!(*editor.document.spatial.ready(), metadata);
             assert!(
                 editor.document.auto_crop_edit.is_some(),
@@ -127,7 +144,6 @@ fn save_as_rebased_relative_locators_do_not_retire_a_completed_shared_result() {
             );
             assert!(!editor.document.dirty());
         });
-        app.pump();
     });
     scheduler.close_and_wait().unwrap();
 }

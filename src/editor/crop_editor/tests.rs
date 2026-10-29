@@ -588,6 +588,7 @@ impl Harness {
             layout: None,
             guides: true,
             auto_problem: None,
+            auto_crop_task: None,
             reveal_controls: false,
         });
         Self {

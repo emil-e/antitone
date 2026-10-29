@@ -87,12 +87,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn feedback_dialog(
-        &mut self,
-        context: &egui::Context,
-        escape_available: bool,
-        cx: &UiContext<'_, Self>,
-    ) {
+    pub(super) fn feedback_dialog(&mut self, context: &egui::Context, escape_available: bool) {
         if let Some(failure) = &self.failure
             && failure.presentation().show(
                 context,
@@ -101,7 +96,7 @@ impl Editor {
             )
         {
             self.failure = None;
-            self.resume_spatial_consumer(cx);
+            self.resume_region_actions();
         }
     }
 }
