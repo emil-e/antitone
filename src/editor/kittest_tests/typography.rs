@@ -36,7 +36,7 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
                     ("rendering", "Rendering"),
                     ("picker", "Roll"),
                 ] {
-                    if harness.read(|editor| editor.document.picking.kind.is_some()) {
+                    if harness.read(|editor| editor.active_pick().is_some()) {
                         harness.enter(|editor, cx| editor.finish_pick(cx));
                     }
                     harness

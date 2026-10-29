@@ -49,7 +49,7 @@ fn click_patch(harness: &mut Harness<'_, Editor>, point: egui::Pos2) {
         });
     }
     harness.step();
-    harness.read(|editor| assert!(editor.document.picking.region.is_some()));
+    harness.read(|editor| assert!(editor.pick_region().is_some()));
 }
 
 fn capture_tool(harness: &mut Harness<'_, Editor>, name: &str, size: egui::Vec2) {
@@ -174,7 +174,8 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.try_run_realtime().unwrap();
             h.get_by_label(label).click();
             h.step();
-            h.read(|e| assert_eq!(e.document.picking.kind, Some(kind)));
+            wait_for(&mut h, |e| e.active_pick().is_some());
+            h.read(|e| assert_eq!(e.active_pick(), Some(kind.display())));
             wait_for(&mut h, |e| {
                 e.document.visit.grade.original.settled.is_some()
             });
@@ -296,7 +297,8 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 harness.try_run_realtime().unwrap();
                 harness.get_by_label(label).click();
                 harness.step();
-                harness.read(|editor| assert_eq!(editor.document.picking.kind, Some(kind)));
+                wait_for(&mut harness, |editor| editor.active_pick().is_some());
+                harness.read(|editor| assert_eq!(editor.active_pick(), Some(kind.display())));
                 assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
                 harness.get_by_label("Apply").click();
                 harness.step();
@@ -306,10 +308,11 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 capture_tool(&mut harness, &format!("{name}-{layout}-offscreen"), size);
                 harness.get_by_label("Cancel").click();
                 harness.step();
-                harness.read(|editor| assert!(editor.document.picking.kind.is_none()));
+                harness.read(|editor| assert!(editor.active_pick().is_none()));
                 harness.read(|editor| assert_eq!(editor.document.state.project, before));
                 harness.get_by_label(label).click();
                 harness.step();
+                wait_for(&mut harness, |editor| editor.active_pick().is_some());
                 click_patch(
                     &mut harness,
                     egui::pos2(if kind == Pick::Dmin { 32. } else { 96. }, 32.),
@@ -318,9 +321,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 harness.step();
                 harness.read(|editor| assert!(editor.busy));
                 wait_for(&mut harness, |e| !e.busy);
-                harness.read(|editor| {
-                    assert!(editor.document.picking.kind.is_none(), "{}", editor.status)
-                });
+                harness.read(|editor| assert!(editor.active_pick().is_none(), "{}", editor.status));
                 let mut expected = before;
                 if kind == Pick::Dmin {
                     let measured = harness.read(|editor| editor.dmin().unwrap());
@@ -420,9 +421,8 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                 harness.try_run_realtime().unwrap();
                 harness.get_by_label("Pick Dmin (film base)").click();
                 harness.step();
-                harness.update(|editor| {
-                    editor.document.picking.region = initial.map(Coverage::rectangle)
-                });
+                wait_for(&mut harness, |editor| editor.active_pick().is_some());
+                harness.update(|editor| editor.set_pick_region(initial.map(Coverage::rectangle)));
                 harness.step();
                 let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
                 let start = geometry.screen_point(start);
@@ -442,16 +442,14 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                 harness.read(|editor| {
                     assert_eq!(
                         editor
-                            .document
-                            .picking
-                            .region
+                            .pick_region()
                             .unwrap()
                             .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area),
                         Some(expected),
                         "oriented={oriented}, initial={initial:?}"
                     )
                 });
-                let selection = harness.read(|editor| editor.document.picking.region);
+                let selection = harness.read(|editor| editor.pick_region());
                 harness.event(egui::Event::PointerButton {
                     pos: end,
                     button: egui::PointerButton::Primary,
@@ -460,11 +458,11 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                 });
                 harness.step();
                 harness.read(|editor| assert!(editor.document.visit.pick_drag.is_none()));
-                harness.read(|editor| assert_eq!(editor.document.picking.region, selection));
+                harness.read(|editor| assert_eq!(editor.pick_region(), selection));
                 harness.read(|editor| assert_eq!(editor.document.state.project, before));
                 harness.get_by_label("Cancel").click();
                 harness.step();
-                harness.read(|editor| assert!(editor.document.picking.kind.is_none()));
+                harness.read(|editor| assert!(editor.active_pick().is_none()));
                 harness.read(|editor| assert_eq!(editor.document.state.project, before));
             });
         }
@@ -491,7 +489,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
             set_layout(&mut harness, size, width);
             harness.get_by_label("Fit").click();
             harness.step();
-            harness.read(|editor| assert_eq!(editor.document.picking.kind, Some(Pick::Flat)));
+            harness.read(|editor| assert_eq!(editor.active_pick(), Some(Pick::Flat.display())));
             harness.read(|editor| assert!(editor.document.flat_edit.is_some()));
             wait_for(&mut harness, |e| {
                 assert!(
@@ -502,8 +500,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
                 e.document.visit.grade.original.settled.is_some()
             });
             let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
-            let support =
-                harness.read(|editor| editor.document.picking.region.expect("proposed support"));
+            let support = harness.read(|editor| editor.pick_region().expect("proposed support"));
             assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
             assert!(
                 geometry

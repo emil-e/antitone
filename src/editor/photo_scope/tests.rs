@@ -2,15 +2,14 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{
-        Coverage, Pick, Scan,
+        Coverage, Pick,
+        picking::measurement::testing,
         tests::{add_ready_fixture, fixture},
     },
 };
 use std::{
-    cell::Cell,
-    rc::Rc,
-    sync::{Arc, mpsc},
-    time::Duration,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 #[test]
@@ -89,12 +88,13 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
     add_ready_fixture(&mut editor);
     let hold = crate::background::testing::pause();
     with_application(editor, |app| {
+        app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
+        app.pump();
         app.enter(|editor, access| {
-            editor.begin_pick(Pick::Dmin, access);
-            editor.document.picking.region = Some(Coverage::rectangle(
+            editor.set_pick_region(Some(Coverage::rectangle(
                 editor.document.visit.ready.as_ref().unwrap().area,
-            ));
-            editor.start_measurement(Pick::Dmin, editor.document.picking.region.unwrap(), access);
+            )));
+            editor.apply_pick(access);
         });
         app.pump();
         let (view, path) = app.read(|editor| {
@@ -109,7 +109,7 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
         });
         app.read(|editor| {
             assert_eq!(editor.document.visit.view, view);
-            assert!(editor.document.visit.measurement.is_some());
+            assert!(editor.measurement_pending());
             assert!(editor.busy);
             assert_eq!(editor.id, view);
             assert_eq!(editor.document.visit.ready.as_ref().unwrap().path, path);
@@ -124,12 +124,13 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
     add_ready_fixture(&mut editor);
     let hold = crate::background::testing::pause();
     with_application(editor, |app| {
+        app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
+        app.pump();
         app.enter(|editor, access| {
-            editor.begin_pick(Pick::Dmin, access);
-            editor.document.picking.region = Some(Coverage::rectangle(
+            editor.set_pick_region(Some(Coverage::rectangle(
                 editor.document.visit.ready.as_ref().unwrap().area,
-            ));
-            editor.start_measurement(Pick::Dmin, editor.document.picking.region.unwrap(), access);
+            )));
+            editor.apply_pick(access);
         });
         app.pump();
         app.update(Editor::sync_document);
@@ -147,7 +148,7 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
         app.pump();
         app.read(|editor| {
             assert_ne!(editor.document.visit.view, view);
-            assert!(editor.document.visit.measurement.is_none());
+            assert!(!editor.measurement_pending());
             assert_eq!(editor.document.state.project, project);
             assert!(editor.busy, "the new visit still owns its source load");
         });
@@ -156,82 +157,52 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
 }
 
 #[test]
-fn leaving_a_visit_cancels_its_continuation_but_not_running_source_computation() {
+fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs_early() {
     let mut editor = crate::editor::tests::with_document_services(fixture());
     add_ready_fixture(&mut editor);
+    editor.sync_document();
+    editor.document.cache.set_budget(0);
+    let before = editor.document.state.project.clone();
+    let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
+    let gate = testing::Gate::install(&mut editor);
     let directory = tempfile::tempdir().unwrap();
     let next_path = directory.path().join("missing.dng");
-    let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
-    let continued = Rc::new(Cell::new(false));
-    let (entered, starts) = mpsc::channel();
-    let (release, resume) = mpsc::channel();
-    let (finished, finishes) = mpsc::channel();
     with_application(editor, |app| {
-        let tasks = app.access();
-        let input = app.read(|editor| {
-            let area = Scan::from_source(
-                editor
-                    .document
-                    .visit
-                    .ready
-                    .as_ref()
-                    .unwrap()
-                    .developed
-                    .clone(),
-            )
-            .area;
-            editor
-                .measurement_input(Pick::Dmin, Coverage::rectangle(area))
-                .unwrap()
-        });
-        let continuation = continued.clone();
-        let view = app.read(|editor| editor.document.visit.view);
-        let task = tasks
-            .spawn(move |state| async move {
-                let result = crate::background::run(move |_| {
-                    entered.send(()).unwrap();
-                    let _ = resume.recv();
-                    let result = input.measure().map_err(|error| error.to_string());
-                    finished.send(()).unwrap();
-                    result
-                })
-                .await
-                .unwrap();
-                continuation.set(true);
-                state.update(|editor| editor.measurement_result(view, Pick::Dmin, result, &state));
-            })
-            .unwrap();
-        app.update(|editor| {
-            editor.document.visit.measurement = Some(measurement::Pending {
-                target: None,
-                kind: Pick::Dmin,
-                _task: task,
-            });
-            editor.busy = true;
-        });
+        app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
         app.pump();
-        starts.recv_timeout(Duration::from_secs(5)).unwrap();
+        app.enter(|editor, cx| {
+            editor.set_pick_region(Some(Coverage::rectangle(
+                editor.document.visit.ready.as_ref().unwrap().area,
+            )));
+            editor.apply_pick(cx);
+        });
+        let call = gate.next(app);
         app.enter(|editor, cx| editor.load(next_path, cx));
-        assert!(app.read(|e| e.document.visit.source.pending()));
         app.pump();
+        assert!(call.cancelled.is_cancelled());
         assert!(
             source.upgrade().is_some(),
             "running work retains its source after visit teardown"
         );
-        release.send(()).unwrap();
-        finishes.recv_timeout(Duration::from_secs(5)).unwrap();
-        app.run_until(Duration::from_secs(5), |editor| {
-            source.upgrade().is_none() && !editor.busy
-        });
-        assert!(
-            !continued.get(),
-            "the departed visit's continuation must not resume at all"
-        );
+        assert!(app.read(|editor| editor.active_pick().is_none() && !editor.measurement_pending()));
+        call.run();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while source.upgrade().is_some() {
+            app.pump();
+            assert!(
+                Instant::now() < deadline,
+                "retired measurement kept its input"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
         app.read(|editor| {
-            assert!(editor.document.visit.measurement.is_none());
+            assert!(!editor.measurement_pending());
+            assert!(editor.active_pick().is_none());
             assert!(!editor.document.visit.source.pending());
             assert!(editor.document.visit.ready.is_none());
             assert!(editor.tasks.view().is_none());
+            assert_eq!(editor.document.state.project, before);
         });
     });
 }

@@ -299,7 +299,7 @@ impl Editor {
             && self.document.visit.ready.is_some()
             && self.document.input.ready()
             && !self.document.source
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.flat_edit.is_none()
@@ -329,7 +329,7 @@ impl Editor {
         if self.busy
             || self.document.visit.ready.is_none()
             || self.document.source
-            || self.document.picking.kind.is_some()
+            || self.active_pick().is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.flat_edit.is_some()
@@ -613,7 +613,7 @@ impl Editor {
         if !self.adjustment_layer_overlays_visible()
             || self.fullscreen.is_some()
             || self.document.analysis_review.is_some()
-            || self.document.picking.kind.is_some()
+            || self.active_pick().is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.source
             || self.tab != 1

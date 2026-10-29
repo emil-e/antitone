@@ -121,7 +121,10 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
             assert_eq!(review.approved.entries.len(), 2);
             assert!(review.approved.entries.iter().all(|e| e.areas.ready()));
             assert_eq!(e.document.state.project, before);
-            assert_eq!(e.document.picking.kind, Some(crate::editor::Pick::Analysis));
+            assert_eq!(
+                e.active_pick(),
+                Some(crate::editor::Pick::Analysis.display())
+            );
             assert!(!e.busy);
             assert!(e.tasks.view().is_none());
             assert_eq!(e.document.cache.charges().retained, 0);

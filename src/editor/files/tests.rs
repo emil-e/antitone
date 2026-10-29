@@ -862,12 +862,6 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
             editor.start_document(Preparation::Open("candidate.json".into()), cx);
             let id = editor.document_pending.unwrap();
             editor.document_prepared(id + 1, Err("stale candidate".into()));
-            editor.measurement_result(
-                active,
-                Pick::Dmin,
-                Ok(Measurement::Reference(DVec3::ONE)),
-                cx,
-            );
             editor.source_result(active, Err("old load".into()));
             assert_eq!(editor.document_pending, Some(id));
             assert_eq!(
@@ -984,13 +978,13 @@ fn save_snapshot_flushes_current_photo_and_retains_other_source_settings() {
 }
 
 #[test]
-fn new_resets_development_and_rejects_previous_document_messages() {
+fn new_resets_development_and_replaces_the_previous_document() {
     let editor = fixture();
     let previous = editor.id;
     with_application(editor, |app| {
         app.enter(|e, cx| e.start_document(Preparation::New, cx));
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
-        app.enter(|e, cx| {
+        app.update(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
             assert!(
                 e.document.state.project.development().is_none()
@@ -998,12 +992,6 @@ fn new_resets_development_and_rejects_previous_document_messages() {
             );
             assert_eq!(e.floor(), crate::processing::CAMERA_INPUT_FLOOR);
             assert!(!e.document.dirty());
-            e.measurement_result(
-                previous,
-                Pick::Dmin,
-                Ok(Measurement::Reference(DVec3::ONE)),
-                cx,
-            );
             assert!(e.dmin().is_none());
             assert!(e.id > previous);
         });
@@ -1024,12 +1012,12 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
             let before = editor.document.state.project.clone();
             editor.document.source = false;
             editor.document.visit.viewport.zoom = Some(2.);
-            editor.document.picking.region = Some(Coverage::rectangle(Rect {
+            editor.set_pick_region(Some(Coverage::rectangle(Rect {
                 x: 12,
                 y: 12,
                 width: 32,
                 height: 32,
-            }));
+            })));
             let source_path = editor
                 .document
                 .source_path(editor.document.visit.current_source.unwrap())

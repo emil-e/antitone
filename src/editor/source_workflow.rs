@@ -77,7 +77,7 @@ impl Editor {
         }
         let started = std::time::Instant::now();
         let selecting_photo =
-            persistent && self.document.picking.kind.is_none() && self.document.flat_edit.is_none();
+            persistent && self.active_pick().is_none() && self.document.flat_edit.is_none();
         self.document.visit.support = Default::default();
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
@@ -127,7 +127,6 @@ impl Editor {
         self.document.export_dialog = None;
         self.document.export_summary = None;
         self.document.visit.return_notice = None;
-        self.document.picking = Default::default();
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
         self.document.visit.ready = None;
@@ -162,7 +161,7 @@ impl Editor {
         };
         self.document.visit.source.task = Some(task);
         if selecting_photo
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.flat_edit.is_none()
             && let Some(source) = self.document.visit.current_source
         {

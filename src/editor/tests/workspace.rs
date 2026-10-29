@@ -64,7 +64,7 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
                     ),
                     before
                 );
-                assert!(editor.document.picking.kind.is_none());
+                assert!(editor.active_pick().is_none());
                 assert!(editor.document.visit.crop_edit.is_none());
                 assert!(editor.document_pending.is_none());
             }

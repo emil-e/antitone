@@ -87,7 +87,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(e.document.picking.region.is_some());
+            assert!(e.pick_region().is_some());
             assert!(e.source_context().unwrap().correction.is_none());
             assert_ne!(e.document.visit.view, visit);
         });
@@ -313,13 +313,14 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
         wait(app);
         app.update(|e| {
             let area = e.document.visit.ready.as_ref().unwrap().area;
-            e.document.picking.region =
-                Some(crate::coverage::Coverage::rectangle(crate::raw::Rect {
+            e.set_pick_region(Some(crate::coverage::Coverage::rectangle(
+                crate::raw::Rect {
                     x: area.x,
                     y: area.y,
                     width: 2,
                     height: 2,
-                }));
+                },
+            )));
         });
         apply(app);
         assert!(
@@ -461,11 +462,9 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             });
             wait(app);
             let region = app.update(|e| {
-                e.document
-                    .picking
-                    .region
-                    .take()
-                    .expect("proposed reference support")
+                let region = e.pick_region().expect("proposed reference support");
+                e.set_pick_region(None);
+                region
             });
             let disabled = frame(app, &context, vec![])
                 .platform_output
@@ -482,7 +481,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             );
             frame(app, &context, key(egui::Key::Enter));
             assert!(!app.read(|e| e.busy));
-            app.update(|e| e.document.picking.region = Some(region));
+            app.update(|e| e.set_pick_region(Some(region)));
             if enter {
                 frame(app, &context, key(egui::Key::Enter));
             } else {

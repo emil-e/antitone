@@ -262,11 +262,12 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 match state {
                     "busy" => editor.busy = true,
                     "crop" => editor.begin_crop(),
-                    "pick" => editor.document.picking.kind = Some(Pick::Gamma),
+                    "pick" => editor.document.visit.picking.display = Some(Pick::Gamma.display()),
                     "flat" => {
                         editor.document.flat_edit = Some(crate::editor::flat::FlatEdit {
                             working: None,
                             reference: None,
+                            region: None,
                             viewport: editor.document.visit.viewport,
                             source: editor.document.source,
                             task: None,
@@ -303,7 +304,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 editor.busy = false;
                 editor.finish_crop(false);
                 editor.document.flat_edit = None;
-                editor.document.picking.kind = None;
+                editor.document.visit.picking.display = None;
                 frame(editor, &context, vec![], cx);
             }
             frame(editor, &context, pointer(point, true), cx);
@@ -427,69 +428,50 @@ fn disabled_cards_keep_actionable_error_tooltips() {
 }
 
 #[test]
-fn enabled_reference_cards_keep_ordered_roll_sampling_and_working_photo_return_context() {
-    for pick in [Pick::Dmin, Pick::Dmax] {
+fn ordinary_pickers_keep_the_current_photo_until_the_interaction_ends() {
+    for pick in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::RollWb, Pick::Wb] {
         let editor = crate::editor::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
+            let (before, working, viewport) = app.update(|editor| {
                 *editor.document = super::tests::fixture();
                 truncate_filmstrip(editor, 2);
                 crate::editor::tests::add_ready_fixture(editor);
                 editor.document.selected = 2;
                 editor.sync_document();
-                let before = editor.document.state.project.clone();
-                let working = editor.document.visit.ready.as_ref().unwrap().path.clone();
-                editor.begin_pick(pick, cx);
-                let view = editor.document.picking.view.unwrap();
+                (
+                    editor.document.state.project.clone(),
+                    editor.document.visit.current_source,
+                    editor.document.visit.viewport,
+                )
+            });
+            app.enter(|editor, cx| editor.begin_pick(pick, cx));
+            app.pump();
+            app.enter(|editor, cx| {
                 let context = egui::Context::default();
                 frame(editor, &context, vec![], cx);
                 let output = frame(editor, &context, vec![], cx);
-                assert!(!node(&output, "photo-0.ARW").1.is_disabled());
+                assert!(node(&output, "photo-0.ARW").1.is_disabled());
                 let point = point(&output, "photo-0.ARW");
                 frame(editor, &context, pointer(point, true), cx);
                 frame(editor, &context, pointer(point, false), cx);
-                assert!(
-                    editor
-                        .document
-                        .source_path(editor.document.visit.current_source.unwrap())
-                        .unwrap()
-                        .ends_with("photo-0.ARW")
-                );
+                assert_eq!(editor.document.visit.current_source, working);
+                assert_eq!(editor.document.selected, 2);
+                assert_eq!(editor.active_pick(), Some(pick.display()));
+                assert!(!editor.document.visit.source.pending());
+                assert_eq!(editor.document.state.project, before);
+                editor.finish_pick(cx);
+                assert_eq!(editor.document.visit.current_source, working);
+                assert_eq!(editor.document.visit.viewport, viewport);
+                assert!(editor.active_pick().is_none());
+                let output = frame(editor, &context, vec![], cx);
+                assert!(!node(&output, "photo-0.ARW").1.is_disabled());
+                frame(editor, &context, pointer(point, true), cx);
+                frame(editor, &context, pointer(point, false), cx);
                 assert_eq!(
                     editor.document.visit.current_source,
-                    Some(editor.document.state.project.order[0])
+                    Some(editor.document.project.order[0])
                 );
-                assert_eq!(editor.document.picking.kind, Some(pick));
-                assert_eq!(editor.document.selected, 0);
-                assert_eq!(
-                    editor.document.picking.return_to.as_ref().unwrap().selected,
-                    2
-                );
-                assert_eq!(
-                    editor.document.picking.return_to.as_ref().unwrap().path,
-                    working
-                );
-                assert_eq!(
-                    editor.document.picking.view.unwrap().viewport,
-                    view.viewport
-                );
-                assert_eq!(editor.document.picking.view.unwrap().source, view.source);
-                assert_eq!(editor.document.state.project, before);
-                editor.source_result(editor.id, Err("sample source unavailable".into()));
-                editor.finish_pick(cx);
                 assert!(editor.document.visit.source.pending());
-                assert!(document::same_path(
-                    &editor
-                        .document
-                        .source_path(editor.document.visit.current_source.unwrap())
-                        .unwrap(),
-                    &working
-                ));
-                assert_eq!(editor.document.selected, 2);
-                assert_eq!(editor.document.visit.viewport, view.viewport);
-                assert_eq!(editor.document.source, view.source);
-                assert!(editor.document.picking.kind.is_none());
-                assert_eq!(editor.document.state.project, before);
             });
         });
     }
@@ -542,8 +524,7 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
                 editor.begin_pick(Pick::Dmin, cx);
                 editor.begin_crop();
                 assert!(
-                    editor.document.picking.kind.is_none()
-                        && editor.document.visit.crop_edit.is_none()
+                    editor.active_pick().is_none() && editor.document.visit.crop_edit.is_none()
                 );
             });
         });

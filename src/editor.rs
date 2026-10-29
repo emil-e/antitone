@@ -58,6 +58,7 @@ mod processing;
 use processing::Grades;
 mod adjustment_layers;
 use adjustment_layers::AdjustmentLayerEditor;
+mod white_balance;
 mod working_view;
 mod working_workflow;
 use working_view::WorkingView;
@@ -89,6 +90,7 @@ mod mask_editor;
 use mask_editor::MaskEdit;
 #[cfg(test)]
 mod cache_preferences_tests;
+mod calibration;
 mod canvas;
 mod document_services;
 mod document_workflow;
@@ -104,15 +106,12 @@ mod export_workflow;
 mod frame;
 #[cfg(all(test, feature = "ui-tests"))]
 mod kittest_tests;
-mod measurement;
 mod memory;
+mod navigation;
 mod photo_scope;
 mod picking;
 mod save;
 mod source_workflow;
-#[cfg(test)]
-use measurement::Measurement;
-mod navigation;
 #[cfg(test)]
 use crate::export::Overwrite;
 mod roll_selection;
@@ -130,19 +129,6 @@ enum Pick {
     Wb,
     Flat,
     Analysis,
-}
-
-struct PickReturn {
-    path: PathBuf,
-    selected: usize,
-    adjustment: Option<(SourceId, adjustment_layers::Target)>,
-}
-
-#[derive(Clone, Copy)]
-struct PickView {
-    source: bool,
-    viewport: Viewport,
-    anchored: Viewport,
 }
 
 #[derive(Clone)]
@@ -848,10 +834,7 @@ impl Editor {
         if let Some(review) = self.document.analysis_review.take() {
             self.tab = review.return_tab;
             self.scopes.visible = review.return_scopes_visible;
-            self.document.picking.kind = None;
-            self.document.picking.region = None;
-            self.document.picking.return_to = None;
-            self.document.picking.view = None;
+            self.document.visit.picking = Default::default();
         }
         self.document.visit.support = Default::default();
         self.document.visit.pending_preview = None;
@@ -888,175 +871,6 @@ impl Editor {
 
     fn load(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
         self.load_source(path, true, cx);
-    }
-
-    fn finish_pick(&mut self, cx: &UiContext<'_, Self>) {
-        self.cancel_measurement();
-        if self.document.analysis_review.is_some() {
-            self.status = "Analysis review cancelled; areas and grade unchanged".into();
-            self.end_analysis_review(cx);
-            return;
-        }
-        self.document.visit.support = Default::default();
-        if self.document.flat_edit.is_some() {
-            self.finish_flat_edit();
-            return;
-        }
-        let view = self.document.picking.view.take();
-        let source = view.map_or(!self.document.input.ready(), |view| view.source);
-        let returning = self.document.picking.return_to.is_some();
-        self.document.picking.kind = None;
-        self.document.picking.region = None;
-        self.document.visit.pick_drag = None;
-        if let Some(context) = self.document.picking.return_to.take() {
-            if self
-                .document
-                .visit
-                .ready
-                .as_ref()
-                .is_none_or(|ready| ready.path != context.path)
-            {
-                let notice = self.status.clone();
-                self.load(context.path, cx);
-                self.document.visit.return_notice = Some(notice);
-            }
-            self.document.selected = context.selected;
-            if let Some((source, target)) = context.adjustment
-                && self.document.visit.current_source == Some(source)
-                && self.adjustment_layer_target() != target
-            {
-                self.select_adjustment_layer(target);
-            }
-        }
-        if let Some(view) = view {
-            if returning || self.document.visit.viewport == view.anchored {
-                self.document.visit.viewport = view.viewport;
-            } else if let Some((layout, pixels_per_point)) = self.document.visit.last_layout {
-                self.document
-                    .visit
-                    .viewport
-                    .reframe(layout, layout.composition, pixels_per_point);
-            }
-        }
-        self.document.source = !self.document.input.ready() || source;
-    }
-
-    fn begin_pick(&mut self, kind: Pick, cx: &UiContext<'_, Self>) {
-        self.finish_dust_cleanup();
-        if self.document.picking.kind.is_some() {
-            self.finish_pick(cx);
-        }
-        if self.busy
-            || self.document.visit.crop_edit.is_some()
-            || self.document.auto_crop_edit.is_some()
-            || self.document.visit.mask_edit.is_some()
-        {
-            return;
-        }
-        self.document.thumbnails.cancel();
-        let viewport = self.document.visit.viewport;
-        // Missing calibration forces source display, not an explicit inspection choice.
-        let source = self.document.input.ready() && self.document.source;
-        self.document.picking.kind = Some(kind);
-        self.document.picking.region = None;
-        self.document.visit.pick_drag = None;
-        self.document.source = matches!(kind, Pick::Dmin | Pick::Dmax | Pick::Analysis);
-        if self.document.source {
-            self.document.picking.return_to =
-                self.document.visit.ready.as_ref().map(|ready| PickReturn {
-                    path: ready.path.clone(),
-                    selected: self.document.selected,
-                    adjustment: self
-                        .document
-                        .visit
-                        .current_source
-                        .map(|source| (source, self.adjustment_layer_target())),
-                });
-        }
-        if let Some((layout, pixels_per_point)) = self.document.visit.last_layout {
-            let next = if kind == Pick::Analysis {
-                Composition::new(
-                    layout.composition.area(),
-                    RollOrientation::default(),
-                    PhotoOrientation::default(),
-                )
-                .expect("loaded source has a valid active area")
-            } else if self.document.source {
-                Composition::new(
-                    layout.composition.area(),
-                    self.document.roll_orientation,
-                    self.document.visit.photo_orientation,
-                )
-                .expect("loaded source has a valid active area")
-            } else {
-                layout.composition
-            };
-            if next != layout.composition {
-                self.document
-                    .visit
-                    .viewport
-                    .reframe(layout, next, pixels_per_point);
-            }
-        }
-        self.document.picking.view = Some(PickView {
-            source,
-            viewport,
-            anchored: self.document.visit.viewport,
-        });
-        if kind == Pick::Analysis {
-            if self.document.analysis_review.is_some() {
-                self.refresh_review_region();
-            } else {
-                self.request_analysis_support(cx);
-            }
-        }
-    }
-
-    fn pick_roll_source(&mut self, id: SourceId, cx: &UiContext<'_, Self>) {
-        let Some(index) = self
-            .document
-            .project
-            .order
-            .iter()
-            .position(|candidate| *candidate == id)
-        else {
-            return;
-        };
-        let path = self.document.source_path(id).expect("selected roll source");
-        let mut picking = std::mem::take(&mut self.document.picking);
-        if self
-            .document
-            .visit
-            .ready
-            .as_ref()
-            .is_none_or(|ready| ready.path != path)
-        {
-            self.load_source(path, false, cx);
-        }
-        self.document.selected = index;
-        picking.region = None;
-        self.document.picking = picking;
-        self.document.source = true;
-    }
-
-    fn apply_pick(&mut self, cx: &UiContext<'_, Self>) {
-        if self.document.analysis_review.is_some() {
-            self.confirm_analysis_review(cx);
-            return;
-        }
-        if self.document.picking.kind == Some(Pick::Analysis) {
-            self.apply_analysis_area(cx);
-            return;
-        }
-        if self.document.picking.kind == Some(Pick::Flat) {
-            self.apply_flat_edit(cx);
-            return;
-        }
-        if let (Some(kind), Some(region)) =
-            (self.document.picking.kind, self.document.picking.region)
-        {
-            self.start_measurement(kind, region, cx);
-        }
     }
 
     fn controls(

@@ -73,7 +73,7 @@ impl Editor {
         if id != self.id
             || self.document.flat_edit.is_none()
             || self.document_pending.is_some()
-            || self.document.picking.kind != Some(Pick::Flat)
+            || self.active_pick() != Some(Pick::Flat.display())
         {
             return;
         }
@@ -85,14 +85,12 @@ impl Editor {
             Ok(preview) => {
                 session.reference = Some(preview);
                 let reference = session.reference.as_ref().unwrap();
-                self.document.picking.region = self
-                    .document
-                    .picking
+                session.region = session
                     .region
                     .or(reference.region.map(super::Coverage::rectangle));
                 self.document.visit.ready = Some(reference.ready.clone());
                 self.resolve_failure(FailureKind::FlatReference);
-                self.status = if self.document.picking.region.is_some() {
+                self.status = if self.pick_region().is_some() {
                     "Proposed illuminated rectangle: adjust edges, then Apply."
                 } else {
                     "Illuminated area is ambiguous; draw a rectangle around the usable light."

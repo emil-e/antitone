@@ -75,7 +75,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         let project = h.read(|editor| editor.document.state.project.clone());
         h.read(|editor| assert!(editor.document.dirty()));
         h.read(|editor| assert!(editor.document.visit.dust.cleanup));
-        h.read(|editor| assert!(editor.document.picking.kind.is_none()));
+        h.read(|editor| assert!(editor.active_pick().is_none()));
         assert!(
             h.get_by_label("Reset dust repairs")
                 .accesskit_node()
@@ -177,7 +177,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         assert!(brush_ring_at(&h, empty));
         h.read(|editor| assert_ne!(editor.document.state.project, project));
         h.read(|editor| assert!(editor.document.dirty()));
-        h.read(|editor| assert!(editor.document.picking.kind.is_none()));
+        h.read(|editor| assert!(editor.active_pick().is_none()));
         h.update(|editor| editor.document.roll.exposure = 0.3);
         h.update(|editor| {
             editor.document.roll.wb = Balance {
@@ -207,7 +207,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         h.read(|editor| assert_eq!(editor.selected_dust_repair(), Some(RepairId(1))));
         h.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
-        h.read(|editor| assert!(editor.document.picking.kind.is_none()));
+        h.read(|editor| assert!(editor.active_pick().is_none()));
         h.update(|editor| editor.document.visit.dust.brush_size = 2);
         let before = h.read(|editor| pixels(editor, source, RepairId(1)));
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::ALT);

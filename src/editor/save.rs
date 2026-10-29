@@ -18,7 +18,7 @@ impl Editor {
             self.status = "Wait for donor selection before saving".into();
             return;
         }
-        self.cancel_measurement();
+        self.retire_pick_actions();
         self.document.history.finish_group();
         self.history_pending = None;
         let id = self.begin_document_operation(false);

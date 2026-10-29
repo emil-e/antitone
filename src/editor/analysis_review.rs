@@ -21,6 +21,53 @@ pub(super) struct Approved {
     pub files: Vec<thumbnails::FileKey>,
 }
 
+struct ReturnView {
+    path: PathBuf,
+    selected: usize,
+    adjustment: Option<(SourceId, adjustment_layers::Target)>,
+    viewport: Viewport,
+    source: bool,
+}
+
+impl ReturnView {
+    fn capture(editor: &Editor) -> Option<Self> {
+        Some(Self {
+            path: editor.document.visit.ready.as_ref()?.path.clone(),
+            selected: editor.document.selected,
+            adjustment: editor
+                .document
+                .visit
+                .current_source
+                .map(|source| (source, editor.adjustment_layer_target())),
+            viewport: editor.document.visit.viewport,
+            source: editor.document.input.ready() && editor.document.source,
+        })
+    }
+
+    fn restore(self, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
+        if editor
+            .document
+            .visit
+            .ready
+            .as_ref()
+            .is_none_or(|ready| ready.path != self.path)
+        {
+            let notice = editor.status.clone();
+            editor.load(self.path, cx);
+            editor.document.visit.return_notice = Some(notice);
+        }
+        editor.document.selected = self.selected;
+        if let Some((source, target)) = self.adjustment
+            && editor.document.visit.current_source == Some(source)
+            && editor.adjustment_layer_target() != target
+        {
+            editor.select_adjustment_layer(target);
+        }
+        editor.document.visit.viewport = self.viewport;
+        editor.document.source = !editor.document.input.ready() || self.source;
+    }
+}
+
 pub(super) struct Review {
     pub request: analysis::Request,
     pub approved: Approved,
@@ -29,6 +76,7 @@ pub(super) struct Review {
     pub loaded: u64,
     pub return_tab: usize,
     pub return_scopes_visible: bool,
+    return_view: Option<ReturnView>,
 }
 
 fn review_label(canvas: egui::Rect, q: [egui::Pos2; 4], picture: bool) -> egui::Rect {
@@ -165,7 +213,7 @@ impl Editor {
             return;
         }
         if self.id != request.loaded
-            || self.document.picking.kind.is_some()
+            || self.active_pick().is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
@@ -197,6 +245,7 @@ impl Editor {
                     loaded: self.id,
                     return_tab: self.tab,
                     return_scopes_visible: self.scopes.visible,
+                    return_view: ReturnView::capture(self),
                 });
                 self.tab = 0;
                 // Positive-only scopes have no data in the source sampling tool.
@@ -228,6 +277,9 @@ impl Editor {
         if self.document.analysis_pending.is_some() {
             return;
         }
+        let Some(region) = self.pick_region() else {
+            return;
+        };
         let Some(review) = &mut self.document.analysis_review else {
             return;
         };
@@ -237,9 +289,6 @@ impl Editor {
             .iter_mut()
             .find(|r| Some(r.source) == self.document.visit.current_source)
         else {
-            return;
-        };
-        let Some(region) = self.document.picking.region else {
             return;
         };
         let quad = region.corners().map(|p| p.0);
@@ -269,24 +318,25 @@ impl Editor {
     }
 
     pub(super) fn refresh_review_region(&mut self) {
-        self.document.picking.region = self
-            .document
-            .analysis_review
-            .as_ref()
-            .and_then(|r| {
-                self.document
-                    .visit
-                    .current_source
-                    .and_then(|id| r.approved.entries.iter().find(|e| e.source == id))
-                    .and_then(|e| {
-                        if r.picture {
-                            e.areas.picture
-                        } else {
-                            e.areas.opening
-                        }
-                    })
-            })
-            .and_then(|q| Areas::coverage(q).ok());
+        self.set_pick_region(
+            self.document
+                .analysis_review
+                .as_ref()
+                .and_then(|r| {
+                    self.document
+                        .visit
+                        .current_source
+                        .and_then(|id| r.approved.entries.iter().find(|e| e.source == id))
+                        .and_then(|e| {
+                            if r.picture {
+                                e.areas.picture
+                            } else {
+                                e.areas.opening
+                            }
+                        })
+                })
+                .and_then(|q| Areas::coverage(q).ok()),
+        );
         self.document.visit.pick_drag = None;
     }
 
@@ -294,8 +344,29 @@ impl Editor {
         if self.document.analysis_review.is_none() || self.document.analysis_pending.is_some() {
             return;
         }
+        let Some(index) = self
+            .document
+            .project
+            .order
+            .iter()
+            .position(|candidate| *candidate == id)
+        else {
+            return;
+        };
+        let path = self.document.source_path(id).expect("review source");
         self.stash_review_region();
-        self.pick_roll_source(id, cx);
+        if self
+            .document
+            .visit
+            .ready
+            .as_ref()
+            .is_none_or(|ready| ready.path != path)
+        {
+            self.load_source(path, false, cx);
+        }
+        self.document.selected = index;
+        self.document.visit.picking.display = Some(Pick::Analysis.display());
+        self.document.source = true;
         self.document.analysis_review.as_mut().unwrap().loaded = self.id;
         self.refresh_review_region();
     }
@@ -308,6 +379,9 @@ impl Editor {
         self.scopes.visible = review.return_scopes_visible;
         let notice = self.status.clone();
         self.finish_pick(cx);
+        if let Some(context) = review.return_view {
+            context.restore(self, cx);
+        }
         self.status = notice;
     }
 
@@ -323,7 +397,7 @@ impl Editor {
         let Some(review) = &self.document.analysis_review else {
             return;
         };
-        if self.document.picking.kind != Some(Pick::Analysis)
+        if self.active_pick() != Some(Pick::Analysis.display())
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
@@ -506,7 +580,7 @@ impl Editor {
                 }
             }
         }
-        for (coverage, active) in [(other, false), (self.document.picking.region, true)] {
+        for (coverage, active) in [(other, false), (self.pick_region(), true)] {
             let Some(coverage) = coverage else {
                 continue;
             };

@@ -151,11 +151,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
         h.enter(|e, cx| e.schedule_dust(e.dust_signature().unwrap(), cx));
         h.step();
         h.read(|e| {
-            assert!(
-                !e.document.source
-                    && e.document.picking.return_to.is_none()
-                    && e.document.flat_edit.is_none()
-            );
+            assert!(!e.document.source && e.document.flat_edit.is_none());
             assert!(e.dust_signature().is_some());
             assert_eq!(
                 e.dust_repairs(e.document.visit.current_source.unwrap())

@@ -169,9 +169,8 @@ impl Editor {
 
     pub(super) fn look_render_failure(&self) -> Option<Error> {
         if self.document.source
-            || self.document.picking.kind.is_some()
+            || self.active_pick().is_some()
             || self.document.flat_edit.is_some()
-            || self.document.picking.return_to.is_some()
             || self.document.analysis_review.is_some()
         {
             return None;

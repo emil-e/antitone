@@ -63,6 +63,7 @@ pub(super) fn calibrated_workflow<R>(
             harness.try_run_realtime().unwrap();
             harness.get_by_label(action).click();
             harness.step();
+            wait_for(&mut harness, |editor| editor.active_pick().is_some());
             assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
             // Keep the support inside the uniform swatch, including the demosaicer's
             // neighbours: the authored 32-pixel ramps can influence selection edges.
@@ -89,7 +90,7 @@ pub(super) fn calibrated_workflow<R>(
             harness.get_by_label("Apply").click();
             harness.step();
             wait_for(&mut harness, |e| !e.busy);
-            harness.read(|editor| assert!(editor.document.picking.kind.is_none()));
+            harness.read(|editor| assert!(editor.active_pick().is_none()));
             let measured = harness.read(|editor| {
                 if expected == 3000. {
                     editor.dmin()
@@ -332,7 +333,7 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
 }
 
 #[test]
-fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widgets() {
+fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets() {
     calibrated_workflow(|mut harness, capture, _directory| {
         stage(&mut harness, "Rendering");
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
@@ -468,26 +469,18 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widget
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.picking.kind, Some(Pick::Dmin)));
-        harness.read(|editor| assert!(editor.document.picking.region.is_none()));
+        wait_for(&mut harness, |editor| editor.active_pick().is_some());
+        harness.read(|editor| assert_eq!(editor.active_pick(), Some(Pick::Dmin.display())));
+        harness.read(|editor| assert!(editor.pick_region().is_none()));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
-        harness.get_by_label("patches.dng").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.ready.as_ref().unwrap().path,
-                fixture("patches.dng")
-            )
-        });
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.current_source,
-                editor.document.find_source(&fixture("patches.dng"))
-            )
-        });
-        harness.read(|editor| assert!(editor.document.picking.region.is_none()));
+        assert!(
+            harness
+                .get_by_label("patches.dng")
+                .accesskit_node()
+                .is_disabled()
+        );
         harness.get_by_label("Cancel").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
@@ -508,9 +501,39 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_return_use_widget
         });
         harness.read(|editor| assert_eq!(editor.document.visit.viewport.zoom, Some(1.)));
         harness.read(|editor| assert!(!editor.document.source));
-        harness.read(|editor| assert!(editor.document.picking.kind.is_none()));
+        harness.read(|editor| assert!(editor.active_pick().is_none()));
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
         harness.read(|editor| assert!(editor.preference_store.is_none()));
+        harness.step();
+        assert!(
+            !harness
+                .get_by_label("patches.dng")
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness.get_by_label("patches.dng").click();
+        harness.step();
+        wait_for(&mut harness, |e| !e.busy);
+        let reference = harness.read(|editor| {
+            let reference = editor.document.find_source(&fixture("patches.dng"));
+            assert_eq!(editor.document.visit.current_source, reference);
+            assert_eq!(
+                editor.document.visit.ready.as_ref().unwrap().path,
+                fixture("patches.dng")
+            );
+            reference
+        });
+        harness.get_by_label("Pick Dmin (film base)").click();
+        harness.step();
+        wait_for(&mut harness, |editor| editor.active_pick().is_some());
+        harness.read(|editor| assert_eq!(editor.document.visit.current_source, reference));
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        harness.read(|editor| {
+            assert_eq!(editor.document.visit.current_source, reference);
+            assert!(editor.active_pick().is_none());
+            assert_eq!(editor.document.state.project, project);
+        });
         wait_settled(&mut harness);
     });
 }

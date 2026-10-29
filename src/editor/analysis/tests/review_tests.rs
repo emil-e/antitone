@@ -115,9 +115,10 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
             );
             editor.select_review_area(geometry, point(picture, 0));
             assert!(editor.document.analysis_review.as_ref().unwrap().picture);
-            let drag = PickDrag::begin(geometry, point(picture, 0), editor.document.picking.region);
-            editor.document.picking.region =
-                Some(drag.update(geometry, point(picture, 0) + egui::vec2(5., 5.)));
+            let drag = PickDrag::begin(geometry, point(picture, 0), editor.pick_region());
+            editor.set_pick_region(Some(
+                drag.update(geometry, point(picture, 0) + egui::vec2(5., 5.)),
+            ));
             editor.stash_review_region();
             let edited = editor
                 .review_areas(editor.document.visit.current_source.unwrap())
@@ -126,7 +127,7 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
             assert_eq!(edited.opening, Some(opening.corners().map(|p| p.0)));
             editor.select_review_area(geometry, point(opening, 0));
             assert!(!editor.document.analysis_review.as_ref().unwrap().picture);
-            assert_eq!(editor.document.picking.region, Some(opening));
+            assert_eq!(editor.pick_region(), Some(opening));
             assert_eq!(editor.document.state.project, before);
             let areas = &mut editor
                 .document
@@ -163,9 +164,9 @@ fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit
             let (id, mut approved) = reply(e);
             approved.entries[0].areas = Areas::default();
             e.analysis_areas_result(id, Ok(Some(approved)), cx);
-            e.document.picking.region = Some(Coverage::rectangle(
+            e.set_pick_region(Some(Coverage::rectangle(
                 e.document.visit.ready.as_ref().unwrap().area,
-            ));
+            )));
         });
         super::super::super::tests::app_frame(app, &ctx, vec![]);
         app.update(|e| {
@@ -175,9 +176,9 @@ fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit
             assert!(areas.opening.is_some() && areas.picture.is_none());
             let geometry = e.document.visit.last_layout.unwrap().0;
             e.select_review_area(geometry, geometry.image.center());
-            e.document.picking.region = Some(Coverage::rectangle(
+            e.set_pick_region(Some(Coverage::rectangle(
                 e.document.visit.ready.as_ref().unwrap().area,
-            ));
+            )));
         });
         super::super::super::tests::app_frame(app, &ctx, vec![]);
         app.read(|e| {
@@ -216,14 +217,14 @@ fn opening_exception_updates_automatic_picture_coverage_but_not_authored_picture
             let original = a.picture;
             let peer = review.approved.entries[1].clone();
             let before = editor.document.state.project.clone();
-            editor.document.picking.region = Some(Coverage::rectangle(rect([90, 70, 600, 400])));
+            editor.set_pick_region(Some(Coverage::rectangle(rect([90, 70, 600, 400]))));
             editor.stash_review_region();
             let review = editor.document.analysis_review.as_mut().unwrap();
             assert_ne!(review.approved.entries[0].areas.picture, original);
             assert_eq!(review.approved.entries[1], peer);
             let authored = Coverage::rectangle(rect([100, 100, 500, 300]));
             review.approved.entries[0].areas.edit_picture(authored);
-            editor.document.picking.region = Some(Coverage::rectangle(rect([120, 90, 500, 300])));
+            editor.set_pick_region(Some(Coverage::rectangle(rect([120, 90, 500, 300]))));
             editor.stash_review_region();
             assert_eq!(
                 editor
@@ -372,7 +373,7 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
             assert!(
                 editor.document.analysis_pending.is_none()
                     && editor.document.analysis_review.is_none()
-                    && editor.document.picking.kind.is_none()
+                    && editor.active_pick().is_none()
             );
             assert_eq!(editor.document.visit.current_source, first);
             assert!(
@@ -453,7 +454,7 @@ fn change(editor: &mut Editor, kind: usize) {
                 .fetch_add(1, Ordering::Relaxed);
         }
         7 => editor.document.state.project.analysis_area = Some([52, 42, 720, 540]),
-        _ => editor.document.picking.kind = Some(Pick::Wb),
+        _ => editor.document.visit.picking.display = Some(Pick::Wb.display()),
     }
     editor.sync_document();
 }
@@ -553,7 +554,7 @@ fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() 
                 .entries[1]
                 .areas
                 .clone();
-            editor.document.picking.region = Some(Coverage::rectangle(rect([40, 30, 700, 500])));
+            editor.set_pick_region(Some(Coverage::rectangle(rect([40, 30, 700, 500]))));
             editor.stash_review_region();
             assert!(
                 editor
@@ -573,9 +574,7 @@ fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() 
             assert_eq!(editor.document.state.project, before);
             editor.analysis_result(id, Err("rejected by unchanged numerical gates".into()), cx);
             assert_eq!(editor.document.state.project, before);
-            assert!(
-                editor.document.analysis_review.is_none() && editor.document.picking.kind.is_none()
-            );
+            assert!(editor.document.analysis_review.is_none() && editor.active_pick().is_none());
         });
     });
 }
@@ -769,10 +768,7 @@ fn review_browsing_and_cancel_restore_working_photo_without_changing_multi_selec
                     && editor.document.roll_selection.contains(other)
             );
             assert_ne!(editor.id, pending);
-            assert!(
-                editor.document.analysis_review.is_none()
-                    && editor.document.picking.region.is_none()
-            );
+            assert!(editor.document.analysis_review.is_none() && editor.pick_region().is_none());
         });
     });
 }

@@ -203,7 +203,7 @@ fn click_toggles_native_and_fit_and_primary_drag_pans_only_without_a_picker() {
     h.press(point, false, egui::PointerButton::Primary);
     assert!(h.editor.document.visit.viewport.zoom.is_none());
     h.native();
-    h.editor.document.picking.kind = Some(Pick::Dmin);
+    h.editor.document.visit.picking.display = Some(Pick::Dmin.display());
     h.press(point, true, egui::PointerButton::Primary);
     let (before, _, _) = h.frame(vec![]);
     let (after, panning, cursor) = h.frame(vec![egui::Event::PointerMoved(point + delta)]);
@@ -234,7 +234,7 @@ fn pan_hover_preserves_fit_small_zoom_picker_and_disabled_cursors() {
         h.frame(vec![egui::Event::PointerMoved(point)]).2,
         egui::CursorIcon::Grab
     );
-    h.editor.document.picking.kind = Some(Pick::Gamma);
+    h.editor.document.visit.picking.display = Some(Pick::Gamma.display());
     assert_eq!(
         h.frame(vec![egui::Event::PointerMoved(point)]).2,
         egui::CursorIcon::Crosshair
@@ -244,7 +244,7 @@ fn pan_hover_preserves_fit_small_zoom_picker_and_disabled_cursors() {
         h.frame(vec![egui::Event::PointerMoved(point)]).2,
         egui::CursorIcon::Default
     );
-    h.editor.document.picking.kind = None;
+    h.editor.document.visit.picking.display = None;
     h.editor.busy = false;
     h.enabled = false;
     assert_eq!(
@@ -287,7 +287,7 @@ fn picker_cursors_share_rectangle_hit_testing_and_no_image_click_changes_view() 
         ),
         egui::CursorIcon::Grabbing
     );
-    h.editor.document.picking.kind = Some(Pick::Dmax);
+    h.editor.document.visit.picking.display = Some(Pick::Dmax.display());
     let zoom = h.editor.document.visit.viewport.zoom;
     h.press(geometry.canvas.center(), true, egui::PointerButton::Primary);
     h.press(
@@ -303,7 +303,7 @@ fn middle_and_space_primary_drag_pan_during_picking() {
     for button in [egui::PointerButton::Middle, egui::PointerButton::Primary] {
         let mut h = Harness::new();
         let initial = h.native();
-        h.editor.document.picking.kind = Some(Pick::Gamma);
+        h.editor.document.visit.picking.display = Some(Pick::Gamma.display());
         let point = initial.canvas.center();
         h.press(point, true, button);
         let mut events = vec![egui::Event::PointerMoved(point + egui::vec2(20., 10.))];

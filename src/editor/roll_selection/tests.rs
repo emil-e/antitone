@@ -280,7 +280,7 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
 }
 
 #[test]
-fn picker_browsing_preserves_multiselection_and_anchor() {
+fn an_ordinary_picker_preserves_multiselection_and_anchor() {
     let editor = fixture(2);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
@@ -291,8 +291,7 @@ fn picker_browsing_preserves_multiselection_and_anchor() {
             editor.select_roll_photo(0, egui::Modifiers::COMMAND, cx);
             let selection = editor.document.roll_selection.ids.clone();
             let anchor = editor.document.roll_selection.anchor;
-            editor.begin_pick(Pick::Dmin, cx);
-            editor.pick_roll_source(editor.document.state.project.order[0], cx);
+            editor.preview_picker(Pick::Dmin);
             settle(editor);
             assert_eq!(editor.document.roll_selection.ids, selection);
             assert_eq!(editor.document.roll_selection.anchor, anchor);
@@ -327,7 +326,7 @@ fn drafts_foreground_work_and_decisions_reject_selection_and_removal() {
                     .push(editor.document.state.project.order[4]);
                 match blocker {
                     "busy" => editor.busy = true,
-                    "pick" => editor.document.picking.kind = Some(Pick::Dmax),
+                    "pick" => editor.document.visit.picking.display = Some(Pick::Dmax.display()),
                     "failure" => editor.report_failure(FailureKind::Save, "fixture".into()),
                     "transition" => editor.transition = Some(Transition::Close),
                     "analysis" => editor.document_pending = Some(12),

@@ -994,7 +994,9 @@ fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
         editor.document.thumbnails.services = Some(Services::Controlled(commands));
         match suspension {
             "busy" => editor.busy = true,
-            "pick" => editor.document.picking.kind = Some(super::super::Pick::Dmin),
+            "pick" => {
+                editor.document.visit.picking.display = Some(super::super::Pick::Dmin.display())
+            }
             "document" => editor.document_pending = Some(0),
             _ => unreachable!(),
         }

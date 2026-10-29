@@ -606,24 +606,18 @@ fn stale_request_generation_source_document_and_controls_cannot_install() {
 fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() {
     let mut editor = state();
     let original = editor.document.state.project.clone();
-    editor.begin_pick(
-        Pick::Analysis,
-        &crate::application::UiContext::render_only(),
-    );
-    editor.document.picking.region = Some(Coverage::rectangle(rect([52, 42, 720, 540])));
+    editor.preview_picker(Pick::Analysis);
+    editor.set_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 540]))));
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.state.project, original);
-    editor.begin_pick(
-        Pick::Analysis,
-        &crate::application::UiContext::render_only(),
-    );
-    editor.document.picking.region = Some(Coverage::rectangle(rect([0, 0, 900, 700])));
+    editor.preview_picker(Pick::Analysis);
+    editor.set_pick_region(Some(Coverage::rectangle(rect([0, 0, 900, 700]))));
     editor.apply_analysis_area(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.state.project, original);
-    assert_eq!(editor.document.picking.kind, Some(Pick::Analysis));
-    editor.document.picking.region = Some(Coverage::rectangle(rect([52, 42, 720, 540])));
+    assert_eq!(editor.active_pick(), Some(Pick::Analysis.display()));
+    editor.set_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 540]))));
     editor.apply_analysis_area(&crate::application::UiContext::render_only());
-    assert!(editor.document.picking.kind.is_none());
+    assert!(editor.active_pick().is_none());
     assert_eq!(
         editor.document.state.project.analysis_area,
         Some([52, 42, 720, 540])
@@ -800,9 +794,9 @@ fn statistics_edit_bypasses_composition_and_crop_drafts_cannot_start_analysis() 
                 )
                 .unwrap()
             );
-            editor.document.picking.region = Some(Coverage::rectangle(rect([52, 42, 720, 480])));
+            editor.set_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 480]))));
             editor.apply_analysis_area(cx);
-            assert!(editor.document.picking.kind.is_none());
+            assert!(editor.active_pick().is_none());
             assert_eq!(
                 editor.document.state.project.analysis_area,
                 Some([52, 42, 720, 480])

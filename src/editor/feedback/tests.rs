@@ -125,7 +125,7 @@ fn unavailable_reference_services_restore_working_context_and_ignore_late_accept
         FailureKind::FlatCorrection
     );
     assert!(!editor.busy && editor.document_pending.is_none() && editor.document_failure.is_none());
-    assert!(editor.document.flat_edit.is_none() && editor.document.picking.kind.is_none());
+    assert!(editor.document.flat_edit.is_none() && editor.active_pick().is_none());
     assert_ne!(editor.document.visit.view, visit);
     assert_eq!(editor.document.visit.ready.as_ref().unwrap().path, path);
     assert!(!editor.document.source);
@@ -221,21 +221,21 @@ fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
     add_ready_fixture(&mut editor);
     let reference = editor.document.visit.ready.as_ref().unwrap().clone();
     crate::editor::tests::paused_reference_fixture(&mut editor, reference, None);
-    editor.document.picking.region = Some(
+    editor.set_pick_region(Some(
         Coverage::new(
             [[20.25, 20.], [40.25, 20.], [40.25, 40.], [20.25, 40.]]
                 .map(crate::geometry::SourcePoint),
         )
         .unwrap(),
-    );
+    ));
     editor.sync_document();
     let before = editor.document.state.project.clone();
-    let region = editor.document.picking.region;
+    let region = editor.pick_region();
     editor.apply_flat_edit(&UiContext::render_only());
     let failure = editor.failure.as_ref().unwrap();
     assert_eq!(failure.kind, FailureKind::FlatSupport);
     assert_eq!(failure.presentation().severity, Severity::Warning);
-    assert_eq!(editor.document.picking.region, region);
+    assert_eq!(editor.pick_region(), region);
     assert_eq!(editor.document.state.project, before);
     assert!(!editor.busy && editor.document_pending.is_none());
     assert!(

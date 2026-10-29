@@ -86,7 +86,7 @@ impl Editor {
     fn file_context_available(&self) -> bool {
         !self.dust_search_pending()
             && !self.application_modal()
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
@@ -174,7 +174,7 @@ impl Editor {
             state.enabled.insert(PhotoInspection);
         }
         if self.fullscreen.is_none()
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.analysis_review.is_none()
         {
             state.enabled.insert(Scopes);

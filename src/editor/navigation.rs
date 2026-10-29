@@ -24,8 +24,7 @@ impl Editor {
                 .mask_edit
                 .as_ref()
                 .is_some_and(MaskEdit::dragging);
-        let picking =
-            (self.document.picking.kind.is_some() || masking) && self.fullscreen.is_none();
+        let picking = (self.active_pick().is_some() || masking) && self.fullscreen.is_none();
         let dusting =
             self.document.visit.dust.cleanup && self.tab == 1 && self.fullscreen.is_none();
         let canvas_tool = picking
@@ -146,7 +145,7 @@ impl Editor {
                                 .ok()
                             })
                         } else {
-                            self.document.picking.region
+                            self.pick_region()
                         };
                         picker_cursor(
                             geometry,

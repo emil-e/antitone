@@ -38,10 +38,10 @@ fn typed_lifecycle_scopes_ids_and_rejects_stale_progress_and_cleanup() {
     tasks.finish(TaskRequest::Photo(1));
     tasks.finish(TaskRequest::Photo(1));
     assert!(tasks.view().is_none());
-    tasks.begin(Task::Measurement(1, Pick::Dmin));
-    tasks.finish(TaskRequest::Measurement(1, Pick::Dmax));
+    tasks.begin(Task::Measurement(1, "Dmin"));
+    tasks.finish(TaskRequest::Measurement(0));
     assert!(tasks.view().is_some());
-    tasks.finish(TaskRequest::Measurement(1, Pick::Dmin));
+    tasks.finish(TaskRequest::Measurement(1));
     assert!(tasks.view().is_none());
 }
 
@@ -102,7 +102,7 @@ fn progress_and_cancellation_states_keep_unknown_duration_honest() {
         Task::Correction(1),
         Task::Photo(1),
         Task::Reference(1),
-        Task::Measurement(1, Pick::Dmin),
+        Task::Measurement(1, "Dmin"),
     ] {
         tasks.begin(task);
         tasks.report(
@@ -421,6 +421,10 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
         add_ready_fixture(&mut editor);
         let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
+            if operation == 2 {
+                app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+                app.pump();
+            }
             let mut source_completion = None;
             let mut save_completion = None;
             let mut export_completion = None;
@@ -443,7 +447,6 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
                         Some((editor.document_pending.unwrap(), editor.document.capture()));
                 }
                 2 => {
-                    editor.begin_pick(Pick::Dmin, access);
                     let source = editor
                         .document
                         .visit
@@ -455,18 +458,14 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
                     let area = Scan::from_source(source).area;
                     // The synthetic SDK source marks its repeated borders ineligible.
                     // This scenario needs a successful pick, not a rejected capture.
-                    editor.document.picking.region = Some(Coverage::rectangle(Rect {
+                    editor.set_pick_region(Some(Coverage::rectangle(Rect {
                         x: area.x + 8,
                         y: area.y + 8,
                         width: area.width - 16,
                         height: area.height - 16,
-                    }));
-                    editor.start_measurement(
-                        Pick::Dmin,
-                        editor.document.picking.region.unwrap(),
-                        access,
-                    );
-                    assert!(editor.document.visit.measurement.is_some());
+                    })));
+                    editor.apply_pick(access);
+                    assert!(editor.measurement_pending());
                 }
                 _ => {
                     editor.export(

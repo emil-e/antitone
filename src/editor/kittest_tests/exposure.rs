@@ -151,7 +151,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.step();
         h.render().unwrap();
         let point = h.read(|editor| {
-            assert_eq!(editor.document.picking.kind, Some(Pick::Wb));
+            assert_eq!(editor.active_pick(), Some(Pick::Wb.display()));
             editor.document.visit.last_layout.unwrap().0.image.center()
         });
         let pixels = capture.borrow();

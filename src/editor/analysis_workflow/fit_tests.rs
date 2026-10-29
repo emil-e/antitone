@@ -66,10 +66,6 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
         app.run_until(LIMIT, |e| !e.busy);
         app.read(|e| {
             assert_eq!(e.document.visit.current_source, Some(other));
-            assert_eq!(
-                e.document.picking.return_to.as_ref().unwrap().path,
-                e.document.source_path(first).unwrap()
-            );
             assert_eq!(e.document.state.project, before);
         });
         confirm(app);
@@ -78,7 +74,7 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
             assert!(e.status.starts_with("Analyzed 2"), "{}", e.status);
             assert_eq!(e.document.visit.current_source, Some(first));
             assert!(e.document.visit.ready.is_some());
-            assert!(e.document.analysis_review.is_none() && e.document.picking.return_to.is_none());
+            assert!(e.document.analysis_review.is_none());
             assert_eq!(e.document.visit.viewport, viewport);
             assert_eq!(e.tab, 2);
             assert!(e.scopes.visible);
@@ -97,6 +93,78 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
         app.read(|e| assert_eq!(e.document.state.project, before));
     });
     scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn review_return_restores_the_selected_source_owned_layer_when_it_still_exists() {
+    use crate::{
+        adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings},
+        editor::adjustment_layers::Target,
+    };
+    for removed in [false, true] {
+        let scheduler = source_loading::SourceLoader::new();
+        let mut editor = fixture(scheduler.clone());
+        let original = editor.document.visit.current_source.unwrap();
+        let other = editor.document.project.order[1];
+        let layers = editor
+            .document
+            .project
+            .source_mut(original)
+            .unwrap()
+            .adjustment_layers
+            .as_mut()
+            .unwrap();
+        let selected = layers.layers[0].id;
+        layers
+            .add(
+                "Other".into(),
+                AdjustmentLayer::global(AdjustmentLayerSettings::default()),
+            )
+            .unwrap();
+        editor.select_adjustment_layer(Target::Layer(selected));
+        with_application(editor, |app| {
+            review(app);
+            app.enter(|editor, cx| {
+                editor.browse_analysis_review(crate::project::SourceId(u64::MAX), cx);
+                assert_eq!(editor.document.visit.current_source, Some(original));
+                assert!(!editor.document.visit.source.pending());
+                editor.browse_analysis_review(other, cx);
+            });
+            app.run_until(LIMIT, |editor| !editor.busy);
+            app.update(|editor| {
+                assert_eq!(editor.document.visit.current_source, Some(other));
+                if removed {
+                    editor
+                        .document
+                        .project
+                        .source_mut(original)
+                        .unwrap()
+                        .adjustment_layers
+                        .as_mut()
+                        .unwrap()
+                        .layers
+                        .clear();
+                }
+            });
+            app.enter(|editor, cx| editor.finish_pick(cx));
+            app.run_until(LIMIT, |editor| !editor.busy);
+            app.read(|editor| {
+                assert!(editor.document.analysis_review.is_none());
+                assert!(editor.active_pick().is_none());
+                assert_eq!(editor.document.visit.current_source, Some(original));
+                assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+                assert_eq!(
+                    editor.adjustment_layer_target(),
+                    if removed {
+                        Target::None
+                    } else {
+                        Target::Layer(selected)
+                    }
+                );
+            });
+        });
+        scheduler.close_and_wait().unwrap();
+    }
 }
 
 #[test]
@@ -202,12 +270,7 @@ fn fitting_document_and_application_retirement_cannot_publish_late_results() {
             } else {
                 app.update(|e| e.document = Document::default().into());
                 app.pump();
-                app.read(|e| {
-                    assert!(
-                        e.document.analysis_review.is_none()
-                            && e.document.picking.return_to.is_none()
-                    )
-                });
+                app.read(|e| assert!(e.document.analysis_review.is_none()));
             }
             assert!(cancelled.is_cancelled());
             assert_eq!(scheduler.waiter_count(), 0);
@@ -258,7 +321,6 @@ fn new_document_supersedes_a_queued_fit_without_consuming_its_areas_or_history()
         app.pump();
         app.read(|e| {
             assert!(e.document.analysis_pending.is_none() && e.document.analysis_review.is_none());
-            assert!(e.document.picking.return_to.is_none());
             assert!(e.document_pending.is_some());
         });
         drop(admission);

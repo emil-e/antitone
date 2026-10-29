@@ -206,15 +206,15 @@ impl Editor {
     }
 
     fn tool_shortcuts(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        if self.document.picking.kind.is_some()
+        if self.active_pick().is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.status = "Pick cancelled; processing unchanged".into();
             self.finish_pick(cx);
-            self.document.picking.region = None;
+            self.set_pick_region(None);
         }
-        if self.document.picking.kind.is_some()
-            && self.document.picking.region.is_some()
+        if self.active_pick().is_some()
+            && self.pick_region().is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
         {
             self.apply_pick(cx);
@@ -285,7 +285,7 @@ impl Editor {
         {
             *file_action = Some(FileAction::Remove);
         }
-        if self.document.picking.kind.is_none()
+        if self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
             && !self.document.visit.adjustment_layers.dragging()

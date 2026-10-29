@@ -53,10 +53,19 @@ impl Correction {
     }
 }
 
+pub(super) const DISPLAY: super::picking::Display = super::picking::Display {
+    label: "Flat-field",
+    view: super::picking::View::Native,
+    area: true,
+    lock_layer_selection: false,
+    help: None,
+};
+
 /// Reference session and saved working context, independent of temporary visits.
 pub(super) struct FlatEdit {
     pub working: Option<Ready>,
     pub reference: Option<FlatPreview>,
+    pub region: Option<Coverage>,
     pub viewport: Viewport,
     pub source: bool,
     pub task: Option<async_executor::Task<()>>,
@@ -69,11 +78,11 @@ pub(super) struct FlatPreview {
 
 impl Editor {
     pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        let editing = self.document.picking.kind == Some(Pick::Flat);
+        let editing = self.document.flat_edit.is_some();
         let settings = self.document.state.project.flat_field();
         let configured = settings.is_some();
         let available = !self.busy
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.visit.mask_edit.is_none();
@@ -143,7 +152,7 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) {
         if self.busy
-            || self.document.picking.kind.is_some()
+            || self.active_pick().is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
@@ -155,16 +164,15 @@ impl Editor {
         let context = FlatEdit {
             working: self.document.visit.ready.take(),
             reference: None,
+            region: region.map(Coverage::rectangle),
             viewport: self.document.visit.viewport,
             source: self.document.source,
             task: None,
         };
         self.document.flat_edit = Some(context);
-        self.document.picking.kind = Some(Pick::Flat);
         self.document.source = true;
         self.id = self.request_id();
         self.replace_photo_scope(self.id);
-        self.document.picking.region = region.map(Coverage::rectangle);
         self.document.visit.viewport.fit();
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
@@ -207,7 +215,7 @@ impl Editor {
     pub(super) fn reference_input(
         &self,
     ) -> Result<Option<super::reference_services::Acceptance>, &'static str> {
-        let Some(coverage) = self.document.picking.region else {
+        let Some(coverage) = self.pick_region() else {
             return Ok(None);
         };
         let Some(reference) = self
@@ -260,8 +268,6 @@ impl Editor {
         self.document.visit.ready = context.working;
         self.document.visit.viewport = context.viewport;
         self.document.source = context.source;
-        self.document.picking.kind = None;
-        self.document.picking.region = None;
         self.document.visit.pick_drag = None;
         self.document.visit.last_layout = None;
         self.invalidate_original();

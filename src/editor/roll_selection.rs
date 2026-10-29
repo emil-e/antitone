@@ -41,7 +41,7 @@ impl Editor {
             || self.document.visit.ready.is_none()
                 && self.document.visit.selection_timing.is_some())
             && self.fullscreen.is_none()
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.flat_edit.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()

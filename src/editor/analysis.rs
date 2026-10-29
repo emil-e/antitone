@@ -1,4 +1,12 @@
 use super::*;
+
+pub(super) const AREA_DISPLAY: picking::Display = picking::Display {
+    label: "Picture area",
+    view: picking::View::Native,
+    area: true,
+    lock_layer_selection: false,
+    help: Some("Picture statistics only · source-aligned · not an output crop"),
+};
 use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
 use std::sync::atomic::Ordering;
 
@@ -224,7 +232,7 @@ impl Editor {
             .map(|pending| (pending.id, pending.loaded))
             != Some((request, loaded))
             || loaded != self.id
-            || self.document.picking.kind != Some(Pick::Analysis)
+            || self.active_pick() != Some(Pick::Analysis.display())
             || self.document_pending.is_some()
         {
             return;
@@ -237,9 +245,8 @@ impl Editor {
             Ok(support) => {
                 ready.analysis_support = Some(support);
                 // A delayed suggestion must never overwrite a rectangle already drawn.
-                if self.document.picking.region.is_none() && self.document.visit.pick_drag.is_none()
-                {
-                    self.document.picking.region = support.map(suggest).map(Coverage::rectangle);
+                if self.pick_region().is_none() && self.document.visit.pick_drag.is_none() {
+                    self.set_pick_region(support.map(suggest).map(Coverage::rectangle));
                 }
             }
             Err(error) => self.status = error,
@@ -266,7 +273,7 @@ impl Editor {
         let capabilities = self.document.input.capabilities();
         let commands = !self.busy
             && self.document.visit.ready.is_some()
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.flat_edit.is_none()
@@ -365,7 +372,7 @@ impl Editor {
 
     pub(super) fn analysis_request(&mut self) -> Option<Request> {
         if self.busy
-            || self.document.picking.kind.is_some()
+            || self.active_pick().is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
@@ -526,7 +533,7 @@ impl Editor {
     }
 
     pub(super) fn apply_analysis_area(&mut self, cx: &UiContext<'_, Self>) {
-        let Some(coverage) = self.document.picking.region else {
+        let Some(coverage) = self.pick_region() else {
             return;
         };
         let Some(area) = self

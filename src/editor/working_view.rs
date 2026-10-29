@@ -797,7 +797,7 @@ impl Editor {
 
         if self.busy
             && self.document_pending.is_none()
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.flat_edit.is_none()
         {
@@ -847,8 +847,7 @@ impl Editor {
         }
 
         if input.repairs.0.is_empty()
-            && (self.document.picking.kind.is_some()
-                || self.document.picking.return_to.is_some()
+            && (self.active_pick().is_some()
                 || self.document.visit.crop_edit.is_some()
                 || self.document.flat_edit.is_some())
         {

@@ -394,14 +394,40 @@ fn cancelling_layer_interaction_during_a_roll_pick_preserves_its_selected_target
         let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
         editor.select_adjustment_layer(Target::Layer(id));
-        editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
-        assert!(editor.document.picking.return_to.is_some());
+        editor.preview_picker(Pick::Dmin);
+        assert_eq!(editor.active_pick(), Some(Pick::Dmin.display()));
         let before = editor.document.state.project.clone();
         editor.finish_adjustment_layer_interaction();
         editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
         assert_eq!(editor.tab, 1);
         assert_eq!(editor.document.state.project, before);
+    });
+}
+
+#[test]
+fn source_calibration_picking_does_not_lock_unrelated_layer_selection() {
+    let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    editor
+        .edit_adjustment_layers(|layers| {
+            layers.add("Other".into(), AdjustmentLayer::global(Default::default()))?;
+            Ok(())
+        })
+        .unwrap();
+    let layers = ids(&editor);
+    let first = layers[0];
+    let second = *layers.last().unwrap();
+    assert_ne!(first, second);
+    editor.select_adjustment_layer(Target::Layer(first));
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+        app.pump();
+        app.update(|editor| {
+            assert_eq!(editor.active_pick(), Some(Pick::Dmin.display()));
+            editor.select_adjustment_layer(Target::Layer(second));
+            assert_eq!(editor.adjustment_layer_target(), Target::Layer(second));
+        });
+        app.enter(|editor, cx| editor.finish_pick(cx));
     });
 }
 
@@ -618,78 +644,6 @@ fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
             )
             .unwrap();
         assert_ne!(before.signature(), current.signature());
-    });
-}
-
-#[test]
-fn temporary_roll_picking_restores_only_an_existing_source_owned_target() {
-    pollster::block_on(async {
-        for removed in [false, true] {
-            let (editor, _, _) = processing::tests::fixture().await;
-            crate::application::test_support::with_application(editor, |app| {
-                app.enter(|editor, cx| {
-                    let original = editor.document.visit.current_source.unwrap();
-                    let target = ids(editor)[0];
-                    let mut other = editor
-                        .document
-                        .state
-                        .project
-                        .source(original)
-                        .unwrap()
-                        .clone();
-                    other.id = SourceId(0);
-                    other.path = "other-fixture.ARW".into();
-                    let other = editor.document.state.project.add_source(other).unwrap();
-                    editor.sync_document();
-                    editor.select_adjustment_layer(Target::Layer(target));
-                    editor.begin_pick(Pick::Dmin, cx);
-                    let mut ready = editor.document.visit.ready.take().unwrap();
-                    editor.pick_roll_source(other, cx);
-                    assert_eq!(editor.document.visit.current_source, Some(other));
-                    assert_eq!(
-                        editor.adjustment_layer_target(),
-                        Target::Layer(ids(editor)[1])
-                    );
-                    assert!(editor.document.visit.source.pending());
-                    // Both fixture sources use identical pixels/metadata; deliver the other owner's Ready.
-                    ready.path = editor.document.source_path(other).unwrap();
-                    ready.record = editor.document.state.project.source(other).unwrap().clone();
-                    ready.record.id = SourceId(0);
-                    ready.record.path = ready.path.clone();
-                    editor.source_result(editor.id, Ok(Box::new(ready)));
-                    assert!(
-                        editor.document.visit.ready.is_some() && !editor.busy,
-                        "{}",
-                        editor.status
-                    );
-                    if removed {
-                        editor
-                            .document
-                            .state
-                            .project
-                            .source_mut(original)
-                            .unwrap()
-                            .adjustment_layers
-                            .as_mut()
-                            .unwrap()
-                            .layers
-                            .clear();
-                    }
-                    editor.finish_pick(cx);
-                    assert_eq!(editor.document.visit.current_source, Some(original));
-                    assert!(editor.document.picking.return_to.is_none());
-                    assert_eq!(
-                        editor.adjustment_layer_target(),
-                        if removed {
-                            Target::None
-                        } else {
-                            Target::Layer(target)
-                        }
-                    );
-                    assert!(editor.document.visit.source.pending());
-                });
-            });
-        }
     });
 }
 

@@ -61,14 +61,15 @@ impl Editor {
         if self.document.auto_crop_edit.is_some() {
             return Some((icons::Icon::Crop, "Auto-crop"));
         }
-        self.document.picking.kind.map(|pick| match pick {
-            Pick::Dmin => (icons::Icon::Pick, "Dmin"),
-            Pick::Dmax => (icons::Icon::Pick, "Dmax"),
-            Pick::Gamma => (icons::Icon::Pick, "Gamma neutral"),
-            Pick::RollWb => (icons::Icon::Pick, "Roll WB neutral"),
-            Pick::Wb => (icons::Icon::Pick, "WB neutral"),
-            Pick::Flat => (icons::Icon::Crop, "Flat-field"),
-            Pick::Analysis => (icons::Icon::Crop, "Picture area"),
+        self.active_pick().map(|display| {
+            (
+                if display.area {
+                    icons::Icon::Crop
+                } else {
+                    icons::Icon::Pick
+                },
+                display.label,
+            )
         })
     }
 
@@ -192,7 +193,7 @@ impl Editor {
             apply_enabled: if self.document.auto_crop_edit.is_some() {
                 self.auto_crop_editable()
             } else {
-                navigating && review_ready && (cropping || self.document.picking.region.is_some())
+                navigating && review_ready && (cropping || self.pick_region().is_some())
             },
         });
 
@@ -471,7 +472,7 @@ impl Editor {
                                 && self.tab == 1
                                 && !dust_session
                                 && !cropping
-                                && self.document.picking.kind.is_none()
+                                && self.active_pick().is_none()
                         }) {
                             ui.separator();
                             ui.small(help);
@@ -507,21 +508,12 @@ impl Editor {
                                 "Drag either area's corners to resize, or its interior to move. Click a label when outlines coincide.",
                             );
                             ui.small("Enter analyzes · Escape cancels");
-                        } else if !fullscreen && let Some(kind) = self.document.picking.kind {
+                        } else if !fullscreen && let Some(kind) = self.active_pick() {
                             ui.separator();
                             ui.small(
                                 "Click a patch or drag an area; drag its edges/corners to resize.",
                             );
-                            if kind == Pick::Analysis {
-                                ui.small(
-                                    "Picture statistics only · source-aligned · not an output crop",
-                                );
-                            }
-                            if matches!(kind, Pick::Dmin | Pick::Dmax) {
-                                ui.small(
-                                    "To sample another image, select it in the filmstrip. Apply/Cancel returns to the working photo.",
-                                );
-                            }
+                            if let Some(help) = kind.help { ui.small(help); }
                             ui.small("Enter applies · Escape cancels");
                         }
                     });

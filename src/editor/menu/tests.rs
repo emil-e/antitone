@@ -50,7 +50,7 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
             assert!(state.enabled(Action::Redo));
         });
         app.update(|e| {
-            e.document.picking.kind = Some(Pick::Dmin);
+            e.document.visit.picking.display = Some(Pick::Dmin.display());
             host::App::menu_action(e, Action::Redo);
         });
         frame(app, &context);
@@ -142,7 +142,7 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
     let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
-    editor.document.picking.kind = Some(Pick::Dmin);
+    editor.document.visit.picking.display = Some(Pick::Dmin.display());
     for action in [
         Action::New,
         Action::Open,
@@ -158,8 +158,8 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         );
         assert!(editor.transition.is_none());
     }
-    assert_eq!(editor.document.picking.kind, Some(Pick::Dmin));
-    editor.document.picking.kind = None;
+    assert_eq!(editor.active_pick(), Some(Pick::Dmin.display()));
+    editor.document.visit.picking.display = None;
     editor.transition = Some(Transition::New);
     host::App::menu_action(&mut editor, Action::Settings);
     frame(&mut editor, &context);
