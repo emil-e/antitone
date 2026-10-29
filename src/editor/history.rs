@@ -243,7 +243,7 @@ impl Editor {
             && self.menus.panel.is_none()
             && self.document.look.is_none()
             && self.document_pending.is_none()
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.flat_edit.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()

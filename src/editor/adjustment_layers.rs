@@ -153,6 +153,12 @@ impl Editor {
     }
 
     pub(super) fn select_adjustment_layer(&mut self, target: Target) {
+        if self
+            .active_pick()
+            .is_some_and(|display| display.lock_layer_selection)
+        {
+            return;
+        }
         self.sync_document();
         self.document.visit.adjustment_layers.owns_delete = true;
         self.document.visit.adjustment_layers.selected = match target {
@@ -198,7 +204,7 @@ impl Editor {
     fn adjustment_layer_actions_available(&self) -> bool {
         !self.busy
             && self.document.input.ready()
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.flat_edit.is_none()
@@ -447,7 +453,7 @@ impl Editor {
     pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
         self.tab == 1
             && !self.document.visit.dust.cleanup
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
             && self.document.flat_edit.is_none()

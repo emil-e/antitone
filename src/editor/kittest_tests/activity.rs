@@ -134,23 +134,23 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             }
             for (name, task, pick) in [
                 ("raw", Task::Photo(id), None),
-                ("reference", Task::Reference(id), Some(Pick::Flat)),
+                ("reference", Task::Reference(id), Some(Pick::Flat.display())),
                 (
                     "measurement",
-                    Task::Measurement(id, Pick::Dmin),
-                    Some(Pick::Dmin),
+                    Task::Measurement(id, "Dmin"),
+                    Some(Pick::Dmin.display()),
                 ),
             ] {
                 harness.update(|editor| held_activity(editor, task));
-                harness.update(|editor| editor.document.picking.kind = pick);
+                harness.update(|editor| editor.document.visit.picking.display = pick);
                 if name == "measurement" {
                     harness.update(|editor| {
-                        editor.document.picking.region = Some(Coverage::rectangle(Rect {
+                        editor.set_pick_region(Some(Coverage::rectangle(Rect {
                             x: 32,
                             y: 32,
                             width: 64,
                             height: 64,
-                        }))
+                        })))
                     });
                 }
                 let ready = if name == "raw" || name == "reference" {
@@ -162,8 +162,8 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 if let Some(ready) = ready {
                     harness.update(|editor| editor.document.visit.ready = Some(ready));
                 }
-                harness.update(|editor| editor.document.picking.kind = None);
-                harness.update(|editor| editor.document.picking.region = None);
+                harness.update(|editor| editor.document.visit.picking.display = None);
+                harness.update(|editor| editor.set_pick_region(None));
                 harness.update(|editor| editor.tasks.finish(task.request()));
                 harness.update(|editor| editor.busy = false);
                 harness.step();

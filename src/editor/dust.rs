@@ -876,7 +876,7 @@ impl Editor {
             .is_some();
         let available = !self.busy
             && self.document.visit.ready.is_some()
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.visit.dust.donor_draft.is_none();
         let mut reset_repairs = false;
         ToolIdentity {
@@ -990,7 +990,7 @@ impl Editor {
         let allowed = canvas_input
             && !panning
             && !self.busy
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.flat_edit.is_none()
             && self.document.analysis_review.is_none()
@@ -1355,7 +1355,7 @@ impl Editor {
             || self.tab != 1
             || self.document.source
             || !self.document.visit.dust.show_masks
-            || self.document.picking.kind.is_some()
+            || self.active_pick().is_some()
             || self.document.visit.dust.donor_draft.is_some()
         {
             return None;

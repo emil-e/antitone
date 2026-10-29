@@ -50,12 +50,14 @@ impl Editor {
         .expect("accepted source composition")
     }
 
-    pub(super) fn canvas_composition(&self, area: Rect, active_pick: Option<Pick>) -> Composition {
+    pub(super) fn canvas_composition(
+        &self,
+        area: Rect,
+        active_pick: Option<picking::Display>,
+    ) -> Composition {
         let crop = if self.auto_crop_context()
-            || matches!(
-                active_pick,
-                Some(Pick::Dmin | Pick::Dmax | Pick::Flat | Pick::Analysis)
-            ) {
+            || active_pick.is_some_and(|display| display.view != picking::View::Working)
+        {
             None
         } else {
             self.document
@@ -65,7 +67,7 @@ impl Editor {
                 .map(|edit| edit.draft)
                 .or(self.document.visit.crop)
         };
-        if matches!(active_pick, Some(Pick::Flat | Pick::Analysis)) {
+        if active_pick.is_some_and(|display| display.view == picking::View::Native) {
             Composition::new(
                 area,
                 RollOrientation::default(),
@@ -210,17 +212,13 @@ impl Editor {
                 }
             }
         };
-        if self.document.picking.kind.is_some()
+        if self.active_pick().is_some()
             || self.document.flat_edit.is_some()
-            || self.document.picking.return_to.is_some()
             || self.document.analysis_review.is_some()
         {
             parameters = parameters.with_look(None);
         }
-        if !self.document.source
-            && self.document.flat_edit.is_none()
-            && self.document.picking.return_to.is_none()
-        {
+        if !self.document.source && self.document.flat_edit.is_none() {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust(signature, cx);
             }
@@ -243,7 +241,7 @@ impl Editor {
     ) -> Option<(egui::Rect, ImagePaint)> {
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas = geometry.canvas;
-        let active_pick = self.document.picking.kind;
+        let active_pick = self.active_pick();
         let composition = geometry.composition;
         // The camera proxy covers the full source, not the crop's bounding region.
         let rect = geometry.image.intersect(canvas);
@@ -256,8 +254,7 @@ impl Editor {
         let normal = !cropping
             && active_pick.is_none()
             && self.document_pending.is_none()
-            && self.document.flat_edit.is_none()
-            && self.document.picking.return_to.is_none();
+            && self.document.flat_edit.is_none();
         let working = normal && self.document.visit.working_view.enabled();
         let view = if working {
             Some(ViewRequest {
@@ -292,12 +289,8 @@ impl Editor {
         {
             Some(OriginalPurpose::Reference)
         } else {
-            (!cropping
-                && !pending
-                && (active_pick.is_some()
-                    || self.document.flat_edit.is_some()
-                    || self.document.picking.return_to.is_some()))
-            .then_some(OriginalPurpose::Tool)
+            (!cropping && !pending && (active_pick.is_some() || self.document.flat_edit.is_some()))
+                .then_some(OriginalPurpose::Tool)
         };
         self.observe_original(
             purpose,
@@ -550,7 +543,7 @@ impl Editor {
             if self.document.analysis_review.is_some() {
                 self.select_review_area(geometry, point);
             } else {
-                self.document.picking.region = Some(geometry.pick_patch(point, 32));
+                self.set_pick_region(Some(geometry.pick_patch(point, 32)));
             }
         }
         if response.drag_started_by(egui::PointerButton::Primary) {
@@ -565,7 +558,7 @@ impl Editor {
                 .filter(|point| {
                     geometry.image.contains(*point) || self.document.analysis_review.is_some()
                 })
-                .map(|point| PickDrag::begin(geometry, point, self.document.picking.region));
+                .map(|point| PickDrag::begin(geometry, point, self.pick_region()));
         }
         if response.dragged_by(egui::PointerButton::Primary)
             && let (Some(drag), Some(end)) = (
@@ -573,7 +566,7 @@ impl Editor {
                 response.interact_pointer_pos(),
             )
         {
-            self.document.picking.region = Some(drag.update(geometry, end));
+            self.set_pick_region(Some(drag.update(geometry, end)));
         }
     }
 
@@ -582,7 +575,7 @@ impl Editor {
         self.paint_mask(ui, geometry);
         if self.document.analysis_review.is_some() {
             self.paint_review_areas(ui, geometry, canvas);
-        } else if !fullscreen && let Some(region) = self.document.picking.region {
+        } else if !fullscreen && let Some(region) = self.pick_region() {
             ui.painter().with_clip_rect(canvas).rect_stroke(
                 geometry.screen_coverage(region),
                 0.,
@@ -638,7 +631,7 @@ impl Editor {
         };
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas_input = self.canvas_input_allowed(ui, canvas);
-        let active_pick = self.document.picking.kind;
+        let active_pick = self.active_pick();
         let composition = if pending {
             self.document
                 .visit

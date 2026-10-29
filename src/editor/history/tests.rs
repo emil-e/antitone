@@ -391,23 +391,15 @@ fn save_completion_baselines_only_the_written_snapshot_and_undo_can_return_to_it
 fn accepted_calibration_is_one_entry_and_an_invalid_pick_preserves_redo() {
     let mut editor = controller();
     let before = editor.history_snapshot();
-    editor.measurement_result(
-        editor.document.visit.view,
-        Pick::Dmin,
-        Ok(Measurement::Reference(DVec3::splat(0.25))),
-        &crate::application::UiContext::render_only(),
-    );
+    (calibration::set_dmin(&mut editor, DVec3::splat(0.25))).unwrap();
+    editor.finish_pick(&crate::application::UiContext::render_only());
     let picked = editor.document.state.project.clone();
     assert_ne!(picked, before);
     assert_eq!(editor.document.history.undo.len(), 1);
     editor = accept_history(editor, Direction::Undo);
     assert_eq!(editor.document.state.project, before);
-    editor.measurement_result(
-        editor.document.visit.view,
-        Pick::Dmin,
-        Ok(Measurement::Reference(DVec3::splat(0.0001))),
-        &crate::application::UiContext::render_only(),
-    );
+    assert!((calibration::set_dmin(&mut editor, DVec3::splat(0.0001))).is_err());
+    editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.state.project, before);
     assert!(editor.document.history.undo.is_empty());
     assert_eq!(editor.document.history.redo.len(), 1);
@@ -577,7 +569,7 @@ fn busy_decisions_and_drafts_cannot_dispatch_document_history() {
     editor.record_edit(before, "Exposure", None);
     for blocked in 0..4 {
         editor.busy = blocked == 0;
-        editor.document.picking.kind = (blocked == 1).then_some(Pick::Dmin);
+        editor.document.visit.picking.display = (blocked == 1).then_some(Pick::Dmin.display());
         editor.document.removal_pending =
             (blocked == 2).then_some(vec![editor.document.visit.current_source.unwrap()]);
         editor.transition = (blocked == 3).then_some(Transition::New);

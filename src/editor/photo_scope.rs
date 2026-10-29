@@ -1,4 +1,4 @@
-use super::{Editor, Ready, TaskRequest, WorkingView, measurement};
+use super::{Editor, Ready, TaskRequest, WorkingView};
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -27,11 +27,12 @@ pub(super) struct PhotoScope {
     pub photo_orientation: super::PhotoOrientation,
     pub crop: Option<super::Crop>,
     pub last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
+    pub picking: super::picking::Session,
+    pub pick_actions: Vec<async_executor::Task<()>>,
     pub pick_drag: Option<super::PickDrag>,
     pub current_source: Option<super::SourceId>,
     pub ready: Option<Ready>,
     pub source: super::source_workflow::State,
-    pub measurement: Option<measurement::Pending>,
     pub grade: super::grade_scope::GradeScope,
     pub working: super::working_workflow::State,
     pub support: super::support_workflow::State,
@@ -49,14 +50,11 @@ impl PhotoScope {
     }
 
     fn activity(&self) -> Option<TaskRequest> {
-        self.measurement
-            .as_ref()
-            .map(|pending| TaskRequest::Measurement(self.view, pending.kind))
-            .or_else(|| {
-                self.source
-                    .pending()
-                    .then_some(TaskRequest::Photo(self.view))
-            })
+        self.picking.activity().or_else(|| {
+            self.source
+                .pending()
+                .then_some(TaskRequest::Photo(self.view))
+        })
     }
 }
 

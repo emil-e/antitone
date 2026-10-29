@@ -1,5 +1,5 @@
 use super::{
-    Editor, Pick,
+    Editor,
     presentation::{Progress, ProgressContent},
 };
 use std::time::{Duration, Instant};
@@ -18,7 +18,7 @@ pub(super) enum Task {
     History(u64),
     Photo(u64),
     Reference(u64),
-    Measurement(u64, Pick),
+    Measurement(u64, &'static str),
     Analyze(u64),
     AnalysisAreas(u64),
     Regions(u64),
@@ -32,7 +32,7 @@ pub(super) enum TaskRequest {
     Document(u64),
     Photo(u64),
     Reference(u64),
-    Measurement(u64, Pick),
+    Measurement(u64),
     Analyze(u64),
     Regions(u64),
     Export(u64),
@@ -57,7 +57,7 @@ impl Task {
             | Self::History(id) => TaskRequest::Document(id),
             Self::Photo(id) => TaskRequest::Photo(id),
             Self::Reference(id) => TaskRequest::Reference(id),
-            Self::Measurement(id, pick) => TaskRequest::Measurement(id, pick),
+            Self::Measurement(id, _) => TaskRequest::Measurement(id),
             Self::Analyze(id) | Self::AnalysisAreas(id) => TaskRequest::Analyze(id),
             Self::Regions(id) => TaskRequest::Regions(id),
             Self::Export(id) => TaskRequest::Export(id),
@@ -125,19 +125,7 @@ impl Task {
             Self::Regions(_) => "Preparing film and picture regions…".into(),
             Self::Export(_) => "Exporting…".into(),
             Self::Look(_) => "Preparing look…".into(),
-            Self::Measurement(_, pick) => {
-                let name = match pick {
-                    Pick::Dmin => "Dmin",
-                    Pick::Dmax => "Dmax",
-                    Pick::Gamma => "Gamma",
-                    Pick::RollWb => "Roll WB",
-                    Pick::Wb => "WB",
-                    Pick::Flat | Pick::Analysis => {
-                        unreachable!("area tools do not dispatch measurements")
-                    }
-                };
-                format!("Measuring {name}…")
-            }
+            Self::Measurement(_, label) => format!("Measuring {label}…"),
         }
     }
 }

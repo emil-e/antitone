@@ -91,9 +91,7 @@ fn reference_rejection_cancel_and_stale_products_preserve_document_and_working_c
             assert!(e.id > request);
             assert_eq!(e.document.visit.view, e.id);
             assert!(
-                !e.document.source
-                    && e.document.picking.kind.is_none()
-                    && e.document.flat_edit.is_none()
+                !e.document.source && e.active_pick().is_none() && e.document.flat_edit.is_none()
             );
             assert_eq!(e.document.state.project, original);
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
@@ -123,12 +121,12 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
     let ready = editor.document.visit.ready.as_ref().unwrap().clone();
     super::super::tests::paused_reference_fixture(&mut editor, ready, None);
     let original = editor.document.state.project.clone();
-    editor.document.picking.region = Some(Coverage::rectangle(Rect {
+    editor.set_pick_region(Some(Coverage::rectangle(Rect {
         x: 12,
         y: 7,
         width: 1,
         height: 1,
-    }));
+    })));
     with_application(editor, |app| {
         app.enter(|e, cx| {
             e.apply_flat_edit(cx);
@@ -140,7 +138,7 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
         });
         app.pump();
         app.read(|e| {
-            assert!(e.document.flat_edit.is_none() && e.document.picking.kind.is_none() && !e.busy);
+            assert!(e.document.flat_edit.is_none() && e.active_pick().is_none() && !e.busy);
             assert_eq!(e.document.state.project, original);
             assert_eq!(
                 e.failure.as_ref().unwrap().kind,
@@ -239,18 +237,20 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
         .unwrap()
     );
     assert_eq!(
-        layout.frame_bounds(editor.document.picking.region.unwrap()),
+        layout.frame_bounds(editor.pick_region().unwrap()),
         (
             crate::geometry::FramePoint([25., 19.]),
             crate::geometry::FramePoint([565., 339.])
         )
     );
     assert_eq!(editor.document.state.project, original);
-    editor.document.picking.region = Some(editor.document.visit.crop.unwrap().coverage().unwrap());
+    editor.set_pick_region(Some(
+        editor.document.visit.crop.unwrap().coverage().unwrap(),
+    ));
     editor.apply_flat_edit(&UiContext::render_only());
     assert!(!editor.busy && editor.document_pending.is_none());
     assert_eq!(editor.document.state.project, original);
-    editor.document.picking.region = Some(Coverage::rectangle(region));
+    editor.set_pick_region(Some(Coverage::rectangle(region)));
     let input = editor.reference_input().unwrap().unwrap();
     assert_eq!(input.region, region);
     assert!(Arc::ptr_eq(
@@ -377,8 +377,8 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             app.enter(|e, cx| {
                 e.sync_document();
                 assert_eq!(e.document.state.project, original);
-                assert_eq!(e.document.picking.kind, Some(Pick::Flat));
-                assert!(e.document.picking.region.is_some());
+                assert_eq!(e.active_pick(), Some(Pick::Flat.display()));
+                assert!(e.pick_region().is_some());
                 e.finish_pick(cx);
                 assert_eq!(e.document.state.project, original);
                 assert_eq!(e.document.visit.current_source, selected);
@@ -447,7 +447,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 assert!(e.status.contains("open"), "{}", e.status);
                 assert!(
                     e.document.flat_edit.is_none()
-                        && e.document.picking.kind.is_none()
+                        && e.active_pick().is_none()
                         && e.document_pending.is_none()
                 );
                 assert_eq!(e.document.state.project, accepted);

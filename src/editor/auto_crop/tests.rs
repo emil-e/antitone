@@ -618,7 +618,7 @@ fn draft_tool_blocks_competing_tools_document_commands_export_and_removal() {
             );
             assert!(
                 e.document.visit.crop_edit.is_none()
-                    && e.document.picking.kind.is_none()
+                    && e.active_pick().is_none()
                     && e.document.flat_edit.is_none()
                     && !e.document.visit.dust.cleanup
                     && e.document.removal_pending.is_none()
@@ -729,7 +729,7 @@ fn entry_respects_other_active_tools_and_foreground_work() {
         let before = e.document.state.project.clone();
         match case {
             0 => e.busy = true,
-            1 => e.document.picking.kind = Some(Pick::Dmin),
+            1 => e.document.visit.picking.display = Some(Pick::Dmin.display()),
             2 => e.begin_crop(),
             3 => e.begin_dust_cleanup(),
             4 => e.document_pending = Some(99),

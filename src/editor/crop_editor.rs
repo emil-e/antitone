@@ -109,7 +109,7 @@ impl Editor {
     pub(super) fn begin_crop(&mut self) {
         self.finish_dust_cleanup();
         if self.busy
-            || self.document.picking.kind.is_some()
+            || self.active_pick().is_some()
             || self.document.visit.crop_edit.is_some()
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
@@ -193,15 +193,14 @@ impl Editor {
             || self.document.flat_edit.is_some()
             || self.document.visit.mask_edit.is_some();
         let ready = !self.busy && self.document.visit.ready.is_some();
-        let commands_enabled = ready && !tool_active && self.document.picking.kind.is_none();
-        let crop_enabled = cropping
-            || auto_cropping
-            || ready && self.document.picking.kind.is_none() && !tool_active;
+        let commands_enabled = ready && !tool_active && self.active_pick().is_none();
+        let crop_enabled =
+            cropping || auto_cropping || ready && self.active_pick().is_none() && !tool_active;
         let dust_enabled = dusting
             || ready
                 && self.document.input.ready()
                 && !self.document.source
-                && self.document.picking.kind.is_none()
+                && self.active_pick().is_none()
                 && !tool_active;
         let repairs_changed = self
             .document

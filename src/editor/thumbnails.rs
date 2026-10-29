@@ -1001,7 +1001,7 @@ impl Editor {
     fn thumbnail_work_allowed(&self) -> bool {
         !self.busy
             && self.document.thumbnails.budgets.pressure != memory::Pressure::Critical
-            && (self.document.picking.kind.is_none() || self.document.analysis_review.is_some())
+            && (self.active_pick().is_none() || self.document.analysis_review.is_some())
             && self.document.visit.crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
             && self.document_pending.is_none()
@@ -1066,16 +1066,14 @@ impl Editor {
         let selected_loading = self.document.visit.ready.is_none()
             && self.document.visit.selection_timing.is_some()
             && self.document_pending.is_none()
-            && self.document.picking.kind.is_none();
+            && self.active_pick().is_none();
         let reviewing =
             self.document.analysis_review.is_some() && self.document.analysis_pending.is_none();
         let selection_enabled = (!self.busy || selected_loading || reviewing)
             && self.document.flat_edit.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.visit.mask_edit.is_none()
-            && (self.document.picking.kind.is_none()
-                || matches!(self.document.picking.kind, Some(Pick::Dmin | Pick::Dmax))
-                || reviewing)
+            && (self.active_pick().is_none() || reviewing)
             && self.document.removal_pending.is_none();
         let height = self
             .preferences
@@ -1122,7 +1120,7 @@ impl Editor {
                         .expect("filmstrip source");
                     let path = self.document.source_path(id).expect("filmstrip locator");
                     let active = self.document.visit.current_source == Some(id);
-                    let selected = if self.document.picking.kind.is_some() {
+                    let selected = if self.active_pick().is_some() {
                         active
                     } else {
                         active || self.document.roll_selection.contains(id)
@@ -1430,8 +1428,6 @@ impl Editor {
         if let Some((index, modifiers)) = select {
             if self.document.analysis_review.is_some() {
                 self.browse_analysis_review(self.document.state.project.order[index], cx);
-            } else if matches!(self.document.picking.kind, Some(Pick::Dmin | Pick::Dmax)) {
-                self.pick_roll_source(self.document.state.project.order[index], cx);
             } else {
                 self.select_roll_photo(index, modifiers, cx);
             }

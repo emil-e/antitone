@@ -361,11 +361,11 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         editor.begin_linear_mask(Some(id));
         assert!(editor.document.visit.mask_edit.is_some());
         editor.begin_crop();
-        editor.begin_pick(Pick::Wb, &crate::application::UiContext::render_only());
+        editor.preview_picker(Pick::Wb);
         editor.request_analysis(&UiContext::render_only());
         assert!(
             editor.document.visit.crop_edit.is_none()
-                && editor.document.picking.kind.is_none()
+                && editor.active_pick().is_none()
                 && editor.document.analysis_pending.is_none()
         );
         assert!(!editor.roll_edit_available());

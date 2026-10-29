@@ -217,13 +217,13 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                     Overwrite::Refuse,
                     &UiContext::render_only(),
                 );
-                assert!(editor.document.picking.kind.is_none());
+                assert!(editor.active_pick().is_none());
                 assert!(editor.document.visit.crop_edit.is_none());
                 assert!(editor.document.export_operation.pending.is_none());
                 assert!(
                     editor.document.visit.grade.original.refining.is_none()
                         && editor.document.visit.grade.task.is_none()
-                        && editor.document.visit.measurement.is_none()
+                        && !editor.measurement_pending()
                         && editor.document.export_operation.pending.is_none()
                 );
 
@@ -292,7 +292,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                         assert!(
                             editor.document.visit.grade.original.refining.is_none()
                                 && editor.document.visit.grade.task.is_none()
-                                && editor.document.visit.measurement.is_none()
+                                && !editor.measurement_pending()
                                 && editor.document.export_operation.pending.is_none(),
                             "pending preview scheduled authoritative work"
                         );
@@ -779,7 +779,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
 }
 
 #[test]
-fn roll_sampling_load_does_not_admit_pending_working_preview() {
+fn a_non_working_source_load_does_not_admit_pending_working_preview() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
@@ -790,16 +790,14 @@ fn roll_sampling_load_does_not_admit_pending_working_preview() {
                     (Thumbnails::with_disk(device, queue, Arc::default(), None))
                         .with_sources(editor.document.cache.clone());
                 let path = directory.path().join("reference.ARW");
-                let id = add_source(editor, path);
-                editor.document.picking.kind = Some(Pick::Dmin);
-                editor.pick_roll_source(id, cx);
+                add_source(editor, path.clone());
+                editor.load_source(path, false, cx);
                 assert!(
                     editor.document.visit.pending_preview.is_none()
                         && editor.document.visit.selection_timing.is_none()
                 );
                 assert!(editor.document.visit.ready.is_none());
                 assert!(editor.busy);
-                assert_eq!(editor.document.picking.kind, Some(Pick::Dmin));
                 assert!(editor.document.visit.source.pending());
             });
         });

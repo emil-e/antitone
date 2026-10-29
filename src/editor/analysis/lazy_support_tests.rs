@@ -25,10 +25,10 @@ fn picture_suggestion_is_captured_demand_and_is_transient_until_applied() {
             };
             editor.begin_pick(Pick::Analysis, cx);
             let (request, loaded) = request(editor);
-            assert!(!editor.busy && editor.document.picking.region.is_none());
+            assert!(!editor.busy && editor.pick_region().is_none());
             editor.analysis_support_result(request, loaded, Ok(Some(support)));
             assert_eq!(
-                editor.document.picking.region,
+                editor.pick_region(),
                 Some(Coverage::rectangle(analysis::suggest(support)))
             );
             assert_eq!(editor.document.state.project, before);
@@ -58,7 +58,7 @@ fn delayed_suggestion_cannot_overwrite_drawing_cancelled_picker_or_reopened_pick
                     height: 100,
                 });
                 match action {
-                    "draw" => editor.document.picking.region = Some(drawn),
+                    "draw" => editor.set_pick_region(Some(drawn)),
                     "cancel" => editor.finish_pick(cx),
                     "reopen" => {
                         editor.finish_pick(cx);
@@ -82,9 +82,9 @@ fn delayed_suggestion_cannot_overwrite_drawing_cancelled_picker_or_reopened_pick
                 );
                 assert_eq!(editor.document.state.project, before);
                 if action == "draw" {
-                    assert_eq!(editor.document.picking.region, Some(drawn));
+                    assert_eq!(editor.pick_region(), Some(drawn));
                 } else {
-                    assert!(editor.document.picking.region.is_none());
+                    assert!(editor.pick_region().is_none());
                     assert_eq!(
                         editor
                             .document
@@ -136,7 +136,7 @@ fn accepted_geometry_and_known_missing_support_require_no_lazy_work() {
             editor.begin_pick(Pick::Analysis, cx);
             assert!(editor.document.visit.support.pending.is_none());
             assert_eq!(
-                editor.document.picking.region,
+                editor.pick_region(),
                 Some(Coverage::rectangle(Rect {
                     x: 100,
                     y: 100,
@@ -157,7 +157,7 @@ fn support_failure_does_not_change_processing_or_poison_later_demand() {
             editor.begin_pick(Pick::Analysis, cx);
             let (id, loaded) = request(editor);
             editor.analysis_support_result(id, loaded, Err("support unavailable".into()));
-            assert!(editor.document.picking.region.is_none());
+            assert!(editor.pick_region().is_none());
             assert_eq!(editor.document.state.project, before);
             editor.finish_pick(cx);
             editor.begin_pick(Pick::Analysis, cx);

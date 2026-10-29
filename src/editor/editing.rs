@@ -1,5 +1,99 @@
+use super::picking::Display;
 use super::*;
 use crate::processing::InputSettings;
+
+impl Pick {
+    pub(super) fn display(self) -> Display {
+        match self {
+            Self::Dmin => calibration::DMIN,
+            Self::Dmax => calibration::DMAX,
+            Self::Gamma => calibration::GAMMA,
+            Self::RollWb => white_balance::ROLL,
+            Self::Wb => white_balance::LAYER,
+            Self::Flat => flat::DISPLAY,
+            Self::Analysis => analysis::AREA_DISPLAY,
+        }
+    }
+}
+
+impl Editor {
+    pub(super) fn finish_pick(&mut self, cx: &UiContext<'_, Self>) {
+        if self.document.analysis_review.is_some() {
+            self.status = "Analysis review cancelled; areas and grade unchanged".into();
+            self.end_analysis_review(cx);
+        } else if self.document.flat_edit.is_some() {
+            self.finish_flat_edit();
+        } else {
+            self.cancel_picker();
+        }
+    }
+
+    pub(super) fn prepare_pick(&mut self, cx: &UiContext<'_, Self>) -> bool {
+        self.finish_dust_cleanup();
+        if self.active_pick().is_some() {
+            self.finish_pick(cx);
+        }
+        if self.busy
+            || self.document.visit.crop_edit.is_some()
+            || self.document.auto_crop_edit.is_some()
+            || self.document.visit.mask_edit.is_some()
+        {
+            return false;
+        }
+        true
+    }
+
+    pub(super) fn begin_pick(&mut self, kind: Pick, cx: &UiContext<'_, Self>) {
+        if !self.prepare_pick(cx) {
+            return;
+        }
+        if kind == Pick::Analysis {
+            self.show_picker(kind.display());
+            if self.document.analysis_review.is_some() {
+                self.refresh_review_region();
+            } else {
+                self.request_analysis_support(cx);
+            }
+            return;
+        }
+        let result = match kind {
+            Pick::Dmin => calibration::pick_dmin(self, cx),
+            Pick::Dmax => calibration::pick_dmax(self, cx),
+            Pick::Gamma => calibration::pick_gamma(self, cx),
+            Pick::RollWb => white_balance::pick_roll(self, cx),
+            Pick::Wb => white_balance::pick_layer(self, cx),
+            Pick::Flat | Pick::Analysis => return,
+        };
+        match result {
+            Ok(task) => {
+                self.document
+                    .visit
+                    .pick_actions
+                    .retain(|task| !task.is_finished());
+                self.document.visit.pick_actions.push(task);
+            }
+            Err(error) => {
+                if self.active_pick().is_some() {
+                    self.cancel_picker();
+                }
+                self.status = error;
+            }
+        }
+    }
+
+    pub(super) fn apply_pick(&mut self, cx: &UiContext<'_, Self>) {
+        if self.submit_picker() {
+            return;
+        }
+        if self.document.analysis_review.is_some() {
+            self.confirm_analysis_review(cx);
+        } else if self.document.flat_edit.is_some() {
+            self.apply_flat_edit(cx);
+        } else if self.active_pick() == Some(analysis::AREA_DISPLAY) {
+            self.apply_analysis_area(cx);
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct ControlSettings {

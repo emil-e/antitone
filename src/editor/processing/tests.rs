@@ -500,17 +500,18 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
                 )
                 .is_err()
         );
-        editor.document.picking.kind = Some(Pick::Gamma);
-        editor.measurement_result(
-            editor.document.visit.view,
-            Pick::Gamma,
-            Ok(Measurement::Balance(Balance {
-                warmth: 0.1,
-                tint: -0.1,
-            })),
-            &crate::application::UiContext::render_only(),
+        editor.document.visit.picking.display = Some(Pick::Gamma.display());
+        assert!(
+            (calibration::set_gamma_balance(
+                &mut editor,
+                Balance {
+                    warmth: 0.1,
+                    tint: -0.1,
+                }
+            ))
+            .is_err()
         );
-        assert!(editor.status.contains("Pick rejected"));
+        editor.finish_pick(&crate::application::UiContext::render_only());
         assert_eq!(
             (
                 editor.document.roll,

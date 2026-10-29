@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{
-        Pick, Preparation, Prepared, measurement,
+        Pick, Preparation, Prepared,
         tests::{add_ready_fixture, fixture},
     },
 };
@@ -37,11 +37,8 @@ fn document_retirement_drops_child_continuations_and_cache_despite_captured_snap
             })
             .unwrap();
         app.update(|scope| {
-            scope.visit.measurement = Some(measurement::Pending {
-                target: None,
-                kind: Pick::Dmin,
-                _task: task,
-            })
+            scope.visit.picking.display = Some(Pick::Dmin.display());
+            scope.visit.pick_actions.push(task);
         });
         app.pump();
         app.update(|scope| *scope = Document::default().into());

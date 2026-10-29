@@ -34,8 +34,7 @@ impl Editor {
                 || (self.document.visit.ready.is_some()
                     || self.document.visit.pending_preview.is_some())
                     && !(self.busy
-                        && (self.document.picking.kind.is_some()
-                            || self.document.flat_edit.is_some())))
+                        && (self.active_pick().is_some() || self.document.flat_edit.is_some())))
     }
 
     pub(super) fn toggle_fullscreen(&mut self, context: &egui::Context) {

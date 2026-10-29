@@ -49,7 +49,7 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Viewer | [working owner](../src/editor/working_view.rs), [GPU view](../src/gpu/view.rs), [viewer](../src/viewer.rs), [original-view owner](../src/editor/original_view.rs), [refinement](../src/refinement.rs), [viewport](../src/viewport.rs) | Physical-view grading/inspection, original comparison, refinement |
 | Scopes | [measurement](../src/scopes.rs), [GPU reduction](../src/gpu_scopes.rs) | Approximate visible-image output statistics |
 | Editor | [editor](../src/editor.rs) and its feature modules | Live state, controls and transactions |
-| Workflows | [application](../src/application.rs), [blocking execution](../src/background.rs), [measurement](../src/editor/measurement.rs), [workflow modules](../src/editor/export_workflow.rs) | UI-thread async execution, borrowed UI context, off-thread services |
+| Workflows | [application](../src/application.rs), [blocking execution](../src/background.rs), [picking](../src/editor/picking.rs), [workflow modules](../src/editor/export_workflow.rs) | Feature-owned async execution, borrowed UI context, off-thread work |
 | Persistence | [project](../src/project.rs), [document](../src/editor/document.rs), [document owner](../src/editor/document_scope.rs) | Accepted state, history and cache lifetime, compatibility |
 
 | Host | [host](../src/platform/host.rs), [macOS](../src/platform/macos.rs), [Windows](../src/platform/windows.rs), [full-display inspection](../src/platform/fullscreen.rs) | Event loop, surface, presentation, native menus, window coverage |

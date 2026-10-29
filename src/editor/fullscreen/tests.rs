@@ -167,7 +167,7 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
         if crop {
             editor.begin_crop();
         } else {
-            editor.begin_pick(Pick::Dmin, &crate::application::UiContext::render_only());
+            editor.preview_picker(Pick::Dmin);
         }
         frame(&mut editor, &context, Some(false), vec![]);
         let viewport = editor.document.visit.viewport;
@@ -178,7 +178,7 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
             .crop_edit
             .as_ref()
             .map(|edit| edit.draft);
-        let pick = editor.document.picking.kind;
+        let pick = editor.active_pick();
         frame(&mut editor, &context, Some(false), key(egui::Key::F));
         frame(&mut editor, &context, Some(true), vec![]);
         frame(&mut editor, &context, Some(true), key(egui::Key::Enter));
@@ -191,7 +191,7 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
                 .map(|edit| edit.draft),
             draft
         );
-        assert_eq!(editor.document.picking.kind, pick);
+        assert_eq!(editor.active_pick(), pick);
         frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
         editor.fullscreen_changed(false);
         frame(&mut editor, &context, Some(false), vec![]);
@@ -206,7 +206,7 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
                 .map(|edit| edit.draft),
             draft
         );
-        assert_eq!(editor.document.picking.kind, pick);
+        assert_eq!(editor.active_pick(), pick);
         assert_eq!(editor.document.state.project, project);
     }
 }

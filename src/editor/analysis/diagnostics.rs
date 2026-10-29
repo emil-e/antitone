@@ -168,7 +168,7 @@ fn diagnose_sample_rolls() {
                     Duration::from_secs(300),
                     |e, cx| e.begin_flat_edit(reference.clone(), None, cx),
                 );
-                if editor.document.picking.region.is_some() {
+                if editor.pick_region().is_some() {
                     editor = crate::editor::tests::complete_reference_operation(
                         editor,
                         Duration::from_secs(300),

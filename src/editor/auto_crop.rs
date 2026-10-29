@@ -134,7 +134,7 @@ impl Editor {
     pub(super) fn auto_crop_editable(&self) -> bool {
         !self.busy
             && self.fullscreen.is_none()
-            && self.document.picking.kind.is_none()
+            && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.flat_edit.is_none()
             && !self.document.visit.dust.cleanup

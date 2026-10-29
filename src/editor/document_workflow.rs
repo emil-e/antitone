@@ -38,7 +38,7 @@ impl Editor {
             return;
         }
         self.cancel_spatial();
-        self.cancel_measurement();
+        self.retire_pick_actions();
         self.document.history.finish_group();
         self.history_pending = match &work {
             Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
@@ -265,7 +265,7 @@ impl Editor {
                 if input_changed {
                     self.document.source = !self.document.input.ready();
                 }
-                self.document.picking = Default::default();
+                self.document.visit.picking = Default::default();
                 self.document.visit.pick_drag = None;
                 self.document.visit.return_notice = None;
                 self.document.export_dialog = None;

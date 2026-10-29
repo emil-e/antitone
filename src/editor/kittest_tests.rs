@@ -607,7 +607,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                     let area =
                         harness.read(|editor| editor.document.visit.ready.as_ref().unwrap().area);
                     harness.update(|editor| {
-                        editor.document.picking.region = Some(if kind == FailureKind::FlatSupport {
+                        editor.set_pick_region(Some(if kind == FailureKind::FlatSupport {
                             let x = f64::from(area.x) + 0.25;
                             let y = f64::from(area.y);
                             Coverage::new(
@@ -622,7 +622,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                                 width: 2,
                                 height: 2,
                             })
-                        })
+                        }))
                     });
                     harness.enter(|editor, cx| editor.apply_flat_edit(cx));
                 }
@@ -827,22 +827,24 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
+        wait_for(&mut harness, |editor| editor.active_pick().is_some());
         assert_eq!(
-            harness.read(|editor| editor.document.picking.kind),
-            Some(Pick::Dmin)
+            harness.read(|editor| editor.active_pick()),
+            Some(Pick::Dmin.display())
         );
         assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.read(|editor| {
-            assert!(editor.document.picking.kind.is_none());
+            assert!(editor.active_pick().is_none());
             assert_eq!(editor.document.state.project, project);
         });
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
+        wait_for(&mut harness, |editor| editor.active_pick().is_some());
         assert_eq!(
-            harness.read(|editor| editor.document.picking.kind),
-            Some(Pick::Dmin)
+            harness.read(|editor| editor.active_pick()),
+            Some(Pick::Dmin.display())
         );
         let point = harness.read(|editor| {
             editor
@@ -863,14 +865,14 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
             });
         }
         harness.step();
-        assert!(harness.read(|editor| editor.document.picking.region.is_some()));
+        assert!(harness.read(|editor| editor.pick_region().is_some()));
         harness.get_by_label("Apply").click();
         harness.step();
         assert!(harness.read(|editor| editor.busy));
         // This fixture delivers completion without another UI pass.
         harness.run_until(Duration::from_secs(5), |editor| !editor.busy);
         harness.read(|editor| {
-            assert!(editor.document.picking.kind.is_none());
+            assert!(editor.active_pick().is_none());
             assert_eq!(editor.status, "Dmin measured");
         });
         let measured = harness.read(|editor| editor.dmin().unwrap());
@@ -1045,7 +1047,7 @@ fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.get_by_label("Fit").click();
     harness.step();
     let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
-    harness.read(|editor| assert!(editor.document.picking.region.is_none()));
+    harness.read(|editor| assert!(editor.pick_region().is_none()));
     drag(
         harness,
         geometry.screen_point(egui::pos2(area.x as f32, area.y as f32)),
@@ -1057,9 +1059,7 @@ fn draw_region(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.read(|editor| {
         assert_eq!(
             editor
-                .document
-                .picking
-                .region
+                .pick_region()
                 .unwrap()
                 .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area),
             Some(area)
