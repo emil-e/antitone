@@ -1,9 +1,11 @@
-//! Raster adapter for the shared pull layer composition and declared-work executor.
+//! Raster adapter for the shared evaluation layer composition and declared-work executor.
 use super::{
-    pull,
+    evaluation,
     raster::{self, Raster},
 };
-use crate::{Error, pixel_pipeline::PixelPipeline};
+use crate::Error;
+#[cfg(test)]
+use crate::pixel_pipeline::PixelPipeline;
 use std::sync::Arc;
 
 pub(crate) struct Kernels {
@@ -17,7 +19,8 @@ pub(crate) struct OutputRegion {
 }
 pub(crate) struct Prepared {
     pub raster: Raster,
-    execution: Option<pull::Recorded>,
+    execution: Option<evaluation::Recorded>,
+    context: evaluation::Context,
 }
 impl Prepared {
     #[cfg(test)]
@@ -27,45 +30,91 @@ impl Prepared {
         raster: Raster,
         previous: Option<&Self>,
     ) -> Result<Self, Error> {
-        Self::with_programs(device, pipeline, raster, previous, Arc::default())
+        let context = previous.map_or_else(
+            || evaluation::Context::new(device, Default::default()),
+            |p| p.context.clone(),
+        );
+        Self::with_context(device, pipeline, raster, previous, context)
     }
-    pub fn with_programs(
+    #[cfg(test)]
+    pub fn with_context(
         device: &wgpu::Device,
         pipeline: &PixelPipeline,
         raster: Raster,
         previous: Option<&Self>,
-        programs: Arc<pull::Programs>,
+        context: evaluation::Context,
     ) -> Result<Self, Error> {
-        let execution = if pipeline.is_empty() {
-            None
-        } else {
-            let domain = pull::Domain {
-                bounds: [0, 0, raster.size()[0], raster.size()[1]].into(),
-                grid: pull::Grid::from_raster(raster),
-                meaning: pull::Meaning::Graded,
-            };
-            let input = pull::raster_input(domain);
-            let root = pipeline.compose(input)?;
-            let plan = pull::Plan::with_policy(
-                root,
-                domain.bounds,
-                pull::Budget {
-                    tile: raster.size(),
-                    scratch_bytes: device.limits().max_buffer_size.saturating_mul(4),
-                },
-                pull::Policy::Composed,
-            )?;
-            let resources = previous
-                .and_then(|p| p.execution.as_ref())
-                .map(|p| p.resources())
-                .unwrap_or_default();
-            Some(pull::Executor::with_programs(programs).prepare(device, plan, resources)?)
+        if pipeline.is_empty() {
+            return Ok(Self {
+                raster,
+                execution: None,
+                context,
+            });
+        }
+        let domain = evaluation::Domain {
+            bounds: [0, 0, raster.size()[0], raster.size()[1]].into(),
+            grid: evaluation::Grid::from_raster(raster),
+            meaning: evaluation::Meaning::Graded,
         };
-        Ok(Self { raster, execution })
+        let root = pipeline.compose(evaluation::raster_input(domain))?;
+        Self::from_composition(device, raster, root, previous, context)
+    }
+    pub fn from_composition(
+        device: &wgpu::Device,
+        raster: Raster,
+        root: Arc<evaluation::ImageNode>,
+        previous: Option<&Self>,
+        context: evaluation::Context,
+    ) -> Result<Self, Error> {
+        let expected = evaluation::Domain {
+            bounds: [0, 0, raster.size()[0], raster.size()[1]].into(),
+            grid: evaluation::Grid::from_raster(raster),
+            meaning: root.domain.meaning,
+        };
+        if !root.domain.same_grid(expected) {
+            return Err(Error::InvalidParameter(
+                "recorded composition differs from raster",
+            ));
+        }
+        context.require_device(device)?;
+        let evaluation = context.request(
+            root,
+            evaluation::Region {
+                bounds: expected.bounds,
+                grid: expected.grid,
+            },
+            evaluation::Budget {
+                tile: raster.size(),
+                scratch_bytes: device.limits().max_buffer_size.saturating_mul(4),
+            },
+        )?;
+        let resources = previous
+            .filter(|p| Arc::ptr_eq(&p.context.programs, &context.programs))
+            .and_then(|p| p.execution.as_ref())
+            .map(|p| p.resources())
+            .unwrap_or_default();
+        let execution = context.record(evaluation, resources)?;
+        Ok(Self {
+            raster,
+            execution: Some(execution),
+            context,
+        })
     }
     #[cfg(all(test, feature = "editor"))]
-    pub fn field(&self) -> Option<&Arc<pull::RetainedBuffer>> {
+    pub fn field(&self) -> Option<&Arc<evaluation::RetainedBuffer>> {
         self.execution.as_ref()?.cached::<super::grain::FieldKey>()
+    }
+    pub fn encode_from(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &wgpu::Buffer,
+        destination: &wgpu::Buffer,
+    ) -> Result<(), Error> {
+        self.execution
+            .as_ref()
+            .ok_or(Error::InvalidParameter("missing recorded composition"))?
+            .encode_into(device, encoder, input, destination)
     }
     pub fn submitted(&self) {
         if let Some(execution) = &self.execution {
@@ -113,6 +162,7 @@ impl Kernels {
             crop,
         })
     }
+    #[cfg(test)]
     pub fn encode(
         &self,
         device: &wgpu::Device,
@@ -124,6 +174,16 @@ impl Kernels {
             execution.encode(device, encoder, pixels)?;
         }
         Ok(())
+    }
+    pub fn encode_from(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        prepared: &Prepared,
+        input: &wgpu::Buffer,
+        destination: &wgpu::Buffer,
+    ) -> Result<(), Error> {
+        prepared.encode_from(device, encoder, input, destination)
     }
     pub fn extract(
         &self,

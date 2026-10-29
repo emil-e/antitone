@@ -38,9 +38,28 @@ fn composed_photographic_kernel_validates() {
 #[test]
 fn composed_working_view_validates() {
     validate(
-        "working view",
-        &gpu::view::view_shader(),
-        &["view_main", "inspection_main"],
+        "source inspection functions",
+        include_str!("gpu/evaluation/inspection.wgsl"),
+        &[],
+    );
+    validate(
+        "acquisition copy",
+        include_str!("gpu/evaluation/copy_texture.wgsl"),
+        &["main"],
+    );
+    validate(
+        "photographic functions",
+        &gpu::evaluation::Grading::shader(),
+        &[],
+    );
+    validate(
+        "camera-cell adjustments",
+        &format!(
+            "{}\n{}",
+            gpu::evaluation::Grading::shader(),
+            include_str!("gpu/evaluation/camera_adjustments.wgsl")
+        ),
+        &["camera_adjustments"],
     );
     validate(
         "image response",

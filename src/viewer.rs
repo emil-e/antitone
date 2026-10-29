@@ -218,30 +218,6 @@ impl GpuImage {
             return Err(Error::Gpu("preview image exceeds GPU limits".into()));
         }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let processing = source
-            .map(|(renderer, source)| -> Result<_, Error> {
-                let working = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("processed AP1 preview"),
-                    size: u64::from(count) * 16,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                let aces_group = renderer.render_binding(
-                    device,
-                    &working,
-                    [width, height, 0, 0],
-                    target,
-                    None,
-                )?;
-                Ok(ImageProcessing {
-                    renderer,
-                    target,
-                    source,
-                    working,
-                    aces_group: std::sync::Mutex::new((None, aces_group)),
-                })
-            })
-            .transpose()?;
         let linear = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("linear target RGB, before presentation"),
             size: wgpu::Extent3d {
@@ -259,6 +235,31 @@ impl GpuImage {
                 | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
+        let processing = source
+            .map(|(renderer, source)| -> Result<_, Error> {
+                let working = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("processed AP1 preview"),
+                    size: u64::from(count) * 16,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let aces_group = renderer.render_binding(
+                    device,
+                    &working,
+                    [width, height, 0, 0],
+                    target,
+                    None,
+                    &linear,
+                )?;
+                Ok(ImageProcessing {
+                    renderer,
+                    target,
+                    source,
+                    working,
+                    aces_group: std::sync::Mutex::new((None, aces_group)),
+                })
+            })
+            .transpose()?;
         let matrix = target.linear_to_srgb();
         let presentation = Presentation {
             columns: [matrix.x_axis, matrix.y_axis, matrix.z_axis].map(|v| v.as_vec3().extend(0.)),
@@ -290,7 +291,7 @@ impl GpuImage {
         self.processing.as_ref().map_or((0, 0), |p| {
             (
                 p.source.byte_len(),
-                p.working.size() + p.aces_group.lock().unwrap().1.look_bytes(),
+                p.working.size() + p.aces_group.lock().unwrap().1.reference_bytes(),
             )
         })
     }
@@ -454,31 +455,12 @@ impl GpuImage {
                 self.presentation.size,
                 processing.target,
                 input.look(),
+                &self.linear,
             )?;
             binding.0 = id;
         }
         self.look_projections.lock().unwrap().clear();
-        *self.look_check.lock().unwrap() =
-            binding
-                .1
-                .encode_look(&processing.renderer, device, encoder)?;
-        let view = self.linear.create_view(&Default::default());
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("ACES target rendering"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-        pass.set_pipeline(&processing.renderer.target(processing.target).pipeline);
-        pass.set_bind_group(0, &binding.1.group, &[]);
-        pass.draw(0..3, 0..1);
+        *self.look_check.lock().unwrap() = binding.1.encode(device, encoder)?;
         Ok(())
     }
 

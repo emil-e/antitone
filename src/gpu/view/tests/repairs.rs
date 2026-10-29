@@ -112,7 +112,7 @@ fn filter_authored_repairs(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -135,13 +135,19 @@ fn filter_authored_repairs(
     source
         .kernels
         .acquisition
-        .copy(device, &mut encoder, &working, &texture);
+        .copy(
+            &source.renderer.evaluation,
+            &mut encoder,
+            &working,
+            &texture,
+        )
+        .unwrap();
     let bounds = frame.bounds().unwrap();
     source
         .kernels
         .acquisition
         .filter(
-            device,
+            &source.renderer.evaluation,
             &mut encoder,
             &texture,
             &pixels,

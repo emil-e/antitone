@@ -368,7 +368,10 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                     image.set_geometry(geometry).unwrap();
                     assert_eq!(
                         image.processing_byte_len(),
-                        (source.byte_len(), output.size())
+                        (
+                            source.byte_len(),
+                            output.size() + std::mem::size_of::<[u32; 4]>() as u64
+                        )
                     );
                     completion(&device, &queue, |encoder| {
                         image.encode_processing(&device, encoder, &input).unwrap()

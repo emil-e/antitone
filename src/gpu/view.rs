@@ -20,8 +20,6 @@ mod repair_reconstruction;
 mod source_spec;
 pub(crate) use source_spec::ViewSourceSpec;
 
-#[cfg(test)]
-pub(crate) use crate::gpu::execution::footprints::shader as view_shader;
 use crate::gpu::execution::footprints::uniform;
 
 pub(crate) struct ViewKernels {
@@ -61,6 +59,42 @@ pub(crate) struct ViewSource {
 }
 
 impl ViewSource {
+    pub(crate) fn retain_neutral(&self, cache: &crate::gpu::evaluation::ImageCache) -> bool {
+        cache.belongs_to(&self.renderer.evaluation)
+            && self.spec.repairs.0.is_empty()
+            && cache.retain(
+                self.spec.request.cache_key(),
+                Arc::new(self.spec.request.clone()),
+                &self.pixels,
+            )
+    }
+    pub(crate) fn cached_neutral(
+        cache: &crate::gpu::evaluation::ImageCache,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<ViewKernels>,
+        wanted: &ViewSourceSpec,
+    ) -> Option<Arc<Self>> {
+        if !cache.belongs_to(&renderer.evaluation) || !wanted.repairs.0.is_empty() {
+            return None;
+        }
+        let found = cache.find::<crate::gpu::execution::footprints::Request>(
+            &wanted.request.cache_key(),
+            |have| have.satisfies(&wanted.request),
+        )?;
+        Some(Arc::new(Self {
+            spec: ViewSourceSpec {
+                authority: wanted.authority,
+                request: found.descriptor.as_ref().clone(),
+            },
+            renderer,
+            kernels,
+            pixels: found.pixels,
+        }))
+    }
+    #[cfg(test)]
+    pub(crate) fn same_pixels_as(&self, other: &Self) -> bool {
+        self.pixels == other.pixels
+    }
     pub(crate) fn published(self: &Arc<Self>, authority: u64) -> Arc<Self> {
         if self.spec.authority == authority {
             return self.clone();
@@ -253,11 +287,15 @@ impl RenderedView {
     pub(crate) fn photographic_bytes(&self) -> u64 {
         self.group
             .as_ref()
-            .map_or(0, |binding| binding.look_bytes())
+            .map_or(0, |binding| binding.reference_bytes())
             + self.graded.as_ref().map_or(0, |graded| {
                 graded.source.pixels.size()
                     + graded.pixels.size()
                     + graded.stages.byte_len()
+                    + graded
+                        .grading
+                        .as_ref()
+                        .map_or(0, |grading| grading.byte_len())
                     + graded.source.spec.repairs.byte_len()
                     + (self.spec.repairs.0.capacity() + graded.source.spec.repairs.0.len()) as u64
                         * std::mem::size_of::<Arc<super::repairs::Patch>>() as u64
@@ -341,6 +379,7 @@ impl RenderedView {
             [width, height, 1, 0],
             target,
             input.look(),
+            &image.linear,
         )?;
         Ok(Arc::new(Self {
             image,
@@ -436,26 +475,9 @@ impl RenderedView {
             let binding = self.group.as_ref().unwrap();
             self.image.set_look_check(
                 binding
-                    .encode_look(&graded.source.renderer, device, &mut encoder)
-                    .expect("validated physical-view look dispatch"),
+                    .encode(device, &mut encoder)
+                    .expect("validated physical-view reference composition"),
             );
-            let view = self.image.linear.create_view(&Default::default());
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("accepted physical-view ACES result"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
-            pass.set_pipeline(&graded.source.renderer.target(self.target).pipeline);
-            pass.set_bind_group(0, &binding.group, &[]);
-            pass.draw(0..3, 0..1);
         }
         // Submitted bindings own their native versions until completion. The callback owns no
         // renderer/queue or GPU-resource lease: it may run under the shared submission gate.

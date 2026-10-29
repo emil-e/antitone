@@ -3,15 +3,15 @@ use super::*;
 struct Independent {
     margin: u32,
 }
-impl Layer for Independent {
+impl EffectDefinition for Independent {
     fn support(&self, _: [f64; 2]) -> Support {
         Support([self.margin, 0])
     }
     #[cfg(all(feature = "gpu", feature = "render"))]
     fn compose(
         &self,
-        input: Arc<crate::gpu::pull::Layer>,
-    ) -> Result<Arc<crate::gpu::pull::Layer>, Error> {
+        input: Arc<crate::gpu::evaluation::ImageNode>,
+    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
         Ok(input)
     }
 }

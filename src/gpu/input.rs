@@ -61,6 +61,29 @@ impl From<Arc<GpuPipeline>> for ProcessingInput {
 }
 
 impl ProcessingInput {
+    /// Install the same captured component definitions used by accepted-recipe export.
+    /// Interactive overlays choose their own recipe; they do not mutate accepted export intent.
+    #[cfg(all(
+        feature = "project",
+        feature = "render",
+        any(feature = "raw", feature = "ui")
+    ))]
+    pub(crate) fn with_recipe_components(
+        self,
+        recipe: &crate::image_recipe::ImageRecipe,
+    ) -> Result<Self, crate::Error> {
+        if !self.parameters().graded() {
+            return Err(crate::Error::InvalidParameter(
+                "positive recipe requires photographic processing",
+            ));
+        }
+        Ok(self
+            .with_look(recipe.look.clone())
+            .with_film_emulation(recipe.film_emulation)
+            .with_frame_size(recipe.composition.crop().size)
+            .with_film_seed(recipe.neutral.source.0)
+            .with_layers(recipe.pixel_pipeline()?))
+    }
     /// Rendering is downstream of the photographic constants; source inspection never adopts a look.
     pub fn with_look(mut self, look: Option<Arc<crate::looks::LookAsset>>) -> Self {
         self.look = if self.parameters().graded() {
@@ -244,6 +267,105 @@ mod tests {
     use super::*;
     use crate::film_emulation::FilmEmulationPreset;
 
+    #[cfg(all(
+        feature = "project",
+        feature = "render",
+        any(feature = "raw", feature = "ui")
+    ))]
+    #[test]
+    fn accepted_components_capture_crop_seed_and_look_without_adopting_view_overrides() {
+        use crate::project::{Development, Project, Source, SourceDevelopment, SourceId};
+        let mut project = Project {
+            input: crate::processing::InputSettings::Digital,
+            ..Default::default()
+        };
+        let id = project
+            .add_source(Source {
+                id: SourceId(0),
+                path: "authored.dng".into(),
+                reference_only: false,
+                development: SourceDevelopment {
+                    decode: Development::new("test".into(), [1.; 4]),
+                    lens_correction: None,
+                    dng_development: None,
+                    dimensions: [624, 424],
+                    active_area: [12, 12, 600, 400],
+                    camera_model: "test".into(),
+                    camera_to_ap1: glam::DMat3::IDENTITY.to_cols_array_2d(),
+                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+                },
+                orientation: Default::default(),
+                crop: Some(crate::crop::Crop {
+                    center: [312., 212.],
+                    size: [300, 200],
+                    angle: 0.19,
+                }),
+                repairs: Default::default(),
+                adjustment_layers: None,
+            })
+            .unwrap();
+        project.output.film_emulation = crate::film_emulation::FilmEmulationSettings {
+            enabled: true,
+            size: 0.04,
+            ..Default::default()
+        };
+        project.output.look = Some(Arc::new(
+            crate::looks::LookAsset::new(
+                "Captured".into(),
+                crate::looks::LookOrigin::Imported,
+                Arc::new(crate::looks::Lut3D::new(2, [0.; 3], [1.; 3], vec![[0.4; 3]; 8]).unwrap()),
+            )
+            .unwrap(),
+        ));
+        let recipe = project.image_recipe(id).unwrap();
+        let base = ProcessingInput::from(
+            ProcessingParameters::interpret(
+                crate::processing::InputSettings::Digital,
+                Default::default(),
+                glam::DMat3::IDENTITY,
+            )
+            .unwrap(),
+        );
+        let captured = base.clone().with_recipe_components(&recipe).unwrap();
+        let pipeline = captured.pixel_pipeline().unwrap();
+        let mtf = pipeline
+            .stages
+            .iter()
+            .find_map(|stage| stage.get::<crate::image_mtf::ImageMtfParameters>())
+            .unwrap();
+        let grain = pipeline
+            .stages
+            .iter()
+            .find_map(|stage| stage.get::<crate::pixel_pipeline::Grain>())
+            .unwrap();
+        assert!((mtf.sigma - 0.08).abs() < 1e-12);
+        assert!((grain.parameters.grain_size - 0.08).abs() < 1e-12);
+        assert_eq!(grain.seed, id.0);
+        assert_eq!(
+            captured.look().unwrap().lut().id(),
+            recipe.look.as_ref().unwrap().lut().id()
+        );
+        let override_view = captured.clone().with_layers(Default::default());
+        assert!(override_view.pixel_pipeline().unwrap().is_empty());
+        assert_eq!(recipe.pixel_pipeline().unwrap(), pipeline);
+        assert_ne!(override_view.signature(), captured.signature());
+        project.output.film_emulation.enabled = false;
+        project.output.look = None;
+        project.source_mut(id).unwrap().crop = None;
+        assert_eq!(captured.pixel_pipeline().unwrap(), pipeline);
+        assert!(
+            base.with_recipe_components(&project.image_recipe(id).unwrap())
+                .unwrap()
+                .pixel_pipeline()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            ProcessingInput::from(ProcessingParameters::source())
+                .with_recipe_components(&recipe)
+                .is_err()
+        );
+    }
     #[test]
     fn source_inspection_cannot_adopt_film_emulation() {
         let source = ProcessingInput::from(ProcessingParameters::source());

@@ -246,8 +246,7 @@ impl Editor {
             .correction
             .as_ref()
             .map(|correction| correction.settings.map.clone());
-        let snapshot = recipe.grade;
-        let look = recipe.look;
+        let snapshot = recipe.grade.clone();
         let input = recipe.neutral.processing_input()?;
         let matrix = self.document.positive_matrix(source, input)?;
         self.document
@@ -262,13 +261,7 @@ impl Editor {
                 },
                 snapshot,
             )
-            .map(|input| {
-                input
-                    .with_look(look)
-                    .with_film_emulation(recipe.film_emulation)
-                    .with_frame_size(recipe.composition.crop().size)
-                    .with_film_seed(source.id.0)
-            })
+            .and_then(|input| input.with_recipe_components(&recipe))
     }
 
     pub(super) fn positive_processing(

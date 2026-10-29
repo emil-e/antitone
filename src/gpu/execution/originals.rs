@@ -1,6 +1,6 @@
 //! Codec-independent bounded original-sample execution and destination-only readback.
 use super::{OutputBlock, Request, SampleEncoding, WorkBudget};
-use crate::gpu::{GpuPipeline, SubmissionGate, pull, rgb16};
+use crate::gpu::{GpuPipeline, SubmissionGate, evaluation, rgb16};
 use crate::{
     Error,
     frame_raster::FrameRaster,
@@ -177,7 +177,7 @@ struct Area {
     budget: WorkBudget,
     unused_texture: wgpu::TextureView,
 }
-impl pull::Operation for Area {
+impl evaluation::Operation for Area {
     fn input(&self, output: SourceRegion) -> Result<Option<SourceRegion>, Error> {
         let origin = [output.x, output.y];
         let extent = [output.width, output.height];
@@ -197,9 +197,9 @@ impl pull::Operation for Area {
     }
     fn lower(
         &self,
-        fragment: &mut pull::Fragment,
-        input: Option<pull::Image>,
-        output: pull::Image,
+        fragment: &mut evaluation::Fragment,
+        input: Option<evaluation::PlannedImage>,
+        output: evaluation::PlannedImage,
     ) -> Result<(), Error> {
         let input = input.unwrap();
         let plan = Unit::plan(
@@ -219,22 +219,24 @@ impl pull::Operation for Area {
         // Its legacy texture binding is deliberately unused in this implementation.
         unit.mapping.space[0] = 1;
         let mapping = fragment.uniform(&unit.mapping);
-        let support = fragment.resource(pull::Storage::Data(
+        let support = fragment.resource(evaluation::Storage::Data(
             bytemuck::cast_slice(unit.support.as_deref().unwrap_or(&[u32::MAX])).into(),
         ));
-        fragment.work.push(pull::Work::Compute {
+        fragment.work.push(evaluation::Work::Compute {
             code: include_str!("../../shaders/export_area.wgsl").into(),
             entry: "main",
             initialize: None,
             bindings: vec![
                 (
                     0,
-                    pull::Binding::Shared(pull::Shared::Texture(self.unused_texture.clone())),
+                    evaluation::Binding::Shared(evaluation::Shared::Texture(
+                        self.unused_texture.clone(),
+                    )),
                 ),
-                (1, pull::Binding::Read(input.resource)),
-                (2, pull::Binding::Write(output.resource)),
+                (1, evaluation::Binding::Read(input.resource)),
+                (2, evaluation::Binding::Write(output.resource)),
                 (3, mapping),
-                (4, pull::Binding::Read(support)),
+                (4, evaluation::Binding::Read(support)),
             ],
             groups: [
                 output.size()[0].div_ceil(8),
@@ -590,7 +592,7 @@ pub(crate) fn execute(
         SampleEncoding::Rgb16 => request.output.display_target(),
     };
     let reconstruction = timed!(Setup, Reconstructor::new_output(device, target))?;
-    let original = pull::original_chain(
+    let original = evaluation::original_chain(
         device,
         renderer,
         request.scan,
@@ -614,10 +616,12 @@ pub(crate) fn execute(
         view_formats: &[],
     });
     let size = request.composition.size();
-    let root = pull::Layer::new(
-        pull::Domain {
+    let root = evaluation::ImageNode::new(
+        evaluation::Domain {
             bounds: [0, 0, size[0], size[1]].into(),
-            grid: pull::Grid::axis_aligned([0.; 2], [1.; 2]),
+            grid: evaluation::Grid::from_frame(crate::frame_raster::FrameRaster::full(
+                request.composition,
+            )?),
             meaning: original.domain.meaning,
         },
         Some(original),
@@ -633,7 +637,7 @@ pub(crate) fn execute(
             unused_texture: dummy.create_view(&Default::default()),
         },
     );
-    let mut executor = pull::Executor::with_programs(renderer.pull_programs.clone());
+    let mut executor = renderer.evaluation.executor();
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
         rgb16_payload_bytes: if reconstruction.rgb16.is_some() {
@@ -671,15 +675,22 @@ pub(crate) fn execute(
             let timing = std::cell::RefCell::new(timestamps.borrow_mut());
             let plan = timed!(
                 CoveragePlan,
-                pull::Plan::with_policy(
-                    root.clone(),
-                    [origin[0], origin[1], extent[0], extent[1]].into(),
-                    pull::Budget {
-                        tile: TILE,
-                        scratch_bytes: (32 << 20).min(device.limits().max_buffer_size)
-                    },
-                    pull::Policy::Composed
-                )
+                renderer
+                    .evaluation
+                    .request(
+                        root.clone(),
+                        evaluation::Region {
+                            bounds: [origin[0], origin[1], extent[0], extent[1]].into(),
+                            grid: root.domain.grid
+                        },
+                        evaluation::Budget {
+                            tile: TILE,
+                            scratch_bytes: (32 << 20).min(device.limits().max_buffer_size)
+                        }
+                    )?
+                    .plans()
+                    .next()
+                    .ok_or(Error::InvalidParameter("empty original evaluation"))?
             )?;
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             {
@@ -706,9 +717,9 @@ pub(crate) fn execute(
                         true
                     }
                 },
-                pull::Sink {
+                evaluation::Sink {
                     encode: |encoder: &mut wgpu::CommandEncoder,
-                             image: pull::Image,
+                             image: evaluation::PlannedImage,
                              pixels: &wgpu::Buffer| {
                         reconstruction.encode_pixels(device, encoder, pixels, image.cells())?;
                         #[cfg(all(test, target_os = "macos", feature = "export"))]
@@ -752,7 +763,7 @@ pub(crate) fn execute(
                 stats.submissions += _executed.submissions as u64;
                 stats.scratch_buffer_allocations += _executed.buffer_allocations as u64;
                 for work in plan.tiles.iter().flat_map(|t| &t.fragment.work) {
-                    if let pull::Work::Upload { output, .. } = work {
+                    if let evaluation::Work::Upload { output, .. } = work {
                         if previous_source_size != Some(output.size()) {
                             stats.source_layout_changes += 1;
                             previous_source_size = Some(output.size());
@@ -769,7 +780,7 @@ pub(crate) fn execute(
                     .iter()
                     .flat_map(|t| &t.fragment.resources)
                     .filter_map(|r| {
-                        if let pull::Storage::Data(bytes) = r {
+                        if let evaluation::Storage::Data(bytes) = r {
                             Some(bytes.len() as u64)
                         } else {
                             None

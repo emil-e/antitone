@@ -107,7 +107,10 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
                 .await
                 .unwrap();
             image.set_flat_field(Some(gpu.clone()), geometry).unwrap();
-            assert_eq!(image.processing_byte_len(), (64 * 8, 64 * 16));
+            assert_eq!(
+                image.processing_byte_len(),
+                (64 * 8, 64 * 16 + std::mem::size_of::<[u32; 4]>() as u64)
+            );
             for (parameters, working) in &cases {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 image
@@ -346,7 +349,9 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                                     device.create_command_encoder(&Default::default());
                                 tile.encode_processing(&device, &mut encoder, &parameters)
                                     .unwrap();
-                                average.accumulate(&device, &mut encoder, &tile.linear, [x, y]);
+                                average
+                                    .accumulate(&device, &mut encoder, &tile.linear, [x, y])
+                                    .unwrap();
                                 queue.submit([encoder.finish()]);
                                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                             }
@@ -357,7 +362,9 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                         .await
                         .unwrap();
                         let mut encoder = device.create_command_encoder(&Default::default());
-                        average.finish(&device, &mut encoder, &result.linear);
+                        average
+                            .finish(&device, &mut encoder, &result.linear)
+                            .unwrap();
                         queue.submit([encoder.finish()]);
                         let actual = read(&device, &queue, &result.linear).await;
                         for y in 0..output[1] {
@@ -529,7 +536,10 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                 .unwrap();
             assert_eq!(
                 image.processing_byte_len(),
-                (pixels.len() as u64 * 8, pixels.len() as u64 * 16)
+                (
+                    pixels.len() as u64 * 8,
+                    pixels.len() as u64 * 16 + std::mem::size_of::<[u32; 4]>() as u64
+                )
             );
             assert!(image.write_source(&queue, &pixels[..7]).is_err());
             let rendered = GpuImage::new_rendered(&device, &queue, 4, 2, target)
@@ -961,12 +971,14 @@ fn tiled_linear_area_average_matches_scalar_fractional_footprints() {
                     tile.size(),
                 );
                 let mut encoder = device.create_command_encoder(&Default::default());
-                average.accumulate(&device, &mut encoder, &tile, [x, y]);
+                average
+                    .accumulate(&device, &mut encoder, &tile, [x, y])
+                    .unwrap();
                 queue.submit([encoder.finish()]);
             }
         }
         let mut encoder = device.create_command_encoder(&Default::default());
-        average.finish(&device, &mut encoder, &output);
+        average.finish(&device, &mut encoder, &output).unwrap();
         queue.submit([encoder.finish()]);
         let actual = read(&device, &queue, &output).await;
         for y in 0..3 {
@@ -1098,14 +1110,18 @@ fn large_retina_fit_area_average_uses_supported_buffer_limits() {
             wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        average.accumulate(&device, &mut encoder, &tile, [0, 0]);
-        average.accumulate(
-            &device,
-            &mut encoder,
-            &tile,
-            [source.width - 1, source.height - 1],
-        );
-        average.finish(&device, &mut encoder, &target);
+        average
+            .accumulate(&device, &mut encoder, &tile, [0, 0])
+            .unwrap();
+        average
+            .accumulate(
+                &device,
+                &mut encoder,
+                &tile,
+                [source.width - 1, source.height - 1],
+            )
+            .unwrap();
+        average.finish(&device, &mut encoder, &target).unwrap();
         for (i, [x, y]) in [
             [0, 0],
             [output[0] / 2, output[1] / 2],

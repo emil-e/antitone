@@ -884,7 +884,9 @@ fn reusable_tiles_grade_original_pixels_before_rotated_target_averaging() {
                             let mut encoder = device.create_command_encoder(&Default::default());
                             tile.encode_processing(&device, &mut encoder, &processing)
                                 .unwrap();
-                            average.accumulate(&device, &mut encoder, &tile.linear, [x, y]);
+                            average
+                                .accumulate(&device, &mut encoder, &tile.linear, [x, y])
+                                .unwrap();
                             queue.submit([encoder.finish()]);
                         }
                     }
@@ -892,7 +894,9 @@ fn reusable_tiles_grade_original_pixels_before_rotated_target_averaging() {
                         .await
                         .unwrap();
                     let mut encoder = device.create_command_encoder(&Default::default());
-                    average.finish(&device, &mut encoder, &output.linear);
+                    average
+                        .finish(&device, &mut encoder, &output.linear)
+                        .unwrap();
                     queue.submit([encoder.finish()]);
                     let actual = read_image(&device, &queue, &output).await;
                     for y in 0..3 {

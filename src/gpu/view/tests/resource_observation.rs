@@ -39,11 +39,11 @@ fn acquisition_execution_resources() {
             );
         }));
         let checkpoint = |name: &str, started: Instant| {
-            let [creations, bytes] = crate::gpu::test_support::take_pull_buffer_creations();
+            let [creations, bytes] = crate::gpu::test_support::take_evaluation_buffer_creations();
             println!(
                 concat!(
                     "execution_resource phase={} seconds={:.9} retained_device={} ",
-                    "encoded_device_peak={} pull_buffer_creations={} pull_buffer_bytes={}"
+                    "encoded_device_peak={} evaluation_buffer_creations={} evaluation_buffer_bytes={}"
                 ),
                 name,
                 started.elapsed().as_secs_f64(),
@@ -54,8 +54,21 @@ fn acquisition_execution_resources() {
             );
         };
         let start = Instant::now();
-        let renderer =
-            pollster::block_on(crate::renderer::GpuRenderer::new(device, queue)).unwrap();
+        let mut policy = crate::gpu::evaluation::CachePolicy::default();
+        if let Some(value) = std::env::var_os("ANTITONE_GENERATED_CACHE_BYTES") {
+            policy.generated_bytes = value
+                .to_str()
+                .ok_or("cache budget is not UTF-8")?
+                .parse::<u64>()
+                .map_err(|e| e.to_string())?;
+        }
+        let renderer = pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(
+            device,
+            queue,
+            SubmissionGate::default(),
+            policy,
+        ))
+        .unwrap();
         let kernels = pollster::block_on(ViewKernels::new(device)).unwrap();
         checkpoint("setup", start);
 
@@ -206,4 +219,44 @@ fn acquisition_execution_resources() {
         Ok(())
     })
     .unwrap();
+}
+
+#[test]
+#[ignore = "isolated neutral-image retention/regeneration and actual allocator observation"]
+fn neutral_image_retention_resources() {
+    crate::cache_observation::with_monitor(|monitor,device,queue|{
+        let file=crate::dng_fixture::Fixture{side:1536,bits:16,ramp:true,..Default::default()}.write();
+        let scan=Scan::open(file.path(),None).map_err(|e|e.to_string())?;
+        let composition=Composition::new(scan.area,Default::default(),Default::default()).unwrap();
+        let frame=FrameRaster::new(composition,FramePoint([256.,256.]),FramePoint([1216.,976.]),[640,480]).unwrap();
+        let policy=crate::gpu::evaluation::CachePolicy{generated_bytes:std::env::var("ANTITONE_GENERATED_CACHE_BYTES").ok().map(|v|v.parse::<u64>().unwrap()).unwrap_or(crate::gpu::evaluation::CachePolicy::default().generated_bytes)};
+        let renderer=pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(device,queue,Default::default(),policy)).unwrap();
+        let kernels=pollster::block_on(ViewKernels::new(device)).unwrap();
+        let cache=renderer.evaluation().image_cache(2);
+        let spec=ViewSourceSpec::new(1,frame,InputSettings::Digital,scan.positive_matrix(&InputSettings::Digital).unwrap(),None).unwrap().with_identity(crate::gpu::execution::source::Identity::camera(scan.source().identity()));
+        let gate=SubmissionGate::default();
+        let peak=Arc::new(AtomicU64::new(0));let observed=peak.clone();let observed_device=device.clone();
+        gate.observe_encoded_resources(Arc::new(move||{observed.fetch_max(crate::gpu::allocated_resource_bytes(&observed_device).unwrap() as u64,Ordering::Relaxed);}));
+        let mut reference=None;
+        for run in 0..4 {
+            monitor.check()?;
+            peak.store(0,Ordering::Relaxed);
+            let _=crate::gpu::test_support::take_evaluation_buffer_creations();
+            let start=Instant::now();
+            let cached=ViewSource::cached_neutral(&cache,renderer.clone(),kernels.clone(),&spec);
+            let hit=cached.is_some();
+            let source=if let Some(source)=cached{source}else{ViewSource::acquire(device,queue,&gate,renderer.clone(),kernels.clone(),&scan,None,spec.clone(),||monitor.check().is_err()).unwrap().unwrap()};
+            source.retain_neutral(&cache);
+            let [creations,bytes]=crate::gpu::test_support::take_evaluation_buffer_creations();
+            println!("neutral_retention run={run} hit={hit} seconds={:.9} retained_payload={} retained_device={} encoded_device_peak={} evaluation_buffer_creations={creations} evaluation_buffer_bytes={bytes}",start.elapsed().as_secs_f64(),renderer.evaluation().retained_bytes(),crate::gpu::allocated_resource_bytes(device).unwrap(),peak.load(Ordering::Relaxed));
+            let pixels=read(device,queue,&source.pixels);
+            if let Some(expected)=&reference{assert_eq!(&pixels,expected);}else{reference=Some(pixels);}
+            drop(source);
+        }
+        if let Some(prefix)=std::env::var_os("ANTITONE_RESOURCE_OUTPUT") {std::fs::write(std::path::PathBuf::from(prefix).with_extension("neutral.rgbaf32"),bytemuck::cast_slice(reference.as_ref().unwrap())).unwrap();}
+        cache.clear();crate::cache_observation::wait(device,queue).unwrap();
+        assert_eq!(renderer.evaluation().retained_bytes(),0);
+        println!("neutral_retention retired_device={}",crate::gpu::allocated_resource_bytes(device).unwrap());
+        Ok(())
+    }).unwrap();
 }

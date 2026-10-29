@@ -16,8 +16,7 @@ struct MailboxState {
     wanted: Option<ViewSourceSpec>,
     input: Option<source::Context>,
     underlay: Option<Arc<ViewSource>>,
-    neutral_detail: Option<Arc<ViewSource>>,
-    neutral_underlay: Option<Arc<ViewSource>>,
+    neutral: Option<crate::gpu::evaluation::ImageCache>,
     repaired_detail: Option<Arc<ViewSource>>,
 }
 
@@ -167,8 +166,7 @@ impl WorkingView {
         let retired = mailbox.input.take();
         mailbox.wanted = None;
         mailbox.underlay = None;
-        mailbox.neutral_detail = None;
-        mailbox.neutral_underlay = None;
+        mailbox.neutral = None;
         mailbox.repaired_detail = None;
 
         self.source = None;
@@ -190,9 +188,16 @@ impl WorkingView {
         self.rendered.as_ref()
     }
 
-    #[cfg(all(test, feature = "ui-tests"))]
+    #[cfg(test)]
     pub(super) fn neutral_source(&self) -> Option<Arc<ViewSource>> {
-        self.mailbox.0.lock().unwrap().neutral_detail.clone()
+        let source = self.source.as_ref()?;
+        let state = self.mailbox.0.lock().unwrap();
+        ViewSource::cached_neutral(
+            state.neutral.as_ref()?,
+            source.renderer.clone(),
+            self.kernels.get()?.clone(),
+            &source.spec.clone().with_repairs(Default::default()),
+        )
     }
 
     pub(super) fn support_ready(&self) -> bool {
@@ -483,8 +488,7 @@ impl Drop for WorkingView {
         let retired = mailbox.input.take();
         mailbox.wanted = None;
         mailbox.underlay = None;
-        mailbox.neutral_detail = None;
-        mailbox.neutral_underlay = None;
+        mailbox.neutral = None;
         mailbox.repaired_detail = None;
         drop(mailbox);
         drop(retired);
@@ -548,145 +552,147 @@ pub(super) fn acquire(
                     || underlay.spec.repairs != spec.repairs
             });
 
-        let result =
-            (|| {
-                let renderer = renderers.get(device, queue)?;
-                // Compile off-thread, then publish immutable pipelines independently of
-                // acquisition. Painting reads only an already-published handle.
-                let kernels = if let Some(kernels) = kernels.get() {
-                    kernels.clone()
-                } else {
-                    let prepared = pollster::block_on(ViewKernels::new(device))?;
-                    kernels.get_or_init(|| prepared).clone()
-                };
+        let result = (|| {
+            let renderer = renderers.get(device, queue)?;
+            // Compile off-thread, then publish immutable pipelines independently of
+            // acquisition. Painting reads only an already-published handle.
+            let kernels = if let Some(kernels) = kernels.get() {
+                kernels.clone()
+            } else {
+                let prepared = pollster::block_on(ViewKernels::new(device))?;
+                kernels.get_or_init(|| prepared).clone()
+            };
 
-                let specs = if needs_underlay {
-                    vec![spec.clone(), spec.underlay()?]
-                } else {
-                    vec![spec.clone()]
-                };
-                let cancelled = || {
-                    retired.load(Ordering::Relaxed)
-                        || source_epoch.load(Ordering::Relaxed) != spec.authority
-                        || mailbox
-                            .0
-                            .lock()
-                            .unwrap()
-                            .wanted
-                            .as_ref()
-                            .is_none_or(|wanted| {
-                                if needs_underlay {
+            let specs = if needs_underlay {
+                vec![spec.clone(), spec.underlay()?]
+            } else {
+                vec![spec.clone()]
+            };
+            let cancelled = || {
+                retired.load(Ordering::Relaxed)
+                    || source_epoch.load(Ordering::Relaxed) != spec.authority
+                    || mailbox
+                        .0
+                        .lock()
+                        .unwrap()
+                        .wanted
+                        .as_ref()
+                        .is_none_or(|wanted| {
+                            if needs_underlay {
+                                !specs
+                                    .iter()
+                                    .all(|pending| pending.compatible_processing(wanted))
+                                    || wanted.frame().composition != spec.frame().composition
+                                    || wanted.repairs != spec.repairs
+                            } else {
+                                wanted != &spec
+                            }
+                        })
+            };
+            let cache = {
+                let mut state = mailbox.0.lock().unwrap();
+                state
+                    .neutral
+                    .get_or_insert_with(|| renderer.evaluation().image_cache(2))
+                    .clone()
+            };
+            let mut neutral_sources = Vec::new();
+            let mut missing_specs = Vec::new();
+            for wanted in &specs {
+                let neutral = wanted.clone().with_repairs(Default::default());
+                let cached =
+                    ViewSource::cached_neutral(&cache, renderer.clone(), kernels.clone(), &neutral);
+                if cached.is_none() {
+                    missing_specs.push(neutral);
+                }
+                neutral_sources.push(cached);
+            }
+
+            if !missing_specs.is_empty() {
+                let Some(acquired) = ViewSource::acquire_many(
+                    device,
+                    queue,
+                    submissions,
+                    renderer,
+                    kernels.clone(),
+                    &scan,
+                    correction.map(|correction| correction.gpu.clone()),
+                    missing_specs,
+                    || {
+                        retired.load(Ordering::Relaxed)
+                            || source_epoch.load(std::sync::atomic::Ordering::Relaxed)
+                                != spec.authority
+                            || mailbox
+                                .0
+                                .lock()
+                                .unwrap()
+                                .wanted
+                                .as_ref()
+                                .is_none_or(|wanted| {
                                     !specs
                                         .iter()
                                         .all(|pending| pending.compatible_processing(wanted))
                                         || wanted.frame().composition != spec.frame().composition
-                                        || wanted.repairs != spec.repairs
-                                } else {
-                                    wanted != &spec
-                                }
-                            })
+                                })
+                    },
+                )?
+                else {
+                    return Ok(None);
                 };
-                let mut neutral_sources = Vec::new();
-                let mut missing_specs = Vec::new();
+
+                let mut acquired = acquired.into_iter();
+                for neutral_source in &mut neutral_sources {
+                    if neutral_source.is_none() {
+                        *neutral_source = acquired.next();
+                    }
+                }
+
+                let state = mailbox.0.lock().unwrap();
+                if !retired.load(Ordering::Relaxed)
+                    && state.wanted.as_ref().is_some_and(|wanted| {
+                        specs
+                            .iter()
+                            .all(|pending| pending.compatible_processing(wanted))
+                            && wanted.frame().composition == spec.frame().composition
+                    })
                 {
+                    for source in neutral_sources.iter().flatten() {
+                        source.retain_neutral(&cache);
+                    }
+                }
+            }
+
+            let mut views = Vec::new();
+            for (index, (wanted, neutral_source)) in
+                specs.iter().cloned().zip(neutral_sources).enumerate()
+            {
+                let previous = {
                     let state = mailbox.0.lock().unwrap();
-                    for wanted in &specs {
-                        let neutral = wanted.clone().with_repairs(Default::default());
-                        let cached = [&state.neutral_detail, &state.neutral_underlay]
-                            .into_iter()
-                            .flatten()
-                            .find(|source| source.spec.satisfies(&neutral))
-                            .map(|source| source.published(wanted.authority));
-                        if cached.is_none() {
-                            missing_specs.push(neutral);
-                        }
-                        neutral_sources.push(cached);
+                    if index == 0 {
+                        state.repaired_detail.clone()
+                    } else {
+                        state.underlay.clone()
                     }
-                }
-
-                if !missing_specs.is_empty() {
-                    let Some(acquired) =
-                        ViewSource::acquire_many(
-                            device,
-                            queue,
-                            submissions,
-                            renderer,
-                            kernels.clone(),
-                            &scan,
-                            correction.map(|correction| correction.gpu.clone()),
-                            missing_specs,
-                            || {
-                                retired.load(Ordering::Relaxed)
-                                    || source_epoch.load(std::sync::atomic::Ordering::Relaxed)
-                                        != spec.authority
-                                    || mailbox.0.lock().unwrap().wanted.as_ref().is_none_or(
-                                        |wanted| {
-                                            !specs.iter().all(|pending| {
-                                                pending.compatible_processing(wanted)
-                                            }) || wanted.frame().composition
-                                                != spec.frame().composition
-                                        },
-                                    )
-                            },
-                        )?
-                    else {
-                        return Ok(None);
-                    };
-
-                    let mut acquired = acquired.into_iter();
-                    for neutral_source in &mut neutral_sources {
-                        if neutral_source.is_none() {
-                            *neutral_source = acquired.next();
-                        }
-                    }
-
-                    let mut state = mailbox.0.lock().unwrap();
-                    if !retired.load(Ordering::Relaxed)
-                        && state.wanted.as_ref().is_some_and(|wanted| {
-                            specs
-                                .iter()
-                                .all(|pending| pending.compatible_processing(wanted))
-                                && wanted.frame().composition == spec.frame().composition
-                        })
-                    {
-                        state.neutral_detail = neutral_sources[0].clone();
-                        if needs_underlay {
-                            state.neutral_underlay = neutral_sources[1].clone();
-                        }
-                    }
-                }
-
-                let mut views = Vec::new();
-                for (index, (wanted, neutral_source)) in
-                    specs.iter().cloned().zip(neutral_sources).enumerate()
-                {
-                    let previous = {
-                        let state = mailbox.0.lock().unwrap();
-                        if index == 0 {
-                            state.repaired_detail.clone()
-                        } else {
-                            state.underlay.clone()
-                        }
-                    };
-                    let Some(view) = ViewSource::reconstruct_repairs(
-                        device,
-                        queue,
-                        submissions,
-                        &scan,
-                        correction.map(|correction| correction.gpu.clone()),
-                        neutral_source.expect("acquired neutral physical view"),
-                        wanted.request.repairs,
-                        previous,
-                        cancelled,
-                    )?
-                    else {
-                        return Ok(None);
-                    };
-                    views.push(view);
-                }
-                Ok(Some(views))
-            })()
-            .map_err(|error: Error| error.to_string());
+                };
+                let Some(view) = ViewSource::reconstruct_repairs(
+                    device,
+                    queue,
+                    submissions,
+                    &scan,
+                    correction.map(|correction| correction.gpu.clone()),
+                    neutral_source.expect("acquired neutral physical view"),
+                    wanted.request.repairs,
+                    previous,
+                    cancelled,
+                )?
+                else {
+                    return Ok(None);
+                };
+                views.push(view);
+            }
+            Ok(Some(views))
+        })()
+        .map_err(|error: Error| error.to_string());
 
         if retired.load(Ordering::Relaxed) {
             return None;

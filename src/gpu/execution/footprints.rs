@@ -14,8 +14,6 @@ mod repairs;
 mod request;
 pub(crate) use request::Request;
 mod kernels;
-#[cfg(test)]
-pub(crate) use kernels::shader;
 pub(crate) use kernels::{Kernels, float_buffer, uniform};
 
 pub(crate) struct Acquired {
@@ -78,6 +76,34 @@ pub(crate) fn execute(
         }
     }
 }
+fn encode_neutral(
+    device: &wgpu::Device,
+    renderer: &crate::renderer::GpuRenderer,
+    source: &ProcessingSource,
+    spec: &Request,
+    output: &wgpu::Buffer,
+    encoder: &mut wgpu::CommandEncoder,
+) -> Result<(), Error> {
+    let geometry = source
+        .geometry()
+        .ok_or(Error::InvalidParameter("neutral source requires geometry"))?;
+    let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
+    let root = crate::gpu::evaluation::Neutral {
+        parameters: spec.neutral,
+        matrix: spec.matrix,
+        field: source.flat_field.clone(),
+        repairs: spec.repairs.clone(),
+    }
+    .resident(device, renderer, source, raster)?;
+    crate::gpu::pixel_pipeline::Prepared::from_composition(
+        device,
+        raster,
+        root,
+        None,
+        renderer.evaluation.clone(),
+    )?
+    .encode_from(device, encoder, &source.input, output)
+}
 impl Acquired {
     /// Navigation positives process the already-sampled camera raster, not the originals.
     #[allow(clippy::too_many_arguments)]
@@ -128,16 +154,11 @@ impl Acquired {
         )?;
         let pixels = float_buffer(device, proxy.dimensions())?;
         let mut encoder = device.create_command_encoder(&Default::default());
+        encode_neutral(device, &renderer, &camera, &spec, &pixels, &mut encoder)?;
+        kernels.cover_proxy(&renderer.evaluation, &mut encoder, &pixels)?;
         renderer
-            .kernel
-            .encode(device, &mut encoder, &camera, &pixels, spec.neutral);
-        kernels.cover_proxy(device, &mut encoder, &pixels);
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submissions.submit(queue, [encoder.finish()])),
-                timeout: None,
-            })
-            .map_err(|error| Error::Gpu(error.to_string()))?;
+            .evaluation
+            .submit(queue, submissions, encoder, || false)?;
         Ok(Arc::new(Self {
             spec,
             pixels,
@@ -210,17 +231,15 @@ impl Acquired {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let pixels = float_buffer(device, frame.output)?;
         let mut encoder = device.create_command_encoder(&Default::default());
-        renderer
-            .kernel
-            .encode(device, &mut encoder, &source, &working, spec.neutral);
-        kernels.copy(device, &mut encoder, &working, &texture);
+        encode_neutral(device, &renderer, &source, &spec, &working, &mut encoder)?;
+        kernels.copy(&renderer.evaluation, &mut encoder, &working, &texture)?;
         kernels.filter_raster(
-            device,
+            &renderer.evaluation,
             &mut encoder,
             &texture,
             &pixels,
@@ -229,7 +248,7 @@ impl Acquired {
             affine,
             [0, 0],
             ([0, 0], frame.output),
-        );
+        )?;
         submissions.submit(queue, [encoder.finish()]);
         Ok(Arc::new(Self {
             spec,
@@ -298,6 +317,18 @@ impl Acquired {
                 Ok((bounds, float_buffer(device, spec.input_frame()?.output)?))
             })
             .collect::<Result<Vec<_>, Error>>()?;
+        let neutral = crate::gpu::evaluation::Neutral {
+            parameters: spec.neutral,
+            matrix: spec.matrix,
+            field: field.clone(),
+            repairs: spec.repairs.clone(),
+        }
+        .originals(
+            device,
+            &renderer,
+            crate::gpu::evaluation::camera_source(scan)?,
+        )?;
+        let mut executor = renderer.evaluation.executor();
         // Plans own source traversal and bounded destination submissions; GPU ownership stays
         // within one admitted original unit, with cancellation between every submission.
         for unit in batch.units() {
@@ -310,13 +341,6 @@ impl Acquired {
             }
             let region = unit.read;
             let size = [region.width, region.height];
-            let originals = scan.tile_region(region, 0, 0, size[0], size[1])?;
-            let mut source = ProcessingSource::new_continuous(device, &originals, spec.matrix)?;
-            source.set_flat_field(
-                field.clone(),
-                SourceGeometry::new([region.x, region.y, region.width, region.height], size)?,
-            )?;
-            let working = float_buffer(device, size)?;
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("bounded neutral AP1 acquisition unit"),
                 size: wgpu::Extent3d {
@@ -328,56 +352,75 @@ impl Acquired {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba32Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
 
-            let mut initialize = true;
-            for windows in unit.submissions {
+            for (index, windows) in unit.submissions.into_iter().enumerate() {
                 if cancelled() {
                     return Ok(None);
                 }
-                let mut encoder = device.create_command_encoder(&Default::default());
-                if initialize {
-                    initialize = false;
-                    renderer
-                        .kernel
-                        .encode(device, &mut encoder, &source, &working, spec.neutral);
-                    renderer.repairs.neutral(
-                        device,
-                        &mut encoder,
-                        &working,
-                        &spec.repairs,
-                        SourceGeometry::new(
-                            [region.x, region.y, region.width, region.height],
-                            size,
-                        )?,
+                let filter = |encoder: &mut wgpu::CommandEncoder| -> Result<(), Error> {
+                    for work in &windows {
+                        let destination = work.destination;
+                        kernels.filter(
+                            &renderer.evaluation,
+                            encoder,
+                            &texture,
+                            &outputs[destination].1,
+                            specs[destination].input_frame()?,
+                            [
+                                region.x as i32 - outputs[destination].0.x as i32,
+                                region.y as i32 - outputs[destination].0.y as i32,
+                            ],
+                            work.window,
+                        )?;
+                    }
+                    Ok(())
+                };
+                if index == 0 {
+                    let evaluation = renderer.evaluation.request(
+                        neutral.clone(),
+                        crate::gpu::evaluation::Region {
+                            bounds: region,
+                            grid: neutral.domain.grid,
+                        },
+                        crate::gpu::evaluation::Budget {
+                            tile: size,
+                            scratch_bytes: (32 << 20).min(device.limits().max_buffer_size),
+                        },
                     )?;
-                    kernels.copy(device, &mut encoder, &working, &texture);
+                    let plan = evaluation
+                        .plans()
+                        .next()
+                        .ok_or(Error::InvalidParameter("empty source acquisition"))??;
+                    if executor
+                        .run_sink(
+                            device,
+                            queue,
+                            submissions,
+                            &plan,
+                            &cancelled,
+                            |encoder, _, pixels| {
+                                kernels.copy(&renderer.evaluation, encoder, pixels, &texture)?;
+                                filter(encoder)
+                            },
+                        )?
+                        .is_none()
+                    {
+                        return Ok(None);
+                    }
+                } else {
+                    let mut encoder = device.create_command_encoder(&Default::default());
+                    filter(&mut encoder)?;
+                    if renderer
+                        .evaluation
+                        .submit(queue, submissions, encoder, &cancelled)?
+                        .is_none()
+                    {
+                        return Ok(None);
+                    }
                 }
-
-                for work in windows {
-                    let destination = work.destination;
-                    kernels.filter(
-                        device,
-                        &mut encoder,
-                        &texture,
-                        &outputs[destination].1,
-                        specs[destination].input_frame()?,
-                        [
-                            region.x as i32 - outputs[destination].0.x as i32,
-                            region.y as i32 - outputs[destination].0.y as i32,
-                        ],
-                        work.window,
-                    )?;
-                }
-                device
-                    .poll(wgpu::PollType::Wait {
-                        submission_index: Some(submissions.submit(queue, [encoder.finish()])),
-                        timeout: None,
-                    })
-                    .map_err(|error| Error::Gpu(error.to_string()))?;
             }
         }
         if cancelled() {

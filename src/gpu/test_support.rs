@@ -3,20 +3,20 @@ use std::sync::Arc;
 
 #[cfg(feature = "editor")]
 thread_local! {
-    static PULL_BUFFER_CREATIONS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0, 0]) };
+    static EVALUATION_BUFFER_CREATIONS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0, 0]) };
 }
 
 #[cfg(feature = "editor")]
-pub(crate) fn pull_buffer_created(bytes: u64) {
-    PULL_BUFFER_CREATIONS.with(|count| {
+pub(crate) fn evaluation_buffer_created(bytes: u64) {
+    EVALUATION_BUFFER_CREATIONS.with(|count| {
         let [buffers, total_bytes] = count.get();
         count.set([buffers + 1, total_bytes + bytes]);
     });
 }
 
 #[cfg(feature = "editor")]
-pub(crate) fn take_pull_buffer_creations() -> [u64; 2] {
-    PULL_BUFFER_CREATIONS.with(|count| count.replace([0, 0]))
+pub(crate) fn take_evaluation_buffer_creations() -> [u64; 2] {
+    EVALUATION_BUFFER_CREATIONS.with(|count| count.replace([0, 0]))
 }
 
 pub(crate) fn render_context() -> (wgpu::Device, wgpu::Queue, Arc<GpuRenderer>) {
