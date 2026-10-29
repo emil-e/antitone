@@ -532,7 +532,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
         let id = editor.document.register(ready.record.clone()).unwrap();
         ready.record = editor.document.state.project.source(id).unwrap().clone();
         editor.document.visit.current_source = Some(id);
-        editor.document.visit.ready = Some(ready);
+        editor.document.visit.canvas.ready = Some(ready);
         editor.document.source = false;
         editor.scopes = Scopes::new(&device);
         let gpu = editor.scopes.gpu.as_ref().unwrap().clone();
@@ -606,6 +606,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 &editor
                     .document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .unwrap()
@@ -615,7 +616,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             ));
             prepare(with, size);
             let reductions = gpu.reduction_count();
-            editor.document.visit.viewport.zoom = Some(2.);
+            editor.document.visit.canvas.viewport.zoom = Some(2.);
             prepare(frame(&mut editor, size), size);
             let zoom_frame = editor.scope_input().unwrap().2;
             assert_ne!(zoom_frame, fit_frame);
@@ -626,10 +627,11 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             let reductions = gpu.reduction_count();
             prepare(frame(&mut editor, size), size);
             assert_eq!(gpu.reduction_count(), reductions, "idle view reuses bins");
-            let (layout, ppp) = editor.document.visit.last_layout.unwrap();
+            let (layout, ppp) = editor.document.visit.canvas.last_layout.unwrap();
             editor
                 .document
                 .visit
+                .canvas
                 .viewport
                 .pan(layout, ppp, egui::vec2(100., -60.));
             prepare(frame(&mut editor, size), size);
@@ -637,7 +639,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             assert_ne!(pan_frame, zoom_frame);
             assert_eq!(pan_frame.output, zoom_frame.output);
             assert_eq!(gpu.reduction_count(), reductions + 1);
-            editor.document.visit.viewport.fit();
+            editor.document.visit.canvas.viewport.fit();
         }
         prepare(
             frame(&mut editor, egui::vec2(1100., 800.)),
@@ -721,7 +723,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 .unwrap(),
             "geometry must not rerender ACES"
         );
-        editor.document.visit.viewport.zoom = Some(3.);
+        editor.document.visit.canvas.viewport.zoom = Some(3.);
         let zoomed_composed = editor.scope_input().unwrap().2;
         assert_ne!(zoomed_composed, composed_frame);
         assert_eq!(zoomed_composed.composition, composed_frame.composition);

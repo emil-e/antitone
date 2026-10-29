@@ -70,10 +70,14 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
         Duration::from_secs(60),
         |editor, cx| editor.add_raws(vec![root.join("roll-0.dng"), root.join("roll-1.dng")], cx),
     );
-    assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+    assert!(
+        editor.document.visit.canvas.ready.is_some(),
+        "{}",
+        editor.status
+    );
     let imported = editor.document.state.project.clone();
     editor = round_trip(editor, &empty, &imported);
-    assert!(editor.document.visit.ready.is_some());
+    assert!(editor.document.visit.canvas.ready.is_some());
     // Calibration is fixture setup; accepted picks have independent controller coverage.
     editor.set_dmin(Some(DVec3::splat(0.2)));
     editor.set_dmax(Some(DVec3::splat(0.005)));
@@ -94,8 +98,8 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
     editor = round_trip(editor, &before_crop, &cropped);
 
     editor.begin_dust_cleanup();
-    let active = editor.document.visit.ready.as_ref().unwrap().area;
-    let geometry = editor.document.visit.viewport.layout_composition(
+    let active = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+    let geometry = editor.document.visit.canvas.viewport.layout_composition(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
         Composition::new(active, Default::default(), Default::default()).unwrap(),
         1.,
@@ -259,20 +263,20 @@ fn accepted_history_restores_exact_settings_and_activates_the_edited_photo_witho
     let after = editor.document.state.project.clone();
     editor.document.visit.current_source = Some(ids[1]);
     editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings::default();
-    editor.document.visit.viewport.zoom = Some(1.75);
-    let viewport = editor.document.visit.viewport;
+    editor.document.visit.canvas.viewport.zoom = Some(1.75);
+    let viewport = editor.document.visit.canvas.viewport;
     editor = accept_history(editor, Direction::Undo);
     assert_eq!(editor.document.state.project, before);
     assert_eq!(editor.document.visit.current_source, Some(ids[0]));
     assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
-    assert_eq!(editor.document.visit.viewport, viewport);
+    assert_eq!(editor.document.visit.canvas.viewport, viewport);
     editor = accept_history(editor, Direction::Redo);
     assert_eq!(editor.document.state.project, after);
     assert_eq!(
         editor.document.visit.adjustment_layer_settings.exposure,
         7.123456789012345
     );
-    assert_eq!(editor.document.visit.viewport, viewport);
+    assert_eq!(editor.document.visit.canvas.viewport, viewport);
 }
 
 #[test]

@@ -184,15 +184,14 @@ impl Editor {
             frame_raster::FrameRaster,
             gpu::view::{RenderedView, ViewSourceSpec},
         };
-        let Some((revision, view, image)) = self.document.visit.grade.original.settled.as_ref()
+        let Some((revision, view, image)) = self.active_canvas().grade.original.settled.as_ref()
         else {
             return Ok(None);
         };
-        if self.document.visit.grade.original.purpose != Some(purpose)
-            || *revision != self.document.visit.grade.original.revision()
+        if self.active_canvas().grade.original.purpose != Some(purpose)
+            || *revision != self.active_canvas().grade.original.revision()
             || self
-                .document
-                .visit
+                .active_canvas()
                 .grade
                 .original
                 .signature
@@ -225,7 +224,7 @@ impl Editor {
                 .as_ref()
                 .map(|correction| correction.settings.map.clone())
         };
-        let Some(ready) = self.document.visit.ready.as_ref() else {
+        let Some(ready) = self.active_canvas().ready.as_ref() else {
             return Ok(None);
         };
         let identity = crate::gpu::execution::source::Identity::camera(ready.developed.identity());
@@ -256,7 +255,7 @@ impl Editor {
         .with_identity(identity)
         .with_repairs(input.repairs.clone())
         .with_pipeline(input.pixel_pipeline()?)?;
-        if let Some(rendered) = &self.document.visit.grade.original.rendered
+        if let Some(rendered) = &self.active_canvas().grade.original.rendered
             && Arc::ptr_eq(&rendered.image, image)
             && rendered.matches(&spec, &input.signature(), self.document.target)
         {
@@ -264,7 +263,7 @@ impl Editor {
         }
         let rendered =
             RenderedView::reference(image.clone(), spec, input.signature(), self.document.target);
-        self.document.visit.grade.original.rendered = Some(rendered.clone());
+        self.active_canvas_mut().grade.original.rendered = Some(rendered.clone());
         Ok(Some(rendered))
     }
 }

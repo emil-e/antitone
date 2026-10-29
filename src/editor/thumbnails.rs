@@ -1040,7 +1040,7 @@ impl Editor {
         budgets: memory::CacheBudgets,
         cx: &UiContext<'_, Self>,
     ) {
-        if self.document.visit.ready.is_none()
+        if self.document.visit.canvas.ready.is_none()
             && self.document.visit.pending_preview.is_none()
             && self.document.flat_edit.is_none()
         {
@@ -1063,8 +1063,8 @@ impl Editor {
         let mut visible = Vec::new();
         let mut select = None;
         let mut remove = false;
-        let selected_loading = self.document.visit.ready.is_none()
-            && self.document.visit.selection_timing.is_some()
+        let selected_loading = self.document.visit.canvas.ready.is_none()
+            && self.document.visit.canvas.selection_timing.is_some()
             && self.document_pending.is_none()
             && self.active_pick().is_none();
         let reviewing =

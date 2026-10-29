@@ -29,6 +29,7 @@ impl Editor {
             || self
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .is_none_or(|ready| ready.analysis_support.is_some())

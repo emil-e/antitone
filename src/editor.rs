@@ -76,12 +76,8 @@ mod analysis_services;
 mod analysis_workflow;
 mod dust;
 mod flat;
-mod reference_services;
-mod reference_workflow;
 mod spatial;
 mod support_workflow;
-#[cfg(test)]
-use flat::FlatPreview;
 use flat::{Correction, FlatEdit};
 mod auto_crop;
 mod crop_editor;
@@ -92,6 +88,7 @@ use mask_editor::MaskEdit;
 mod cache_preferences_tests;
 mod calibration;
 mod canvas;
+mod canvas_view;
 mod document_services;
 mod document_workflow;
 use document_services::{Preparation, Prepared, Request as DocumentRequest};
@@ -127,7 +124,6 @@ enum Pick {
     Gamma,
     RollWb,
     Wb,
-    Flat,
     Analysis,
 }
 
@@ -659,7 +655,7 @@ impl Editor {
     }
 
     fn seed_thumbnail(&mut self) {
-        let Some(ready) = &mut self.document.visit.ready else {
+        let Some(ready) = &mut self.document.visit.canvas.ready else {
             return;
         };
         let Some((file, proxy)) = ready.thumbnail.take() else {
@@ -821,9 +817,7 @@ impl Editor {
     pub(super) fn begin_document_operation(&mut self, replacement: bool) -> u64 {
         self.document.write = save::State::default();
         self.candidate_operation = document_workflow::State::default();
-        if let Some(session) = &mut self.document.flat_edit {
-            session.task = None;
-        }
+        self.finish_flat_edit();
         self.retire_look();
         self.finish_auto_crop(false);
         self.finish_dust_cleanup();
@@ -838,8 +832,8 @@ impl Editor {
         }
         self.document.visit.support = Default::default();
         self.document.visit.pending_preview = None;
-        self.document.visit.preview_rendered = None;
-        self.document.visit.selection_timing = None;
+        self.document.visit.canvas.preview_rendered = None;
+        self.document.visit.canvas.selection_timing = None;
         if self.document.analysis_pending.take().is_some() {
             self.cancel_analysis();
         }
@@ -859,6 +853,7 @@ impl Editor {
         let reuse = self
             .document
             .visit
+            .canvas
             .ready
             .as_ref()
             .and(self.document.visit.current_source)
@@ -926,7 +921,7 @@ impl Editor {
             && self.document.visit.mask_edit.is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.flat_edit.is_none()
-            && self.document.visit.ready.is_some();
+            && self.document.visit.canvas.ready.is_some();
         let mut start_pick = None;
 
         egui::ScrollArea::vertical()
@@ -1231,7 +1226,7 @@ impl Editor {
                 self.document.visit.photo_orientation,
             )
         {
-            self.document.visit.viewport.fit();
+            self.document.visit.canvas.viewport.fit();
         }
         if let Some(kind) = start_pick {
             self.control_command(editing::Command::Pick(kind), cx);
@@ -1298,7 +1293,7 @@ impl host::App for Editor {
                 .visit
                 .working_view
                 .revision()
-                .unwrap_or_else(|| self.document.visit.grade.original.revision()),
+                .unwrap_or_else(|| self.document.visit.canvas.grade.original.revision()),
         ))
     }
 

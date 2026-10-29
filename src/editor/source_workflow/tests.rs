@@ -141,7 +141,7 @@ fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels
         start(app);
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
-            let ready = e.document.visit.ready.as_ref().unwrap();
+            let ready = e.document.visit.canvas.ready.as_ref().unwrap();
             assert_eq!(ready.path, path());
             assert!(!e.document.visit.source.pending());
             assert!(e.tasks.view().is_none());
@@ -194,7 +194,7 @@ fn retired_visit_cannot_publish_or_block_unrelated_cpu_work() {
         release.send(()).unwrap();
         drop(probe);
         app.read(|e| {
-            assert!(e.document.visit.ready.is_none());
+            assert!(e.document.visit.canvas.ready.is_none());
             assert_eq!(e.status, "new visit");
         });
     });
@@ -340,7 +340,7 @@ fn worker_closure_finishes_the_waiter_while_native_cleanup_continues() {
         await_native(app, &starts);
         scheduler.close();
         app.run_until(Duration::from_secs(10), |e| !e.busy);
-        assert!(app.read(|e| e.document.visit.ready.is_none()));
+        assert!(app.read(|e| e.document.visit.canvas.ready.is_none()));
         let (entered, observed) = mpsc::channel();
         let probe = app
             .access()
@@ -380,7 +380,7 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
         });
         app.read(|e| {
             assert_eq!(e.document.visit.view, view);
-            assert!(e.document.visit.ready.is_some());
+            assert!(e.document.visit.canvas.ready.is_some());
             assert_eq!(e.document.state.project, accepted);
             assert!(e.tasks.view().is_none());
         });
@@ -392,7 +392,7 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
 fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
     for complete_first in [false, true] {
         let editor = super::super::tests::authored_fixture(&["patches.dng"]);
-        let ready = editor.document.visit.ready.as_ref().unwrap().clone();
+        let ready = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
         let path = ready.path.clone();
         let accepted = editor.document.state.project.clone();
         with_application(editor, |app| {
@@ -405,7 +405,7 @@ fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
                 if complete_first {
                     e.source_result(view, Ok(Box::new(ready.clone())));
                     assert!(e.document.visit.source.completion.is_some());
-                    assert!(e.document.visit.ready.is_none() && e.busy);
+                    assert!(e.document.visit.canvas.ready.is_none() && e.busy);
                 }
                 e.document_prepared(operation, Err("candidate rejected".into()));
                 if !complete_first {
@@ -413,7 +413,7 @@ fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
                     e.source_result(view, Ok(Box::new(ready)));
                 }
                 assert_eq!(e.document.visit.view, view);
-                assert!(e.document.visit.ready.is_some() && e.tasks.view().is_none());
+                assert!(e.document.visit.canvas.ready.is_some() && e.tasks.view().is_none());
                 assert_eq!(e.document.state.project, accepted);
                 assert!(e.status.contains("candidate rejected"));
             });
@@ -428,7 +428,7 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
     // exercise physical source execution; this case does not simulate that timing.
     for complete_first in [false, true] {
         let editor = super::super::tests::authored_fixture(&["patches.dng"]);
-        let ready = editor.document.visit.ready.as_ref().unwrap().clone();
+        let ready = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
         let source_path = ready.path.clone();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("written.antitone");
@@ -446,7 +446,7 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
                 if complete_first {
                     e.source_result(view, Ok(Box::new(ready.clone())));
                     assert!(e.document.visit.source.completion.is_some());
-                    assert!(e.document.visit.ready.is_none() && e.busy);
+                    assert!(e.document.visit.canvas.ready.is_none() && e.busy);
                 }
                 e.save_result(operation, Ok(Box::new(saved)), cx);
                 if !complete_first {
@@ -454,7 +454,7 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
                     e.source_result(view, Ok(Box::new(ready)));
                 }
                 assert_eq!(e.document.visit.view, view);
-                assert!(e.document.visit.ready.is_some() && e.tasks.view().is_none());
+                assert!(e.document.visit.canvas.ready.is_some() && e.tasks.view().is_none());
                 assert!(e.document.dirty());
                 assert_eq!(e.document.state.project.roll.exposure, 0.5);
                 assert_eq!(e.document.path.as_deref(), Some(path.as_path()));
@@ -495,7 +495,7 @@ fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product()
             // The pending acquisition is retired rather than left dangling, and the document's
             // own product is installed.
             assert!(!e.document.visit.source.pending());
-            assert!(e.document.visit.ready.is_some());
+            assert!(e.document.visit.canvas.ready.is_some());
             // Whether the scope survives depends on the prepared product's key, not on the
             // preparation being a correction: this fixture has no reference frame, so the
             // development is unchanged and the visit continues into the installed document.
@@ -547,7 +547,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         drop(probe);
         app.read(|e| {
             assert!(e.document.state.project.sources.is_empty());
-            assert!(e.document.visit.ready.is_none());
+            assert!(e.document.visit.canvas.ready.is_none());
             assert!(!e.busy && e.tasks.view().is_none());
         });
     });

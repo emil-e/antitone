@@ -155,11 +155,11 @@ impl Editor {
         }
         if self.file_available() {
             state.enabled.extend([New, Open, AddScans, Close]);
-            if self.document.input.ready() && self.document.visit.ready.is_some() {
+            if self.document.input.ready() && self.document.visit.canvas.ready.is_some() {
                 state.enabled.insert(Export);
             }
         }
-        if self.document.visit.ready.is_some()
+        if self.document.visit.canvas.ready.is_some()
             && !self.busy
             && !self
                 .document
@@ -295,7 +295,7 @@ impl Editor {
                 self.menus.panel = None;
                 self.menus.pending.push_front(Quit);
             }
-            Fit => self.document.visit.viewport.fit(),
+            Fit => self.active_canvas_mut().viewport.fit(),
             Scopes => {
                 self.scopes.visible = !self.scopes.visible;
                 self.preferences.scopes_visible = self.scopes.visible;

@@ -296,7 +296,7 @@ impl Editor {
             && !self.document.visit.adjustment_layers.dragging()
             && self.tab == 1
             && !self.busy
-            && self.document.visit.ready.is_some()
+            && self.document.visit.canvas.ready.is_some()
             && self.document.input.ready()
             && !self.document.source
             && self.active_pick().is_none()
@@ -327,7 +327,7 @@ impl Editor {
 
     fn begin_mask(&mut self, kind: Kind, id: Option<AdjustmentLayerId>) {
         if self.busy
-            || self.document.visit.ready.is_none()
+            || self.document.visit.canvas.ready.is_none()
             || self.document.source
             || self.active_pick().is_some()
             || self.document.visit.crop_edit.is_some()

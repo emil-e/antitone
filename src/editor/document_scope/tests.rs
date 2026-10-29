@@ -62,6 +62,7 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
     let source = editor
         .document
         .visit
+        .canvas
         .ready
         .as_ref()
         .unwrap()
@@ -75,13 +76,27 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
             assert!(editor.busy && editor.document_pending.is_some());
             assert_eq!(editor.document.visit.view, view);
             assert!(Arc::ptr_eq(
-                &editor.document.visit.ready.as_ref().unwrap().developed,
+                &editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed,
                 &source
             ));
             editor.document_prepared(request, Err("candidate rejected".into()));
             assert_eq!(editor.document.visit.view, view);
             assert!(Arc::ptr_eq(
-                &editor.document.visit.ready.as_ref().unwrap().developed,
+                &editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed,
                 &source
             ));
             assert_eq!(editor.document.state.project, accepted);
@@ -102,7 +117,7 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
         editor.sync_document();
         let view = editor.document.visit.view;
         let store = Arc::downgrade(&editor.document.cache);
-        let ready = editor.document.visit.ready.as_ref().unwrap().clone();
+        let ready = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
         let selected = editor.document.visit.current_source;
         let candidate = editor.document.capture();
         let work = if replace {
@@ -131,7 +146,7 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
                 } else {
                     assert_eq!(editor.document.visit.view, view);
                 }
-                assert!(editor.document.visit.ready.is_some());
+                assert!(editor.document.visit.canvas.ready.is_some());
                 assert_eq!(store.upgrade().is_none(), replace);
                 assert_eq!(
                     store.ptr_eq(&Arc::downgrade(&editor.document.cache)),

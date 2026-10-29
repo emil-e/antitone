@@ -43,7 +43,13 @@ fn documented_states_render() {
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
             !e.busy && e.document_pending.is_none()
         });
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            )
+        });
 
         // The scans read from the emulsion side arrive top/bottom mirrored; the
         // shared scan baseline corrects all photos at once, before analysis.
@@ -104,7 +110,7 @@ fn documented_states_render() {
         wait_for(&mut harness, |e| !e.busy);
         tab(&mut harness, "Photo");
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document.visit.ready.is_some()
+            !e.busy && e.document.visit.canvas.ready.is_some()
         });
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
             e.document
@@ -143,7 +149,7 @@ fn documented_states_render() {
         harness.get_by_label(&first_label).click();
         harness.step();
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document.visit.ready.is_some()
+            !e.busy && e.document.visit.canvas.ready.is_some()
         });
         tab(&mut harness, "Roll");
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {

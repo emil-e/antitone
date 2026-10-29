@@ -185,11 +185,11 @@ impl Editor {
         let eager =
             allowed && self.document.thumbnails.budgets.pressure == memory::Pressure::Normal;
         let idle = allowed
-            && self.document.visit.grade.original.refining.is_none()
+            && self.document.visit.canvas.grade.original.refining.is_none()
             && if self.document.visit.working_view.revision().is_some() {
                 self.document.visit.working_view.idle()
             } else {
-                self.document.visit.grade.original.idle()
+                self.document.visit.canvas.grade.original.idle()
             };
         let mut protected = Vec::new();
         for id in &visible {

@@ -202,6 +202,7 @@ impl Editor {
             .or_else(|| {
                 self.document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .and_then(|r| r.analysis_support.flatten())
@@ -238,14 +239,14 @@ impl Editor {
             return;
         }
         self.document.visit.support = Default::default();
-        let Some(ready) = &mut self.document.visit.ready else {
+        let Some(ready) = &mut self.document.visit.canvas.ready else {
             return;
         };
         match result {
             Ok(support) => {
                 ready.analysis_support = Some(support);
                 // A delayed suggestion must never overwrite a rectangle already drawn.
-                if self.pick_region().is_none() && self.document.visit.pick_drag.is_none() {
+                if self.pick_region().is_none() && self.document.visit.canvas.pick_drag.is_none() {
                     self.set_pick_region(support.map(suggest).map(Coverage::rectangle));
                 }
             }
@@ -262,7 +263,7 @@ impl Editor {
             Orientation::Vertical => self.document.roll_orientation.vertical ^= true,
             Orientation::Reset => self.document.roll_orientation = RollOrientation::default(),
         }
-        self.document.visit.viewport.fit();
+        self.document.visit.canvas.viewport.fit();
         self.record_edit(before, "Roll orientation", None);
     }
 
@@ -272,7 +273,7 @@ impl Editor {
         let reviewing = self.document.analysis_review.is_some();
         let capabilities = self.document.input.capabilities();
         let commands = !self.busy
-            && self.document.visit.ready.is_some()
+            && self.document.visit.canvas.ready.is_some()
             && self.active_pick().is_none()
             && self.document.visit.crop_edit.is_none()
             && self.document.auto_crop_edit.is_none()
@@ -377,7 +378,7 @@ impl Editor {
             || self.document.auto_crop_edit.is_some()
             || self.document.visit.mask_edit.is_some()
             || self.document.visit.adjustment_layers.confirming()
-            || self.document.visit.ready.is_none()
+            || self.document.visit.canvas.ready.is_none()
             || self.document.state.project.order.is_empty()
         {
             return None;
@@ -392,6 +393,7 @@ impl Editor {
             local_support: self
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .is_some_and(|ready| ready.analysis_support.is_none()),
@@ -507,7 +509,7 @@ impl Editor {
                     }
                 };
                 if snapshot.areas.is_none()
-                    && let Some(ready) = &mut self.document.visit.ready
+                    && let Some(ready) = &mut self.document.visit.canvas.ready
                 {
                     ready.analysis_support = Some(Some(outcome.support));
                 }

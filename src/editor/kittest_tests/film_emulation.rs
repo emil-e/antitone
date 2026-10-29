@@ -42,7 +42,7 @@ fn film_controls_persist_render_and_reset_without_changing_target_at_both_displa
     editor_harness_with_gpu(true, |mut h, _, _, _| {
         h.enter(|editor, cx| editor.add_raws(vec![fixture("roll-0.dng")], cx));
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document.visit.ready.is_some()
+            !editor.busy && editor.document.visit.canvas.ready.is_some()
         });
         stage(&mut h, "Rendering");
         assert!(

@@ -10,32 +10,32 @@ use crate::{
 fn mapping(app: &TestApplication<'_, Editor>) -> (TextureMapping, FrameRaster, bool) {
     let context = egui::Context::default();
     let mut result = None;
-    let mut output = context.run_ui(Default::default(), |ui| {
-        app.enter(|editor, cx| {
-            let ready = editor.document.visit.ready.as_ref().unwrap();
-            let proxy = ready.proxy.clone();
-            let composition = editor.canvas_composition(ready.area, None);
-            let size = composition.size();
-            let canvas = egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(size[0] as f32, size[1] as f32),
-            );
-            let geometry =
-                editor
-                    .document
-                    .visit
-                    .viewport
-                    .layout_composition(canvas, composition, 1.);
-            let (_, paint) = editor
-                .canvas_image(ui, geometry, proxy, false, false, cx)
-                .unwrap();
-            result = Some((
-                paint.texture_mapping(),
-                paint.view_frame().expect("canvas presents a RenderedView"),
-                editor.document.visit.working_view.displayed.is_some(),
-            ));
+    let mut output =
+        context.run_ui(Default::default(), |ui| {
+            app.enter(|editor, cx| {
+                let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
+                let proxy = ready.proxy.clone();
+                let composition = editor.canvas_composition(ready.area, None);
+                let size = composition.size();
+                let canvas = egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(size[0] as f32, size[1] as f32),
+                );
+                let geometry = editor.document.visit.canvas.viewport.layout_composition(
+                    canvas,
+                    composition,
+                    1.,
+                );
+                let (_, paint) = editor
+                    .canvas_image(ui, geometry, proxy, false, false, cx)
+                    .unwrap();
+                result = Some((
+                    paint.texture_mapping(),
+                    paint.view_frame().expect("canvas presents a RenderedView"),
+                    editor.document.visit.working_view.displayed.is_some(),
+                ));
+            });
         });
-    });
     output.textures_delta.clear();
     result.unwrap()
 }

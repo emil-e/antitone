@@ -14,6 +14,7 @@ pub(in crate::editor) fn capture_scan(editor: &Editor) -> Result<Scan, String> {
     let ready = editor
         .document
         .visit
+        .canvas
         .ready
         .as_ref()
         .ok_or("No developed source for measurement")?;

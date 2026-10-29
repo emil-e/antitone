@@ -44,7 +44,7 @@ pub(super) fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
         let mut app = TestApplication::new(&owner, || {});
         app.enter(|e, cx| e.load(paths[0].clone(), cx));
         app.run_until(LIMIT, |e| !e.busy);
-        app.read(|e| assert!(e.document.visit.ready.is_some(), "{}", e.status));
+        app.read(|e| assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status));
         app.close_execution();
     }
     let mut editor = owner.into_inner().unwrap();

@@ -46,7 +46,7 @@ fn editor() -> Editor {
         .unwrap();
     editor.select_dust_repair(RepairId(1));
     editor.document.dust.search_worker = Some(worker::testing::Search::Geometry(
-        editor.document.visit.ready.as_ref().unwrap().area,
+        editor.document.visit.canvas.ready.as_ref().unwrap().area,
     ));
     editor
 }
@@ -102,7 +102,7 @@ fn high_response(e: &mut Editor) -> Response {
     let evaluated = Arc::new(
         crate::dust_repair::evaluate(
             &request.repair,
-            e.document.visit.ready.as_ref().unwrap().area,
+            e.document.visit.canvas.ready.as_ref().unwrap().area,
             |_| Ok([1e35; 3]),
         )
         .unwrap(),
@@ -133,7 +133,7 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
                 frame(e, &ctx, vec![], cx);
             }
             let project = e.document.state.project.clone();
-            let layout = e.document.visit.last_layout.unwrap().0;
+            let layout = e.document.visit.canvas.last_layout.unwrap().0;
             let start = layout.screen_point(egui::pos2(100., 200.));
             frame(
                 e,
@@ -253,7 +253,7 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
                     frame(e, &ctx, vec![], cx);
                 }
                 let project = e.document.state.project.clone();
-                let layout = e.document.visit.last_layout.unwrap().0;
+                let layout = e.document.visit.canvas.last_layout.unwrap().0;
                 let modifiers = if edit_existing {
                     egui::Modifiers::SHIFT
                 } else {
@@ -358,16 +358,16 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
         1,
         Ok(Some(response(
             &request,
-            e.document.visit.ready.as_ref().unwrap().area,
+            e.document.visit.canvas.ready.as_ref().unwrap().area,
         ))),
     );
     let composition = Composition::new(
-        e.document.visit.ready.as_ref().unwrap().area,
+        e.document.visit.canvas.ready.as_ref().unwrap().area,
         Default::default(),
         Default::default(),
     )
     .unwrap();
-    let geometry = e.document.visit.viewport.layout_composition(
+    let geometry = e.document.visit.canvas.viewport.layout_composition(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1728., 1152.)),
         composition,
         1.,
@@ -456,7 +456,7 @@ fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
         QuarterTurns::Three,
     ] {
         let composition = Composition::with_crop(
-            e.document.visit.ready.as_ref().unwrap().area,
+            e.document.visit.canvas.ready.as_ref().unwrap().area,
             RollOrientation {
                 turns,
                 ..Default::default()
@@ -476,8 +476,8 @@ fn repair_outline_fast_rejection_keeps_exact_hits_under_rotation_and_zoom() {
         )
         .unwrap();
         for zoom in [None, Some(2.)] {
-            e.document.visit.viewport.zoom = zoom;
-            let geometry = e.document.visit.viewport.layout_composition(
+            e.document.visit.canvas.viewport.zoom = zoom;
+            let geometry = e.document.visit.canvas.viewport.layout_composition(
                 egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.)),
                 composition,
                 1.,
@@ -707,12 +707,12 @@ fn disconnected_supports_share_the_stored_translation_before_evaluation_and_afte
         .collect::<BTreeSet<_>>();
     assert_eq!(presented, support.selected_points().collect());
     let composition = Composition::new(
-        e.document.visit.ready.as_ref().unwrap().area,
+        e.document.visit.canvas.ready.as_ref().unwrap().area,
         Default::default(),
         Default::default(),
     )
     .unwrap();
-    let geometry = e.document.visit.viewport.layout_composition(
+    let geometry = e.document.visit.canvas.viewport.layout_composition(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(864., 576.)),
         composition,
         1.,
@@ -841,7 +841,7 @@ fn repair_identity_excludes_roll_photo_grades_but_tracks_negative_interpretation
         ..Default::default()
     };
     e.document.target = OutputTarget::Srgb;
-    e.document.visit.viewport.zoom = Some(2.);
+    e.document.visit.canvas.viewport.zoom = Some(2.);
     assert_eq!(e.dust_signature(), Some(before));
     e.set_gamma(0.8);
     assert_ne!(e.dust_signature(), Some(before));
@@ -906,7 +906,7 @@ fn viewport_and_downstream_grades_preserve_healing_but_visit_retirement_cancels_
         app.enter(|e, cx| {
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             let request = captured_request(e);
-            e.document.visit.viewport.zoom = Some(2.);
+            e.document.visit.canvas.viewport.zoom = Some(2.);
             e.document.visit.adjustment_layer_settings.exposure = 1.;
             e.document.roll.exposure = 2.;
             e.schedule_dust(e.dust_signature().unwrap(), cx);
@@ -941,7 +941,7 @@ fn cancellation_and_obsolete_replies_neither_fail_current_repairs_nor_steal_admi
             assert!(e.document.dust.failed.is_empty());
             e.schedule_dust(signature, cx);
             let second = captured_request(e);
-            let active = e.document.visit.ready.as_ref().unwrap().area;
+            let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
             e.receive_dust(first.request, Ok(Some(response(&first, active))));
             assert_eq!(
                 e.document
@@ -977,7 +977,7 @@ fn failed_new_open_preserve_repairs_and_empty_replacements_retire_them_and_late_
         crate::application::test_support::with_application(e, |app| {
             app.enter(|e, cx| {
                 let source = e.document.visit.current_source.unwrap();
-                let active = e.document.visit.ready.as_ref().unwrap().area;
+                let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
                 e.schedule_dust(e.dust_signature().unwrap(), cx);
                 let request = captured_request(e);
                 let work = || {

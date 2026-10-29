@@ -37,8 +37,8 @@ impl GradeScope {
 
 impl super::Editor {
     pub(super) fn observe_grade(&mut self, input: &ProcessingInput) {
-        if !self.document.visit.grade.matches(input) {
-            self.document.visit.grade = GradeScope::new(input);
+        if !self.active_canvas().grade.matches(input) {
+            self.active_canvas_mut().grade = GradeScope::new(input);
         }
     }
 }

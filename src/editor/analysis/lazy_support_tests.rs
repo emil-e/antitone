@@ -89,6 +89,7 @@ fn delayed_suggestion_cannot_overwrite_drawing_cancelled_picker_or_reopened_pick
                         editor
                             .document
                             .visit
+                            .canvas
                             .ready
                             .as_ref()
                             .and_then(|r| r.analysis_support),
@@ -117,6 +118,7 @@ fn accepted_geometry_and_known_missing_support_require_no_lazy_work() {
                 editor
                     .document
                     .visit
+                    .canvas
                     .ready
                     .as_mut()
                     .unwrap()

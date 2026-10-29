@@ -7,7 +7,13 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>) -> R) -> R {
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
         wait_for(&mut h, |e| !e.busy);
-        h.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        h.read(|editor| {
+            assert!(
+                editor.document.visit.canvas.ready.is_some(),
+                "{}",
+                editor.status
+            )
+        });
         h.update(|e| {
             e.set_dmin(Some(DVec3::splat(0.2)));
             e.set_dmax(Some(DVec3::splat(0.005)));
@@ -491,10 +497,10 @@ fn history_confirmed_multi_removal_can_restore_an_empty_roll_without_resetting_i
         let removed = h.read(|editor| editor.document.state.project.clone());
         shortcut(&mut h, false);
         h.read(|editor| assert_eq!(editor.document.state.project, before));
-        h.read(|editor| assert!(editor.document.visit.ready.is_some()));
+        h.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
         shortcut(&mut h, true);
         h.read(|editor| assert_eq!(editor.document.state.project, removed));
-        h.read(|editor| assert!(editor.document.visit.ready.is_none()));
+        h.read(|editor| assert!(editor.document.visit.canvas.ready.is_none()));
         h.render().unwrap();
     });
 }

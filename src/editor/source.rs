@@ -32,15 +32,25 @@ impl Editor {
     }
 
     pub(super) fn source_context(&self) -> Option<Context> {
+        let ready = self.document.visit.canvas.ready.as_ref()?;
         Some(Context {
-            source: self.document.visit.ready.as_ref()?.developed.clone(),
-            reference: self.document.visit.ready.as_ref()?.reference.clone(),
-            correction: if self.document.flat_edit.is_some() {
-                None
-            } else {
-                self.document.correction.clone()
-            },
+            source: ready.developed.clone(),
+            reference: ready.reference.clone(),
+            correction: self.document.correction.clone(),
         })
+    }
+
+    pub(super) fn canvas_source_context(&self) -> Option<Context> {
+        if let Some(flat) = &self.document.flat_edit {
+            let ready = flat.view.ready.as_ref()?;
+            Some(Context {
+                source: ready.developed.clone(),
+                reference: ready.reference.clone(),
+                correction: None,
+            })
+        } else {
+            self.source_context()
+        }
     }
 }
 

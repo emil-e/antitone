@@ -4,7 +4,16 @@ use crate::dust_repair::RepairId;
 mod persistence;
 
 fn click(h: &mut Harness<'_, Editor>, p: egui::Pos2, modifiers: egui::Modifiers) {
-    let at = h.read(|editor| editor.document.visit.last_layout.unwrap().0.screen_point(p));
+    let at = h.read(|editor| {
+        editor
+            .document
+            .visit
+            .canvas
+            .last_layout
+            .unwrap()
+            .0
+            .screen_point(p)
+    });
     h.hover_at(at);
     for pressed in [true, false] {
         h.event(egui::Event::PointerButton {
@@ -81,9 +90,19 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
                 .accesskit_node()
                 .is_disabled()
         );
-        let view = h.read(|editor| editor.document.visit.viewport);
+        let view = h.read(|editor| editor.document.visit.canvas.viewport);
         let diameter = h.read(|editor| editor.document.visit.dust.brush_size);
-        let hover = h.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center());
+        let hover = h.read(|editor| {
+            editor
+                .document
+                .visit
+                .canvas
+                .last_layout
+                .unwrap()
+                .0
+                .image
+                .center()
+        });
         h.hover_at(hover);
         h.event(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
@@ -93,7 +112,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         });
         for _ in 0..4 {
             h.step();
-            h.read(|editor| assert_eq!(editor.document.visit.viewport, view));
+            h.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, view));
         }
         h.read(|editor| assert!(editor.document.visit.dust.brush_size > diameter));
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
@@ -111,7 +130,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         });
         let initial_neutral =
             h.read(|editor| editor.document.visit.working_view.neutral_source().unwrap());
-        let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let target = layout.screen_point(egui::pos2(96., 32.));
         h.hover_at(target);
         h.step();
@@ -203,10 +222,10 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
                     .same_source_as(&initial)
             )
         });
-        let viewport = h.read(|editor| editor.document.visit.viewport);
+        let viewport = h.read(|editor| editor.document.visit.canvas.viewport);
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         h.read(|editor| assert_eq!(editor.selected_dust_repair(), Some(RepairId(1))));
-        h.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
+        h.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
         h.read(|editor| assert!(editor.active_pick().is_none()));
         h.update(|editor| editor.document.visit.dust.brush_size = 2);
         let before = h.read(|editor| pixels(editor, source, RepairId(1)));
@@ -233,7 +252,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
             point[0] as f32 + offset[0] as f32 + 0.5,
             point[1] as f32 + offset[1] as f32 + 0.5,
         );
-        let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let desired = [50, 50];
         drag(
             &mut h,
@@ -259,6 +278,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
             editor
                 .document
                 .visit
+                .canvas
                 .last_layout
                 .unwrap()
                 .0
@@ -407,7 +427,9 @@ fn navigating_back_to_a_repaired_photo_keeps_inactive_dust_artwork_hidden() {
                 ..Default::default()
             },
             |ui| {
-                h.read(|editor| editor.paint_dust(ui, editor.document.visit.last_layout.unwrap().0))
+                h.read(|editor| {
+                    editor.paint_dust(ui, editor.active_canvas().last_layout.unwrap().0)
+                })
             },
         );
         output.textures_delta.clear();

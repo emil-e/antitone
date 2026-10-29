@@ -89,7 +89,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
                 });
             }
             let request = harness.read(|editor| editor.id);
-            let viewport = harness.read(|editor| editor.document.visit.viewport);
+            let viewport = harness.read(|editor| editor.document.visit.canvas.viewport);
             harness.key_press_modifiers(
                 egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
                 egui::Key::A,
@@ -99,7 +99,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             harness.read(|editor| {
                 assert_eq!(editor.id, request, "shortcut does not dispatch a reload")
             });
-            harness.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
+            harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
             assert_eq!(
                 harness
                     .get_by_label("photo-0.dng")
@@ -208,7 +208,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         harness.read(|editor| {
             assert!(
-                editor.document.visit.ready.is_none()
+                editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.current_source.is_none()
             )
         });
@@ -228,7 +228,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         harness.read(|editor| assert!(editor.document.correction.is_some()));
         harness.read(|editor| {
             assert!(
-                editor.document.visit.ready.is_none()
+                editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.current_source.is_none()
             )
         });
@@ -259,7 +259,7 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             );
             assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
         });
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some()));
+        harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
         for (path, bytes) in paths.iter().zip(originals) {
             assert_eq!(
                 std::fs::read(path).unwrap(),
@@ -491,6 +491,7 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
             assert_eq!(
                 e.document
                     .visit
+                    .canvas
                     .preview_rendered
                     .as_ref()
                     .unwrap()

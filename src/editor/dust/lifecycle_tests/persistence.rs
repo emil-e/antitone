@@ -118,12 +118,12 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
 
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             let request = captured_request(e);
-            let active = e.document.visit.ready.as_ref().unwrap().area;
+            let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
             e.receive_dust(request.request, Ok(Some(response(&request, active))));
             let evaluation = e.document.dust.cached[&(source, RepairId(1))]
                 .evaluated
                 .clone();
-            let reference_revision = e.document.visit.grade.original.revision();
+            let reference_revision = e.document.visit.canvas.grade.original.revision();
             e.begin_dust_mask(Some(RepairId(1)));
             assert_eq!(
                 e.effective_dust_repair(source, RepairId(1)).unwrap(),
@@ -133,7 +133,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
 
             assert!(!e.document.dirty());
             assert_eq!(
-                e.document.visit.grade.original.revision(),
+                e.document.visit.canvas.grade.original.revision(),
                 reference_revision
             );
             assert_eq!(
@@ -162,7 +162,7 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
             let path = directory.path().join("pending.antitone");
             e.schedule_dust(e.dust_signature().unwrap(), cx);
             let request = captured_request(e);
-            let active = e.document.visit.ready.as_ref().unwrap().area;
+            let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
             let captured = e.document.capture();
             e.start_save(
                 crate::editor::document_services::Write {

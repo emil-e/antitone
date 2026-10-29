@@ -21,10 +21,10 @@ fn chosen_response(request: &Request, active: SourceRegion, offset: [i32; 2]) ->
 }
 
 fn layout(e: &mut Editor) -> crate::viewport::CanvasLayout {
-    e.document.visit.viewport.layout_composition(
+    e.document.visit.canvas.viewport.layout_composition(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(864., 576.)),
         Composition::new(
-            e.document.visit.ready.as_ref().unwrap().area,
+            e.document.visit.canvas.ready.as_ref().unwrap().area,
             Default::default(),
             Default::default(),
         )
@@ -45,7 +45,7 @@ fn held_drag_completion_is_preview_only_and_release_records_the_accepted_edit() 
     let request = request(&mut e);
     assert_eq!(request.repair.offset, [40, 5]);
     e.document.visit.dust.start(&request);
-    let active = e.document.visit.ready.as_ref().unwrap().area;
+    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
     e.receive_dust(request.request, Ok(Some(response(&request, active))));
     assert_eq!(e.dust_repairs(source), Some(&original));
     assert!(
@@ -67,7 +67,7 @@ fn held_drag_completion_is_preview_only_and_release_records_the_accepted_edit() 
 fn obsolete_success_cannot_modify_new_support_or_offset_or_steal_a_new_request() {
     let mut e = editor();
     let first = request(&mut e);
-    let active = e.document.visit.ready.as_ref().unwrap().area;
+    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
     let stale = chosen_response(&first, active, [60, 0]);
     e.document.visit.dust.start(&first);
     e.dust_repairs_mut(first.source)
@@ -95,7 +95,7 @@ fn obsolete_success_cannot_modify_new_support_or_offset_or_steal_a_new_request()
 fn ordinary_evaluation_cannot_propose_a_different_offset() {
     let mut e = editor();
     let request = request(&mut e);
-    let active = e.document.visit.ready.as_ref().unwrap().area;
+    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
     e.document.visit.dust.start(&request);
     e.receive_dust(
         request.request,
@@ -420,7 +420,7 @@ fn impossible_stroke_is_rejected_whole_without_changing_existing_repairs() {
                 width: 96,
                 height: 96,
             };
-            e.document.visit.ready.as_mut().unwrap().area = active;
+            e.document.visit.canvas.ready.as_mut().unwrap().area = active;
             e.document
                 .project
                 .source_mut(source)
@@ -541,7 +541,7 @@ fn coherent_editor() -> Editor {
 fn real_evaluation_workflow_continues_after_a_failed_repair_without_another_paint() {
     let mut e = coherent_editor();
     let source = e.document.visit.current_source.unwrap();
-    let active = e.document.visit.ready.as_ref().unwrap().area;
+    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
     e.dust_repairs_mut(source)
         .insert(
             SupportMask::new([active.x, active.y], [3, 3], vec![true; 9]).unwrap(),
@@ -565,6 +565,111 @@ fn real_evaluation_workflow_continues_after_a_failed_repair_without_another_pain
         app.read(|e| {
             assert!(e.document.dust.failed.contains_key(&(source, RepairId(1))));
             assert!(e.document.visit.dust.pending.is_none());
+        });
+    });
+}
+
+#[test]
+fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_view_is_active() {
+    let mut e = coherent_editor();
+    let source = e.document.visit.current_source.unwrap();
+    let record = e.document.project.source(source).unwrap();
+    let area = record.development.active_area;
+    let field = Arc::new(
+        crate::flat_field::FlatField::from_nodes(area, [2, 2], vec![DVec3::splat(1.2); 4]).unwrap(),
+    );
+    let settings = crate::project::FlatFieldSettings::new(record, field);
+    e.document.project.set_flat_field(Some(settings));
+    e.document.correction = crate::editor::Correction::prepare(
+        &e.source_services.as_ref().unwrap().device,
+        &e.document.capture(),
+        None,
+    )
+    .unwrap();
+    let photo = e.source_context().unwrap();
+    assert!(photo.correction.is_some());
+    let signature = e.dust_signature().unwrap();
+    let mut reference_editor = super::super::super::tests::authored_fixture(&["bare-light.dng"]);
+    let reference = reference_editor.document.visit.canvas.ready.take().unwrap();
+    let reference_scan =
+        Scan::with_reference(reference.developed.clone(), reference.reference.clone());
+    let repairs = [[50, 50], [100, 80]].map(|origin| {
+        let id = e
+            .dust_repairs_mut(source)
+            .insert(
+                SupportMask::new(origin, [3, 3], vec![true; 9]).unwrap(),
+                RepairOrigin::Manual,
+                [30, 0],
+            )
+            .unwrap();
+        let repair = e
+            .dust_repairs(source)
+            .unwrap()
+            .repairs()
+            .iter()
+            .find(|r| r.id == id)
+            .unwrap()
+            .clone();
+        let request = Request {
+            request: 1,
+            loaded: e.id,
+            source,
+            signature,
+            repair,
+            input: e.input(),
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let expected = evaluate(&photo.scan().unwrap(), &request)
+            .unwrap()
+            .evaluated;
+        let wrong_source = evaluate(&reference_scan, &request).unwrap().evaluated;
+        let uncorrected = Scan::with_reference(photo.source.clone(), photo.reference.clone());
+        let wrong_correction = evaluate(&uncorrected, &request).unwrap().evaluated;
+        let values = |r: &EvaluatedRepair| r.pixels().collect::<Vec<_>>();
+        assert_ne!(values(&expected), values(&wrong_source));
+        assert_ne!(values(&expected), values(&wrong_correction));
+        (id, expected)
+    });
+    let hold = crate::background::testing::pause();
+    with_application(e, |app| {
+        app.enter(|e, cx| e.schedule_dust(signature, cx));
+        app.pump();
+        app.read(|e| assert!(e.document.visit.dust.pending.is_some()));
+        // Only install prepared reference UI; both repair evaluations use the real continuation.
+        app.update(|e| {
+            e.finish_dust_cleanup();
+            super::super::super::tests::paused_reference_fixture(e, reference, None);
+        });
+        let (working_revision, reference_revision) = app.read(|e| {
+            assert!(e.canvas_source_context().unwrap().correction.is_none());
+            (
+                e.document.visit.canvas.grade.original.revision(),
+                e.active_canvas().grade.original.revision(),
+            )
+        });
+        drop(hold);
+        app.run_until(Duration::from_secs(15), |e| {
+            repairs
+                .iter()
+                .all(|(id, _)| e.document.dust.has_evaluation(source, *id))
+        });
+        app.read(|e| {
+            assert_eq!(
+                e.active_canvas().grade.original.revision(),
+                reference_revision
+            );
+            assert!(e.document.visit.canvas.grade.original.revision() > working_revision);
+        });
+        app.update(Editor::finish_flat_edit);
+        app.read(|e| {
+            assert!(e.document.visit.dust.pending.is_none());
+            for (id, expected) in repairs {
+                let cached = e.document.dust.cached.get(&(source, id)).unwrap();
+                assert_eq!(
+                    cached.evaluated.pixels().collect::<Vec<_>>(),
+                    expected.pixels().collect::<Vec<_>>()
+                );
+            }
         });
     });
 }
@@ -638,7 +743,7 @@ fn navigation_discards_the_unfinished_stroke_and_returning_can_start_a_new_one()
             assert!(e.dust_repairs(other).is_none());
             assert!(!Arc::ptr_eq(
                 &captured,
-                &e.document.visit.ready.as_ref().unwrap().developed
+                &e.document.visit.canvas.ready.as_ref().unwrap().developed
             ));
         });
         let index = app.read(|e| {
@@ -669,7 +774,7 @@ fn real_search_publishes_a_donor_before_a_failed_heal_without_another_paint() {
     let e = coherent_editor();
     with_application(e, |app| {
         let stroke = app.enter(|e, cx| {
-            let active = e.document.visit.ready.as_ref().unwrap().area;
+            let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
             queue(e, [active.x, active.y], cx)
         });
         app.run_until(Duration::from_secs(10), |e| !e.dust_search_pending());

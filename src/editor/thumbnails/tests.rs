@@ -177,7 +177,7 @@ pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
 fn transient_reference_with_the_same_development_cannot_seed_the_working_photo() {
     let mut editor = super::super::tests::fixture();
     super::super::tests::add_ready_fixture(&mut editor);
-    let ready = editor.document.visit.ready.as_mut().unwrap();
+    let ready = editor.document.visit.canvas.ready.as_mut().unwrap();
     ready.record.path = "different-reference.ARW".into();
     ready.thumbnail = Some((
         FileKey::new(&ready.record.path),
@@ -883,7 +883,7 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
     let (commands, requests) = mpsc::channel();
     editor.document.thumbnails.services = Some(Services::Controlled(commands));
     // Only original-policy state is involved here, not an original producer.
-    editor.document.visit.grade.original.refining = Some((
+    editor.document.visit.canvas.grade.original.refining = Some((
         0,
         crate::refinement::ViewRequest {
             area: [0, 0, 1, 1].into(),
@@ -1070,7 +1070,7 @@ fn idle_prefetch_fixture() -> (Editor, mpsc::Receiver<workflow::Submission>) {
     }
     let (commands, requests) = mpsc::channel();
     editor.document.thumbnails.services = Some(Services::Controlled(commands));
-    editor.document.visit.grade.original.last_edit =
+    editor.document.visit.canvas.grade.original.last_edit =
         std::time::Instant::now() - Duration::from_secs(1);
     (editor, requests)
 }
@@ -1181,7 +1181,7 @@ fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_gr
 fn idle_prefetch_renders_an_offscreen_card_after_its_cpu_only_pass_finished() {
     let (mut editor, requests) = idle_prefetch_fixture();
     let last = *editor.document.state.project.order.last().unwrap();
-    editor.document.visit.grade.original.last_edit = std::time::Instant::now();
+    editor.document.visit.canvas.grade.original.last_edit = std::time::Instant::now();
     let context = egui::Context::default();
     let budgets = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Normal);
     crate::application::test_support::with_application(editor, |app| {
@@ -1192,7 +1192,7 @@ fn idle_prefetch_renders_an_offscreen_card_after_its_cpu_only_pass_finished() {
         finish_submission(cpu, Ok(None), true);
         app.pump();
         app.enter(|e, cx| {
-            e.document.visit.grade.original.last_edit =
+            e.document.visit.canvas.grade.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             e.advance_thumbnail_demand(cx);
         });
@@ -1217,7 +1217,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         assert_eq!(old.job.key.source.id, last);
         assert!(old.job.render);
         app.enter(|e, cx| {
-            e.document.visit.grade.original.last_edit = std::time::Instant::now();
+            e.document.visit.canvas.grade.original.last_edit = std::time::Instant::now();
             filmstrip_frame(e, &context, budgets, cx);
         });
         let cpu_only = take_submission(app, &requests);
@@ -1236,7 +1236,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         finish_submission(cpu_only, Ok(None), false);
         app.pump();
         app.enter(|e, cx| {
-            e.document.visit.grade.original.last_edit =
+            e.document.visit.canvas.grade.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             filmstrip_frame(e, &context, budgets, cx);
         });
@@ -1413,7 +1413,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
         app.enter(|e, cx| {
             e.begin_crop();
             assert!(e.document.visit.crop_edit.is_some());
-            e.document.visit.grade.original.last_edit =
+            e.document.visit.canvas.grade.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             filmstrip_frame(e, &context, e.document.thumbnails.budgets, cx);
             assert!(e.document.thumbnails.pending.is_none());
@@ -1754,6 +1754,7 @@ fn replacing_a_document_releases_thumbnail_images_even_for_identical_project_dat
         let image = editor
             .document
             .visit
+            .canvas
             .ready
             .as_ref()
             .unwrap()

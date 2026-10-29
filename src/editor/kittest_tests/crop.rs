@@ -6,7 +6,7 @@ fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell
     harness.step();
     harness.render().unwrap();
     let (layout, pipeline, target) = harness.read(|editor| {
-        let ready = editor.document.visit.ready.as_ref().unwrap();
+        let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
         (
             editor
                 .document
@@ -118,7 +118,9 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
             e.sync_document();
         });
         h.enter(|e, cx| e.add_raws(vec![damaged], cx));
-        wait_for(&mut h, |e| !e.busy && e.document.visit.ready.is_some());
+        wait_for(&mut h, |e| {
+            !e.busy && e.document.visit.canvas.ready.is_some()
+        });
         h.update(|e| {
             e.document.source = false;
             e.document.visit.adjustment_layer_settings.exposure = 0.75;
@@ -221,13 +223,13 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
                 .crop_edit
                 .as_ref()
                 .and_then(|edit| edit.layout)
-                .unwrap_or_else(|| e.document.visit.last_layout.unwrap().0);
+                .unwrap_or_else(|| e.active_canvas().last_layout.unwrap().0);
             let position = layout.screen_point(egui::pos2(160., 96.));
             assert!(
                 layout.image.shrink(8.).contains(position)
                     && layout.canvas.shrink(8.).contains(position)
             );
-            let ready = e.document.visit.ready.as_ref().unwrap();
+            let ready = e.document.visit.canvas.ready.as_ref().unwrap();
             (
                 position,
                 e.adjustment_layer_snapshot(
@@ -293,7 +295,11 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
             harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
             wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
             harness.update(|editor| {
-                assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+                assert!(
+                    editor.document.visit.canvas.ready.is_some(),
+                    "{}",
+                    editor.status
+                );
                 if !digital {
                     editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
                     editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
@@ -391,7 +397,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
                     .layout
                     .unwrap();
                 let density = 1.;
-                editor.document.visit.viewport.zoom_at(
+                editor.document.visit.canvas.viewport.zoom_at(
                     layout,
                     density,
                     layout.scale * 1.8,
@@ -411,6 +417,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
                 editor
                     .document
                     .visit
+                    .canvas
                     .viewport
                     .pan(layout, 1., egui::vec2(65., -35.));
             });

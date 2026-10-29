@@ -37,7 +37,7 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
                     RollSettings::default(),
                     snapshot,
                     glam::DMat3::IDENTITY,
-                    e.document.visit.ready.as_ref().unwrap().area,
+                    e.document.visit.canvas.ready.as_ref().unwrap().area,
                 )
             })
             .map(Arc::new)
@@ -52,7 +52,7 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
         app.enter(|e, access| {
             e.observe_grade(&accepted);
             let guard = Dropped(dropped.clone());
-            e.document.visit.grade.task = access.spawn(move |_| async move {
+            e.document.visit.canvas.grade.task = access.spawn(move |_| async move {
                 let _guard = guard;
                 std::future::pending::<()>().await;
             });
@@ -70,14 +70,14 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
         app.pump();
         assert!(dropped.load(Ordering::Relaxed));
         app.read(|e| {
-            assert!(e.document.visit.grade.matches(&preview));
+            assert!(e.document.visit.canvas.grade.matches(&preview));
             assert_eq!(
                 e.document.state.project, before,
                 "an admitted visual snapshot is not a persisted edit"
             );
         });
         app.update(|e| e.observe_grade(&accepted));
-        app.read(|e| assert!(e.document.visit.grade.matches(&accepted)));
+        app.read(|e| assert!(e.document.visit.canvas.grade.matches(&accepted)));
     });
 }
 

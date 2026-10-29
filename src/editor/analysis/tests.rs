@@ -76,7 +76,11 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
                 editor.add_raws(vec![root.join("roll-0.dng"), root.join("roll-1.dng")], cx)
             },
         );
-        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        );
         assert_eq!(editor.document.state.project.order.len(), 2);
         let selected = editor.document.visit.current_source;
         editor.set_dmin(Some(DVec3::splat(0.8)));
@@ -224,7 +228,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         assert!(!editor.busy);
         assert_eq!(editor.status, "Analysis cancelled");
         assert_eq!(editor.document.state.project, before_cancel);
-        assert!(editor.document.visit.ready.is_some());
+        assert!(editor.document.visit.canvas.ready.is_some());
     });
 }
 
@@ -378,7 +382,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         .exposure = 0.;
     editor.document.state.project.add_source(second).unwrap();
     let before = editor.document.state.project.clone();
-    editor.document.visit.viewport.zoom = Some(1.7);
+    editor.document.visit.canvas.viewport.zoom = Some(1.7);
     let area = rect([12, 12, 800, 600]);
     let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
     let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
@@ -395,7 +399,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         output: [32, 24],
         frame: None,
     };
-    editor.document.visit.grade.original.observe(
+    editor.document.visit.canvas.grade.original.observe(
         OriginalPurpose::Reference,
         (
             input.signature(),
@@ -404,8 +408,8 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
             composition,
         ),
     );
-    let original_revision = editor.document.visit.grade.original.revision();
-    editor.document.visit.grade.original.refining = Some((original_revision, view));
+    let original_revision = editor.document.visit.canvas.grade.original.revision();
+    editor.document.visit.canvas.grade.original.refining = Some((original_revision, view));
     let id = pending(&mut editor);
     editor.analysis_progress(id, 1, 1);
     assert_eq!(editor.document.state.project, before);
@@ -486,20 +490,57 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         editor.document.state.project.camera_basis(),
         before.camera_basis()
     );
-    assert_eq!(editor.document.visit.viewport.zoom, Some(1.7));
+    assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.7));
     assert!(!editor.document.source);
     assert!(editor.document.visit.working_view.revision().is_none());
     assert!(editor.document.visit.working_view.displayed.is_none());
     assert!(
-        editor.document.visit.grade.original.signature.is_none()
-            && editor.document.visit.grade.original.settled.is_none()
+        editor
+            .document
+            .visit
+            .canvas
+            .grade
+            .original
+            .signature
+            .is_none()
+            && editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .settled
+                .is_none()
     );
-    assert!(editor.document.visit.grade.original.revision() > original_revision);
-    assert!(editor.document.visit.grade.original.refining.is_none());
+    assert!(editor.document.visit.canvas.grade.original.revision() > original_revision);
+    assert!(
+        editor
+            .document
+            .visit
+            .canvas
+            .grade
+            .original
+            .refining
+            .is_none()
+    );
     editor.original_result(original_revision, Ok(None));
     assert!(
-        editor.document.visit.grade.original.refining.is_none()
-            && editor.document.visit.grade.original.settled.is_none()
+        editor
+            .document
+            .visit
+            .canvas
+            .grade
+            .original
+            .refining
+            .is_none()
+            && editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .settled
+                .is_none()
     );
     assert!(editor.document.dirty());
     editor.document.roll.exposure = 0.;
@@ -671,43 +712,80 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         output.textures_delta.clear();
                     };
                     frame(editor);
-                    editor.document.visit.grade.original.last_edit =
+                    editor.document.visit.canvas.grade.original.last_edit =
                         std::time::Instant::now() - Duration::from_secs(1);
                     frame(editor);
-                    let revision = editor.document.visit.grade.original.revision();
-                    let signature = editor.document.visit.grade.original.signature.clone();
+                    let revision = editor.document.visit.canvas.grade.original.revision();
+                    let signature = editor
+                        .document
+                        .visit
+                        .canvas
+                        .grade
+                        .original
+                        .signature
+                        .clone();
                     let view = signature.as_ref().unwrap().2.unwrap();
                     let image = editor
                         .document
                         .visit
+                        .canvas
                         .ready
                         .as_ref()
                         .unwrap()
                         .proxy
                         .image(OutputTarget::Srgb)
                         .unwrap();
-                    assert!(editor.document.visit.grade.original.refining.is_some());
+                    assert!(
+                        editor
+                            .document
+                            .visit
+                            .canvas
+                            .grade
+                            .original
+                            .refining
+                            .is_some()
+                    );
                     if !outstanding {
                         editor.original_result(revision, Ok(Some(image.clone())));
                     } else if settled {
-                        editor.document.visit.grade.original.settled =
+                        editor.document.visit.canvas.grade.original.settled =
                             Some((revision, view, image.clone()));
                     }
                     let before = editor.document.state.project.clone();
                     editor.begin_analysis(cx);
-                    assert_eq!(editor.document.visit.grade.original.signature, signature);
                     assert_eq!(
-                        editor.document.visit.grade.original.settled.is_some(),
+                        editor.document.visit.canvas.grade.original.signature,
+                        signature
+                    );
+                    assert_eq!(
+                        editor
+                            .document
+                            .visit
+                            .canvas
+                            .grade
+                            .original
+                            .settled
+                            .is_some(),
                         settled
                     );
                     if outstanding {
                         // A late completion from cancelled work cannot replace the accepted image.
                         editor.original_result(revision, Ok(Some(image.clone())));
                     } else {
-                        assert_eq!(editor.document.visit.grade.original.revision(), revision);
+                        assert_eq!(
+                            editor.document.visit.canvas.grade.original.revision(),
+                            revision
+                        );
                     }
                     assert_eq!(
-                        editor.document.visit.grade.original.settled.is_some(),
+                        editor
+                            .document
+                            .visit
+                            .canvas
+                            .grade
+                            .original
+                            .settled
+                            .is_some(),
                         settled
                     );
                     let pending = editor.document.analysis_pending.as_ref().unwrap().id;
@@ -729,6 +807,7 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         let (current_revision, current_view, retained) = editor
                             .document
                             .visit
+                            .canvas
                             .grade
                             .original
                             .settled
@@ -736,15 +815,33 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                             .unwrap();
                         assert_eq!(
                             *current_revision,
-                            editor.document.visit.grade.original.revision()
+                            editor.document.visit.canvas.grade.original.revision()
                         );
                         assert_eq!(*current_view, view);
                         assert!(Arc::ptr_eq(retained, &image));
-                        assert!(editor.document.visit.grade.original.refining.is_none());
-                        assert!(editor.document.visit.grade.task.is_none());
+                        assert!(
+                            editor
+                                .document
+                                .visit
+                                .canvas
+                                .grade
+                                .original
+                                .refining
+                                .is_none()
+                        );
+                        assert!(editor.document.visit.canvas.grade.task.is_none());
                     } else {
-                        assert!(editor.document.visit.grade.original.refining.is_some());
-                        assert!(editor.document.visit.grade.task.is_some());
+                        assert!(
+                            editor
+                                .document
+                                .visit
+                                .canvas
+                                .grade
+                                .original
+                                .refining
+                                .is_some()
+                        );
+                        assert!(editor.document.visit.canvas.grade.task.is_some());
                     }
                 });
             });
@@ -768,10 +865,10 @@ fn statistics_edit_bypasses_composition_and_crop_drafts_cannot_start_analysis() 
             editor.document.source = false;
             editor.sync_document();
             let before = editor.document.state.project.clone();
-            editor.document.visit.viewport.zoom = Some(1.7);
-            let view = editor.document.visit.viewport;
+            editor.document.visit.canvas.viewport.zoom = Some(1.7);
+            let view = editor.document.visit.canvas.viewport;
             editor.begin_pick(Pick::Analysis, cx);
-            let area = editor.document.visit.ready.as_ref().unwrap().area;
+            let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
             let ctx = egui::Context::default();
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -786,7 +883,14 @@ fn statistics_edit_bypasses_composition_and_crop_drafts_cannot_start_analysis() 
             output.textures_delta.clear();
             assert!(editor.document.source);
             assert_eq!(
-                editor.document.visit.last_layout.unwrap().0.composition,
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .last_layout
+                    .unwrap()
+                    .0
+                    .composition,
                 Composition::new(
                     area,
                     RollOrientation::default(),
@@ -807,7 +911,7 @@ fn statistics_edit_bypasses_composition_and_crop_drafts_cannot_start_analysis() 
                 before.orientation
             );
             assert_eq!(editor.document.roll, before.roll);
-            assert_eq!(editor.document.visit.viewport, view);
+            assert_eq!(editor.document.visit.canvas.viewport, view);
             assert!(!editor.document.source);
             editor.begin_crop();
             assert!(editor.document.visit.crop_edit.is_some());
@@ -902,11 +1006,16 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
             Duration::from_secs(60),
             |editor, cx| editor.add_raws(paths, cx),
         );
-        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        );
         assert_eq!(
             editor
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .unwrap()
@@ -1137,19 +1246,28 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             for _ in 0..4 {
                 super::super::tests::app_frame(editor, &ctx, vec![]);
             }
-            let signature = editor.document.visit.grade.original.signature.clone();
-            let revision = editor.document.visit.grade.original.revision();
+            let signature = editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .signature
+                .clone();
+            let revision = editor.document.visit.canvas.grade.original.revision();
             let view = signature.as_ref().unwrap().2.unwrap();
             let image = editor
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .unwrap()
                 .proxy
                 .image(OutputTarget::Srgb)
                 .unwrap();
-            editor.document.visit.grade.original.settled = Some((revision, view, image.clone()));
+            editor.document.visit.canvas.grade.original.settled =
+                Some((revision, view, image.clone()));
             editor.request_analysis(cx);
             let before = editor.document.state.project.clone();
             let mut output = ctx.run_ui(
@@ -1171,12 +1289,19 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             assert!(editor.document.analysis_preparing.is_none());
             assert!(editor.tasks.view().is_none());
             assert_eq!(editor.document.state.project, before);
-            assert_eq!(editor.document.visit.grade.original.signature, signature);
-            assert_eq!(editor.document.visit.grade.original.revision(), revision);
+            assert_eq!(
+                editor.document.visit.canvas.grade.original.signature,
+                signature
+            );
+            assert_eq!(
+                editor.document.visit.canvas.grade.original.revision(),
+                revision
+            );
             assert!(Arc::ptr_eq(
                 &editor
                     .document
                     .visit
+                    .canvas
                     .grade
                     .original
                     .settled

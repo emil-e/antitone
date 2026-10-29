@@ -223,7 +223,7 @@ fn offscreen_known_reference_is_included_in_read_only_parameter_preflight() {
     candidate.project.source_mut(id).unwrap().adjustment_layers = offscreen.adjustment_layers;
     assert!(editor.validate_document_candidate(&candidate).is_err());
     assert_eq!(editor.document.state.project, before);
-    assert!(editor.document.visit.ready.is_none());
+    assert!(editor.document.visit.canvas.ready.is_none());
 }
 
 #[test]

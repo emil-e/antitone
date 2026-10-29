@@ -79,7 +79,7 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
         app.enter(|editor, cx| {
             start_area_preparation(editor, cx);
             prepared(editor);
-            let active = editor.document.visit.ready.as_ref().unwrap().area;
+            let active = editor.document.visit.canvas.ready.as_ref().unwrap().area;
             let opening = Coverage::rectangle(active);
             let picture = Coverage::rectangle(Rect {
                 x: active.x + active.width / 4,
@@ -165,7 +165,7 @@ fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit
             approved.entries[0].areas = Areas::default();
             e.analysis_areas_result(id, Ok(Some(approved)), cx);
             e.set_pick_region(Some(Coverage::rectangle(
-                e.document.visit.ready.as_ref().unwrap().area,
+                e.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
         });
         super::super::super::tests::app_frame(app, &ctx, vec![]);
@@ -174,10 +174,10 @@ fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit
                 .review_areas(e.document.visit.current_source.unwrap())
                 .unwrap();
             assert!(areas.opening.is_some() && areas.picture.is_none());
-            let geometry = e.document.visit.last_layout.unwrap().0;
+            let geometry = e.document.visit.canvas.last_layout.unwrap().0;
             e.select_review_area(geometry, geometry.image.center());
             e.set_pick_region(Some(Coverage::rectangle(
-                e.document.visit.ready.as_ref().unwrap().area,
+                e.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
         });
         super::super::super::tests::app_frame(app, &ctx, vec![]);
@@ -204,7 +204,7 @@ fn opening_exception_updates_automatic_picture_coverage_but_not_authored_picture
             editor.document.state.project.add_source(other).unwrap();
             start_area_preparation(editor, cx);
             prepared(editor);
-            let active = editor.document.visit.ready.as_ref().unwrap().area;
+            let active = editor.document.visit.canvas.ready.as_ref().unwrap().area;
             let review = editor.document.analysis_review.as_mut().unwrap();
             let a = &mut review.approved.entries[0].areas;
             a.picture_observed = [false; 4];
@@ -347,10 +347,18 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
             start_area_preparation(editor, cx);
             prepared(editor);
             let before = editor.document.state.project.clone();
-            let proxy = editor.document.visit.ready.as_ref().unwrap().proxy.clone();
+            let proxy = editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .proxy
+                .clone();
             editor.browse_analysis_review(other, cx);
             let record = editor.document.state.project.source(other).unwrap().clone();
-            editor.document.visit.ready = Some(Ready {
+            editor.document.visit.canvas.ready = Some(Ready {
                 reference: None,
                 developed: crate::editor::tests::developed_fixture(),
                 file: thumbnails::FileKey::new(&record.path),

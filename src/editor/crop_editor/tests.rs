@@ -171,7 +171,7 @@ fn angle_control_reframing_keeps_magnification_and_screen_pivot() {
     )
     .unwrap();
     reframe_crop(
-        &mut h.editor.document.visit.viewport,
+        &mut h.editor.document.visit.canvas.viewport,
         before,
         next,
         1.,
@@ -629,7 +629,7 @@ impl Harness {
                             Some(self.editor.document.visit.crop_edit.as_ref().unwrap().draft),
                         )
                         .unwrap();
-                        let mut layout = self.editor.document.visit.viewport.layout_crop(
+                        let mut layout = self.editor.document.visit.canvas.viewport.layout_crop(
                             canvas.shrink(20.),
                             composition,
                             ui.ctx().pixels_per_point(),

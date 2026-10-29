@@ -53,7 +53,7 @@ pub(super) fn fixture() -> (Editor, tempfile::TempDir) {
     let path = directory.path().join("photo-0.ARW");
     std::fs::write(&path, b"metadata-only source fixture").unwrap();
     editor.document.state.project.source_mut(id).unwrap().path = path.clone();
-    let ready = editor.document.visit.ready.as_mut().unwrap();
+    let ready = editor.document.visit.canvas.ready.as_mut().unwrap();
     ready.path = path.clone();
     ready.record.path = path.clone();
     ready.file = thumbnails::FileKey::new(&path);
@@ -98,7 +98,7 @@ fn preview(editor: &Editor, id: SourceId) -> Option<Crop> {
 
 fn browse(editor: &mut Editor, index: usize, cx: &UiContext<'_, Editor>) {
     // Exercise production selection/load state, then deliver compatible metadata without RAW decoding.
-    let mut ready = editor.document.visit.ready.take().unwrap();
+    let mut ready = editor.document.visit.canvas.ready.take().unwrap();
     editor.select_roll_photo(index, egui::Modifiers::NONE, cx);
     let id = editor.document.visit.current_source.unwrap();
     let source = editor.document.state.project.source(id).unwrap();
@@ -279,7 +279,7 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
             e.document.visit.crop = Some(small());
             e.sync_document();
             let mut expected = e.document.state.project.clone();
-            let active = e.document.visit.ready.as_ref().unwrap().area;
+            let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
             let proposed = default_crop(active, &measured_areas());
             assert!(proposed.angle.abs() > 0.);
             e.begin_crop();
@@ -324,7 +324,7 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
                 e.document.analysis_preparing.is_none()
                     && e.document.analysis_pending.is_none()
                     && !e.document.visit.source.pending()
-                    && e.document.visit.grade.task.is_none(),
+                    && e.document.visit.canvas.grade.task.is_none(),
                 "no hidden Analyze, RAW reload or grading work"
             );
         });
@@ -389,12 +389,12 @@ fn margin_uses_originals_and_target_identity_across_browsing_and_reselection() {
             assert!(e.document.source && e.auto_crop_context());
             assert!(e.auto_crop_preview(ids[1]).is_none());
             e.select_active_photo_only();
-            let viewport = e.document.visit.viewport;
+            let viewport = e.document.visit.canvas.viewport;
             for percent in [2., 1.25, 0., 5., 0.] {
                 e.adjust_auto_crop_margin(percent);
                 assert_eq!(e.auto_crop_margin, percent);
                 assert_eq!(e.document.state.project, before);
-                assert_eq!(e.document.visit.viewport, viewport);
+                assert_eq!(e.document.visit.canvas.viewport, viewport);
                 for (&id, &original) in [ids[0], ids[2]].iter().zip(&proposals) {
                     let active = e
                         .document
@@ -440,8 +440,8 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
     let (mut e, _directory) = fixture();
     e.document.visit.crop = Some(small());
     e.sync_document();
-    e.document.visit.viewport.zoom = Some(1.5);
-    let viewport = e.document.visit.viewport;
+    e.document.visit.canvas.viewport.zoom = Some(1.5);
+    let viewport = e.document.visit.canvas.viewport;
     let before = e.document.state.project.clone();
     let serialized = serde_json::to_string(&before).unwrap();
     e.auto_crop(Target::Roll);
@@ -453,7 +453,7 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
     assert_eq!(e.document.visit.crop, Some(small()));
     assert_ne!(preview(&e, before.order[0]), e.document.visit.crop);
     let composition = Composition::with_crop(
-        e.document.visit.ready.as_ref().unwrap().area,
+        e.document.visit.canvas.ready.as_ref().unwrap().area,
         e.document.roll_orientation,
         e.document.visit.photo_orientation,
         e.document.visit.crop,
@@ -467,7 +467,7 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
     e.finish_auto_crop(false);
     assert_eq!(e.document.state.project, before);
     assert_eq!(e.document.visit.crop, Some(small()));
-    assert_eq!(e.document.visit.viewport, viewport);
+    assert_eq!(e.document.visit.canvas.viewport, viewport);
     assert!(e.document.auto_crop_edit.is_none() && !e.auto_crop_context());
 }
 
@@ -560,7 +560,7 @@ fn development_change_and_invalid_margins_do_not_mutate_the_draft_or_document() 
 fn a_whole_source_proposal_is_an_explicit_draft_reset_not_an_absent_override() {
     let (mut e, _directory) = fixture();
     let id = e.document.visit.current_source.unwrap();
-    let active = e.document.visit.ready.as_ref().unwrap().area;
+    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
     let areas = &mut e.document.state.project.analysis_regions[0].areas;
     areas.picture_geometry = Some(PictureGeometry {
         size: [768, 512],
@@ -645,10 +645,10 @@ fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     let (mut e, _directory) = fixture();
     e.document.visit.crop = Some(small());
     e.sync_document();
-    e.document.visit.viewport.zoom = Some(1.5);
-    let viewport = e.document.visit.viewport;
+    e.document.visit.canvas.viewport.zoom = Some(1.5);
+    let viewport = e.document.visit.canvas.viewport;
     let before = e.document.state.project.clone();
-    let active = e.document.visit.ready.as_ref().unwrap().area;
+    let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
     let expected = default_crop(active, &measured_areas());
     e.begin_crop();
     e.document.visit.crop_edit.as_mut().unwrap().draft = Crop::from_region(active);
@@ -658,7 +658,7 @@ fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     assert_eq!(e.document.visit.crop, Some(small()));
     assert_eq!(e.document.state.project, before);
     e.finish_crop(false);
-    assert_eq!(e.document.visit.viewport, viewport);
+    assert_eq!(e.document.visit.canvas.viewport, viewport);
     assert_eq!(e.document.state.project, before);
     e.begin_crop();
     e.auto_crop(Target::Photo);
@@ -679,9 +679,10 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
     e.begin_crop();
     e.document.visit.crop_edit.as_mut().unwrap().draft = small();
     let before = e.document.state.project.clone();
-    let viewport = e.document.visit.viewport;
+    let viewport = e.document.visit.canvas.viewport;
     e.document
         .visit
+        .canvas
         .ready
         .as_mut()
         .unwrap()
@@ -693,7 +694,7 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
     assert_eq!(e.document.visit.crop_edit.as_ref().unwrap().draft, small());
     assert!(e.document.auto_crop_edit.is_none());
     assert_eq!(e.document.state.project, before);
-    assert_eq!(e.document.visit.viewport, viewport);
+    assert_eq!(e.document.visit.canvas.viewport, viewport);
     assert!(e.status.contains("Crop unchanged"));
     assert!(
         e.source_tool_warning(e.document.visit.current_source.unwrap())
@@ -701,14 +702,21 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
             .contains("Automatic crop unavailable")
     );
     let path = directory.path().join("photo-0.ARW");
-    e.document.visit.ready.as_mut().unwrap().record.development = e
+    e.document
+        .visit
+        .canvas
+        .ready
+        .as_mut()
+        .unwrap()
+        .record
+        .development = e
         .document
         .project
         .source(e.document.visit.current_source.unwrap())
         .unwrap()
         .development
         .clone();
-    e.document.visit.ready.as_mut().unwrap().file = e.document.file_key(&path);
+    e.document.visit.canvas.ready.as_mut().unwrap().file = e.document.file_key(&path);
     e.auto_crop(Target::Photo);
     assert!(
         e.source_tool_warning(e.document.visit.current_source.unwrap())

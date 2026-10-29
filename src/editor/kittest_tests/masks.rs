@@ -54,7 +54,7 @@ fn endpoint(editor: &Editor) -> egui::Pos2 {
     let AdjustmentLayerCoverage::Linear { end, .. } = accepted_mask(editor) else {
         unreachable!()
     };
-    let layout = editor.document.visit.last_layout.unwrap().0;
+    let layout = editor.active_canvas().last_layout.unwrap().0;
     layout.screen_frame_point(layout.composition.source_to_frame(end))
 }
 
@@ -63,7 +63,7 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         let before = harness.read(|editor| editor.document.state.project.clone());
         arm(&mut harness, false);
-        let image = harness.read(|editor| editor.document.visit.last_layout.unwrap().0.image);
+        let image = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
         pointer(&mut harness, image.center(), true);
         pointer(&mut harness, image.center(), false);
         harness.read(|editor| {
@@ -87,7 +87,7 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.read(|editor| assert!(editor.document.visit.mask_edit.is_none()));
         arm(&mut harness, false);
-        let image = harness.read(|editor| editor.document.visit.last_layout.unwrap().0.image);
+        let image = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
         drag(
             &mut harness,
             image.center() - egui::vec2(80., 40.),
@@ -142,7 +142,7 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
 fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through_rotated_crops() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         harness.update(|editor| {
-            let area = editor.document.visit.ready.as_ref().unwrap().area;
+            let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
             editor.document.roll_orientation.turn_clockwise();
             editor.document.visit.photo_orientation.flips.horizontal = true;
             editor.document.visit.crop =
@@ -151,7 +151,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
         });
         harness.step();
         arm(&mut harness, false);
-        let image = harness.read(|editor| editor.document.visit.last_layout.unwrap().0.image);
+        let image = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
         drag(
             &mut harness,
             image.center() - egui::vec2(30., 50.),
@@ -174,7 +174,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
                     )
                     .unwrap();
                 let snapshot = input.pipeline().unwrap().snapshot().clone();
-                let layout = editor.document.visit.last_layout.unwrap().0;
+                let layout = editor.active_canvas().last_layout.unwrap().0;
                 let start = endpoint(editor);
                 (input, snapshot, layout, start)
             });
@@ -261,7 +261,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             harness.step();
             pointer(&mut harness, start - egui::vec2(20., 20.), false);
             harness.read(|editor| assert_eq!(editor.document.state.project, accepted));
-            let layout = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             let outside = layout.canvas.min + egui::vec2(8., 20.);
             drag(&mut harness, outside, outside + egui::vec2(5., 70.));
             harness.read(|editor| assert!(editor.document.visit.mask_edit.is_none()));
@@ -336,7 +336,7 @@ fn armed_creation_suspends_outside_photo_and_resumes_without_consuming_an_id() {
                             .is_disabled()
                     );
                 }
-                let image = h.read(|editor| editor.document.visit.last_layout.unwrap().0.image);
+                let image = h.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
                 drag(
                     &mut h,
                     image.center() - egui::vec2(30., 30.),
@@ -350,7 +350,7 @@ fn armed_creation_suspends_outside_photo_and_resumes_without_consuming_an_id() {
                 });
             }
             stage(&mut h, "Photo");
-            let image = h.read(|editor| editor.document.visit.last_layout.unwrap().0.image);
+            let image = h.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
             drag(
                 &mut h,
                 image.center() - egui::vec2(30., 30.),
@@ -375,22 +375,23 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
     workflow::calibrated_workflow(|mut h, _, _directory| {
         for radial in [false, true] {
             arm(&mut h, radial);
-            let image = h.read(|editor| editor.document.visit.last_layout.unwrap().0.image);
+            let image = h.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
             drag(
                 &mut h,
                 image.center() - egui::vec2(30., 30.),
                 image.center() + egui::vec2(30., 30.),
             );
-            let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             h.update(|editor| {
-                editor
-                    .document
-                    .visit
-                    .viewport
-                    .zoom_at(layout, 1., 2., layout.canvas.center())
+                editor.document.visit.canvas.viewport.zoom_at(
+                    layout,
+                    1.,
+                    2.,
+                    layout.canvas.center(),
+                )
             });
             h.step();
-            let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             let mask = h.read(|editor| {
                 adjustment_layers::layers(editor)
                     .layers
@@ -406,7 +407,7 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
             };
             let start = layout.screen_frame_point(layout.composition.source_to_frame(point));
             let end = start + egui::vec2(20., 15.);
-            let viewport = h.read(|editor| editor.document.visit.viewport);
+            let viewport = h.read(|editor| editor.document.visit.canvas.viewport);
             hold_drag(&mut h, start, end);
             h.read(|editor| assert!(editor.document.visit.mask_edit.as_ref().unwrap().dragging()));
             h.key_press(egui::Key::Z);
@@ -423,10 +424,10 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
                 h.hover_at(end + egui::vec2(10., 5.));
                 h.step();
             }
-            h.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
+            h.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
             h.read(|editor| {
                 assert_eq!(
-                    editor.document.visit.last_layout.unwrap().0.image,
+                    editor.active_canvas().last_layout.unwrap().0.image,
                     layout.image
                 )
             });
@@ -458,7 +459,7 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
             });
             h.key_press(egui::Key::Z);
             h.step();
-            h.read(|editor| assert!(editor.document.visit.viewport.zoom.is_none()));
+            h.read(|editor| assert!(editor.document.visit.canvas.viewport.zoom.is_none()));
         }
     });
 }
@@ -467,7 +468,7 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
 fn fullscreen_suspension_cannot_accept_an_unseen_mask_release() {
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         arm(&mut harness, false);
-        let image = harness.read(|editor| editor.document.visit.last_layout.unwrap().0.image);
+        let image = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
         let start = image.center() - egui::vec2(40., 40.);
         let end = image.center() + egui::vec2(40., 40.);
         hold_drag(&mut harness, start, end);

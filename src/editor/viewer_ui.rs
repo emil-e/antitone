@@ -6,7 +6,7 @@ pub(super) fn surface() -> egui::Color32 {
 
 impl Editor {
     pub(super) fn source_parameters(&self, exposure: f64) -> Result<ProcessingParameters, Error> {
-        if let Some(ready) = &self.document.visit.ready {
+        if let Some(ready) = &self.active_canvas().ready {
             return self.source_preview_parameters(
                 ready
                     .developed
@@ -142,7 +142,8 @@ impl Editor {
                 .mask_edit
                 .as_ref()
                 .is_some_and(MaskEdit::creating);
-        let dust_session = !fullscreen && self.document.visit.dust.cleanup && !self.document.source;
+        let dust_session =
+            !fullscreen && self.document.visit.dust.cleanup && !self.canvas_inspection();
         let tool = (!fullscreen && !dust_session)
             .then(|| self.viewer_tool())
             .flatten();
@@ -165,11 +166,11 @@ impl Editor {
         let mut cancel = false;
         let mut apply = false;
         let calibrated = self.document.input.ready();
-        if !calibrated {
+        if !calibrated && self.document.flat_edit.is_none() {
             self.document.source = true;
         }
 
-        let navigating = self.document.visit.ready.is_some()
+        let navigating = self.active_canvas().ready.is_some()
             && !self.busy
             && !self
                 .document
@@ -222,14 +223,14 @@ impl Editor {
                 };
                 let quality = if self.document.visit.pending_preview.is_some() {
                     " · Cached preview"
-                } else if self.document.source || self.document.visit.ready.is_none() {
+                } else if self.canvas_inspection() || self.active_canvas().ready.is_none() {
                     ""
                 } else if self.document.visit.working_view.enabled() && tool.is_none() {
                     if look_error.is_some() {
                         " · Look unavailable"
                     } else if self.document.visit.working_view.error.is_some() {
                         " · View unavailable"
-                    } else if self.document.visit.working_view.compare && self.document.visit.grade.original.refinement_error == Some(self.document.visit.grade.original.revision()) {
+                    } else if self.document.visit.working_view.compare && self.active_canvas().grade.original.refinement_error == Some(self.active_canvas().grade.original.revision()) {
                         " · Reference unavailable"
                     } else if self.document.visit.working_view.compare && self.document.visit.working_view.reference_ready() {
                         " · Original reference"
@@ -240,9 +241,9 @@ impl Editor {
                     } else {
                         ""
                     }
-                } else if self.document.visit.grade.original.refining.is_some() {
+                } else if self.active_canvas().grade.original.refining.is_some() {
                     " · Refining"
-                } else if self.document.visit.grade.original.settled.is_none() {
+                } else if self.active_canvas().grade.original.settled.is_none() {
                     " · Approximate"
                 } else {
                     ""
@@ -277,7 +278,7 @@ impl Editor {
                         >= trailing_width
                             + presentation::CONTROL_HEIGHT
                             + VIEWER_ITEM_GAP
-                            + if self.document.source { 224. } else { 192. };
+                            + if self.canvas_inspection() { 224. } else { 192. };
                 if icons::button(
                     ui,
                     Icon::Fit,
@@ -291,14 +292,14 @@ impl Editor {
                 )
                 .clicked()
                 {
-                    self.document.visit.viewport.fit();
+                    self.active_canvas_mut().viewport.fit();
                 }
                 let layout = if cropping {
                     self.document.visit.crop_edit.as_ref().and_then(|edit| edit.layout)
                 } else {
                     None
                 }
-                .or(self.document.visit.last_layout.map(|(layout, _)| layout));
+                .or(self.active_canvas().last_layout.map(|(layout, _)| layout));
                 let zoom = layout.map_or("—".into(), |layout| {
                     format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point())
                 });
@@ -358,7 +359,7 @@ impl Editor {
                         );
                     });
                 }
-                if !self.document.source && tool.is_none() && self.document.visit.working_view.enabled() {
+                if !self.canvas_inspection() && tool.is_none() && self.document.visit.working_view.enabled() {
                     ui.add_enabled_ui(inspecting, |ui| {
                         icons::toggle(
                             ui,
@@ -370,7 +371,7 @@ impl Editor {
                     });
                 }
                 let inspection_id = ui.make_persistent_id("source-inspection-popup");
-                if self.document.source {
+                if self.canvas_inspection() {
                     let exposure = format!("Source {:+.2} EV", self.source_exposure);
                     let inspection = icons::button(
                         ui,

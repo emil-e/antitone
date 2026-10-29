@@ -116,13 +116,20 @@ impl Editor {
         {
             return;
         }
-        let Some(area) = self.document.visit.ready.as_ref().map(|ready| ready.area) else {
+        let Some(area) = self
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .map(|ready| ready.area)
+        else {
             return;
         };
         self.finish_adjustment_layer_interaction();
         self.document.visit.crop_edit = Some(CropEdit {
             draft: self.document.visit.crop.unwrap_or(Crop::from_region(area)),
-            viewport: self.document.visit.viewport,
+            viewport: self.document.visit.canvas.viewport,
             ratio: None,
             drag: None,
             layout: None,
@@ -130,8 +137,8 @@ impl Editor {
             auto_problem: None,
             reveal_controls: true,
         });
-        self.document.visit.viewport.fit();
-        self.document.visit.last_layout = None;
+        self.document.visit.canvas.viewport.fit();
+        self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
         self.status = "Crop draft; changes are not applied".into();
     }
@@ -146,8 +153,8 @@ impl Editor {
         edit.draft = crop;
         edit.ratio = None;
         edit.layout = None;
-        self.document.visit.viewport.fit();
-        self.document.visit.last_layout = None;
+        self.document.visit.canvas.viewport.fit();
+        self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
     }
 
@@ -160,6 +167,7 @@ impl Editor {
             let active = self
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .expect("crop retains its source")
@@ -169,14 +177,14 @@ impl Editor {
                 .expect("crop draft is constrained");
             self.document.visit.crop =
                 (edit.draft != Crop::from_region(active)).then_some(edit.draft);
-            self.document.visit.viewport.fit();
+            self.document.visit.canvas.viewport.fit();
             self.status = "Crop applied".into();
             self.record_edit(before, "Crop", self.document.visit.current_source);
         } else {
-            self.document.visit.viewport = edit.viewport;
+            self.document.visit.canvas.viewport = edit.viewport;
             self.status = "Crop cancelled; composition unchanged".into();
         }
-        self.document.visit.last_layout = None;
+        self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
     }
 
@@ -192,7 +200,7 @@ impl Editor {
             || auto_cropping
             || self.document.flat_edit.is_some()
             || self.document.visit.mask_edit.is_some();
-        let ready = !self.busy && self.document.visit.ready.is_some();
+        let ready = !self.busy && self.document.visit.canvas.ready.is_some();
         let commands_enabled = ready && !tool_active && self.active_pick().is_none();
         let crop_enabled =
             cropping || auto_cropping || ready && self.active_pick().is_none() && !tool_active;
@@ -327,7 +335,7 @@ impl Editor {
             }
         }
         if orientation != self.document.visit.photo_orientation {
-            self.document.visit.viewport.fit();
+            self.document.visit.canvas.viewport.fit();
         }
         self.record_edit(
             before,
@@ -362,6 +370,7 @@ impl Editor {
         let area = self
             .document
             .visit
+            .canvas
             .ready
             .as_ref()
             .expect("crop retains its source")
@@ -496,7 +505,7 @@ impl Editor {
             edit.draft = Crop::from_region(area);
             edit.ratio = None;
             edit.drag = None;
-            self.document.visit.viewport.fit();
+            self.document.visit.canvas.viewport.fit();
         } else if edit.draft != previous {
             edit.drag = None;
             if let Some(layout) = edit.layout {
@@ -508,7 +517,7 @@ impl Editor {
                 )
                 .unwrap();
                 reframe_crop(
-                    &mut self.document.visit.viewport,
+                    &mut self.document.visit.canvas.viewport,
                     layout,
                     next,
                     ui.ctx().pixels_per_point(),
@@ -710,7 +719,7 @@ impl Editor {
             ui.ctx().set_cursor_icon(cursor);
         }
         // The painted layout is the editing viewport: retain it, not a new Fit of the crop.
-        self.document.visit.viewport.reframe(
+        self.document.visit.canvas.viewport.reframe(
             layout,
             layout.composition,
             ui.ctx().pixels_per_point(),

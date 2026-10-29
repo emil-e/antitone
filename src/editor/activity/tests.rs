@@ -430,7 +430,7 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
             let mut export_completion = None;
             app.enter(|editor, access| match operation {
                 0 => {
-                    let ready = editor.document.visit.ready.take().unwrap();
+                    let ready = editor.document.visit.canvas.ready.take().unwrap();
                     editor.load("current.ARW".into(), access);
                     assert!(editor.document.visit.source.pending());
                     source_completion = Some((editor.document.visit.view, ready));
@@ -450,6 +450,7 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
                     let source = editor
                         .document
                         .visit
+                        .canvas
                         .ready
                         .as_ref()
                         .unwrap()
@@ -505,34 +506,31 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
 }
 
 #[test]
-fn reference_failure_retires_only_the_matched_preparation_and_restores_the_view() {
+fn reference_failure_finishes_preparation_and_restores_the_view() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     let previous_visit = editor.document.visit.view;
     let before = (
         editor.document.visit.current_source,
-        editor.document.visit.viewport,
+        editor.document.visit.canvas.viewport,
         editor.document.source,
     );
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|e, cx| {
-            e.begin_flat_edit("reference.ARW".into(), None, cx);
-            let id = e.id;
-            e.reference_previewed(id + 1, Err("stale".into()));
-            assert!(e.tasks.view().is_some() && e.busy);
-            e.reference_previewed(id, Err("cannot prepare".into()));
-            assert!(e.tasks.view().is_none() && !e.busy);
-            assert_ne!(e.document.visit.view, previous_visit);
+        app.enter(|e, cx| e.begin_flat_edit("reference.ARW".into(), None, cx));
+        assert!(app.read(|e| e.tasks.view().is_some() && e.busy));
+        app.run_until(std::time::Duration::from_secs(5), |e| !e.busy);
+        app.read(|e| {
+            assert!(e.tasks.view().is_none());
+            assert_eq!(e.document.visit.view, previous_visit);
             assert_eq!(
                 (
                     e.document.visit.current_source,
-                    e.document.visit.viewport,
+                    e.document.visit.canvas.viewport,
                     e.document.source
                 ),
                 before
             );
         });
-        app.pump();
     });
 }
 
@@ -545,14 +543,20 @@ fn activity_keeps_viewer_geometry_stable_and_never_covers_an_acknowledged_failur
             let context = egui::Context::default();
             app_frame(editor, &context, vec![]);
             app_frame(editor, &context, vec![]);
-            let canvas = editor.document.visit.last_layout.unwrap().0.canvas;
+            let canvas = editor.document.visit.canvas.last_layout.unwrap().0.canvas;
             editor.tasks.begin(Task::Export(editor.id));
             editor.busy = true;
             app_frame(editor, &context, vec![]);
-            assert_eq!(editor.document.visit.last_layout.unwrap().0.canvas, canvas);
+            assert_eq!(
+                editor.document.visit.canvas.last_layout.unwrap().0.canvas,
+                canvas
+            );
             editor.begin_analysis(cx);
             app_frame(editor, &context, vec![]);
-            assert_eq!(editor.document.visit.last_layout.unwrap().0.canvas, canvas);
+            assert_eq!(
+                editor.document.visit.canvas.last_layout.unwrap().0.canvas,
+                canvas
+            );
             editor.document.analysis_pending = None;
             editor.tasks.begin(Task::Save(editor.id));
             editor.tasks.elapse(Duration::from_secs(1));

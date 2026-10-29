@@ -114,7 +114,7 @@ impl Editor {
     pub(super) fn auto_crop_entry_available(&self) -> bool {
         self.document.auto_crop_edit.is_none()
             && !self.busy
-            && self.document.visit.ready.is_some()
+            && self.document.visit.canvas.ready.is_some()
             && self.roll_edit_available()
             && !self.document.visit.dust.cleanup
             && self.document.analysis_review.is_none()
@@ -145,7 +145,7 @@ impl Editor {
         let available = if target == Target::Photo {
             !self.busy
                 && self.document.visit.crop_edit.is_some()
-                && self.document.visit.ready.is_some()
+                && self.document.visit.canvas.ready.is_some()
         } else {
             self.auto_crop_entry_available()
         };
@@ -261,7 +261,7 @@ impl Editor {
         if self.document.visit.current_source != Some(id) {
             return true;
         }
-        self.document.visit.ready.as_ref().is_some_and(|r| {
+        self.document.visit.canvas.ready.as_ref().is_some_and(|r| {
             self.document.state.project.source(id).is_ok_and(|s| {
                 r.record.development == s.development
                     && r.area == Rect::from(s.development.active_area)
@@ -366,7 +366,7 @@ impl Editor {
         let available = if target == Target::Photo {
             !self.busy
                 && self.document.visit.crop_edit.is_some()
-                && self.document.visit.ready.is_some()
+                && self.document.visit.canvas.ready.is_some()
         } else {
             self.auto_crop_entry_available()
         };
@@ -431,14 +431,14 @@ impl Editor {
                 entries,
                 problems,
                 origin: self.document.visit.current_source,
-                viewport: self.document.visit.viewport,
+                viewport: self.document.visit.canvas.viewport,
                 source_view: self.document.source,
                 reveal_controls: true,
                 show_outline: true,
                 drag: None,
             });
-            self.document.visit.viewport.fit();
-            self.document.visit.last_layout = None;
+            self.document.visit.canvas.viewport.fit();
+            self.document.visit.canvas.last_layout = None;
             self.invalidate_original();
         }
         self.status = format!("Auto-crop: {count} proposed, {skipped} skipped");
@@ -590,11 +590,11 @@ impl Editor {
         let edit = self.document.auto_crop_edit.take().unwrap();
         self.document.source = edit.source_view;
         if !apply && self.document.visit.current_source == edit.origin {
-            self.document.visit.viewport = edit.viewport;
+            self.document.visit.canvas.viewport = edit.viewport;
         } else {
-            self.document.visit.viewport.fit();
+            self.document.visit.canvas.viewport.fit();
         }
-        self.document.visit.last_layout = None;
+        self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
     }
 }

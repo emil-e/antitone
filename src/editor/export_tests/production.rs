@@ -26,7 +26,7 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
         editor.set_dmin(Some(DVec3::splat(0.8)));
         editor.set_dmax(Some(DVec3::splat(0.02)));
         editor.document.roll = RollSettings::default();
-        let area = editor.document.visit.ready.as_ref().unwrap().area;
+        let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
         editor.document.visit.crop = Some(Crop {
             center: [
                 f64::from(area.x) + f64::from(area.width) / 2.,

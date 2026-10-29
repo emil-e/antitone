@@ -53,7 +53,7 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         SourceGeometry::new(record.development.active_area, [7, 5]).unwrap(),
     )
     .unwrap();
-    editor.document.visit.ready = Some(Ready {
+    editor.document.visit.canvas.ready = Some(Ready {
         reference: None,
         developed: crate::editor::tests::developed_fixture(),
         file: thumbnails::FileKey::new(&record.path),
@@ -95,10 +95,10 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         .source_mut(id)
         .unwrap()
         .adjustment_layers = Some(layers);
-    editor.document.visit.last_layout = Some((
-        editor.document.visit.viewport.layout(
+    editor.document.visit.canvas.last_layout = Some((
+        editor.document.visit.canvas.viewport.layout(
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
-            editor.document.visit.ready.as_ref().unwrap().area,
+            editor.document.visit.canvas.ready.as_ref().unwrap().area,
             1.,
         ),
         1.,
@@ -172,7 +172,7 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
         layers.layers[0].name = "Renamed".into();
         layers.next_id += 1;
         editor.source_exposure = 2.;
-        editor.document.visit.viewport.zoom = Some(3.);
+        editor.document.visit.canvas.viewport.zoom = Some(3.);
         editor.document.target = OutputTarget::Srgb;
         let renamed = positive(&editor);
         assert!(std::ptr::eq(
@@ -224,6 +224,7 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
         let revision = editor
             .document
             .visit
+            .canvas
             .ready
             .as_ref()
             .unwrap()
@@ -238,6 +239,7 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
             editor
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .unwrap()
@@ -397,7 +399,7 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
                 editor.document.roll,
                 first.pipeline().unwrap().snapshot().clone(),
                 glam::DMat3::IDENTITY,
-                editor.document.visit.ready.as_ref().unwrap().area,
+                editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )
             .unwrap(),
         ));
@@ -487,7 +489,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
             editor.dmax(),
             editor.document.state.project.clone(),
         );
-        let generation = editor.document.visit.grade.original.revision();
+        let generation = editor.document.visit.canvas.grade.original.revision();
         assert!(
             editor
                 .validate_processing(
@@ -522,7 +524,10 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
             ),
             before
         );
-        assert_eq!(editor.document.visit.grade.original.revision(), generation);
+        assert_eq!(
+            editor.document.visit.canvas.grade.original.revision(),
+            generation
+        );
         assert!(std::ptr::eq(
             accepted.pipeline().unwrap(),
             positive(&editor).pipeline().unwrap()
@@ -560,11 +565,12 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         let accepted = positive(&editor);
         let (_, scope, _) = editor.scope_input().unwrap();
         assert_eq!(scope.signature(), accepted.signature());
-        editor.document.visit.grade.original.last_edit =
+        editor.document.visit.canvas.grade.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
         let request = editor
             .document
             .visit
+            .canvas
             .grade
             .original
             .request(
@@ -573,7 +579,8 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
                 editor.source_context().unwrap(),
             )
             .unwrap();
-        editor.document.visit.grade.original.refining = Some((request.revision, request.view));
+        editor.document.visit.canvas.grade.original.refining =
+            Some((request.revision, request.view));
         assert_eq!(request.target, editor.document.target);
         let retired_generation = request.generation.clone();
         let (revision, captured, view) = (request.revision, request.input, request.view);
@@ -592,7 +599,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         frame(&mut editor, &context);
         assert_ne!(positive(&editor).signature(), captured.signature());
         assert!(!Arc::ptr_eq(
-            &editor.document.visit.grade.original.generation,
+            &editor.document.visit.canvas.grade.original.generation,
             &retired_generation
         ));
         assert!(retired_generation.load(std::sync::atomic::Ordering::Relaxed) > revision);
@@ -604,6 +611,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
                 editor
                     .document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .unwrap()
@@ -612,8 +620,26 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
                     .unwrap(),
             )),
         );
-        assert!(editor.document.visit.grade.original.settled.is_none());
-        assert!(editor.document.visit.grade.original.refining.is_none());
+        assert!(
+            editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .settled
+                .is_none()
+        );
+        assert!(
+            editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .refining
+                .is_none()
+        );
         assert_eq!(
             captured.signature(),
             accepted.signature(),
@@ -624,7 +650,14 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         assert!(editor.scope_input().is_err());
         frame(&mut editor, &context);
         assert!(
-            editor.document.visit.grade.original.signature.is_none(),
+            editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .signature
+                .is_none(),
             "source inspection never requests photographic comparison"
         );
         assert!(view.area.width > 0);
@@ -658,7 +691,15 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
         let accepted = positive(&editor);
         let mut tracked = vec![tracked_grade(&editor, id)];
         let bytes = tracked[0].1;
-        let proxy = editor.document.visit.ready.as_ref().unwrap().proxy.clone();
+        let proxy = editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .proxy
+            .clone();
         let images = [
             proxy.image(OutputTarget::Srgb).unwrap(),
             proxy.image(OutputTarget::DisplayP3).unwrap(),
@@ -704,9 +745,9 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
         drop(accepted);
 
         let observe = |editor: &mut Editor| {
-            let layout = editor.document.visit.last_layout.unwrap().0;
+            let layout = editor.document.visit.canvas.last_layout.unwrap().0;
             let frame = layout.physical_frame_raster(1.);
-            editor.document.visit.grade.original.observe(
+            editor.document.visit.canvas.grade.original.observe(
                 OriginalPurpose::Reference,
                 (
                     positive(editor).signature(),
@@ -721,12 +762,14 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
             );
         };
         observe(&mut editor);
-        editor.document.visit.grade.original.last_edit = Instant::now() - Duration::from_secs(1);
+        editor.document.visit.canvas.grade.original.last_edit =
+            Instant::now() - Duration::from_secs(1);
         // Retain consumer input independently of newer UI demand. Actual task and
         // running-job admission are covered by the live workflow tests.
         let held = editor
             .document
             .visit
+            .canvas
             .grade
             .original
             .request(
@@ -739,11 +782,12 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
             editor.document.visit.adjustment_layer_settings.exposure = f64::from(i) / 100.;
             observe(&mut editor);
             tracked.push(tracked_grade(&editor, id));
-            editor.document.visit.grade.original.last_edit =
+            editor.document.visit.canvas.grade.original.last_edit =
                 Instant::now() - Duration::from_secs(1);
             let latest = editor
                 .document
                 .visit
+                .canvas
                 .grade
                 .original
                 .request(
@@ -762,6 +806,7 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
         let newest = editor
             .document
             .visit
+            .canvas
             .grade
             .original
             .request(
@@ -772,12 +817,21 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
             .unwrap();
         assert!(newest.revision > held.revision);
         editor.original_result(held.revision, Ok(None));
-        assert!(editor.document.visit.grade.original.settled.is_none());
+        assert!(
+            editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .settled
+                .is_none()
+        );
         drop(held);
 
         editor.document.grades.clear();
-        editor.document.visit.grade.original.signature = None;
-        editor.document.visit.grade = Default::default();
+        editor.document.visit.canvas.grade.original.signature = None;
+        editor.document.visit.canvas.grade = Default::default();
         assert_eq!(live_grade_buffers(&tracked), (2, 2 * bytes));
         drop(newest);
         assert_eq!(live_grade_buffers(&tracked), (1, bytes));

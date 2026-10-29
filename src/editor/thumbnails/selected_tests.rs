@@ -6,6 +6,7 @@ fn preview_image(editor: &Editor, input: &ProcessingInput) -> Arc<GpuImage> {
     let (_, _, frame, target, view) = editor
         .document
         .visit
+        .canvas
         .preview_rendered
         .as_ref()
         .expect("shared provisional renderer");
@@ -13,7 +14,14 @@ fn preview_image(editor: &Editor, input: &ProcessingInput) -> Arc<GpuImage> {
     assert_eq!(*target, editor.document.target);
     assert_eq!(
         frame.composition,
-        editor.document.visit.last_layout.unwrap().0.composition
+        editor
+            .document
+            .visit
+            .canvas
+            .last_layout
+            .unwrap()
+            .0
+            .composition
     );
     assert!(
         !view.in_flight(),
@@ -204,7 +212,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
 
                 editor.load(path, cx);
                 assert!(editor.document.visit.source.pending());
-                assert!(editor.document.visit.ready.is_none());
+                assert!(editor.document.visit.canvas.ready.is_none());
                 assert!(editor.document.visit.pending_preview.is_some());
                 assert!(editor.busy);
                 assert!(editor.scope_input().is_err());
@@ -221,8 +229,15 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                 assert!(editor.document.visit.crop_edit.is_none());
                 assert!(editor.document.export_operation.pending.is_none());
                 assert!(
-                    editor.document.visit.grade.original.refining.is_none()
-                        && editor.document.visit.grade.task.is_none()
+                    editor
+                        .document
+                        .visit
+                        .canvas
+                        .grade
+                        .original
+                        .refining
+                        .is_none()
+                        && editor.document.visit.canvas.grade.task.is_none()
                         && !editor.measurement_pending()
                         && editor.document.export_operation.pending.is_none()
                 );
@@ -246,6 +261,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                                         >= editor
                                             .document
                                             .visit
+                                            .canvas
                                             .last_layout
                                             .unwrap()
                                             .0
@@ -254,12 +270,13 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                             }
                             _ => false,
                         });
-                        assert!(editor.document.visit.ready.is_none());
+                        assert!(editor.document.visit.canvas.ready.is_none());
                         assert!(editor.document.visit.pending_preview.is_some());
                         assert_eq!(
                             editor
                                 .document
                                 .visit
+                                .canvas
                                 .last_layout
                                 .unwrap()
                                 .0
@@ -290,8 +307,15 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                                     && pixel[3] > 0.)
                         );
                         assert!(
-                            editor.document.visit.grade.original.refining.is_none()
-                                && editor.document.visit.grade.task.is_none()
+                            editor
+                                .document
+                                .visit
+                                .canvas
+                                .grade
+                                .original
+                                .refining
+                                .is_none()
+                                && editor.document.visit.canvas.grade.task.is_none()
                                 && !editor.measurement_pending()
                                 && editor.document.export_operation.pending.is_none(),
                             "pending preview scheduled authoritative work"
@@ -381,12 +405,12 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                 assert_eq!(editor.document.visit.current_source, Some(b_id));
                 assert!(editor.busy);
                 assert!(editor.document.visit.pending_preview.is_some());
-                assert!(editor.document.visit.ready.is_none());
+                assert!(editor.document.visit.canvas.ready.is_none());
 
                 editor.source_result(second, Err("current load failed".into()));
                 assert!(!editor.busy);
                 assert!(editor.document.visit.pending_preview.is_none());
-                assert!(editor.document.visit.selection_timing.is_none());
+                assert!(editor.document.visit.canvas.selection_timing.is_none());
                 assert_eq!(editor.status, "current load failed");
 
                 editor.load(b.clone(), cx);
@@ -395,7 +419,7 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                 editor.start_document(Preparation::New, cx);
                 assert!(
                     editor.document.visit.pending_preview.is_none()
-                        && editor.document.visit.selection_timing.is_none()
+                        && editor.document.visit.canvas.selection_timing.is_none()
                 );
                 assert!(editor.busy && editor.document_pending.is_some());
             });
@@ -418,7 +442,7 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
                 let id = add_source(editor, path.clone());
                 editor.load(path.clone(), cx);
                 assert!(editor.document.visit.pending_preview.is_some());
-                assert!(editor.document.visit.ready.is_none());
+                assert!(editor.document.visit.canvas.ready.is_none());
                 assert!(editor.busy);
                 editor.document.thumbnails.seed(
                     editor.document.state.project.source(id).unwrap(),
@@ -502,7 +526,7 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
                 editor.validate_pending_preview();
                 assert!(editor.document.visit.pending_preview.is_none());
                 assert!(editor.busy);
-                assert!(editor.document.visit.ready.is_none());
+                assert!(editor.document.visit.canvas.ready.is_none());
                 assert!(editor.document.visit.source.pending());
             });
         });
@@ -559,7 +583,7 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                     record: editor.document.state.project.source(id).unwrap().clone(),
                 };
                 editor.source_result(editor.id, Ok(Box::new(ready)));
-                assert!(editor.document.visit.ready.is_some());
+                assert!(editor.document.visit.canvas.ready.is_some());
                 assert!(editor.document.visit.pending_preview.is_some());
                 assert!(!editor.busy);
                 assert!(editor.selected_view().unwrap().2);
@@ -572,10 +596,10 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                     )
                     .unwrap();
                 assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
-                editor.document.visit.last_layout = Some((
-                    editor.document.visit.viewport.layout(
+                editor.document.visit.canvas.last_layout = Some((
+                    editor.document.visit.canvas.viewport.layout(
                         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
-                        editor.document.visit.ready.as_ref().unwrap().area,
+                        editor.document.visit.canvas.ready.as_ref().unwrap().area,
                         1.,
                     ),
                     1.,
@@ -648,7 +672,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                 assert!(editor.document.visit.source.pending());
                 assert!(editor.document.visit.pending_preview.is_some());
                 assert!(editor.busy);
-                assert!(editor.document.visit.ready.is_none());
+                assert!(editor.document.visit.canvas.ready.is_none());
                 let captured = editor
                     .positive_processing(
                         editor.document.input,
@@ -704,8 +728,15 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                             positive_pixels = Some(actual);
                         }
                         assert!(
-                            editor.document.visit.grade.original.refining.is_none()
-                                && editor.document.visit.grade.task.is_none(),
+                            editor
+                                .document
+                                .visit
+                                .canvas
+                                .grade
+                                .original
+                                .refining
+                                .is_none()
+                                && editor.document.visit.canvas.grade.task.is_none(),
                             "cached preview must not schedule full-source work"
                         );
                     }
@@ -794,9 +825,9 @@ fn a_non_working_source_load_does_not_admit_pending_working_preview() {
                 editor.load_source(path, false, cx);
                 assert!(
                     editor.document.visit.pending_preview.is_none()
-                        && editor.document.visit.selection_timing.is_none()
+                        && editor.document.visit.canvas.selection_timing.is_none()
                 );
-                assert!(editor.document.visit.ready.is_none());
+                assert!(editor.document.visit.canvas.ready.is_none());
                 assert!(editor.busy);
                 assert!(editor.document.visit.source.pending());
             });

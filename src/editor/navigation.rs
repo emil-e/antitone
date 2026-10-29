@@ -47,27 +47,26 @@ impl Editor {
                     .or(pointer)
             {
                 // Touch translation moves the previous center to the current center after zoom.
-                self.document.visit.viewport.zoom_at(
+                self.active_canvas_mut().viewport.zoom_at(
                     geometry,
                     pixels_per_point,
                     geometry.scale * pixels_per_point * zoom,
                     anchor,
                 );
-                geometry = self.document.visit.viewport.layout_composition(
+                geometry = self.active_canvas_mut().viewport.layout_composition(
                     geometry.canvas,
                     geometry.composition,
                     pixels_per_point,
                 );
             }
             if translation != egui::Vec2::ZERO
-                && self.document.visit.viewport.zoom.is_some()
+                && self.active_canvas_mut().viewport.zoom.is_some()
                 && can_pan(geometry)
             {
-                self.document
-                    .visit
+                self.active_canvas_mut()
                     .viewport
                     .pan(geometry, pixels_per_point, translation);
-                geometry = self.document.visit.viewport.layout_composition(
+                geometry = self.active_canvas_mut().viewport.layout_composition(
                     geometry.canvas,
                     geometry.composition,
                     pixels_per_point,
@@ -79,14 +78,15 @@ impl Editor {
                 || response.dragged_by(egui::PointerButton::Primary)
                     && (space
                         || !canvas_tool
-                            && self.document.visit.viewport.zoom.is_some()
+                            && self.active_canvas_mut().viewport.zoom.is_some()
                             && can_pan(geometry)));
         if panning && can_pan(geometry) {
-            self.document
-                .visit
-                .viewport
-                .pan(geometry, pixels_per_point, response.drag_delta());
-            geometry = self.document.visit.viewport.layout_composition(
+            self.active_canvas_mut().viewport.pan(
+                geometry,
+                pixels_per_point,
+                response.drag_delta(),
+            );
+            geometry = self.active_canvas_mut().viewport.layout_composition(
                 geometry.canvas,
                 geometry.composition,
                 pixels_per_point,
@@ -99,15 +99,14 @@ impl Editor {
                 .interact_pointer_pos()
                 .filter(|point| geometry.image.contains(*point))
         {
-            if self.document.visit.viewport.zoom.is_none() {
-                self.document
-                    .visit
+            if self.active_canvas_mut().viewport.zoom.is_none() {
+                self.active_canvas_mut()
                     .viewport
                     .zoom_at(geometry, pixels_per_point, 1., point);
             } else {
-                self.document.visit.viewport.fit();
+                self.active_canvas_mut().viewport.fit();
             }
-            geometry = self.document.visit.viewport.layout_composition(
+            geometry = self.active_canvas_mut().viewport.layout_composition(
                 geometry.canvas,
                 geometry.composition,
                 pixels_per_point,
@@ -123,7 +122,9 @@ impl Editor {
                     ui.input(|i| i.modifiers.alt || i.modifiers.shift),
                 )
             } else if space
-                || !canvas_tool && self.document.visit.viewport.zoom.is_some() && can_pan(geometry)
+                || !canvas_tool
+                    && self.active_canvas_mut().viewport.zoom.is_some()
+                    && can_pan(geometry)
             {
                 egui::CursorIcon::Grab
             } else if masking {
@@ -151,13 +152,13 @@ impl Editor {
                             geometry,
                             point,
                             region,
-                            self.document.visit.pick_drag,
+                            self.active_canvas().pick_drag,
                             response.dragged_by(egui::PointerButton::Primary),
                         )
                     })
                     .unwrap_or(egui::CursorIcon::Crosshair)
             } else if pointer.is_some_and(|point| geometry.image.contains(point)) && !canvas_tool {
-                if self.document.visit.viewport.zoom.is_none() {
+                if self.active_canvas_mut().viewport.zoom.is_none() {
                     egui::CursorIcon::ZoomIn
                 } else {
                     egui::CursorIcon::ZoomOut

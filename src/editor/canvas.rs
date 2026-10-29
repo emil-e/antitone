@@ -99,19 +99,20 @@ impl Editor {
             canvas
         };
         let mut geometry = if cropping {
-            self.document
-                .visit
-                .viewport
-                .layout_crop(layout_canvas, composition, pixels_per_point)
+            self.active_canvas_mut().viewport.layout_crop(
+                layout_canvas,
+                composition,
+                pixels_per_point,
+            )
         } else {
-            self.document.visit.viewport.layout_composition(
+            self.active_canvas_mut().viewport.layout_composition(
                 layout_canvas,
                 composition,
                 pixels_per_point,
             )
         };
         if let Some(zoom) = zoom_action {
-            self.document.visit.viewport.zoom_at(
+            self.active_canvas_mut().viewport.zoom_at(
                 geometry,
                 pixels_per_point,
                 if zoom > 0. {
@@ -123,12 +124,13 @@ impl Editor {
             );
         }
         geometry = if cropping {
-            self.document
-                .visit
-                .viewport
-                .layout_crop(layout_canvas, composition, pixels_per_point)
+            self.active_canvas_mut().viewport.layout_crop(
+                layout_canvas,
+                composition,
+                pixels_per_point,
+            )
         } else {
-            self.document.visit.viewport.layout_composition(
+            self.active_canvas_mut().viewport.layout_composition(
                 layout_canvas,
                 composition,
                 pixels_per_point,
@@ -153,7 +155,7 @@ impl Editor {
             self.adjust_dust_brush_from_scroll(ui, geometry);
         }
         if response.drag_started_by(egui::PointerButton::Primary) {
-            self.document.visit.pick_drag = None;
+            self.active_canvas_mut().pick_drag = None;
         }
         let (geometry, panning) = if !canvas_input {
             (geometry, false)
@@ -180,7 +182,7 @@ impl Editor {
             self.mask_interaction(ui, response, geometry, panning, canvas_input);
         }
         if !cropping {
-            self.document.visit.last_layout = Some((geometry, pixels_per_point));
+            self.active_canvas_mut().last_layout = Some((geometry, pixels_per_point));
         }
         (geometry, panning)
     }
@@ -190,7 +192,7 @@ impl Editor {
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
     ) -> Option<ProcessingInput> {
-        let mut parameters = if self.document.source {
+        let mut parameters = if self.canvas_inspection() {
             let source_parameters = self.source_parameters(self.source_exposure);
             match source_parameters {
                 Ok(parameters) => ProcessingInput::from(parameters),
@@ -321,7 +323,7 @@ impl Editor {
             && !self.busy
             && reference_allowed
             && (!working || self.document.visit.working_view.support_ready())
-            && let Some(source) = self.source_context()
+            && let Some(source) = self.canvas_source_context()
         {
             self.request_original(&parameters, self.document.target, ui.ctx(), source, cx);
         }
@@ -353,7 +355,7 @@ impl Editor {
             None
         };
         let paint = if let Some(rendered) = tool.or(rendered) {
-            self.document.visit.preview_rendered = None;
+            self.active_canvas_mut().preview_rendered = None;
             proxy.release_output();
             let mapping = if cropping {
                 geometry.uv(draw, composition.area())
@@ -419,6 +421,7 @@ impl Editor {
             .document
             .correction
             .as_ref()
+            .filter(|_| self.document.flat_edit.is_none())
             .map(|correction| correction.settings.map.clone());
         let inspection = parameters.pipeline().is_none();
         let settings = match self.document.input.calibration().filter(|_| !inspection) {
@@ -465,7 +468,7 @@ impl Editor {
         };
         let signature = parameters.signature();
         if let Some((id, cached_signature, cached_frame, cached_target, rendered)) =
-            &self.document.visit.preview_rendered
+            &self.active_canvas().preview_rendered
             && *id == self.id
             && *cached_signature == signature
             && *cached_frame == frame
@@ -497,8 +500,7 @@ impl Editor {
             .view_source(queue, &self.submissions, kernels, spec)
             .ok()?;
         let previous = self
-            .document
-            .visit
+            .active_canvas()
             .preview_rendered
             .as_ref()
             .map(|entry| &entry.4);
@@ -520,7 +522,7 @@ impl Editor {
             )
         }
         .ok()?;
-        self.document.visit.preview_rendered = Some((
+        self.active_canvas_mut().preview_rendered = Some((
             self.id,
             signature,
             frame,
@@ -553,7 +555,7 @@ impl Editor {
                 self.select_review_area(geometry, point);
             }
             // Classify from the press, not the later point where egui recognizes the drag.
-            self.document.visit.pick_drag = ui
+            self.active_canvas_mut().pick_drag = ui
                 .input(|input| input.pointer.press_origin())
                 .filter(|point| {
                     geometry.image.contains(*point) || self.document.analysis_review.is_some()
@@ -562,7 +564,7 @@ impl Editor {
         }
         if response.dragged_by(egui::PointerButton::Primary)
             && let (Some(drag), Some(end)) = (
-                self.document.visit.pick_drag,
+                self.active_canvas().pick_drag,
                 response.interact_pointer_pos(),
             )
         {
@@ -599,6 +601,23 @@ impl Editor {
     }
 
     pub(super) fn viewer_canvas(
+        &mut self,
+        ui: &mut egui::Ui,
+        zoom_action: Option<f32>,
+        fullscreen: bool,
+        cx: &UiContext<'_, Self>,
+    ) {
+        let identity = if self.document.flat_edit.is_some() {
+            "flat-reference"
+        } else {
+            "working-photo"
+        };
+        ui.push_id(identity, |ui| {
+            self.canvas_contents(ui, zoom_action, fullscreen, cx)
+        });
+    }
+
+    fn canvas_contents(
         &mut self,
         ui: &mut egui::Ui,
         zoom_action: Option<f32>,
@@ -655,7 +674,11 @@ impl Editor {
             .with_clip_rect(canvas)
             .add(egui_wgpu::Callback::new_paint_callback(
                 draw,
-                SelectionPaint::new(paint, self.document.visit.selection_timing.clone(), pending),
+                SelectionPaint::new(
+                    paint,
+                    self.active_canvas().selection_timing.clone(),
+                    pending,
+                ),
             ));
         if cropping {
             self.paint_crop(ui, geometry);
@@ -678,7 +701,7 @@ impl Editor {
         }
         self.paint_canvas_selection(ui, geometry, fullscreen);
         if response.drag_stopped_by(egui::PointerButton::Primary) {
-            self.document.visit.pick_drag = None;
+            self.active_canvas_mut().pick_drag = None;
         }
     }
 }

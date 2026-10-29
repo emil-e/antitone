@@ -84,7 +84,11 @@ pub(super) fn authored_fixture(paths: &[&str]) -> Editor {
         editor = complete_document_operation(editor, Duration::from_secs(60), |e, cx| {
             e.add_raws(paths, cx)
         });
-        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        );
     }
     editor
 }
@@ -240,17 +244,28 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
                 cx,
             )
         });
-        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        );
         let view = ViewRequest {
-            area: editor.document.visit.ready.as_ref().unwrap().area,
+            area: editor.document.visit.canvas.ready.as_ref().unwrap().area,
             output: [16, 16],
             frame: None,
         };
-        let revision = editor.document.visit.grade.original.revision();
+        let revision = editor.document.visit.canvas.grade.original.revision();
         let submissions = host::App::submission_gate(&editor).clone();
         let request = original_view::Request {
             revision,
-            generation: editor.document.visit.grade.original.generation.clone(),
+            generation: editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .generation
+                .clone(),
             input: ProcessingParameters::source().into(),
             target: OutputTarget::Srgb,
             view,
@@ -307,13 +322,13 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
             height: 5760,
         };
         for (width, height, ppp) in [(1100., 800., 1.), (800., 600., 2.)] {
-            for kind in [Pick::Flat, Pick::Dmin] {
+            for display in [flat::DISPLAY, calibration::DMIN] {
                 let mut editor = fixture();
                 editor.initialize_viewer(&device, &queue);
                 editor.set_dmin(None);
                 editor.set_dmax(None);
                 editor.document.source = true;
-                editor.document.visit.picking.display = Some(kind.display());
+                editor.document.visit.picking.display = Some(display);
                 editor.set_pick_region(Some(Coverage::rectangle(Rect {
                     x: 46,
                     y: 46,
@@ -324,7 +339,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     "/Users/example/{}/reference-with-a-long-filename.ARW",
                     "a-long-scanning-session-directory/".repeat(12)
                 ));
-                editor.document.visit.ready = Some(Ready {
+                editor.document.visit.canvas.ready = Some(Ready {
                     reference: None,
                     developed: developed_fixture(),
                     file: thumbnails::FileKey::new(&path),
@@ -365,7 +380,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     } else {
                         let pos = fit_point.unwrap();
                         if frame == 4 {
-                            editor.document.visit.viewport.zoom = Some(2.);
+                            editor.document.visit.canvas.viewport.zoom = Some(2.);
                         }
                         vec![
                             egui::Event::PointerMoved(pos),
@@ -412,8 +427,8 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                                         - area.width as f32 / area.height as f32)
                                         .abs()
                                         < 1e-4,
-                                    "Fit did not restore aspect: frame={frame} kind={kind:?} zoom={:?} image={:?}",
-                                    editor.document.visit.viewport.zoom,
+                                    "Fit did not restore aspect: frame={frame} display={display:?} zoom={:?} image={:?}",
+                                    editor.document.visit.canvas.viewport.zoom,
                                     callback.rect
                                 );
                             }
@@ -449,7 +464,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     } else {
                         assert!(image && rectangle);
                     }
-                    assert!(editor.document.visit.viewport.zoom.is_none());
+                    assert!(editor.document.visit.canvas.viewport.zoom.is_none());
                 }
             }
         }
@@ -523,19 +538,22 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
     let fit = editor
         .document
         .visit
+        .canvas
         .viewport
         .layout_composition(canvas, composition, 2.);
+    editor.document.visit.canvas.viewport.zoom_at(
+        fit,
+        2.,
+        2.,
+        fit.image.min + egui::vec2(10., 10.),
+    );
     editor
         .document
         .visit
-        .viewport
-        .zoom_at(fit, 2., 2., fit.image.min + egui::vec2(10., 10.));
-    editor
-        .document
-        .visit
+        .canvas
         .viewport
         .layout_composition(canvas, composition, 2.);
-    let precise = editor.document.visit.viewport;
+    let precise = editor.document.visit.canvas.viewport;
     let geometry = (
         editor.document.roll_orientation,
         editor.document.visit.photo_orientation,
@@ -546,7 +564,7 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
     );
     for kind in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb] {
         editor.preview_picker(kind);
-        assert_eq!(editor.document.visit.viewport, precise);
+        assert_eq!(editor.document.visit.canvas.viewport, precise);
         assert_eq!(
             (
                 editor.document.roll_orientation,
@@ -562,7 +580,7 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
             grade
         );
         editor.finish_pick(&crate::application::UiContext::render_only());
-        assert_eq!(editor.document.visit.viewport, precise);
+        assert_eq!(editor.document.visit.canvas.viewport, precise);
     }
 }
 
@@ -692,7 +710,7 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
             editor.dmax(),
             editor.document.roll,
             editor.document.visit.adjustment_layer_settings,
-            editor.document.visit.viewport,
+            editor.document.visit.canvas.viewport,
         );
         editor.preview_picker(kind);
         editor.finish_pick(&crate::application::UiContext::render_only());
@@ -725,7 +743,7 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
                     editor.dmax(),
                     editor.document.roll,
                     editor.document.visit.adjustment_layer_settings,
-                    editor.document.visit.viewport
+                    editor.document.visit.canvas.viewport
                 ),
                 before
             );
@@ -873,29 +891,16 @@ pub(super) fn paused_reference_fixture(
     reference: Ready,
     region: Option<Rect>,
 ) {
-    let working = editor.document.visit.ready.take();
     editor.document.flat_edit = Some(FlatEdit {
-        working,
-        reference: Some(FlatPreview {
-            ready: reference.clone(),
-            region,
-        }),
+        view: super::canvas_view::CanvasView {
+            ready: Some(reference),
+            ..Default::default()
+        },
         region: region.map(Coverage::rectangle),
-        viewport: editor.document.visit.viewport,
-        source: editor.document.source,
         task: None,
+        selection: None,
+        activity: None,
     });
-    editor.id = editor.request_id();
-    editor.replace_photo_scope(editor.id);
-    editor
-        .source_epoch
-        .store(editor.id, std::sync::atomic::Ordering::Relaxed);
-    editor.document.visit.ready = Some(reference);
-    editor.document.source = true;
-    editor.busy = false;
-    editor.document.visit.viewport.fit();
-    editor.document.visit.last_layout = None;
-    editor.invalidate_original();
 }
 
 pub(super) fn add_ready_fixture(editor: &mut Editor) {
@@ -961,7 +966,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
             .unwrap(),
     );
     editor.document.visit.view = editor.id;
-    editor.document.visit.ready = Some(Ready {
+    editor.document.visit.canvas.ready = Some(Ready {
         reference: None,
         developed: developed_fixture(),
         file: thumbnails::FileKey::new(&record.path),
@@ -1183,7 +1188,7 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
     }));
     editor.document.visit.photo_orientation.turn_clockwise();
     editor.document.roll_orientation.horizontal = true;
-    editor.document.visit.viewport.zoom = Some(2.);
+    editor.document.visit.canvas.viewport.zoom = Some(2.);
     let context = egui::Context::default();
     for editing in [false, true] {
         if editing {
@@ -1203,8 +1208,15 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             editor.document.source,
             editor.document.target,
         );
-        let viewport = editor.document.visit.viewport;
-        let signature = editor.document.visit.grade.original.signature.clone();
+        let viewport = editor.document.visit.canvas.viewport;
+        let signature = editor
+            .document
+            .visit
+            .canvas
+            .grade
+            .original
+            .signature
+            .clone();
         let draft = editor
             .document
             .visit
@@ -1222,7 +1234,7 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
                 .unwrap()
                 .image
         } else {
-            editor.document.visit.last_layout.unwrap().0.image
+            editor.document.visit.canvas.last_layout.unwrap().0.image
         };
         for (tab, label, heading, hidden) in [
             (0, "Roll", "Reset scan orientation", "Crop & straighten"),
@@ -1264,8 +1276,11 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
                 ),
                 state
             );
-            assert_eq!(editor.document.visit.viewport, viewport);
-            assert_eq!(editor.document.visit.grade.original.signature, signature);
+            assert_eq!(editor.document.visit.canvas.viewport, viewport);
+            assert_eq!(
+                editor.document.visit.canvas.grade.original.signature,
+                signature
+            );
             assert_eq!(
                 editor
                     .document
@@ -1286,7 +1301,7 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
                     .unwrap()
                     .image
             } else {
-                editor.document.visit.last_layout.unwrap().0.image
+                editor.document.visit.canvas.last_layout.unwrap().0.image
             };
             assert_eq!(next_image, image);
         }
@@ -1342,7 +1357,7 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
         );
     }
     for _ in 0..3 {
-        editor.document.visit.grade.original.last_edit =
+        editor.document.visit.canvas.grade.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
         app_frame(&mut editor, &context, vec![]);
     }
@@ -1356,8 +1371,17 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
         .unwrap();
     assert!(!explicit.image.intersects(explicit.canvas));
     assert_eq!(explicit.scale * context.pixels_per_point(), 1.);
-    assert!(editor.document.visit.grade.original.refining.is_none());
-    assert!(editor.document.visit.grade.task.is_none());
+    assert!(
+        editor
+            .document
+            .visit
+            .canvas
+            .grade
+            .original
+            .refining
+            .is_none()
+    );
+    assert!(editor.document.visit.canvas.grade.task.is_none());
     let text = app_frame(&mut editor, &context, vec![]);
     let fit = text
         .iter()
@@ -1408,7 +1432,7 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
     add_ready_fixture(&mut editor);
     editor.started = true;
     editor.tab = 1;
-    editor.document.visit.viewport.zoom = Some(2.);
+    editor.document.visit.canvas.viewport.zoom = Some(2.);
     let context = egui::Context::default();
     app_frame(&mut editor, &context, vec![]);
     for apply in [false, true] {
@@ -1435,7 +1459,7 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
             .unwrap_or_else(|| panic!("crop control missing: {labels:?}"))
             .1
             .center();
-        let viewport = editor.document.visit.viewport;
+        let viewport = editor.document.visit.canvas.viewport;
         let crop = editor.document.visit.crop;
         for pressed in [true, false] {
             app_frame(
@@ -1478,14 +1502,14 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
         assert!(editor.document.visit.crop_edit.is_none());
         if apply {
             assert_eq!(editor.document.visit.crop, Some(draft));
-            assert!(editor.document.visit.viewport.zoom.is_none());
-            let (layout, ppp) = editor.document.visit.last_layout.unwrap();
+            assert!(editor.document.visit.canvas.viewport.zoom.is_none());
+            let (layout, ppp) = editor.document.visit.canvas.last_layout.unwrap();
             let expected =
                 Viewport::default().layout_composition(layout.canvas, layout.composition, ppp);
             assert_eq!(layout.image, expected.image);
         } else {
             assert_eq!(editor.document.visit.crop, crop);
-            assert_eq!(editor.document.visit.viewport, viewport);
+            assert_eq!(editor.document.visit.canvas.viewport, viewport);
         }
     }
 }
@@ -1508,26 +1532,26 @@ fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
         for _ in 0..3 {
             app_frame(&mut editor, &context, vec![]);
         }
-        let (before, _) = editor.document.visit.last_layout.unwrap();
-        let viewport = editor.document.visit.viewport;
+        let (before, _) = editor.document.visit.canvas.last_layout.unwrap();
+        let viewport = editor.document.visit.canvas.viewport;
         let source = before.source_point(before.canvas.center());
         editor.preview_picker(kind);
         app_frame(&mut editor, &context, vec![]);
-        let (after, _) = editor.document.visit.last_layout.unwrap();
+        let (after, _) = editor.document.visit.canvas.last_layout.unwrap();
         assert_eq!(after.canvas, before.canvas);
         assert_eq!(after.scale, before.scale);
         assert!((after.source_point(after.canvas.center()) - source).length() < 0.002);
         editor.finish_pick(&crate::application::UiContext::render_only());
-        assert_eq!(editor.document.visit.viewport, viewport);
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
         for _ in 0..3 {
             app_frame(&mut editor, &context, vec![]);
         }
         assert_eq!(
-            editor.document.visit.last_layout.unwrap().0.image,
+            editor.document.visit.canvas.last_layout.unwrap().0.image,
             before.image,
             "{kind:?}: canvas {:?} -> {:?}",
             before.canvas,
-            editor.document.visit.last_layout.unwrap().0.canvas
+            editor.document.visit.canvas.last_layout.unwrap().0.canvas
         );
     }
 }
@@ -1545,25 +1569,26 @@ fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
     editor.started = true;
     let context = egui::Context::default();
     for kind in [Pick::Gamma, Pick::Wb] {
-        editor.document.visit.viewport.fit();
+        editor.document.visit.canvas.viewport.fit();
         for _ in 0..3 {
             app_frame(&mut editor, &context, vec![]);
         }
         editor.preview_picker(kind);
         app_frame(&mut editor, &context, vec![]);
-        let (layout, ppp) = editor.document.visit.last_layout.unwrap();
+        let (layout, ppp) = editor.document.visit.canvas.last_layout.unwrap();
         editor
             .document
             .visit
+            .canvas
             .viewport
             .zoom_at(layout, ppp, 2., layout.canvas.center());
         app_frame(&mut editor, &context, vec![]);
-        let (navigated, _) = editor.document.visit.last_layout.unwrap();
+        let (navigated, _) = editor.document.visit.canvas.last_layout.unwrap();
         let anchor = navigated.source_point(navigated.canvas.center());
         editor.finish_pick(&crate::application::UiContext::render_only());
         app_frame(&mut editor, &context, vec![]);
-        let (returned, _) = editor.document.visit.last_layout.unwrap();
-        assert_eq!(editor.document.visit.viewport.zoom, Some(2.));
+        let (returned, _) = editor.document.visit.canvas.last_layout.unwrap();
+        assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(2.));
         assert_eq!(returned.scale, navigated.scale);
         assert!((returned.source_point(returned.canvas.center()) - anchor).length() < 0.002);
     }
@@ -1596,8 +1621,8 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
         editor.dmin(),
         editor.dmax(),
     );
-    editor.document.visit.viewport.zoom = Some(2.);
-    let viewport = editor.document.visit.viewport;
+    editor.document.visit.canvas.viewport.zoom = Some(2.);
+    let viewport = editor.document.visit.canvas.viewport;
     editor.begin_crop();
     let draft = Crop::from_region(Rect {
         x: 200,
@@ -1612,7 +1637,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     editor.file_action(files::FileAction::Save, &UiContext::render_only());
     assert!(editor.document_pending.is_none());
     editor.finish_crop(false);
-    assert_eq!(editor.document.visit.viewport, viewport);
+    assert_eq!(editor.document.visit.canvas.viewport, viewport);
     assert_eq!(editor.document.visit.crop, crop);
     editor.sync_document();
     assert_eq!(editor.document.state.project, project);
@@ -1643,7 +1668,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     );
     editor.begin_crop();
     editor.document.visit.crop_edit.as_mut().unwrap().draft =
-        Crop::from_region(editor.document.visit.ready.as_ref().unwrap().area);
+        Crop::from_region(editor.document.visit.canvas.ready.as_ref().unwrap().area);
     editor.finish_crop(true);
     assert!(editor.document.visit.crop.is_none());
 }
@@ -1667,7 +1692,7 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
         editor.dmax(),
     );
     editor.begin_crop();
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     editor.document.visit.crop_edit.as_mut().unwrap().draft =
         crop.straightened(area, -0.19).unwrap();
     editor.finish_crop(false);
@@ -1707,10 +1732,11 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     let layout = editor
         .document
         .visit
+        .canvas
         .viewport
         .layout_composition(canvas, composition, 2.);
-    editor.document.visit.last_layout = Some((layout, 2.));
-    let viewport = editor.document.visit.viewport;
+    editor.document.visit.canvas.last_layout = Some((layout, 2.));
+    let viewport = editor.document.visit.canvas.viewport;
     let anchor = layout.source_point(canvas.center());
     editor.preview_picker(Pick::Dmin);
     let full = Composition::new(
@@ -1722,13 +1748,14 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     let uncropped = editor
         .document
         .visit
+        .canvas
         .viewport
         .layout_composition(canvas, full, 2.);
     assert_eq!(uncropped.scale, layout.scale);
     assert!((uncropped.source_point(canvas.center()) - anchor).length() < 0.002);
     editor.finish_pick(&crate::application::UiContext::render_only());
-    assert_eq!(editor.document.visit.viewport, viewport);
-    editor.document.visit.last_layout = Some((layout, 2.));
+    assert_eq!(editor.document.visit.canvas.viewport, viewport);
+    editor.document.visit.canvas.last_layout = Some((layout, 2.));
     editor.preview_picker(Pick::Wb);
     let coverage = layout.pick_patch(canvas.center(), 32);
     let screen = layout.screen_coverage(coverage);
@@ -1761,7 +1788,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
     editor.document.roll_orientation.horizontal = true;
     add_ready_fixture(&mut editor);
     editor.document.source = false;
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let composition = Composition::with_crop(
         area,
         editor.document.roll_orientation,
@@ -1770,13 +1797,15 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
     )
     .unwrap();
     let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
-    let original = editor
-        .document
-        .visit
-        .viewport
-        .layout_composition(canvas, composition, 2.);
-    editor.document.visit.last_layout = Some((original, 2.));
-    let viewport = editor.document.visit.viewport;
+    let original =
+        editor
+            .document
+            .visit
+            .canvas
+            .viewport
+            .layout_composition(canvas, composition, 2.);
+    editor.document.visit.canvas.last_layout = Some((original, 2.));
+    let viewport = editor.document.visit.canvas.viewport;
     let source_anchor = original.source_point(canvas.center());
     let state = (
         editor.document.visit.crop,
@@ -1800,6 +1829,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
         let layout = editor
             .document
             .visit
+            .canvas
             .viewport
             .layout_composition(canvas, measuring, 2.);
         assert_eq!(layout.scale, original.scale);
@@ -1812,7 +1842,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
             assert_eq!(layout.area, area);
         }
         editor.finish_pick(&crate::application::UiContext::render_only());
-        assert_eq!(editor.document.visit.viewport, viewport);
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert_eq!(
             (
                 editor.document.visit.crop,
@@ -1875,33 +1905,37 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
             add_ready_fixture(editor);
             let roll_orientation = editor.document.roll_orientation;
             let composition = Composition::new(
-                editor.document.visit.ready.as_ref().unwrap().area,
+                editor.document.visit.canvas.ready.as_ref().unwrap().area,
                 editor.document.roll_orientation,
                 editor.document.visit.photo_orientation,
             )
             .unwrap();
             let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.));
-            let fit = editor
-                .document
-                .visit
-                .viewport
-                .layout_composition(canvas, composition, 2.);
+            let fit =
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .viewport
+                    .layout_composition(canvas, composition, 2.);
             editor
                 .document
                 .visit
+                .canvas
                 .viewport
                 .zoom_at(fit, 2., 2., fit.image.max);
             editor
                 .document
                 .visit
+                .canvas
                 .viewport
                 .layout_composition(canvas, composition, 2.);
-            let viewport = editor.document.visit.viewport;
+            let viewport = editor.document.visit.canvas.viewport;
             let photo_orientation = editor.document.visit.photo_orientation;
             let source_id = editor.document.visit.current_source;
             editor.preview_picker(Pick::Dmin);
-            assert_eq!(editor.document.visit.viewport, viewport);
-            editor.document.visit.viewport.zoom = Some(0.25);
+            assert_eq!(editor.document.visit.canvas.viewport, viewport);
+            editor.document.visit.canvas.viewport.zoom = Some(0.25);
             editor.finish_pick(cx);
             assert!(!editor.document.visit.source.pending());
             assert_eq!(editor.document.visit.current_source, source_id);
@@ -1909,7 +1943,7 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
             assert!(editor.active_pick().is_none());
             assert_eq!(editor.document.roll_orientation, roll_orientation);
             assert_eq!(editor.document.visit.photo_orientation, photo_orientation);
-            assert_eq!(editor.document.visit.viewport, viewport);
+            assert_eq!(editor.document.visit.canvas.viewport, viewport);
         });
     });
 }
@@ -2058,17 +2092,17 @@ fn orientation_buttons_transform_displayed_photo_and_preserve_crop_and_other_sco
         "Turn left",
     ] {
         let before = Composition::with_crop(
-            editor.document.visit.ready.as_ref().unwrap().area,
+            editor.document.visit.canvas.ready.as_ref().unwrap().area,
             editor.document.roll_orientation,
             editor.document.visit.photo_orientation,
             editor.document.visit.crop,
         )
         .unwrap();
-        editor.document.visit.viewport.zoom = Some(2.);
+        editor.document.visit.canvas.viewport.zoom = Some(2.);
         click_section_button(&mut editor, &context, "Composition", label);
-        assert!(editor.document.visit.viewport.zoom.is_none());
+        assert!(editor.document.visit.canvas.viewport.zoom.is_none());
         let after = Composition::with_crop(
-            editor.document.visit.ready.as_ref().unwrap().area,
+            editor.document.visit.canvas.ready.as_ref().unwrap().area,
             editor.document.roll_orientation,
             editor.document.visit.photo_orientation,
             editor.document.visit.crop,
@@ -2344,7 +2378,7 @@ fn shared_roll_turns_apply_to_new_photos_and_export_snapshots() {
         app.enter(|editor, cx| {
             editor.document.roll_orientation.turn_clockwise();
             add_ready_fixture(editor);
-            let ready = editor.document.visit.ready.take().unwrap();
+            let ready = editor.document.visit.canvas.ready.take().unwrap();
             editor.load("new.ARW".into(), cx);
             assert!(editor.document.visit.source.pending());
             let mut record = ready.record;

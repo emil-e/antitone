@@ -151,7 +151,7 @@ impl Editor {
             #[cfg(test)]
             worker: self.document.dust.search_worker.clone(),
         };
-        let active = self.document.visit.ready.as_ref().unwrap().area;
+        let active = self.document.visit.canvas.ready.as_ref().unwrap().area;
         if previous.is_none() {
             self.document.dust.selected.remove(&source);
         }

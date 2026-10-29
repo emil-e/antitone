@@ -629,7 +629,7 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
                 assert_eq!(editor.preferences.filmstrip_height, height);
                 assert_eq!(editor.document.state.project, before);
                 assert!(
-                    editor.document.visit.ready.is_none()
+                    editor.document.visit.canvas.ready.is_none()
                         && editor.document.visit.pending_preview.is_none()
                 );
             }
@@ -831,7 +831,8 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .any(|label| label == "Camera preview")
     );
     assert!(
-        editor.document.visit.ready.is_none() && editor.document.visit.pending_preview.is_none()
+        editor.document.visit.canvas.ready.is_none()
+            && editor.document.visit.pending_preview.is_none()
     );
     assert_eq!(editor.document.thumbnails.sources.proxy_count(), 0);
     assert_eq!(editor.document.state.project, original);
@@ -875,7 +876,8 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         [8, 4]
     );
     assert!(
-        editor.document.visit.ready.is_none() && editor.document.visit.pending_preview.is_none()
+        editor.document.visit.canvas.ready.is_none()
+            && editor.document.visit.pending_preview.is_none()
     );
     editor
         .document
@@ -934,7 +936,8 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
             .is_some()
     );
     assert!(
-        editor.document.visit.ready.is_none() && editor.document.visit.pending_preview.is_none()
+        editor.document.visit.canvas.ready.is_none()
+            && editor.document.visit.pending_preview.is_none()
     );
     editor
         .document

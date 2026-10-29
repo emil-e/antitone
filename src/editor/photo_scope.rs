@@ -1,5 +1,4 @@
-use super::{Editor, Ready, TaskRequest, WorkingView};
-use std::sync::Arc;
+use super::{Editor, TaskRequest, WorkingView};
 
 #[cfg(test)]
 mod tests;
@@ -12,28 +11,16 @@ pub(super) struct PhotoScope {
     pub dust: super::dust::Interaction,
     pub spatial_consumer: Option<super::spatial::Consumer>,
     pub working_view: WorkingView,
-    pub viewport: super::Viewport,
+    pub canvas: super::canvas_view::CanvasView,
     pub pending_preview: Option<super::thumbnails::SelectedPreview>,
-    pub preview_rendered: Option<(
-        u64,
-        crate::gpu::ProcessingSignature,
-        crate::frame_raster::FrameRaster,
-        super::OutputTarget,
-        Arc<crate::gpu::view::RenderedView>,
-    )>,
-    pub selection_timing: Option<Arc<super::SelectionTiming>>,
     pub return_notice: Option<String>,
     pub adjustment_layer_settings: super::AdjustmentLayerSettings,
     pub photo_orientation: super::PhotoOrientation,
     pub crop: Option<super::Crop>,
-    pub last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
     pub picking: super::picking::Session,
     pub pick_actions: Vec<async_executor::Task<()>>,
-    pub pick_drag: Option<super::PickDrag>,
     pub current_source: Option<super::SourceId>,
-    pub ready: Option<Ready>,
     pub source: super::source_workflow::State,
-    pub grade: super::grade_scope::GradeScope,
     pub working: super::working_workflow::State,
     pub support: super::support_workflow::State,
     pub crop_edit: Option<super::CropEdit>,
@@ -66,7 +53,10 @@ impl Editor {
         // Replacing the owner drops its task handles, images and transient tools.
         self.document.visit = PhotoScope {
             working_view,
-            viewport: self.document.visit.viewport,
+            canvas: super::canvas_view::CanvasView {
+                viewport: self.document.visit.canvas.viewport,
+                ..Default::default()
+            },
             current_source: self.document.visit.current_source,
             crop: self.document.visit.crop,
             photo_orientation: self.document.visit.photo_orientation,

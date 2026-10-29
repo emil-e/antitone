@@ -63,6 +63,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
             let reference = editor
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .unwrap()
@@ -74,7 +75,15 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 crate::exposure_reference::ReferenceExposure::Matched(_)
             ));
             assert!((reference.ev() - 1.3).abs() < 0.03, "{reference:?}");
-            editor.document.visit.last_layout.unwrap().0.image.center()
+            editor
+                .document
+                .visit
+                .canvas
+                .last_layout
+                .unwrap()
+                .0
+                .image
+                .center()
         });
         let card = h
             .get_by_label(file.path().file_name().unwrap().to_str().unwrap())
@@ -107,6 +116,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 editor
                     .document
                     .visit
+                    .canvas
                     .grade
                     .original
                     .refinement_error
@@ -117,7 +127,17 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
             editor.document.visit.working_view.reference_ready()
         });
         h.render().unwrap();
-        let point = h.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center());
+        let point = h.read(|editor| {
+            editor
+                .document
+                .visit
+                .canvas
+                .last_layout
+                .unwrap()
+                .0
+                .image
+                .center()
+        });
         {
             let pixels = capture.borrow();
             let actual = pixels.pixels
@@ -138,6 +158,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 editor
                     .document
                     .visit
+                    .canvas
                     .grade
                     .original
                     .refinement_error
@@ -145,14 +166,29 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 "{}",
                 editor.status
             );
-            editor.document.visit.grade.original.settled.is_some()
+            editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .settled
+                .is_some()
         });
         h.event(egui::Event::PointerGone);
         h.step();
         h.render().unwrap();
         let point = h.read(|editor| {
             assert_eq!(editor.active_pick(), Some(Pick::Wb.display()));
-            editor.document.visit.last_layout.unwrap().0.image.center()
+            editor
+                .document
+                .visit
+                .canvas
+                .last_layout
+                .unwrap()
+                .0
+                .image
+                .center()
         });
         let pixels = capture.borrow();
         let actual = pixels.pixels
@@ -179,7 +215,7 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
         });
         let (selected, native, development) = h.read(|editor| {
             assert!(editor.document.input.is_negative());
-            let ready = editor.document.visit.ready.as_ref().unwrap();
+            let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
             assert!(ready.reference.as_ref().is_none());
             (
                 editor.document.visit.current_source,
@@ -200,7 +236,7 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
                 crate::processing::InputSettings::Digital
             );
             assert_eq!(editor.document.visit.current_source, selected);
-            let ready = editor.document.visit.ready.as_ref().unwrap();
+            let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
             assert_eq!(
                 ready.record.development, development,
                 "the original unity/as-shot basis is unchanged"
@@ -303,6 +339,7 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
                         editor
                             .document
                             .visit
+                            .canvas
                             .ready
                             .as_ref()
                             .unwrap()
@@ -313,7 +350,15 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
                         ))
                     );
                 }
-                editor.document.visit.last_layout.unwrap().0.image.center()
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .last_layout
+                    .unwrap()
+                    .0
+                    .image
+                    .center()
             });
             let card = h
                 .get_by_label(file.path().file_name().unwrap().to_str().unwrap())

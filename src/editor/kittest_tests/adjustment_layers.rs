@@ -44,7 +44,7 @@ pub(super) fn show_layers(harness: &mut Harness<'_, Editor>) {
 
 pub(super) fn install_layers(editor: &mut Editor) -> [AdjustmentLayerId; 2] {
     let source = editor.document.visit.current_source.unwrap();
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let mut layers = AdjustmentLayers::default();
     let adjustment = AdjustmentLayer {
         mask: AdjustmentLayerCoverage::Linear {
@@ -504,12 +504,21 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
             let before = harness.read(|editor| {
                 (
                     editor.document.state.project.clone(),
-                    editor.document.visit.viewport,
+                    editor.document.visit.canvas.viewport,
                 )
             });
             let from = harness.get_by_label("Sky").rect().center();
-            let outside =
-                harness.read(|editor| editor.document.visit.last_layout.unwrap().0.canvas.center());
+            let outside = harness.read(|editor| {
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .last_layout
+                    .unwrap()
+                    .0
+                    .canvas
+                    .center()
+            });
             harness.hover_at(from);
             harness.event(egui::Event::PointerButton {
                 pos: from,
@@ -536,7 +545,7 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
                 assert_eq!(
                     (
                         editor.document.state.project.clone(),
-                        editor.document.visit.viewport
+                        editor.document.visit.canvas.viewport
                     ),
                     before
                 );
@@ -715,7 +724,7 @@ fn white_balance_picker_targets_masked_partial_strength_layers() {
 fn mask_artwork(editor: &Editor) -> usize {
     let context = egui::Context::default();
     let mut output = context.run_ui(Default::default(), |ui| {
-        editor.paint_mask(ui, editor.document.visit.last_layout.unwrap().0);
+        editor.paint_mask(ui, editor.active_canvas().last_layout.unwrap().0);
     });
     output.textures_delta.clear();
     output
@@ -752,7 +761,7 @@ fn mask_center(editor: &Editor) -> egui::Pos2 {
         AdjustmentLayerCoverage::Radial { center, .. } => center,
         _ => panic!("gradient"),
     };
-    let layout = editor.document.visit.last_layout.unwrap().0;
+    let layout = editor.active_canvas().last_layout.unwrap().0;
     layout.screen_frame_point(layout.composition.source_to_frame(point))
 }
 
@@ -770,22 +779,23 @@ fn collapsed_layers_hide_all_mask_artwork_and_do_not_intercept_navigation() {
             harness.read(|editor| {
                 assert!(mask_artwork(editor) > 0);
                 let point = mask_center(editor);
-                let layout = editor.document.visit.last_layout.unwrap().0;
+                let layout = editor.active_canvas().last_layout.unwrap().0;
                 assert!(layout.canvas.contains(point));
                 assert!(editor.mask_pointer_interest(layout, point));
             });
             let before = harness.read(|editor| editor.document.state.project.clone());
             click(&mut harness, "Layers");
-            let point = harness.read(|editor| {
-                assert_eq!(mask_artwork(editor), 0);
-                assert!(editor.document.visit.adjustment_layers.show_coverage);
-                let point = mask_center(editor);
-                assert!(
-                    !editor
-                        .mask_pointer_interest(editor.document.visit.last_layout.unwrap().0, point)
-                );
-                point
-            });
+            let point =
+                harness.read(|editor| {
+                    assert_eq!(mask_artwork(editor), 0);
+                    assert!(editor.document.visit.adjustment_layers.show_coverage);
+                    let point = mask_center(editor);
+                    assert!(!editor.mask_pointer_interest(
+                        editor.active_canvas().last_layout.unwrap().0,
+                        point
+                    ));
+                    point
+                });
             super::masks::hold_drag(&mut harness, point, point + egui::vec2(18., 12.));
             super::masks::pointer(&mut harness, point + egui::vec2(18., 12.), false);
             harness.read(|editor| {
@@ -904,8 +914,17 @@ fn collapsed_layers_keep_active_gradient_creation_visible_until_release() {
             let before = harness.read(|editor| layers(editor).layers.len());
             click(&mut harness, name);
             click(&mut harness, "Layers");
-            let start =
-                harness.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center());
+            let start = harness.read(|editor| {
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .last_layout
+                    .unwrap()
+                    .0
+                    .image
+                    .center()
+            });
             let end = start + egui::vec2(30., 24.);
             super::masks::hold_drag(&mut harness, start, end);
             harness.read(|editor| {

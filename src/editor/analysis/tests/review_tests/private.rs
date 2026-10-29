@@ -36,7 +36,11 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             Duration::from_secs(240),
             |editor, cx| editor.add_raws(paths.clone(), cx),
         );
-        assert!(editor.document.visit.ready.is_some(), "{}", editor.status);
+        assert!(
+            editor.document.visit.canvas.ready.is_some(),
+            "{}",
+            editor.status
+        );
         editor.sync_document();
         let before = editor.document.state.project.clone();
         let first = editor.document.visit.current_source;

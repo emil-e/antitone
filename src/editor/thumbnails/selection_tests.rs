@@ -186,7 +186,7 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
             assert!(editor.document.visit.source.pending());
             assert!(
                 editor.busy
-                    && editor.document.visit.ready.is_none()
+                    && editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.pending_preview.is_none()
             );
             let before = editor.document.state.project.clone();
@@ -203,14 +203,14 @@ fn cold_loading_and_failed_selected_raw_retain_selection_and_filename() {
             );
             selected_outline(&output, point(&output, name), true);
             assert!(
-                editor.document.visit.ready.is_none()
+                editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.pending_preview.is_none()
             );
             assert_eq!(editor.document.state.project, before);
             editor.source_result(editor.id, Err("RAW unavailable".into()));
             assert!(
                 !editor.busy
-                    && editor.document.visit.ready.is_none()
+                    && editor.document.visit.canvas.ready.is_none()
                     && editor.document.visit.pending_preview.is_none()
             );
             let output = frame(editor, &context, vec![], cx);
@@ -265,12 +265,11 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                     "pick" => editor.document.visit.picking.display = Some(Pick::Gamma.display()),
                     "flat" => {
                         editor.document.flat_edit = Some(crate::editor::flat::FlatEdit {
-                            working: None,
-                            reference: None,
+                            view: Default::default(),
                             region: None,
-                            viewport: editor.document.visit.viewport,
-                            source: editor.document.source,
                             task: None,
+                            selection: None,
+                            activity: None,
                         })
                     }
                     _ => unreachable!(),
@@ -441,7 +440,7 @@ fn ordinary_pickers_keep_the_current_photo_until_the_interaction_ends() {
                 (
                     editor.document.state.project.clone(),
                     editor.document.visit.current_source,
-                    editor.document.visit.viewport,
+                    editor.document.visit.canvas.viewport,
                 )
             });
             app.enter(|editor, cx| editor.begin_pick(pick, cx));
@@ -461,7 +460,7 @@ fn ordinary_pickers_keep_the_current_photo_until_the_interaction_ends() {
                 assert_eq!(editor.document.state.project, before);
                 editor.finish_pick(cx);
                 assert_eq!(editor.document.visit.current_source, working);
-                assert_eq!(editor.document.visit.viewport, viewport);
+                assert_eq!(editor.document.visit.canvas.viewport, viewport);
                 assert!(editor.active_pick().is_none());
                 let output = frame(editor, &context, vec![], cx);
                 assert!(!node(&output, "photo-0.ARW").1.is_disabled());
@@ -515,7 +514,7 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
                 }
                 assert_eq!(editor.document.visit.current_source, Some(second));
                 assert_eq!(editor.document.selected, 1);
-                assert!(editor.busy && editor.document.visit.ready.is_none());
+                assert!(editor.busy && editor.document.visit.canvas.ready.is_none());
                 assert!(editor.id > original);
                 assert!(editor.document.visit.source.pending());
                 editor.source_result(original, Err("obsolete failure".into()));

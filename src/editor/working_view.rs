@@ -755,8 +755,8 @@ impl Editor {
             return false;
         }
 
-        let reservation = if self.document.visit.grade.original.refining.is_some()
-            || self.document.visit.grade.original.settled.is_none()
+        let reservation = if self.document.visit.canvas.grade.original.refining.is_some()
+            || self.document.visit.canvas.grade.original.settled.is_none()
         {
             pixels.saturating_mul(2).saturating_add(3 << 20)
         } else {
@@ -765,7 +765,7 @@ impl Editor {
         let allowed = if self.document.visit.working_view.compare {
             self.document.thumbnails.reserve_view(0);
             true
-        } else if self.document.visit.grade.original.settled.is_some() {
+        } else if self.document.visit.canvas.grade.original.settled.is_some() {
             self.document.thumbnails.reserve_view(reservation)
         } else {
             self.document.thumbnails.reserve_view(0);
@@ -786,6 +786,9 @@ impl Editor {
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
+        if self.document.flat_edit.is_some() {
+            return Ok(None);
+        }
         let previous = self.document.visit.working_view.displayed.take();
         if self
             .document
@@ -861,7 +864,7 @@ impl Editor {
             return Ok(None);
         }
 
-        let Some(ready) = &self.document.visit.ready else {
+        let Some(ready) = &self.document.visit.canvas.ready else {
             self.document.visit.working_view.clear();
             return Ok(None);
         };

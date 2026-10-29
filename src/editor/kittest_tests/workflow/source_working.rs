@@ -25,7 +25,7 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
             assert!(!editor.document.source);
             assert_eq!(editor.document.roll.exposure, 0.);
             assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.);
-            let ready = editor.document.visit.ready.as_ref().unwrap();
+            let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
             assert_eq!(ready.record.development.decode.fixed_wb, [4., 1., 2., 1.]);
             assert_eq!(
                 ready.record.development.decode.contract,
@@ -112,6 +112,7 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
             editor
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .unwrap()
@@ -156,8 +157,17 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
             h.step();
             workflow::wait_settled(&mut h);
             h.render().unwrap();
-            let canvas =
-                h.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center());
+            let canvas = h.read(|editor| {
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .last_layout
+                    .unwrap()
+                    .0
+                    .image
+                    .center()
+            });
             // The authored frame is spatially uniform. The card's centre is an
             // interior image point, clear of its caption and selection border.
             let card = h.get_by_label("negative.dng").rect().center();
@@ -180,7 +190,14 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
                 assert_eq!(editor.source_exposure, ev);
                 assert_eq!(editor.document.state.project, accepted);
                 assert!(Arc::ptr_eq(
-                    &editor.document.visit.ready.as_ref().unwrap().developed,
+                    &editor
+                        .document
+                        .visit
+                        .canvas
+                        .ready
+                        .as_ref()
+                        .unwrap()
+                        .developed,
                     &developed
                 ));
                 assert!(
@@ -266,14 +283,14 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         harness.run_until(Duration::from_secs(15), |e| !e.busy);
         harness.read(|editor| {
             assert_ne!(editor.document.visit.current_source.unwrap(), previous);
-            assert!(editor.document.visit.ready.is_some());
+            assert!(editor.document.visit.canvas.ready.is_some());
             if film {
                 assert_eq!(
                     editor.document.input,
                     crate::processing::InputSettings::Digital
                 );
                 assert!(editor.document.film_emulation.enabled);
-                let ready = editor.document.visit.ready.as_ref().unwrap();
+                let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
                 let proxy = ready.proxy.image(editor.document.target).unwrap();
                 assert!(
                     proxy.linear.width() < ready.area.width,
@@ -337,7 +354,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             "provisional rendering must use the host gate while acquisition is parked"
         );
         harness.read(|editor| {
-            assert_eq!(editor.document.visit.viewport.zoom, Some(1.));
+            assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.));
             assert!(
                 !editor.document.visit.working_view.support_ready()
                     && editor.document.visit.working_view.displayed.is_none()
@@ -348,6 +365,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             let preview = editor
                 .document
                 .visit
+                .canvas
                 .preview_rendered
                 .as_ref()
                 .expect("available proxy preview");
@@ -359,6 +377,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                 editor
                     .document
                     .visit
+                    .canvas
                     .selection_timing
                     .as_ref()
                     .unwrap()
@@ -372,7 +391,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         });
         harness.render().unwrap();
         harness.read(|editor| {
-            assert!(editor.document.visit.preview_rendered.is_none());
+            assert!(editor.document.visit.canvas.preview_rendered.is_none());
             let displayed = editor
                 .document
                 .visit
@@ -424,6 +443,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
             editor
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .unwrap()
@@ -488,6 +508,7 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
                     editor
                         .document
                         .visit
+                        .canvas
                         .ready
                         .as_ref()
                         .unwrap()
@@ -521,7 +542,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
         harness.read(|editor| assert!(editor.document.source));
         harness.read(|editor| assert!(editor.calibration().is_none()));
         stage(&mut harness, "Rendering");
-        harness.update(|editor| editor.document.visit.viewport.zoom = Some(4.));
+        harness.update(|editor| editor.document.visit.canvas.viewport.zoom = Some(4.));
         harness.step();
         wait_for(&mut harness, |e| {
             e.document.visit.working_view.support_ready()
@@ -546,8 +567,8 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
             .into_iter()
             .enumerate()
         {
-            let layout = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
-            harness.update(|editor| editor.document.visit.viewport.pan(layout, 1., delta));
+            let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
+            harness.update(|editor| editor.document.visit.canvas.viewport.pan(layout, 1., delta));
             harness.step();
             harness.step();
             harness
@@ -615,7 +636,18 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                 )
             });
             harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
-            harness.read(|editor| assert!(editor.document.visit.grade.original.refining.is_none()));
+            harness.read(|editor| {
+                assert!(
+                    editor
+                        .document
+                        .visit
+                        .canvas
+                        .grade
+                        .original
+                        .refining
+                        .is_none()
+                )
+            });
             harness.read(|editor| {
                 assert_eq!(
                     editor.document.state.project, project,

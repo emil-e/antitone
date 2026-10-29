@@ -4,7 +4,7 @@ use glam::DVec2;
 
 fn seed(editor: &mut Editor) {
     adjustment_layers::install_layers(editor);
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let source = editor
         .document
         .state
@@ -25,7 +25,7 @@ fn seed(editor: &mut Editor) {
 }
 
 fn screen(editor: &Editor, point: SourcePoint) -> egui::Pos2 {
-    let layout = editor.document.visit.last_layout.unwrap().0;
+    let layout = editor.active_canvas().last_layout.unwrap().0;
     layout.screen_frame_point(layout.composition.source_to_frame(point))
 }
 
@@ -63,8 +63,17 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
             set_layout(&mut harness, size, width);
             let before = harness.read(|editor| editor.document.state.project.clone());
             arm(&mut harness, true);
-            let center =
-                harness.read(|editor| editor.document.visit.last_layout.unwrap().0.image.center());
+            let center = harness.read(|editor| {
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .last_layout
+                    .unwrap()
+                    .0
+                    .image
+                    .center()
+            });
             hold_drag(&mut harness, center, center + egui::vec2(0.01, 0.02));
             harness.read(|editor| {
                 assert!(
@@ -77,7 +86,7 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
             pointer(&mut harness, center + egui::vec2(0.01, 0.02), false);
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
             arm(&mut harness, true);
-            let layout = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             let pressed = layout.image.center();
             let expected_center = layout
                 .composition
@@ -134,7 +143,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         harness.update(seed);
         harness.update(|editor| {
-            let area = editor.document.visit.ready.as_ref().unwrap().area;
+            let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
             editor.document.roll_orientation.turn_clockwise();
             editor.document.visit.photo_orientation.flips.horizontal = true;
             editor.document.visit.crop =
@@ -158,6 +167,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                     editor
                         .document
                         .visit
+                        .canvas
                         .last_layout
                         .unwrap()
                         .0
@@ -168,7 +178,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             harness.read(|editor| {
                 assert!(
                     editor.mask_pointer_interest(
-                        editor.document.visit.last_layout.unwrap().0,
+                        editor.active_canvas().last_layout.unwrap().0,
                         center_screen
                     ),
                     "target={:?} mask={original:?}",

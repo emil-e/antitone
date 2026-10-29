@@ -92,7 +92,7 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
         app.pump();
         app.enter(|editor, access| {
             editor.set_pick_region(Some(Coverage::rectangle(
-                editor.document.visit.ready.as_ref().unwrap().area,
+                editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(access);
         });
@@ -100,7 +100,15 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
         let (view, path) = app.read(|editor| {
             (
                 editor.document.visit.view,
-                editor.document.visit.ready.as_ref().unwrap().path.clone(),
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .path
+                    .clone(),
             )
         });
         app.enter(|editor, cx| {
@@ -112,7 +120,10 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
             assert!(editor.measurement_pending());
             assert!(editor.busy);
             assert_eq!(editor.id, view);
-            assert_eq!(editor.document.visit.ready.as_ref().unwrap().path, path);
+            assert_eq!(
+                editor.document.visit.canvas.ready.as_ref().unwrap().path,
+                path
+            );
         });
     });
     drop(hold);
@@ -128,7 +139,7 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
         app.pump();
         app.enter(|editor, access| {
             editor.set_pick_region(Some(Coverage::rectangle(
-                editor.document.visit.ready.as_ref().unwrap().area,
+                editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(access);
         });
@@ -137,7 +148,15 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
         let (view, path, project) = app.read(|editor| {
             (
                 editor.document.visit.view,
-                editor.document.visit.ready.as_ref().unwrap().path.clone(),
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .path
+                    .clone(),
                 editor.document.state.project.clone(),
             )
         });
@@ -163,7 +182,16 @@ fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs
     editor.sync_document();
     editor.document.cache.set_budget(0);
     let before = editor.document.state.project.clone();
-    let source = Arc::downgrade(&editor.document.visit.ready.as_ref().unwrap().developed);
+    let source = Arc::downgrade(
+        &editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .developed,
+    );
     let gate = testing::Gate::install(&mut editor);
     let directory = tempfile::tempdir().unwrap();
     let next_path = directory.path().join("missing.dng");
@@ -172,7 +200,7 @@ fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs
         app.pump();
         app.enter(|editor, cx| {
             editor.set_pick_region(Some(Coverage::rectangle(
-                editor.document.visit.ready.as_ref().unwrap().area,
+                editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(cx);
         });
@@ -200,7 +228,7 @@ fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs
             assert!(!editor.measurement_pending());
             assert!(editor.active_pick().is_none());
             assert!(!editor.document.visit.source.pending());
-            assert!(editor.document.visit.ready.is_none());
+            assert!(editor.document.visit.canvas.ready.is_none());
             assert!(editor.tasks.view().is_none());
             assert_eq!(editor.document.state.project, before);
         });

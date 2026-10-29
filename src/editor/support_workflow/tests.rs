@@ -32,7 +32,7 @@ fn imported(app: &mut TestApplication<'_, Editor>) {
         );
     });
     app.run_until(Duration::from_secs(20), |e| !e.busy);
-    app.read(|e| assert!(e.document.visit.ready.is_some(), "{}", e.status));
+    app.read(|e| assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status));
 }
 
 #[test]
@@ -45,6 +45,7 @@ fn lazy_support_progresses_without_paint_and_does_not_accept_a_picture_or_change
             assert!(
                 e.document
                     .visit
+                    .canvas
                     .ready
                     .as_ref()
                     .unwrap()
@@ -69,7 +70,13 @@ fn lazy_support_progresses_without_paint_and_does_not_accept_a_picture_or_change
         });
         app.read(|e| {
             assert_eq!(
-                e.document.visit.ready.as_ref().unwrap().analysis_support,
+                e.document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .analysis_support,
                 Some(expected)
             );
             assert_eq!(e.document.state.project, before);
@@ -131,6 +138,7 @@ fn queued_support_respects_drawn_geometry_and_reopened_picker_identity() {
                 assert!(
                     e.document
                         .visit
+                        .canvas
                         .ready
                         .as_ref()
                         .unwrap()
@@ -181,7 +189,10 @@ fn document_replacement_retires_support_without_waiting_for_a_paint_or_accepting
         drop(hold);
         app.run_until(Duration::from_secs(20), |e| !e.busy);
         app.read(|e| {
-            assert!(e.document.state.project.order.is_empty() && e.document.visit.ready.is_none())
+            assert!(
+                e.document.state.project.order.is_empty()
+                    && e.document.visit.canvas.ready.is_none()
+            )
         });
     });
     scheduler.close_and_wait().unwrap();

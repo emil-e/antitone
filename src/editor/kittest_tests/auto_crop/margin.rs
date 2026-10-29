@@ -38,8 +38,8 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
             h.get_by_label("100%").click();
             h.step();
             overlay::wait_context(&mut h);
-            let layout = h.read(|editor| editor.document.visit.last_layout.unwrap().0);
-            let viewport = h.read(|editor| editor.document.visit.viewport);
+            let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
+            let viewport = h.read(|editor| editor.document.visit.canvas.viewport);
             let image = h.read(|editor| {
                 editor
                     .document
@@ -112,11 +112,11 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
             overlay::wait_context(&mut h);
             h.read(|editor| {
                 assert_eq!(
-                    editor.document.visit.last_layout.unwrap().0.image,
+                    editor.active_canvas().last_layout.unwrap().0.image,
                     layout.image
                 )
             });
-            h.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
+            h.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
             h.read(|editor| {
                 assert!(Arc::ptr_eq(
                     &image.image,

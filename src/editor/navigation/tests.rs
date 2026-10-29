@@ -48,7 +48,13 @@ impl Harness {
                             ui.available_size(),
                             egui::Sense::click_and_drag(),
                         );
-                        let geometry = self.editor.document.visit.viewport.layout(canvas, AREA, 2.);
+                        let geometry = self
+                            .editor
+                            .document
+                            .visit
+                            .canvas
+                            .viewport
+                            .layout(canvas, AREA, 2.);
                         result = Some(self.editor.navigate(ui, &response, geometry, 2.));
                     });
             },
@@ -81,6 +87,7 @@ impl Harness {
         self.editor
             .document
             .visit
+            .canvas
             .viewport
             .zoom_at(fit, 2., 1., fit.canvas.center());
         self.frame(vec![]).0
@@ -109,9 +116,9 @@ fn plain_scroll_pans_both_axes_without_changing_zoom_or_fit_mode() {
     let delta = h.context.input(|input| input.translation_delta());
     assert!(delta.x > 0. && delta.y < 0.);
     assert!((after.image.min - initial.image.min - delta).length() < 0.001);
-    h.editor.document.visit.viewport.fit();
+    h.editor.document.visit.canvas.viewport.fit();
     h.frame(vec![wheel(egui::vec2(30., -20.), egui::Modifiers::NONE)]);
-    assert!(h.editor.document.visit.viewport.zoom.is_none());
+    assert!(h.editor.document.visit.canvas.viewport.zoom.is_none());
 }
 
 #[test]
@@ -189,7 +196,7 @@ fn click_toggles_native_and_fit_and_primary_drag_pans_only_without_a_picker() {
     );
     h.press(point, true, egui::PointerButton::Primary);
     let (native, _, cursor) = h.press(point, false, egui::PointerButton::Primary);
-    assert_eq!(h.editor.document.visit.viewport.zoom, Some(1.));
+    assert_eq!(h.editor.document.visit.canvas.viewport.zoom, Some(1.));
     assert_eq!(cursor, egui::CursorIcon::Grab);
     assert!((native.source_point(point) - fit.source_point(point)).length() < 0.001);
     h.press(point, true, egui::PointerButton::Primary);
@@ -201,7 +208,7 @@ fn click_toggles_native_and_fit_and_primary_drag_pans_only_without_a_picker() {
     h.press(point + delta, false, egui::PointerButton::Primary);
     h.press(point, true, egui::PointerButton::Primary);
     h.press(point, false, egui::PointerButton::Primary);
-    assert!(h.editor.document.visit.viewport.zoom.is_none());
+    assert!(h.editor.document.visit.canvas.viewport.zoom.is_none());
     h.native();
     h.editor.document.visit.picking.display = Some(Pick::Dmin.display());
     h.press(point, true, egui::PointerButton::Primary);
@@ -224,6 +231,7 @@ fn pan_hover_preserves_fit_small_zoom_picker_and_disabled_cursors() {
     h.editor
         .document
         .visit
+        .canvas
         .viewport
         .zoom_at(fit, 2., 0.1, point);
     let (small, _, cursor) = h.frame(vec![egui::Event::PointerMoved(point)]);
@@ -288,14 +296,14 @@ fn picker_cursors_share_rectangle_hit_testing_and_no_image_click_changes_view() 
         egui::CursorIcon::Grabbing
     );
     h.editor.document.visit.picking.display = Some(Pick::Dmax.display());
-    let zoom = h.editor.document.visit.viewport.zoom;
+    let zoom = h.editor.document.visit.canvas.viewport.zoom;
     h.press(geometry.canvas.center(), true, egui::PointerButton::Primary);
     h.press(
         geometry.canvas.center(),
         false,
         egui::PointerButton::Primary,
     );
-    assert_eq!(h.editor.document.visit.viewport.zoom, zoom);
+    assert_eq!(h.editor.document.visit.canvas.viewport.zoom, zoom);
 }
 
 #[test]
@@ -342,7 +350,7 @@ fn z_fits_without_text_focus_but_does_not_intercept_numeric_text() {
         |ui| crate::editor::tests::paint_controller(&mut h.editor, ui),
     );
     output.textures_delta.clear();
-    assert!(h.editor.document.visit.viewport.zoom.is_none());
+    assert!(h.editor.document.visit.canvas.viewport.zoom.is_none());
     h.native();
     let focus = egui::Id::new("numeric");
     h.context.memory_mut(|memory| memory.request_focus(focus));
@@ -358,6 +366,6 @@ fn z_fits_without_text_focus_but_does_not_intercept_numeric_text() {
         },
     );
     output.textures_delta.clear();
-    assert_eq!(h.editor.document.visit.viewport.zoom, Some(1.));
+    assert_eq!(h.editor.document.visit.canvas.viewport.zoom, Some(1.));
     assert_eq!(text, "z");
 }

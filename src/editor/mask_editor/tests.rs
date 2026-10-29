@@ -81,7 +81,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
             .layers[0]
             .id;
         editor.select_adjustment_layer(adjustment_layers::Target::Layer(id));
-        let layout = editor.document.visit.last_layout.unwrap().0;
+        let layout = editor.document.visit.canvas.last_layout.unwrap().0;
         let context = egui::Context::default();
         for invert in [false, true] {
             editor
@@ -224,7 +224,7 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
                 .signature()
         );
         let context = egui::Context::default();
-        let layout = editor.document.visit.last_layout.unwrap().0;
+        let layout = editor.document.visit.canvas.last_layout.unwrap().0;
         let mut output = context.run_ui(Default::default(), |ui| editor.paint_mask(ui, layout));
         output.textures_delta.clear();
         assert!(
@@ -262,7 +262,7 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let before = editor.document.state.project.clone();
-        let mut viewport = editor.document.visit.viewport;
+        let mut viewport = editor.document.visit.canvas.viewport;
         viewport.zoom = Some(3.);
         editor.document.visit.working_view.compare = true;
         editor.begin_linear_mask(None);
@@ -292,10 +292,10 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
             .unwrap();
         assert_eq!(first, repeated);
         assert_eq!(editor.document.state.project, before);
-        editor.document.visit.viewport.zoom = Some(3.);
+        editor.document.visit.canvas.viewport.zoom = Some(3.);
         editor.finish_mask(false);
         assert!(editor.document.visit.mask_edit.is_none());
-        assert_eq!(editor.document.visit.viewport, viewport);
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert!(editor.document.visit.working_view.compare);
         assert_eq!(editor.document.state.project, before);
         editor.begin_linear_mask(None);

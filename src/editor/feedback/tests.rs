@@ -59,7 +59,10 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
     editor.sync_document();
     let before = editor.document.state.project.clone();
     let source = editor.document.visit.current_source;
-    let view = (editor.document.visit.viewport, editor.document.source);
+    let view = (
+        editor.document.visit.canvas.viewport,
+        editor.document.source,
+    );
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
             e.export(
@@ -88,46 +91,45 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.document.visit.current_source, source);
             assert_eq!(editor.document.source, view.1);
-            assert_eq!(editor.document.visit.viewport.zoom, view.0.zoom);
+            assert_eq!(editor.document.visit.canvas.viewport.zoom, view.0.zoom);
         });
     });
 }
 
 #[test]
-fn unavailable_reference_services_restore_working_context_and_ignore_late_acceptance() {
+fn unavailable_reference_preparation_restores_working_context_and_preserves_failure() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.document.source = false;
     editor.sync_document();
     let before = editor.document.state.project.clone();
     let visit = editor.document.visit.view;
-    let path = editor.document.visit.ready.as_ref().unwrap().path.clone();
-    let mut reference = fixture();
-    add_ready_fixture(&mut reference);
-    crate::editor::tests::paused_reference_fixture(
-        &mut editor,
-        reference.document.visit.ready.take().unwrap(),
-        Some(Rect {
-            x: 20,
-            y: 20,
-            width: 100,
-            height: 80,
-        }),
-    );
+    let path = editor
+        .document
+        .visit
+        .canvas
+        .ready
+        .as_ref()
+        .unwrap()
+        .path
+        .clone();
     let request = editor.id;
     let mut editor = crate::editor::tests::complete_reference_operation(
         editor,
         Duration::from_secs(5),
-        |e, cx| e.apply_flat_edit(cx),
+        |e, cx| e.begin_flat_edit("missing-reference.ARW".into(), None, cx),
     );
     assert_eq!(
         editor.failure.as_ref().unwrap().kind,
-        FailureKind::FlatCorrection
+        FailureKind::FlatReference
     );
     assert!(!editor.busy && editor.document_pending.is_none() && editor.document_failure.is_none());
     assert!(editor.document.flat_edit.is_none() && editor.active_pick().is_none());
-    assert_ne!(editor.document.visit.view, visit);
-    assert_eq!(editor.document.visit.ready.as_ref().unwrap().path, path);
+    assert_eq!(editor.document.visit.view, visit);
+    assert_eq!(
+        editor.document.visit.canvas.ready.as_ref().unwrap().path,
+        path
+    );
     assert!(!editor.document.source);
     assert_eq!(editor.document.state.project, before);
     editor.document_prepared(request, Err("late completion".into()));
@@ -202,7 +204,7 @@ fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
                 id,
                 Ok(Box::new(Prepared {
                     document: editor.document.capture(),
-                    ready: editor.document.visit.ready.clone(),
+                    ready: editor.document.visit.canvas.ready.clone(),
                     selected: editor.document.visit.current_source,
                     reuse_ready: true,
                     correction: None,
@@ -219,7 +221,7 @@ fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
 fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
-    let reference = editor.document.visit.ready.as_ref().unwrap().clone();
+    let reference = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
     crate::editor::tests::paused_reference_fixture(&mut editor, reference, None);
     editor.set_pick_region(Some(
         Coverage::new(

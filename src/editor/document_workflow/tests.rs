@@ -63,6 +63,7 @@ fn accepted_open_seeds_a_fresh_scope_cache_from_the_prepared_source() {
             let ready = e
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .expect("opened source ready");
@@ -94,7 +95,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         });
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         let (accepted, selected, visit) = app.read(|e| {
-            assert!(e.document.visit.ready.is_some(), "{}", e.status);
+            assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             assert_eq!(e.document.state.project.order.len(), 1);
             assert!(e.document.dirty());
             (
@@ -125,7 +126,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
                 e.status,
                 e.history_label(crate::editor::history::Direction::Undo)
             );
-            assert!(e.document.visit.ready.is_none());
+            assert!(e.document.visit.canvas.ready.is_none());
         });
         app.enter(|e, access| {
             e.restore_history(crate::editor::history::Direction::Redo, access);
@@ -133,7 +134,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
-            assert!(e.document.visit.ready.is_some());
+            assert!(e.document.visit.canvas.ready.is_some());
         });
         let cache = app.read(|e| Arc::downgrade(&e.document.cache));
         app.enter(|e, access| {
@@ -143,7 +144,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.read(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
             assert!(!e.document.dirty());
-            assert!(e.document.visit.ready.is_none());
+            assert!(e.document.visit.canvas.ready.is_none());
             assert!(
                 e.history_label(crate::editor::history::Direction::Undo)
                     .is_none()
@@ -246,7 +247,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.enter(|e, cx| {
-            assert!(e.document.visit.ready.is_some(), "{}", e.status);
+            assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             e.set_dmin(Some(glam::DVec3::splat(0.6)));
             e.set_dmax(Some(glam::DVec3::splat(0.005)));
             e.document.source = false;
@@ -275,7 +276,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         let (negative, scan, expected_pixels) = app.read(|e| {
             assert!(e.document.correction.is_some(), "{}", e.status);
             let services = e.source_services.as_ref().unwrap();
-            let ready = e.document.visit.ready.as_ref().unwrap();
+            let ready = e.document.visit.canvas.ready.as_ref().unwrap();
             let (uncorrected, _) = crate::editor::prepare_source(
                 &services.renderers,
                 &services.device,
@@ -296,7 +297,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         cleared_scan.flat_field = None;
         // The fixture really exercises an active GPU correction, not just saved settings.
         let corrected_pixels =
-            app.read(|e| digital_proxy_pixels(e, e.document.visit.ready.as_ref().unwrap()));
+            app.read(|e| digital_proxy_pixels(e, e.document.visit.canvas.ready.as_ref().unwrap()));
         assert!(
             corrected_pixels
                 .iter()
@@ -331,7 +332,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 e.history_label(history::Direction::Undo),
                 Some("Input stage")
             );
-            let actual = digital_proxy_pixels(e, e.document.visit.ready.as_ref().unwrap());
+            let actual = digital_proxy_pixels(e, e.document.visit.canvas.ready.as_ref().unwrap());
             assert_eq!(actual.len(), expected_pixels.len());
             for (a, b) in actual.iter().zip(&expected_pixels) {
                 for channel in 0..3 {
@@ -427,7 +428,14 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
             (
                 e.document.state.project.clone(),
                 e.document.visit.view,
-                e.document.visit.ready.as_ref().unwrap().developed.clone(),
+                e.document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .developed
+                    .clone(),
                 e.document.cache.clone(),
             )
         });
@@ -442,7 +450,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
             assert_eq!(e.document.state.project, snapshot);
             assert_eq!(e.document.visit.view, visit);
             assert!(Arc::ptr_eq(
-                &e.document.visit.ready.as_ref().unwrap().developed,
+                &e.document.visit.canvas.ready.as_ref().unwrap().developed,
                 &native
             ));
             assert!(Arc::ptr_eq(&store, &e.document.cache));
@@ -484,7 +492,7 @@ fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
             assert!(e.document.state.project.sources.is_empty());
-            assert!(e.document.visit.ready.is_none());
+            assert!(e.document.visit.canvas.ready.is_none());
             assert_eq!(e.status, "Project ready");
         });
     });
@@ -520,7 +528,7 @@ fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_ret
         starts.recv_timeout(Duration::from_secs(10)).unwrap();
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
-            assert!(e.document.visit.ready.is_none() && e.busy);
+            assert!(e.document.visit.canvas.ready.is_none() && e.busy);
         });
         app.enter(|e, access| {
             e.start_document(Preparation::New, access);
@@ -533,7 +541,8 @@ fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_ret
         assert_eq!(count.load(Ordering::Relaxed), 1);
         app.read(|e| {
             assert!(
-                e.document.state.project.sources.is_empty() && e.document.visit.ready.is_none()
+                e.document.state.project.sources.is_empty()
+                    && e.document.visit.canvas.ready.is_none()
             );
         });
     });

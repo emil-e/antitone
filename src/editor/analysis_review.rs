@@ -32,14 +32,14 @@ struct ReturnView {
 impl ReturnView {
     fn capture(editor: &Editor) -> Option<Self> {
         Some(Self {
-            path: editor.document.visit.ready.as_ref()?.path.clone(),
+            path: editor.document.visit.canvas.ready.as_ref()?.path.clone(),
             selected: editor.document.selected,
             adjustment: editor
                 .document
                 .visit
                 .current_source
                 .map(|source| (source, editor.adjustment_layer_target())),
-            viewport: editor.document.visit.viewport,
+            viewport: editor.document.visit.canvas.viewport,
             source: editor.document.input.ready() && editor.document.source,
         })
     }
@@ -48,6 +48,7 @@ impl ReturnView {
         if editor
             .document
             .visit
+            .canvas
             .ready
             .as_ref()
             .is_none_or(|ready| ready.path != self.path)
@@ -63,7 +64,7 @@ impl ReturnView {
         {
             editor.select_adjustment_layer(target);
         }
-        editor.document.visit.viewport = self.viewport;
+        editor.document.visit.canvas.viewport = self.viewport;
         editor.document.source = !editor.document.input.ready() || self.source;
     }
 }
@@ -252,7 +253,7 @@ impl Editor {
                 self.scopes.visible = false;
                 self.begin_pick(Pick::Analysis, cx);
                 self.refresh_review_region();
-                self.document.visit.viewport.fit();
+                self.document.visit.canvas.viewport.fit();
                 self.status = "Review sampling areas".into();
             }
             Ok(None) => self.status = "Analysis-area preparation cancelled; grade unchanged".into(),
@@ -337,7 +338,7 @@ impl Editor {
                 })
                 .and_then(|q| Areas::coverage(q).ok()),
         );
-        self.document.visit.pick_drag = None;
+        self.document.visit.canvas.pick_drag = None;
     }
 
     pub(super) fn browse_analysis_review(&mut self, id: SourceId, cx: &UiContext<'_, Self>) {
@@ -358,6 +359,7 @@ impl Editor {
         if self
             .document
             .visit
+            .canvas
             .ready
             .as_ref()
             .is_none_or(|ready| ready.path != path)
@@ -387,7 +389,7 @@ impl Editor {
 
     pub(super) fn confirm_analysis_review(&mut self, cx: &UiContext<'_, Self>) {
         if self.busy
-            || self.document.visit.ready.is_none()
+            || self.document.visit.canvas.ready.is_none()
             || self.document.analysis_pending.is_some()
         {
             return;

@@ -120,7 +120,7 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
         add_ready_fixture(&mut editor);
         let context = egui::Context::default();
         warm(&mut editor, &context, size);
-        let canvas = editor.document.visit.last_layout.unwrap().0.canvas;
+        let canvas = editor.active_canvas().last_layout.unwrap().0.canvas;
         let bar = egui::containers::panel::PanelState::load(&context, egui::Id::new("viewer-bar"))
             .unwrap()
             .outer_rect;
@@ -128,13 +128,19 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
         let before = labels(&mut editor, &context, size, vec![]);
         let fit = before.iter().find(|(s, _)| s == "Fit").unwrap().1;
         assert!(fit.top() >= canvas.bottom());
-        for pick in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb, Pick::Flat] {
-            editor.preview_picker(pick);
+        for display in [
+            calibration::DMIN,
+            calibration::DMAX,
+            calibration::GAMMA,
+            white_balance::LAYER,
+            flat::DISPLAY,
+        ] {
+            editor.show_picker(display);
             warm(&mut editor, &context, size);
             assert_eq!(
-                editor.document.visit.last_layout.unwrap().0.canvas,
+                editor.active_canvas().last_layout.unwrap().0.canvas,
                 canvas,
-                "{pick:?}"
+                "{display:?}"
             );
             assert_eq!(
                 labels(&mut editor, &context, size, vec![])
@@ -165,15 +171,15 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
         editor.source_exposure = 12.3;
         editor.status = "Rejected measurement; accepted processing unchanged".into();
         warm(&mut editor, &context, size);
-        assert_eq!(editor.document.visit.last_layout.unwrap().0.canvas, canvas);
-        let ready = editor.document.visit.ready.take();
+        assert_eq!(editor.active_canvas().last_layout.unwrap().0.canvas, canvas);
+        let ready = editor.document.visit.canvas.ready.take();
         editor.busy = true;
         let busy = labels(&mut editor, &context, size, vec![]);
         assert_eq!(busy.iter().find(|(s, _)| s == "Fit").unwrap().1, fit);
         editor.busy = false;
         let empty = labels(&mut editor, &context, size, vec![]);
         assert_eq!(empty.iter().find(|(s, _)| s == "Fit").unwrap().1, fit);
-        editor.document.visit.ready = ready;
+        editor.document.visit.canvas.ready = ready;
     }
 }
 
@@ -207,7 +213,12 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             .crop_edit
                             .as_ref()
                             .and_then(|edit| edit.layout)
-                            .or(editor.document.visit.last_layout.map(|(layout, _)| layout))
+                            .or(editor
+                                .document
+                                .visit
+                                .canvas
+                                .last_layout
+                                .map(|(layout, _)| layout))
                             .unwrap()
                             .canvas;
                         let output = frame(editor, &context, size, vec![]);
@@ -236,7 +247,6 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             Pick::RollWb => "Roll WB neutral",
                             Pick::Wb => "WB neutral",
                             Pick::Analysis => "Picture area",
-                            Pick::Flat => unreachable!(),
                         };
                         let marking = title.to_uppercase();
                         let identity = text
@@ -354,9 +364,9 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
         } else {
             editor.preview_picker(Pick::Wb);
         }
-        editor.document.visit.viewport.zoom = Some(2.);
+        editor.document.visit.canvas.viewport.zoom = Some(2.);
         warm(&mut editor, &context, size);
-        let viewport = editor.document.visit.viewport;
+        let viewport = editor.document.visit.canvas.viewport;
         let draft = editor
             .document
             .visit
@@ -390,7 +400,7 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
             size,
             pointer(title + egui::vec2(-100., -100.), false),
         );
-        assert_eq!(editor.document.visit.viewport, viewport);
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert_eq!(editor.pick_region(), region);
         assert_eq!(
             editor
@@ -415,7 +425,12 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
             .crop_edit
             .as_ref()
             .and_then(|edit| edit.layout)
-            .or(editor.document.visit.last_layout.map(|(layout, _)| layout))
+            .or(editor
+                .document
+                .visit
+                .canvas
+                .last_layout
+                .map(|(layout, _)| layout))
             .unwrap()
             .canvas;
         frame(
@@ -432,7 +447,7 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
                 },
             ],
         );
-        assert_eq!(editor.document.visit.viewport, viewport);
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert_eq!(editor.pick_region(), region);
         frame(&mut editor, &context, size, key(egui::Key::Escape));
         assert!(!egui::Popup::is_any_open(&context));
@@ -514,14 +529,14 @@ fn bottom_crop_handles_are_unobstructed_without_reframing_or_docking() {
             .layout
             .unwrap();
         let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
-        let viewport = editor.document.visit.viewport;
+        let viewport = editor.document.visit.canvas.viewport;
         let text = labels(&mut editor, &context, size, vec![]);
         for name in ["Apply", "Cancel"] {
             assert!(
                 text.iter().find(|(s, _)| s == name).unwrap().1.top() >= layout.canvas.bottom()
             );
         }
-        assert_eq!(editor.document.visit.viewport, viewport);
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
         let handle = layout.image.center_bottom();
         frame(&mut editor, &context, size, pointer(handle, true));
         frame(
@@ -680,7 +695,7 @@ fn numeric_enter_and_escape_are_handled_before_picker_or_crop_shortcuts() {
 }
 
 fn flat_fixture(editor: &mut Editor) {
-    let ready = editor.document.visit.ready.as_ref().unwrap();
+    let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
     let mut record = ready.record.clone();
     record.path = "light.ARW".into();
     record.reference_only = true;
@@ -706,14 +721,14 @@ fn crop_numeric_cancellation_survives_hiding_and_reopening_composition() {
     editor.tab = 1;
     editor.scopes.visible = false;
     editor.begin_crop();
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     editor.document.visit.crop_edit.as_mut().unwrap().draft = Crop::from_region(area)
         .straightened(area, 0.123456789)
         .unwrap();
     let context = egui::Context::default();
     warm(&mut editor, &context, size);
     let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
-    let viewport = editor.document.visit.viewport;
+    let viewport = editor.document.visit.canvas.viewport;
     let project = editor.document.state.project.clone();
     let text = labels(&mut editor, &context, size, vec![]);
     click(
@@ -760,7 +775,7 @@ fn crop_numeric_cancellation_survives_hiding_and_reopening_composition() {
         editor.document.visit.crop_edit.as_ref().unwrap().draft,
         draft
     );
-    assert_eq!(editor.document.visit.viewport, viewport);
+    assert_eq!(editor.document.visit.canvas.viewport, viewport);
     assert_eq!(editor.document.state.project, project);
     let text = labels(&mut editor, &context, size, vec![]);
     click(
@@ -793,7 +808,7 @@ fn crop_numeric_cancellation_survives_hiding_and_reopening_composition() {
     );
     frame(&mut editor, &context, size, key(egui::Key::Enter));
     let edited = editor.document.visit.crop_edit.as_ref().unwrap().draft;
-    let edited_viewport = editor.document.visit.viewport;
+    let edited_viewport = editor.document.visit.canvas.viewport;
     assert_eq!(
         -edited.angle
             * Composition::new(
@@ -821,7 +836,7 @@ fn crop_numeric_cancellation_survives_hiding_and_reopening_composition() {
         editor.document.visit.crop_edit.as_ref().unwrap().draft,
         edited
     );
-    assert_eq!(editor.document.visit.viewport, edited_viewport);
+    assert_eq!(editor.document.visit.canvas.viewport, edited_viewport);
     assert_eq!(editor.document.state.project, project);
 }
 
@@ -840,7 +855,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                 editor.document.source = source;
                 let context = egui::Context::default();
                 warm(&mut editor, &context, size);
-                let canvas = editor.document.visit.last_layout.unwrap().0.canvas;
+                let canvas = editor.active_canvas().last_layout.unwrap().0.canvas;
                 let project = editor.document.state.project.clone();
                 let section = if cropping {
                     "photo-composition"
@@ -852,7 +867,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                     editor.begin_crop();
                 } else {
                     flat_fixture(&mut editor);
-                    let area = editor.document.visit.ready.as_ref().unwrap().area;
+                    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
                     editor.set_pick_region(Some(Coverage::rectangle(Rect {
                         x: area.x + 20,
                         y: area.y + 30,
@@ -897,7 +912,12 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                         .crop_edit
                         .as_ref()
                         .and_then(|edit| edit.layout)
-                        .or(editor.document.visit.last_layout.map(|(layout, _)| layout))
+                        .or(editor
+                            .document
+                            .visit
+                            .canvas
+                            .last_layout
+                            .map(|(layout, _)| layout))
                         .unwrap()
                         .canvas;
                     assert_eq!(current_canvas, canvas);
@@ -950,8 +970,8 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                     );
                     assert_eq!(editor.pick_region(), region);
                     assert_eq!(
-                        editor.document.visit.viewport,
-                        *view.get_or_insert(editor.document.visit.viewport)
+                        editor.document.visit.canvas.viewport,
+                        *view.get_or_insert(editor.document.visit.canvas.viewport)
                     );
                     assert_eq!(editor.document.state.project, project);
                     assert_eq!(editor.preferences.sections.get(section), Some(&false));
@@ -982,11 +1002,11 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
         add_ready_fixture(&mut editor);
         let _hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
-            app.update(|editor| editor.document.visit.viewport.zoom = Some(2.));
+            app.update(|editor| editor.document.visit.canvas.viewport.zoom = Some(2.));
             let context = egui::Context::default();
             warm(app, &context, size);
             let project = app.read(|editor| editor.document.state.project.clone());
-            let view = app.read(|editor| editor.document.visit.viewport);
+            let view = app.read(|editor| editor.document.visit.canvas.viewport);
             app.enter(|editor, cx| editor.begin_pick(pick, cx));
             warm(app, &context, size);
             let output = frame(app, &context, size, vec![]);
@@ -1011,13 +1031,13 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
             );
             app.read(|editor| {
                 assert!(editor.active_pick().is_none());
-                assert_eq!(editor.document.visit.viewport, view);
+                assert_eq!(editor.document.visit.canvas.viewport, view);
                 assert_eq!(editor.document.state.project, project);
             });
             app.enter(|editor, cx| editor.begin_pick(pick, cx));
             app.pump();
             app.update(|editor| {
-                let area = editor.document.visit.ready.as_ref().unwrap().area;
+                let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
                 editor.set_pick_region(Some(Coverage::rectangle(Rect {
                     x: area.x + 20,
                     y: area.y + 30,
@@ -1091,6 +1111,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
             editor
                 .document
                 .visit
+                .canvas
                 .ready
                 .as_ref()
                 .unwrap()
@@ -1242,7 +1263,7 @@ fn geometry_busy_guards_and_crop_apply_use_the_original_transactions() {
                 text.iter().find(|(s, _)| s == "Apply").unwrap().1.center(),
             );
             assert!(editor.document.visit.crop_edit.is_none());
-            assert!(editor.document.visit.viewport.zoom.is_none());
+            assert!(editor.document.visit.canvas.viewport.zoom.is_none());
         }
     }
 }
@@ -1258,7 +1279,7 @@ fn source_inspection_is_hidden_outside_source_view_without_losing_its_value() {
     editor.source_exposure = 7.25;
     let context = egui::Context::default();
     warm(&mut editor, &context, size);
-    let canvas = editor.document.visit.last_layout.unwrap().0.canvas;
+    let canvas = editor.active_canvas().last_layout.unwrap().0.canvas;
     let text = labels(&mut editor, &context, size, vec![]);
     assert!(
         !text
@@ -1292,7 +1313,7 @@ fn source_inspection_is_hidden_outside_source_view_without_losing_its_value() {
     warm(&mut editor, &context, size);
     assert!(!egui::Popup::is_any_open(&context));
     assert_eq!(editor.source_exposure, 7.25);
-    assert_eq!(editor.document.visit.last_layout.unwrap().0.canvas, canvas);
+    assert_eq!(editor.active_canvas().last_layout.unwrap().0.canvas, canvas);
 
     // In a narrow window the readout is the first thing the bar gives up, with the value still
     // retained for the popup once a wider window has room for it.
@@ -1322,7 +1343,7 @@ fn uncalibrated_view_remains_source_only_with_the_positive_toggle_disabled() {
     let size = egui::vec2(800., 600.);
     warm(&mut editor, &context, size);
     assert!(editor.document.source);
-    assert!(editor.document.visit.last_layout.is_some());
+    assert!(editor.active_canvas().last_layout.is_some());
     let output = frame(&mut editor, &context, size, vec![]);
     let nodes = output.platform_output.accesskit_update.unwrap().nodes;
     assert!(

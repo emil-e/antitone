@@ -358,11 +358,11 @@ fn retiring_a_photo_discards_its_crop_consumer_but_keeps_shared_regions_for_the_
         await_native(app, &starts);
         let request = app.read(|editor| editor.document.spatial_preparing.as_ref().unwrap().id);
         let replacement_draft = app.update(|editor| {
-            let ready = editor.document.visit.ready.clone().unwrap();
+            let ready = editor.document.visit.canvas.ready.clone().unwrap();
             let visit = editor.request_id();
             editor.replace_photo_scope(visit);
             assert!(editor.document.spatial_preparing.is_some());
-            editor.document.visit.ready = Some(ready);
+            editor.document.visit.canvas.ready = Some(ready);
             editor.busy = false;
             editor.begin_crop();
             editor.busy = true;

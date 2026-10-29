@@ -18,7 +18,7 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
         tint: 0.2,
     };
     editor.sync_document();
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let region = crate::coverage::Coverage::rectangle(Rect {
         x: area.x + 8,
         y: area.y + 8,
@@ -111,7 +111,7 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
         .adjustment_layers = Some(layers);
     editor.refresh_adjustment_layer_selection();
     editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(selected));
-    let ready = editor.document.visit.ready.as_ref().unwrap();
+    let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
     let region = Coverage::rectangle(Rect {
         x: ready.area.x + ready.area.width / 3,
         y: ready.area.y + ready.area.height / 3,
@@ -156,7 +156,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
     editor.document.input = InputSettings::Digital;
     editor.document.roll = RollSettings::default();
     let source = editor.document.visit.current_source.unwrap();
-    let ready = editor.document.visit.ready.as_ref().unwrap();
+    let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
     let developed = ready.developed.clone();
     let patch = Rect {
         x: ready.area.x + ready.area.width / 3,
@@ -304,7 +304,7 @@ fn changing_layer_before_the_wb_caller_is_polled_withdraws_it_and_a_new_pick_can
     let undo = editor
         .history_label(crate::editor::history::Direction::Undo)
         .map(str::to_owned);
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let region = Coverage::rectangle(Rect {
         x: area.x + 8,
         y: area.y + 8,
@@ -399,7 +399,7 @@ fn wb_picking_keeps_its_selected_layer_until_its_awaiting_feature_applies_the_va
         .add("Other".into(), AdjustmentLayer::global(second_settings))
         .unwrap();
     editor.select_adjustment_layer(crate::editor::adjustment_layers::Target::Layer(first));
-    let area = editor.document.visit.ready.as_ref().unwrap().area;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     let region = Coverage::rectangle(Rect {
         x: area.x + 8,
         y: area.y + 8,
@@ -490,8 +490,15 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         samples: 1024,
         spread: 0.,
     });
-    editor.document.visit.ready.as_mut().unwrap().reference = Some(baseline.clone());
-    let ready = editor.document.visit.ready.as_ref().unwrap();
+    editor
+        .document
+        .visit
+        .canvas
+        .ready
+        .as_mut()
+        .unwrap()
+        .reference = Some(baseline.clone());
+    let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
     let scan = Scan::with_reference(ready.developed.clone(), Some(baseline));
     let patch = Rect {
         x: scan.area.x + 8,
@@ -539,7 +546,14 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         .unwrap()
         .measure(&mut zero_image, Coverage::rectangle(patch))
         .unwrap();
-    editor.document.visit.ready.as_mut().unwrap().reference = None;
+    editor
+        .document
+        .visit
+        .canvas
+        .ready
+        .as_mut()
+        .unwrap()
+        .reference = None;
     let balance = captured
         .measure(&mut captured_image, Coverage::rectangle(patch))
         .unwrap();

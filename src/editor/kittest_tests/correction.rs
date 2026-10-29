@@ -14,6 +14,171 @@ fn pick_patch(harness: &mut Harness<'_, Editor>, action: &str, area: Rect) {
 }
 
 #[test]
+fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products_untouched() {
+    super::tools::calibrated_harness(|mut harness| {
+        harness.update(|e| {
+            e.scopes.visible = false;
+            e.document.visit.canvas.viewport.zoom = Some(1.375);
+            e.document.visit.working_view.compare = true;
+        });
+        wait_settled(&mut harness);
+        let (photo, viewport, mode, displayed, original, revision, visit) = harness.read(|e| {
+            let canvas = &e.document.visit.canvas;
+            (
+                canvas.ready.as_ref().unwrap().developed.clone(),
+                canvas.viewport,
+                e.document.source,
+                e.document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .image
+                    .clone(),
+                canvas.grade.original.settled.as_ref().unwrap().2.clone(),
+                canvas.grade.original.revision(),
+                e.document.visit.view,
+            )
+        });
+        assert!(!mode);
+        harness.enter(|e, cx| e.begin_flat_edit(fixture("bare-light.dng"), None, cx));
+        wait_for(&mut harness, |e| !e.busy);
+        wait_settled(&mut harness);
+        let normal_unchanged = |e: &Editor| {
+            let canvas = &e.document.visit.canvas;
+            assert_eq!(canvas.viewport, viewport);
+            assert_eq!(e.document.source, mode);
+            assert_eq!(e.document.visit.view, visit);
+            assert!(Arc::ptr_eq(
+                &photo,
+                &canvas.ready.as_ref().unwrap().developed
+            ));
+            assert!(Arc::ptr_eq(
+                &displayed,
+                &e.document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+                    .image
+            ));
+            assert!(Arc::ptr_eq(
+                &original,
+                &canvas.grade.original.settled.as_ref().unwrap().2
+            ));
+            assert_eq!(canvas.grade.original.revision(), revision);
+        };
+        harness.read(|e| {
+            normal_unchanged(e);
+            assert_eq!(
+                e.active_canvas().ready.as_ref().unwrap().path,
+                fixture("bare-light.dng")
+            );
+            let shown_area = e.selected_view().unwrap().0;
+            assert_eq!(shown_area, e.active_canvas().ready.as_ref().unwrap().area);
+            assert_ne!(
+                shown_area,
+                e.document.visit.canvas.ready.as_ref().unwrap().area
+            );
+            assert!(e.active_canvas().viewport.zoom.is_none());
+            assert!(e.canvas_inspection());
+        });
+        let center = harness.read(|e| e.active_canvas().last_layout.unwrap().0.canvas.center());
+        harness.hover_at(center);
+        harness.event(egui::Event::Zoom(4.));
+        harness.step();
+        let before_pan = harness.read(|e| {
+            normal_unchanged(e);
+            let view = e.active_canvas();
+            let layout = view.last_layout.unwrap().0;
+            assert!(
+                layout.image.width() > layout.canvas.width()
+                    || layout.image.height() > layout.canvas.height()
+            );
+            assert!(view.viewport.zoom.is_some());
+            view.viewport
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        let end = center + egui::vec2(30., -20.);
+        harness.hover_at(end);
+        harness.step();
+        harness.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Middle,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        wait_settled(&mut harness);
+        harness.read(|e| {
+            assert_ne!(e.active_canvas().viewport, before_pan);
+            normal_unchanged(e);
+        });
+        harness.update(|e| {
+            crate::platform::host::App::menu_action(e, crate::platform::menu::Action::Fit);
+        });
+        harness.step();
+        wait_settled(&mut harness);
+        harness.read(|e| {
+            assert!(e.active_canvas().viewport.zoom.is_none());
+            normal_unchanged(e);
+        });
+        harness.get_by_label("100%").click();
+        harness.step();
+        let reference_viewport = harness.read(|e| e.active_canvas().viewport);
+        assert_eq!(reference_viewport.zoom, Some(1.));
+        harness.get_by_label("Fullscreen viewing").click();
+        harness.step();
+        harness.read(|e| assert!(e.fullscreen.is_some()));
+        harness.event(egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        harness.event(egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        harness.read(|e| {
+            assert!(e.active_canvas().viewport.zoom.is_none());
+            normal_unchanged(e);
+        });
+        harness.get_by_label("Exit fullscreen").click();
+        harness.step();
+        harness.update(|e| e.fullscreen_changed(false));
+        harness.step();
+        wait_settled(&mut harness);
+        harness.read(|e| {
+            assert!(e.fullscreen.is_none());
+            assert_eq!(e.active_canvas().viewport, reference_viewport);
+            normal_unchanged(e);
+        });
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        wait_settled(&mut harness);
+        harness.read(|e| {
+            assert!(e.document.flat_edit.is_none());
+            normal_unchanged(e);
+        });
+    });
+}
+
+#[test]
 fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() {
     editor_harness(|mut harness, _| {
         harness.enter(|e, cx| e.add_raws(vec![fixture("illuminated-patches.dng")], cx));
@@ -62,7 +227,7 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
             (
                 e.gamma(),
                 e.document.visit.current_source,
-                e.document.visit.viewport,
+                e.document.visit.canvas.viewport,
                 e.document.state.project.flat_field().cloned(),
             )
         });
@@ -93,7 +258,7 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
             assert!(e.document.state.project.flat_field().is_none());
             assert!(e.source_context().unwrap().correction.is_none());
             assert_eq!(e.document.visit.current_source, selected);
-            assert_eq!(e.document.visit.viewport, viewport);
+            assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert!((e.document.state.project.input.gamma() - desired).abs() < 1e-12);
         });
         harness.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
@@ -113,7 +278,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
     editor_harness_with_thumbnails(true, |mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("illuminated-patches.dng")], cx));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
-        harness.read(|editor| assert!(editor.document.visit.ready.is_some(), "{}", editor.status));
+        harness.read(|editor| assert!(editor.active_canvas().ready.is_some(), "{}", editor.status));
         let before = harness.read(|editor| editor.document.state.project.clone());
         let selected = harness.read(|editor| editor.document.visit.current_source);
         harness.get_by_label("Flat-field correction").click();
@@ -134,7 +299,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         wait_settled(&mut harness);
-        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let original = harness.read(|editor| editor.pick_region().unwrap());
         assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
         assert!(
@@ -161,12 +326,12 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             editor
                 .pick_region()
                 .unwrap()
-                .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area)
+                .exact_rectangle(editor.active_canvas().ready.as_ref().unwrap().area)
                 .unwrap()
         });
         let moved = harness.read(|editor| {
             moved
-                .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area)
+                .exact_rectangle(editor.active_canvas().ready.as_ref().unwrap().area)
                 .unwrap()
         });
         assert!(shrunk.width < moved.width && shrunk.height < moved.height);
@@ -176,7 +341,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
         wait_for(&mut harness, |e| !e.busy);
-        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let region = harness.read(|editor| editor.pick_region().unwrap());
         drag(
             &mut harness,
@@ -188,7 +353,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             editor
                 .pick_region()
                 .unwrap()
-                .exact_rectangle(editor.document.visit.ready.as_ref().unwrap().area)
+                .exact_rectangle(editor.active_canvas().ready.as_ref().unwrap().area)
                 .unwrap()
         });
         harness.get_by_label("Apply").click();
@@ -350,11 +515,13 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             wait_for(&mut harness, |e| {
                 e.document.thumbnails.ready_count(&e.document, target) > 0
             });
-            let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+            let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
             let timing =
                 harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-            harness.update(|editor| editor.document.visit.selection_timing = Some(timing.clone()));
+            harness.update(|editor| {
+                editor.document.visit.canvas.selection_timing = Some(timing.clone())
+            });
             harness.step();
             let png = harness.render().unwrap();
             assert!(timing.ready_was_painted());
@@ -382,11 +549,11 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         set_layout(&mut harness, egui::vec2(600., 600.), 315.);
         harness.get_by_label("100%").click();
         harness.step();
-        harness.read(|editor| assert_eq!(editor.document.visit.viewport.zoom, Some(1.)));
+        harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.)));
         stage(&mut harness, "Roll");
         harness.get_by_label("Enabled").scroll_to_me();
         harness.try_run_realtime().unwrap();
-        let viewport = harness.read(|editor| editor.document.visit.viewport);
+        let viewport = harness.read(|editor| editor.document.visit.canvas.viewport);
         let corrected = harness.read(|editor| editor.document.state.project.clone());
         for enabled in [false, true] {
             harness.get_by_label("Enabled").click();
@@ -395,7 +562,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             harness.read(|editor| assert_eq!(editor.document.correction.is_some(), enabled));
             harness.read(|editor| assert!(editor.document.source));
             harness.read(|editor| assert_eq!(editor.source_exposure, 2.));
-            harness.read(|editor| assert_eq!(editor.document.visit.viewport, viewport));
+            harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, viewport));
             let mut expected = corrected.clone();
             expected.flat_field_mut().unwrap().enabled = enabled;
             harness.read(|editor| assert_eq!(editor.document.state.project, expected));
@@ -412,7 +579,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             let frame = rendered.spec.frame();
             assert!(
                 frame.bounds().unwrap().width
-                    < editor.document.visit.ready.as_ref().unwrap().area.width
+                    < editor.active_canvas().ready.as_ref().unwrap().area.width
             );
             // Physical 100% fixes pixel pitch, not the integer bounding ROI: fractional window edges
             // can require an extra original row/column without adding a display pixel.
@@ -525,7 +692,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.get_by_label("Fit").click();
         harness.step();
         wait_settled(&mut harness);
-        let geometry = harness.read(|editor| editor.document.visit.last_layout.unwrap().0);
+        let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
         harness.read(|editor| {
             assert!(
@@ -579,7 +746,7 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.read(|editor| {
             assert_eq!(editor.document.state.project, cleared);
             assert!(editor.document.correction.is_none());
-            assert!(editor.document.visit.ready.is_some());
+            assert!(editor.active_canvas().ready.is_some());
             assert!(editor.failure.is_none(), "{}", editor.status);
         });
         harness.read(|editor| assert!(editor.preference_store.is_none()));

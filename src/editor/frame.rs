@@ -23,7 +23,7 @@ impl Editor {
     }
 
     pub(super) fn receive_frame(&mut self) {
-        if self.document.visit.ready.is_none()
+        if self.document.visit.canvas.ready.is_none()
             || self
                 .document
                 .visit
@@ -197,7 +197,7 @@ impl Editor {
                     .as_ref()
                     .is_some_and(MaskEdit::dragging)
             {
-                self.document.visit.viewport.fit();
+                self.active_canvas_mut().viewport.fit();
             }
             self.select_active_shortcut(ui.ctx());
             self.tool_shortcuts(ui, cx);

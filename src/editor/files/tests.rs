@@ -604,7 +604,14 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             .unwrap();
         assert!(Arc::ptr_eq(
             &expected.input.source,
-            &editor.document.visit.ready.as_ref().unwrap().developed
+            &editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed
         ));
         assert_eq!(
             expected.recipe.neutral.input.calibration().unwrap(),
@@ -1011,7 +1018,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
                 .unwrap();
             let before = editor.document.state.project.clone();
             editor.document.source = false;
-            editor.document.visit.viewport.zoom = Some(2.);
+            editor.document.visit.canvas.viewport.zoom = Some(2.);
             editor.set_pick_region(Some(Coverage::rectangle(Rect {
                 x: 12,
                 y: 12,
