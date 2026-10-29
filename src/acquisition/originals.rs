@@ -1,7 +1,10 @@
 //! Bounded original-cell processing followed by consumer-owned reconstruction.
+
 use super::*;
+
 #[cfg(test)]
 mod tests;
+
 use crate::{
     frame_raster::FrameRaster,
     geometry::{Composition, FramePoint},

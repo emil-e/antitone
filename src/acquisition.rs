@@ -3,6 +3,7 @@
 //! The first planner supports symmetric margins on one processing grid. Reconstruction
 //! remains a separate sampling boundary: originals are processed before reconstruction,
 //! whereas physical/proxy views filter neutral pixels before the photographic grade.
+
 use crate::{
     Error,
     coverage::Coverage,
@@ -13,11 +14,17 @@ use crate::{
 };
 
 mod footprints;
+
 mod layout;
+
 mod originals;
+
 pub use originals::{OriginalBatch, OriginalUnit};
+
 pub(crate) mod windows;
+
 pub use footprints::{FilterWindow, FootprintBatch, FootprintBudget, FootprintUnit};
+
 #[cfg(test)]
 mod tests;
 
@@ -251,18 +258,23 @@ impl Plan {
     pub fn output(&self) -> FrameRaster {
         self.output
     }
+
     pub fn sampling(&self) -> Sampling {
         self.sampling
     }
+
     pub fn pipeline(&self) -> &PixelPipeline {
         &self.pipeline
     }
+
     pub fn stages(&self) -> &[StageRegion] {
         &self.stages
     }
+
     pub fn input(&self) -> ProcessingRaster {
         self.input
     }
+
     /// Source units per processing cell, preserved through padding and input reuse.
     pub fn pitch(&self) -> [f64; 2] {
         self.pitch

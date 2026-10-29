@@ -1,4 +1,5 @@
 //! Captured sample provenance; neither visit epochs nor publication tickets are content.
+
 use crate::{gpu::ProcessingSource, scan::CameraIdentity};
 use std::sync::{Arc, Weak};
 
@@ -26,12 +27,15 @@ impl Identity {
     pub fn camera(identity: CameraIdentity) -> Self {
         Self::Camera(Arc::new(identity))
     }
+
     pub fn unbound() -> Self {
         Self::Unbound(Arc::new(()))
     }
+
     pub fn captured(&self) -> bool {
         !matches!(self, Self::Unbound(_))
     }
+
     pub fn proxy(proxy: &crate::scan::CameraPixels) -> Self {
         proxy
             .identity()

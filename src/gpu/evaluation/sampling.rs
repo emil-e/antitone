@@ -1,4 +1,5 @@
-//! Callable image sampling: virtual images can cross operations without a buffer per layer.
+//! Callable image sampling: virtual images can cross operations without a buffer per node.
+
 use super::*;
 use crate::geometry::SourceRegion as Rect;
 
@@ -6,12 +7,15 @@ pub enum SampleInput {
     Raster(PlannedImage),
     Callable(Sampled),
 }
+
 pub enum Access {
     Raster,
     Callable,
 }
+
 pub trait SampleProducer: Send + Sync {
     fn access(&self) -> Access;
+
     fn emit(
         &self,
         fragment: &mut Fragment,
@@ -20,6 +24,7 @@ pub trait SampleProducer: Send + Sync {
         region: Rect,
     ) -> Result<Sampled, Error>;
 }
+
 pub trait SampleConsumer: Send + Sync {
     fn emit(
         &self,
@@ -36,6 +41,7 @@ pub struct Sampled {
     pub symbol: String,
     pub bindings: Vec<(u32, Binding)>,
 }
+
 impl Sampled {
     pub fn raster(fragment: &mut Fragment, image: PlannedImage) -> Self {
         let parameters = fragment.uniform(&[
@@ -46,8 +52,12 @@ impl Sampled {
         ]);
         Self {
             code: r#"
-@group(0) @binding(32) var<storage, read> sample_pixels: array<vec4f>;
-@group(0) @binding(33) var<uniform> sample_rectangle: vec4u;
+@group(0) @binding(32)
+var<storage, read> sample_pixels: array<vec4f>;
+
+@group(0) @binding(33)
+var<uniform> sample_rectangle: vec4u;
+
 fn sample_buffer(p: vec2i) -> vec4f {
     let local = p - vec2i(sample_rectangle.xy);
     return sample_pixels[u32(local.y) * sample_rectangle.z + u32(local.x)];
@@ -72,11 +82,15 @@ fn sample_buffer(p: vec2i) -> vec4f {
 {}
 @group(0) @binding(21) var<storage, read_write> sample_result: array<vec4f>;
 @group(0) @binding(22) var<uniform> sample_output: vec4u;
+
 @compute @workgroup_size(64)
 fn sample_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {{
     let index = id.x + id.y * groups.x * 64u;
-    if index >= sample_output.z * sample_output.w {{ return; }}
-    let p = sample_output.xy + vec2u(index % sample_output.z,index / sample_output.z);
+    if index >= sample_output.z * sample_output.w {{
+        return;
+    }}
+
+    let p = sample_output.xy + vec2u(index % sample_output.z, index / sample_output.z);
     sample_result[index] = {call};
 }}
 "#,
@@ -96,7 +110,9 @@ fn sample_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups
 
 pub fn display_code(target: crate::rendering::OutputTarget) -> Result<Arc<str>, Error> {
     use std::sync::OnceLock;
+
     static SRGB: OnceLock<Result<Arc<str>, Error>> = OnceLock::new();
+
     static P3: OnceLock<Result<Arc<str>, Error>> = OnceLock::new();
     let cache = match target {
         crate::rendering::OutputTarget::Srgb => &SRGB,

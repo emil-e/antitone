@@ -1,4 +1,5 @@
 //! Conservative affine support and bounded submission windows; neither changes sampling quality.
+
 pub(crate) type Window = ([u32; 2], [u32; 2]);
 
 #[cfg(any(test, all(feature = "gpu", feature = "render")))]
@@ -80,6 +81,7 @@ pub(crate) fn bounded_by((origin, extent): Window, tile: [u32; 2]) -> Vec<Window
     }
     result
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

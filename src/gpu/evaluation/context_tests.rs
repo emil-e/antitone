@@ -6,28 +6,34 @@ struct Pixels {
     domain: Domain,
     reads: Arc<AtomicUsize>,
 }
+
 impl Source for Pixels {
     fn domain(&self) -> Domain {
         self.domain
     }
+
     fn read(&self, r: SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
         self.reads.fetch_add(1, Ordering::Relaxed);
         Ok(vec![[-0.25, 0.4, 2., 3.]; (r.width * r.height) as usize])
     }
 }
+
 #[derive(Debug, PartialEq)]
 struct FieldKey {
     region: SourceRegion,
     grid: Grid,
     seed: u32,
 }
+
 struct Field {
     seed: u32,
 }
+
 impl Operation for Field {
     fn input(&self, r: SourceRegion) -> Result<Option<SourceRegion>, Error> {
         Ok(Some(r))
     }
+
     fn lower(
         &self,
         f: &mut Fragment,
@@ -45,14 +51,62 @@ impl Operation for Field {
         });
         let r = output.region;
         let geometry = f.uniform(&[r.x, r.y, r.width, self.seed]);
-        f.compute("@group(0) @binding(0) var<storage,read_write> field:array<vec4f>; @group(0) @binding(1) var<uniform> g:vec4u; @compute @workgroup_size(64) fn initialize(@builtin(global_invocation_id) id:vec3u){if id.x>=arrayLength(&field){return;} let x=g.x+id.x%g.z;let y=g.y+id.x/g.z;let v=1.0+f32((x+3u*y+g.w)%5u)*0.0625;field[id.x]=vec4f(v);}","initialize",vec![(0,Binding::Write(field)),(1,geometry)],output.cells());
+        f.compute(
+            r#"
+@group(0) @binding(0)
+var<storage, read_write> field: array<vec4f>;
+
+@group(0) @binding(1)
+var<uniform> g: vec4u;
+
+@compute @workgroup_size(64)
+fn initialize(@builtin(global_invocation_id) id: vec3u) {
+    if id.x >= arrayLength(&field) {
+        return;
+    }
+    let x = g.x + id.x % g.z;
+    let y = g.y + id.x / g.z;
+    let v = 1.0 + f32((x + 3u * y + g.w) % 5u) * 0.0625;
+    field[id.x] = vec4f(v);
+}
+"#,
+            "initialize",
+            vec![(0, Binding::Write(field)), (1, geometry)],
+            output.cells(),
+        );
         if let Work::Compute { initialize, .. } = f.work.last_mut().unwrap() {
             *initialize = Some(field);
         }
-        f.compute("@group(0) @binding(0) var<storage,read> p:array<vec4f>; @group(0) @binding(1) var<storage,read> field:array<vec4f>; @group(0) @binding(2) var<storage,read_write> out:array<vec4f>; @compute @workgroup_size(64) fn apply(@builtin(global_invocation_id) id:vec3u){if id.x<arrayLength(&out){out[id.x]=vec4f(p[id.x].rgb*field[id.x].x,p[id.x].w);}}","apply",vec![(0,Binding::Read(input.resource)),(1,Binding::Read(field)),(2,Binding::Write(output.resource))],output.cells());
+        f.compute(
+            r#"
+@group(0) @binding(0)
+var<storage, read> p: array<vec4f>;
+
+@group(0) @binding(1)
+var<storage, read> field: array<vec4f>;
+
+@group(0) @binding(2)
+var<storage, read_write> out: array<vec4f>;
+
+@compute @workgroup_size(64)
+fn apply(@builtin(global_invocation_id) id: vec3u) {
+    if id.x < arrayLength(&out) {
+        out[id.x] = vec4f(p[id.x].rgb * field[id.x].x, p[id.x].w);
+    }
+}
+"#,
+            "apply",
+            vec![
+                (0, Binding::Read(input.resource)),
+                (1, Binding::Read(field)),
+                (2, Binding::Write(output.resource)),
+            ],
+            output.cells(),
+        );
         Ok(())
     }
 }
+
 fn domain() -> Domain {
     Domain {
         bounds: [11, 17, 9, 7].into(),
@@ -60,6 +114,7 @@ fn domain() -> Domain {
         meaning: Meaning::Graded,
     }
 }
+
 fn root(reads: Arc<AtomicUsize>) -> Arc<ImageNode> {
     let d = domain();
     ImageNode::new(
@@ -68,6 +123,7 @@ fn root(reads: Arc<AtomicUsize>) -> Arc<ImageNode> {
         Field { seed: 7 },
     )
 }
+
 fn request(context: &Context, image: Arc<ImageNode>, bounds: SourceRegion) -> Evaluation {
     context
         .request(
@@ -83,6 +139,7 @@ fn request(context: &Context, image: Arc<ImageNode>, bounds: SourceRegion) -> Ev
         )
         .unwrap()
 }
+
 fn expected(region: SourceRegion) -> Vec<[f32; 4]> {
     (region.y..region.y + region.height)
         .flat_map(|y| {

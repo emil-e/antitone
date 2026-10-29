@@ -1,4 +1,5 @@
 //! Captured processing and sample-storage choices, independent of file encoding.
+
 use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,

@@ -217,8 +217,28 @@ fn shared_slots_fuse_only_for_the_same_module_and_the_same_captured_resource() {
     };
     let first = uniform([2., 0.25, 0., 0.]);
     let second = uniform([3., 0.5, 0., 0.]);
-    let code: Arc<str> = "@group(0) @binding(0) var<uniform> c:vec4f; fn times(p:vec4f,pos:vec2f)->vec4f{return vec4f(p.rgb*c.x,p.w);} fn add(p:vec4f,pos:vec2f)->vec4f{return vec4f(p.rgb+vec3f(c.y),p.w);}".into();
-    let independent:Arc<str>="@group(0) @binding(0) var<uniform> d:vec4f; fn add_other(p:vec4f,pos:vec2f)->vec4f{return vec4f(p.rgb+vec3f(d.y),p.w);}".into();
+    let code: Arc<str> = r#"
+@group(0) @binding(0)
+var<uniform> c: vec4f;
+
+fn times(p: vec4f, pos: vec2f) -> vec4f {
+    return vec4f(p.rgb * c.x, p.w);
+}
+
+fn add(p: vec4f, pos: vec2f) -> vec4f {
+    return vec4f(p.rgb + vec3f(c.y), p.w);
+}
+"#
+    .into();
+    let independent: Arc<str> = r#"
+@group(0) @binding(0)
+var<uniform> d: vec4f;
+
+fn add_other(p: vec4f, pos: vec2f) -> vec4f {
+    return vec4f(p.rgb + vec3f(d.y), p.w);
+}
+"#
+    .into();
     let mut work = Vec::new();
     for (resource, bias, module, symbol) in [
         (&first, 0.25, code.clone(), "add"),

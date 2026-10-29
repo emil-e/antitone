@@ -1,4 +1,5 @@
 //! Compatibility of acquired samples, independent of photographic stage parameters.
+
 #[cfg(test)]
 mod tests;
 

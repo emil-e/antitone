@@ -6,16 +6,22 @@ fn display_does_not_hide_invalid_working_pixels_in_either_physical_policy() {
     for policy in [Policy::Materialized, Policy::Composed] {
         for body in [
             "return p;",
-            "let high=p.rgb*1e30;return vec4f(high*high,p.w);",
-            "return vec4f(p.rgb,-2.0);",
+            "let high = p.rgb * 1e30;\n    return vec4f(high * high, p.w);",
+            "return vec4f(p.rgb, -2.0);",
         ] {
             let source = source(Arc::new(super::tests::fixture()));
             let input = pointwise(
                 source,
                 Meaning::Neutral,
                 Function {
-                    code: format!("fn working_pixel(p:vec4f,position:vec2f)->vec4f {{{body}}}")
-                        .into(),
+                    code: format!(
+                        r#"
+fn working_pixel(p: vec4f, position: vec2f) -> vec4f {{
+    {body}
+}}
+"#
+                    )
+                    .into(),
                     symbol: "working_pixel",
                     bindings: vec![],
                 },

@@ -1,4 +1,5 @@
 //! Codec-independent bounded original-sample execution and destination-only readback.
+
 use super::{OutputBlock, Request, SampleEncoding, WorkBudget};
 use crate::gpu::{GpuPipeline, SubmissionGate, evaluation, rgb16};
 use crate::{
@@ -14,6 +15,7 @@ use std::sync::Arc;
 
 #[cfg(feature = "export")]
 use crate::export_timing::timed;
+
 #[cfg(not(feature = "export"))]
 macro_rules! timed {
     ($stage:ident, $body:expr) => {
@@ -23,8 +25,11 @@ macro_rules! timed {
 
 // Bounded execution granularity, independent of file codec tile layout.
 pub(crate) const TILE: [u32; 2] = [128; 2];
+
 pub(crate) type RenderBlock<'a> = dyn FnMut([u32; 2], [u32; 2]) -> Result<OutputBlock, Error> + 'a;
+
 pub(crate) type Complete<'a> = dyn FnMut() -> Result<(), Error> + 'a;
+
 use crate::{
     acquisition::{
         Plan, Request as AcquisitionRequest, Sampling, SourceRead, SourceSupport, ValidOutput,
@@ -37,6 +42,7 @@ use wgpu::util::DeviceExt;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "film_tests.rs"]
 mod film_tests;
+
 #[cfg(all(test, target_os = "macos"))]
 #[path = "intent_tests.rs"]
 mod intent_tests;
@@ -177,6 +183,7 @@ struct Area {
     budget: WorkBudget,
     unused_texture: wgpu::TextureView,
 }
+
 impl evaluation::Operation for Area {
     fn input(&self, output: SourceRegion) -> Result<Option<SourceRegion>, Error> {
         let origin = [output.x, output.y];
@@ -195,6 +202,7 @@ impl evaluation::Operation for Area {
         };
         Ok(Some(bounds))
     }
+
     fn lower(
         &self,
         fragment: &mut evaluation::Fragment,
@@ -839,9 +847,11 @@ pub(crate) fn execute(
 #[cfg(all(test, target_os = "macos"))]
 #[path = "mask_tests.rs"]
 mod mask_tests;
+
 #[cfg(all(test, target_os = "macos"))]
 #[path = "repair_tests.rs"]
 mod repair_tests;
+
 #[cfg(all(test, target_os = "macos"))]
 #[path = "tests.rs"]
 mod tests;

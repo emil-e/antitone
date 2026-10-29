@@ -11,6 +11,7 @@ struct Codes {
     area: SourceRegion,
     pixels: Vec<[f32; 4]>,
 }
+
 impl Source for Codes {
     fn domain(&self) -> Domain {
         Domain {
@@ -19,6 +20,7 @@ impl Source for Codes {
             meaning: Meaning::CameraCodes,
         }
     }
+
     fn read(&self, r: SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
         Ok((r.y..r.y + r.height)
             .flat_map(|y| {
@@ -231,7 +233,12 @@ fn camera_neutral_repair_roll_and_stack_are_requestable_images_with_a_fused_orig
             photo.neutral.clone(),
             Meaning::Neutral,
             Function {
-                code: "fn double(p:vec4f,pos:vec2f)->vec4f{return vec4f(p.rgb*2.,p.w);}".into(),
+                code: r#"
+fn double(p: vec4f, pos: vec2f) -> vec4f {
+    return vec4f(p.rgb * 2., p.w);
+}
+"#
+                .into(),
                 symbol: "double",
                 bindings: vec![],
             },
@@ -379,18 +386,22 @@ fn folded_negative_original_does_not_require_a_representable_neutral_intermediat
 #[test]
 fn equivalent_implementations_keep_the_domain_and_compose_with_downstream_functions() {
     use std::sync::atomic::{AtomicUsize, Ordering};
+
     struct Traced {
         function: Function,
         calls: Arc<AtomicUsize>,
     }
+
     impl Operation for Traced {
         fn input(&self, r: SourceRegion) -> Result<Option<SourceRegion>, Error> {
             Ok(Some(r))
         }
+
         fn pointwise(&self) -> Option<Function> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             Some(self.function.clone())
         }
+
         fn lower(
             &self,
             _: &mut Fragment,
@@ -407,7 +418,14 @@ fn equivalent_implementations_keep_the_domain_and_compose_with_downstream_functi
         pixels: vec![[0.25, 0.5, 1.25, 0.]; 6],
     }));
     let function = |symbol, body: &str| Function {
-        code: format!("fn {symbol}(p:vec4f,pos:vec2f)->vec4f{{return vec4f({body},p.w);}}").into(),
+        code: format!(
+            r#"
+fn {symbol}(p: vec4f, pos: vec2f) -> vec4f {{
+    return vec4f({body}, p.w);
+}}
+"#
+        )
+        .into(),
         symbol,
         bindings: vec![],
     };

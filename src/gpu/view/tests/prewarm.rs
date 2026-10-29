@@ -1,4 +1,5 @@
 use super::*;
+
 #[test]
 fn fresh_resident_camera_paints_without_incidental_acquisition_or_thumbnail_compilation() {
     pollster::block_on(async {
@@ -45,6 +46,7 @@ fn fresh_resident_camera_paints_without_incidental_acquisition_or_thumbnail_comp
             .unwrap();
     });
 }
+
 #[test]
 fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_layer_without_compiling()
  {

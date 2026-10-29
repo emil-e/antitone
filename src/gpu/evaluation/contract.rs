@@ -1,4 +1,5 @@
 //! Image nodes, operation contracts and declared GPU work. Shader bodies stay opaque to planning.
+
 use super::*;
 use crate::geometry::SourceRegion as Rect;
 
@@ -22,6 +23,7 @@ pub struct Grid {
     pub pitch: [f64; 2],
     pub coverage: u32,
 }
+
 impl Grid {
     pub fn axis_aligned(origin: [f64; 2], pitch: [f64; 2]) -> Self {
         Self {
@@ -31,9 +33,11 @@ impl Grid {
             coverage: 0,
         }
     }
+
     pub fn point(self, p: [f64; 2]) -> [f64; 2] {
         std::array::from_fn(|i| self.origin[i] + p[0] * self.axes[0][i] + p[1] * self.axes[1][i])
     }
+
     pub fn from_frame(frame: crate::frame_raster::FrameRaster) -> Self {
         let origin = frame.source_point([0.; 2]).0;
         let axes = [[1., 0.], [0., 1.]].map(|point| {
@@ -49,6 +53,7 @@ impl Grid {
             coverage: 0,
         }
     }
+
     pub(crate) fn from_raster(raster: crate::gpu::raster::Raster) -> Self {
         let axes = [
             raster.axis_x[..2].try_into().unwrap(),
@@ -64,6 +69,7 @@ impl Grid {
             coverage: raster.dimensions[2],
         }
     }
+
     pub(crate) fn raster(self, region: Rect) -> crate::gpu::raster::Raster {
         let origin = self.point([f64::from(region.x) + 0.5, f64::from(region.y) + 0.5]);
         crate::gpu::raster::Raster {
@@ -84,16 +90,19 @@ impl Grid {
         }
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Domain {
     pub bounds: Rect,
     pub grid: Grid,
     pub meaning: Meaning,
 }
+
 impl Domain {
     pub fn point(self, p: [f64; 2]) -> [f64; 2] {
         self.grid.point(p)
     }
+
     pub fn same_grid(self, other: Self) -> bool {
         self.bounds == other.bounds && self.grid == other.grid
     }
@@ -101,24 +110,30 @@ impl Domain {
 
 pub trait Source: Send + Sync {
     fn domain(&self) -> Domain;
+
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error>;
 }
 
 /// Declares upstream demand and GPU lowering for a captured image operation.
 pub trait Operation: Send + Sync {
     fn input(&self, output: Rect) -> Result<Option<Rect>, Error>;
+
     fn pointwise(&self) -> Option<Function> {
         None
     }
+
     fn in_place(&self) -> bool {
         false
     }
+
     fn sample_producer(&self) -> Option<&dyn SampleProducer> {
         None
     }
+
     fn sample_consumer(&self) -> Option<&dyn SampleConsumer> {
         None
     }
+
     fn lower(
         &self,
         fragment: &mut Fragment,
@@ -135,6 +150,7 @@ pub struct ImageNode {
     pub operation: Arc<dyn Operation>,
     pub(crate) implementation: Option<Arc<ImageNode>>,
 }
+
 impl ImageNode {
     pub fn new(
         domain: Domain,
@@ -148,6 +164,7 @@ impl ImageNode {
             implementation: None,
         })
     }
+
     /// Supply an equivalent physical implementation without erasing logical image boundaries.
     /// Composed planning selects it; materialized planning follows the logical chain.
     /// Approximate preview orderings are separate compositions, not equivalent implementations.
@@ -178,6 +195,7 @@ pub struct Function {
     pub symbol: &'static str,
     pub bindings: Vec<(u32, FunctionBinding)>,
 }
+
 impl Function {
     pub fn new(code: impl Into<Arc<str>>, symbol: &'static str) -> Self {
         Self {
@@ -186,11 +204,13 @@ impl Function {
             bindings: vec![],
         }
     }
+
     pub fn with_shared(mut self, slot: u32, resource: Shared) -> Self {
         self.bindings
             .push((slot, FunctionBinding::Shared(resource)));
         self
     }
+
     /// Capture parameter bytes without a device or shader specialization. Planning owns their
     /// uniform allocation and admission, just like other declared operation constants.
     /// The value's byte layout must match the shader's WGSL uniform declaration.
@@ -201,6 +221,7 @@ impl Function {
         ));
         self
     }
+
     pub(crate) fn lower_bindings(&self, fragment: &mut Fragment) -> Vec<(u32, Binding)> {
         self.bindings
             .iter()
@@ -208,16 +229,19 @@ impl Function {
             .collect()
     }
 }
+
 #[derive(Clone, PartialEq, Eq)]
 pub enum FunctionBinding {
     Shared(Shared),
     Uniform(Arc<[u8]>),
 }
+
 impl From<Shared> for FunctionBinding {
     fn from(value: Shared) -> Self {
         Self::Shared(value)
     }
 }
+
 impl FunctionBinding {
     pub(crate) fn lower(&self, fragment: &mut Fragment) -> Binding {
         match self {
@@ -239,6 +263,7 @@ pub enum Shared {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Resource(pub usize);
+
 /// A demanded region and symbolic resource within a plan, rather than an image expression.
 #[derive(Clone, Copy)]
 pub struct PlannedImage {
@@ -246,10 +271,12 @@ pub struct PlannedImage {
     pub domain: Domain,
     pub region: Rect,
 }
+
 impl PlannedImage {
     pub fn size(self) -> [u32; 2] {
         [self.region.width, self.region.height]
     }
+
     pub fn cells(self) -> u32 {
         self.region.width * self.region.height
     }
@@ -273,6 +300,7 @@ pub enum Storage {
     /// Caller-owned RGBA32Float attachment; lifetime follows recorded commands.
     RenderTarget(wgpu::Texture),
 }
+
 impl Storage {
     pub fn bytes(&self) -> u64 {
         match self {
@@ -282,6 +310,7 @@ impl Storage {
             Self::Texture(size) => u64::from(size[0]) * u64::from(size[1]) * 16,
         }
     }
+
     pub fn can_hold(&self, next: &Self) -> bool {
         match (self, next) {
             (
@@ -308,6 +337,7 @@ pub enum Binding {
     Texture(Resource),
     Shared(Shared),
 }
+
 impl Binding {
     pub fn local(&self) -> Option<Resource> {
         match self {
@@ -336,6 +366,7 @@ pub enum Work {
         target: Resource,
     },
 }
+
 impl Work {
     pub(crate) fn linear(
         code: impl Into<Arc<str>>,
@@ -353,6 +384,7 @@ impl Work {
             initialize: None,
         }
     }
+
     pub fn resources(&self) -> Vec<Resource> {
         match self {
             Self::Upload { output, .. } => vec![output.resource],
@@ -375,12 +407,14 @@ pub struct Fragment {
     pub resources: Vec<Storage>,
     pub work: Vec<Work>,
 }
+
 impl Fragment {
     pub fn resource(&mut self, storage: Storage) -> Resource {
         let resource = Resource(self.resources.len());
         self.resources.push(storage);
         resource
     }
+
     pub fn image(&mut self, domain: Domain, region: Rect) -> PlannedImage {
         PlannedImage {
             resource: self.resource(Storage::Buffer(
@@ -390,18 +424,22 @@ impl Fragment {
             region,
         }
     }
+
     pub fn uniform<T: bytemuck::Pod>(&mut self, value: &T) -> Binding {
         Binding::Uniform(self.resource(Storage::Uniform(bytemuck::bytes_of(value).into())))
     }
+
     pub fn retained(&mut self, key: RetainedKey, bytes: u64) -> Resource {
         self.resource(Storage::Retained { key, bytes })
     }
+
     pub fn initialize(&mut self, resource: Resource) {
         let Some(Work::Compute { initialize, .. }) = self.work.last_mut() else {
             panic!("an initializer must be compute work");
         };
         *initialize = Some(resource);
     }
+
     /// Linear work with 64-thread groups. Kernels flatten the invocation ID as
     /// `id.x + id.y * num_workgroups.x * 64`, including the bounds check.
     pub fn compute(

@@ -410,8 +410,8 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 OutputTarget::Srgb,
                 None,
             );
-            let layer = &first.graded.as_ref().unwrap().source;
-            let actual = read(&device, &queue, &layer.pixels);
+            let acquired = &first.graded.as_ref().unwrap().source;
+            let actual = read(&device, &queue, &acquired.pixels);
             let mut touched = 0;
             for (i, pixel) in actual.iter().enumerate() {
                 let footprint = frame
@@ -468,8 +468,8 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
                 OutputTarget::Srgb,
                 Some(&first),
             );
-            let same_layer = &graded.graded.as_ref().unwrap().source;
-            assert!(Arc::ptr_eq(layer, same_layer));
+            let same_acquired = &graded.graded.as_ref().unwrap().source;
+            assert!(Arc::ptr_eq(acquired, same_acquired));
             let values = read(&device, &queue, &graded.graded.as_ref().unwrap().pixels);
             let post = wb_matrix(photo.wb).unwrap()
                 * wb_matrix(roll.wb).unwrap()

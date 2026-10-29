@@ -1,4 +1,5 @@
 //! Immutable physical-view acquisition and rendering. Originals remain reference/export authority.
+
 use super::*;
 #[cfg(test)]
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
@@ -14,10 +15,13 @@ use std::sync::{
 };
 #[cfg(test)]
 use wgpu::util::DeviceExt;
+
 mod composite;
+
 mod repair_reconstruction;
 
 mod source_spec;
+
 pub(crate) use source_spec::ViewSourceSpec;
 
 use crate::gpu::execution::footprints::uniform;
@@ -26,12 +30,15 @@ pub(crate) struct ViewKernels {
     acquisition: Arc<crate::gpu::execution::footprints::Kernels>,
     compose: wgpu::RenderPipeline,
 }
+
 impl std::ops::Deref for ViewKernels {
     type Target = crate::gpu::execution::footprints::Kernels;
+
     fn deref(&self) -> &Self::Target {
         &self.acquisition
     }
 }
+
 impl ViewKernels {
     pub(crate) async fn new(device: &wgpu::Device) -> Result<Arc<Self>, Error> {
         let acquisition = crate::gpu::execution::footprints::Kernels::new(device).await?;
@@ -68,6 +75,7 @@ impl ViewSource {
                 &self.pixels,
             )
     }
+
     pub(crate) fn cached_neutral(
         cache: &crate::gpu::evaluation::ImageCache,
         renderer: Arc<crate::renderer::GpuRenderer>,
@@ -91,10 +99,12 @@ impl ViewSource {
             pixels: found.pixels,
         }))
     }
+
     #[cfg(test)]
     pub(crate) fn same_pixels_as(&self, other: &Self) -> bool {
         self.pixels == other.pixels
     }
+
     pub(crate) fn published(self: &Arc<Self>, authority: u64) -> Arc<Self> {
         if self.spec.authority == authority {
             return self.clone();
@@ -258,8 +268,10 @@ struct GradedView {
     source: Arc<ViewSource>,
     data: Arc<crate::gpu::execution::footprints::Processed>,
 }
+
 impl std::ops::Deref for GradedView {
     type Target = crate::gpu::execution::footprints::Processed;
+
     fn deref(&self) -> &Self::Target {
         &self.data
     }

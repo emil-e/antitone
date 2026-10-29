@@ -15,10 +15,12 @@ pub(super) struct Authored {
     domain: Domain,
     pixels: Arc<Vec<[f32; 4]>>,
 }
+
 impl Source for Authored {
     fn domain(&self) -> Domain {
         self.domain
     }
+
     fn read(&self, rect: Rect) -> Result<Vec<[f32; 4]>, Error> {
         assert!(self.domain.bounds.contains_region(rect));
         let area = self.domain.bounds;
@@ -30,6 +32,7 @@ impl Source for Authored {
             .collect())
     }
 }
+
 pub(super) fn fixture() -> Authored {
     let area = Rect {
         x: 11,
@@ -63,6 +66,7 @@ pub(super) fn fixture() -> Authored {
         pixels: Arc::new(pixels),
     }
 }
+
 pub(super) fn matrix() -> DMat3 {
     DMat3::from_cols(
         DVec3::new(1.07, 0.03, -0.08),
@@ -70,6 +74,7 @@ pub(super) fn matrix() -> DMat3 {
         DVec3::new(-0.08, 0.02, 1.06),
     )
 }
+
 pub(super) fn settings(area: Rect) -> (RollSettings, AdjustmentLayerSnapshot) {
     let roll = RollSettings {
         exposure: 0.15,
@@ -99,6 +104,7 @@ pub(super) fn settings(area: Rect) -> (RollSettings, AdjustmentLayerSnapshot) {
     .unwrap();
     (roll, snapshot)
 }
+
 pub(super) fn reduced(domain: Domain, size: [u32; 2]) -> Domain {
     let area = domain.bounds;
     Domain {
@@ -113,6 +119,7 @@ pub(super) fn reduced(domain: Domain, size: [u32; 2]) -> Domain {
         meaning: domain.meaning,
     }
 }
+
 pub(super) fn chain(
     device: &wgpu::Device,
     renderer: &crate::renderer::GpuRenderer,
@@ -144,6 +151,7 @@ pub(super) fn chain(
     }
     node
 }
+
 pub(super) fn make_plan(node: Arc<ImageNode>, tile: [u32; 2]) -> Plan {
     Plan::new(
         node.clone(),
@@ -175,6 +183,7 @@ fn grade_scalar(values: Vec<DVec3>, domain: Domain, source_area: Rect) -> Vec<DV
         })
         .collect()
 }
+
 fn blur_scalar(values: &[DVec3], domain: Domain, sigma: f64) -> Vec<DVec3> {
     if sigma == 0. {
         return values.to_vec();
@@ -201,6 +210,7 @@ fn blur_scalar(values: &[DVec3], domain: Domain, sigma: f64) -> Vec<DVec3> {
     }
     image
 }
+
 pub(super) fn reconstruct_scalar(values: &[DVec3], input: Domain, output: Domain) -> Vec<DVec3> {
     let area = output.bounds;
     (area.y..area.y + area.height)
@@ -227,6 +237,7 @@ pub(super) fn reconstruct_scalar(values: &[DVec3], input: Domain, output: Domain
         })
         .collect()
 }
+
 pub(super) fn scalar(
     data: &Authored,
     physical: bool,
@@ -266,6 +277,7 @@ pub(super) fn scalar(
     }
     pixels
 }
+
 pub(super) fn checked_error(expected: &[DVec3], actual: &[[f32; 4]]) -> Result<f64, &'static str> {
     if expected.len() != actual.len() {
         return Err("pixel count differs");
@@ -283,6 +295,7 @@ pub(super) fn checked_error(expected: &[DVec3], actual: &[[f32; 4]]) -> Result<f
         })
         .fold(0., f64::max))
 }
+
 pub(super) fn max_error(expected: &[DVec3], actual: &[[f32; 4]]) -> f64 {
     checked_error(expected, actual).expect("comparison requires complete finite images")
 }

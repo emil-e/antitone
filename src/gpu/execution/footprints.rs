@@ -1,4 +1,5 @@
 //! Bounded source acquisition at neutral-footprint and supplied-camera sampling boundaries.
+
 use crate::{
     Error,
     frame_raster::FrameRaster,
@@ -8,12 +9,19 @@ use crate::{
 };
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
+
 mod processing;
+
 pub(crate) use processing::Processed;
+
 mod repairs;
+
 mod request;
+
 pub(crate) use request::Request;
+
 mod kernels;
+
 pub(crate) use kernels::{Kernels, float_buffer, uniform};
 
 pub(crate) struct Acquired {
@@ -22,6 +30,7 @@ pub(crate) struct Acquired {
     pub kernels: Arc<Kernels>,
     pub pixels: wgpu::Buffer,
 }
+
 pub(crate) enum Input<'a> {
     Originals {
         scan: &'a Scan,
@@ -38,6 +47,7 @@ pub(crate) enum Input<'a> {
         request: Request,
     },
 }
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
     device: &wgpu::Device,
@@ -76,6 +86,7 @@ pub(crate) fn execute(
         }
     }
 }
+
 fn encode_neutral(
     device: &wgpu::Device,
     renderer: &crate::renderer::GpuRenderer,
@@ -104,6 +115,7 @@ fn encode_neutral(
     )?
     .encode_from(device, encoder, &source.input, output)
 }
+
 impl Acquired {
     /// Navigation positives process the already-sampled camera raster, not the originals.
     #[allow(clippy::too_many_arguments)]

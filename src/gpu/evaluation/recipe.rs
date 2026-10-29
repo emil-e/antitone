@@ -1,4 +1,5 @@
 //! Explicit purpose assembly from one captured set of photographic components.
+
 use super::*;
 use crate::{
     gpu::{GpuFlatField, ProcessingInput, ProcessingSource},
@@ -10,6 +11,7 @@ pub(crate) struct Recipe {
     input: ProcessingInput,
     stages: PixelPipeline,
 }
+
 impl Recipe {
     #[cfg(feature = "ui")]
     pub(crate) fn prewarm_resident(
@@ -26,6 +28,7 @@ impl Recipe {
         )?;
         renderer.evaluation().prewarm_image(image)
     }
+
     #[cfg(feature = "editor")]
     pub(crate) fn prewarm_filtered(device: &wgpu::Device, context: &Context) -> Result<(), Error> {
         let domain = Domain {
@@ -43,18 +46,22 @@ impl Recipe {
             crate::gpu::ProcessingParameters::source(),
         )?)
     }
+
     pub fn capture(input: &ProcessingInput) -> Result<Self, Error> {
         Ok(Self::with_stages(input, input.pixel_pipeline()?))
     }
+
     pub fn with_stages(input: &ProcessingInput, stages: PixelPipeline) -> Self {
         Self {
             input: input.clone(),
             stages,
         }
     }
+
     pub fn stages(&self) -> &PixelPipeline {
         &self.stages
     }
+
     #[cfg(feature = "raw")]
     pub fn originals(
         &self,
@@ -72,6 +79,7 @@ impl Recipe {
             reference,
         )
     }
+
     pub fn resident(
         &self,
         device: &wgpu::Device,
@@ -82,6 +90,7 @@ impl Recipe {
         let photograph = Photograph::from_resident(device, renderer, source, &self.input, raster)?;
         self.stages.compose(photograph.graded)
     }
+
     #[cfg(feature = "editor")]
     pub fn filtered(
         &self,
@@ -96,6 +105,7 @@ impl Recipe {
         let image = self.stages.compose(grading.compose(neutral)?)?;
         Ok((image, grading))
     }
+
     #[cfg(feature = "editor")]
     pub fn inspection(
         device: &wgpu::Device,
@@ -128,6 +138,7 @@ impl Recipe {
             },
         ))
     }
+
     pub fn reference(
         &self,
         device: &wgpu::Device,

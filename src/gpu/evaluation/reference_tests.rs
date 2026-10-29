@@ -14,6 +14,7 @@ fn buffer(device: &wgpu::Device, pixels: &[[f32; 4]]) -> wgpu::Buffer {
             | wgpu::BufferUsages::COPY_SRC,
     })
 }
+
 fn texture(device: &wgpu::Device, size: [u32; 2], format: wgpu::TextureFormat) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -32,6 +33,7 @@ fn texture(device: &wgpu::Device, size: [u32; 2], format: wgpu::TextureFormat) -
         view_formats: &[],
     })
 }
+
 fn asset() -> Arc<LookAsset> {
     let mut nodes = vec![];
     for b in 0..2 {
@@ -50,6 +52,7 @@ fn asset() -> Arc<LookAsset> {
         .unwrap(),
     )
 }
+
 fn read_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

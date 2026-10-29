@@ -23,7 +23,14 @@ fn independent_code_reference_can_be_composed_and_replaced_without_planner_chang
     let base = execute::read(&device, &queue, &base.pixels);
     for gain in [0.75f32, 1.25] {
         let function = Function {
-            code: format!("fn experiment_gain(p: vec4f, position: vec2f) -> vec4f {{ return vec4f(p.rgb * {gain}, p.w); }}").into(),
+            code: format!(
+                r#"
+fn experiment_gain(p: vec4f, position: vec2f) -> vec4f {{
+    return vec4f(p.rgb * {gain}, p.w);
+}}
+"#
+            )
+            .into(),
             symbol: "experiment_gain",
             bindings: vec![],
         };
@@ -99,14 +106,17 @@ fn pure_admission_rejects_insufficient_budget_and_invalid_demands() {
 #[test]
 fn cancellation_at_submission_does_not_read_or_submit_another_source_tile() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
     struct Counted {
         source: super::tests::Authored,
         reads: Arc<AtomicUsize>,
     }
+
     impl Source for Counted {
         fn domain(&self) -> Domain {
             self.source.domain()
         }
+
         fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
             self.reads.fetch_add(1, Ordering::Relaxed);
             self.source.read(region)
@@ -149,10 +159,12 @@ fn cancellation_at_submission_does_not_read_or_submit_another_source_tile() {
 #[test]
 fn fragment_scheduling_rejects_undeclared_production_before_any_gpu_work() {
     struct Broken;
+
     impl Operation for Broken {
         fn input(&self, r: Rect) -> Result<Option<Rect>, Error> {
             Ok(Some(r))
         }
+
         fn lower(
             &self,
             f: &mut Fragment,

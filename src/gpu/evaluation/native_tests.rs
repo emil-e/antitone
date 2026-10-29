@@ -14,6 +14,7 @@ struct Case {
     input: ProcessingInput,
     demand: crate::refinement::ViewRequest,
 }
+
 fn case(
     device: &wgpu::Device,
     renderer: &crate::renderer::GpuRenderer,
@@ -82,6 +83,7 @@ fn case(
         },
     }
 }
+
 fn regional(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -102,6 +104,7 @@ fn regional(
     .unwrap()
     .unwrap()
 }
+
 #[test]
 fn authored_native_source_and_real_grade_mtf_display_match_regional_execution() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();

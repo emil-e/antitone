@@ -1,4 +1,5 @@
 //! Concrete operation implementations. Geometry and GPU bodies stay out of the planner.
+
 use super::*;
 #[cfg(all(test, feature = "editor"))]
 use crate::gpu::GpuGrade;
@@ -9,6 +10,7 @@ use wgpu::util::DeviceExt;
 pub fn source(source: Arc<dyn Source>) -> Arc<ImageNode> {
     ImageNode::new(source.domain(), None, SourceOp(source))
 }
+
 #[cfg(all(test, feature = "editor"))]
 impl Source for crate::scan::Scan {
     fn domain(&self) -> Domain {
@@ -18,6 +20,7 @@ impl Source for crate::scan::Scan {
             meaning: Meaning::Camera,
         }
     }
+
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
         let mut pixels = self.tile_region(
             self.area,
@@ -37,10 +40,12 @@ impl Source for crate::scan::Scan {
 }
 
 struct SourceOp(Arc<dyn Source>);
+
 impl Operation for SourceOp {
     fn input(&self, _: Rect) -> Result<Option<Rect>, Error> {
         Ok(None)
     }
+
     fn lower(
         &self,
         fragment: &mut Fragment,
@@ -65,14 +70,18 @@ pub fn pointwise(input: Arc<ImageNode>, meaning: Meaning, function: Function) ->
         Map(function),
     )
 }
+
 struct Map(Function);
+
 impl Operation for Map {
     fn input(&self, region: Rect) -> Result<Option<Rect>, Error> {
         Ok(Some(region))
     }
+
     fn pointwise(&self) -> Option<Function> {
         Some(self.0.clone())
     }
+
     fn lower(
         &self,
         _: &mut Fragment,
@@ -152,21 +161,25 @@ pub fn gaussian(input: Arc<ImageNode>, sigma: f64) -> Result<Arc<ImageNode>, Err
         },
     ))
 }
+
 struct Gaussian {
     domain: Domain,
     sigma: f64,
     support: [u32; 2],
 }
+
 impl Gaussian {
     fn parameters(&self, fragment: &mut Fragment, input: PlannedImage) -> Binding {
         let raster = input.domain.grid.raster(input.region);
         fragment.uniform(&crate::gpu::image_mtf::Parameters::new(raster, self.sigma))
     }
 }
+
 impl SampleProducer for Gaussian {
     fn access(&self) -> Access {
         Access::Raster
     }
+
     fn emit(
         &self,
         fragment: &mut Fragment,
@@ -195,6 +208,7 @@ impl SampleProducer for Gaussian {
             crate::gpu::image_mtf::sample_shader(),
             r#"
 @group(0) @binding(12) var<uniform> gaussian_origin: vec4u;
+
 fn sample_gaussian(p: vec2i) -> vec4f {
     let local = p - vec2i(gaussian_origin.xy);
     let index = u32(local.y) * parameters.raster.dimensions.x + u32(local.x);
@@ -213,15 +227,18 @@ fn sample_gaussian(p: vec2i) -> vec4f {
         })
     }
 }
+
 impl Operation for Gaussian {
     fn sample_producer(&self) -> Option<&dyn SampleProducer> {
         Some(self)
     }
+
     fn input(&self, region: Rect) -> Result<Option<Rect>, Error> {
         Ok(Some(
             crate::processing_support::Support(self.support).expand(region, self.domain.bounds),
         ))
     }
+
     fn lower(
         &self,
         fragment: &mut Fragment,
@@ -321,6 +338,7 @@ pub fn reconstruct(input: Arc<ImageNode>, grid: Domain) -> Result<Arc<ImageNode>
         },
     ))
 }
+
 #[cfg(all(test, feature = "editor"))]
 struct Reconstruction {
     input: Domain,
@@ -328,11 +346,13 @@ struct Reconstruction {
     base: [f32; 2],
     scale: [f32; 2],
 }
+
 #[cfg(all(test, feature = "editor"))]
 impl Operation for Reconstruction {
     fn sample_consumer(&self) -> Option<&dyn SampleConsumer> {
         Some(self)
     }
+
     fn input(&self, region: Rect) -> Result<Option<Rect>, Error> {
         let first = [region.x, region.y];
         let end = [region.x + region.width, region.y + region.height];
@@ -368,6 +388,7 @@ impl Operation for Reconstruction {
             height: high[1] - low[1],
         }))
     }
+
     fn lower(
         &self,
         fragment: &mut Fragment,
@@ -378,6 +399,7 @@ impl Operation for Reconstruction {
         self.emit(fragment, sample, output)
     }
 }
+
 #[cfg(all(test, feature = "editor"))]
 impl SampleConsumer for Reconstruction {
     fn emit(
@@ -406,7 +428,15 @@ impl SampleConsumer for Reconstruction {
         ]));
         let uniform = Binding::Uniform(fragment.resource(Storage::Uniform(bytes.into())));
         let code = format!(
-            "{}\nfn reconstruction_sample(p: vec2i) -> vec4f {{ return {}(p); }}\n{}",
+            r#"
+{}
+
+fn reconstruction_sample(p: vec2i) -> vec4f {{
+    return {}(p);
+}}
+
+{}
+"#,
             input.code,
             input.symbol,
             include_str!("reconstruct.wgsl")
@@ -425,6 +455,7 @@ pub fn display(
 ) -> Result<Arc<ImageNode>, Error> {
     display_with_destination(input, renderer, target, None)
 }
+
 pub(crate) fn display_texture(
     input: Arc<ImageNode>,
     renderer: &crate::renderer::GpuRenderer,
@@ -442,6 +473,7 @@ pub(crate) fn display_texture(
     }
     display_with_destination(input, renderer, target, Some(texture.clone()))
 }
+
 fn display_with_destination(
     input: Arc<ImageNode>,
     renderer: &crate::renderer::GpuRenderer,
@@ -476,6 +508,7 @@ fn display_with_destination(
         operation,
     ))
 }
+
 struct Display {
     destination: Option<wgpu::Texture>,
     coverage: bool,
@@ -484,10 +517,12 @@ struct Display {
     layout: wgpu::BindGroupLayout,
     shared: Vec<(u32, Shared)>,
 }
+
 impl SampleProducer for Display {
     fn access(&self) -> Access {
         Access::Callable
     }
+
     fn emit(
         &self,
         _fragment: &mut Fragment,
@@ -506,10 +541,19 @@ impl SampleProducer for Display {
 {}
 fn sample_display(p: vec2i) -> vec4f {{
     let pixel = {}(p);
-    if pixel.w < 0.0 {{ return pixel; }}
-    if {coverage} && (u32(pixel.w) & 8u) == 0u {{ return vec4f(0.0); }}
-    if any((bitcast<vec3u>(pixel.rgb) & vec3u(0x7f800000u)) == vec3u(0x7f800000u)) {{ return vec4f(0.0,0.0,0.0,-1.0); }}
-    return antitone_render(vec4f(pixel.rgb,1.0));
+    if pixel.w < 0.0 {{
+        return pixel;
+    }}
+
+    if {coverage} && (u32(pixel.w) & 8u) == 0u {{
+        return vec4f(0.0);
+    }}
+
+    if any((bitcast<vec3u>(pixel.rgb) & vec3u(0x7f800000u)) == vec3u(0x7f800000u)) {{
+        return vec4f(0.0, 0.0, 0.0, -1.0);
+    }}
+
+    return antitone_render(vec4f(pixel.rgb, 1.0));
 }}
 "#,
             input.code,
@@ -531,13 +575,16 @@ fn sample_display(p: vec2i) -> vec4f {{
         })
     }
 }
+
 impl Operation for Display {
     fn sample_producer(&self) -> Option<&dyn SampleProducer> {
         self.destination.is_none().then_some(self)
     }
+
     fn input(&self, region: Rect) -> Result<Option<Rect>, Error> {
         Ok(Some(region))
     }
+
     fn lower(
         &self,
         fragment: &mut Fragment,

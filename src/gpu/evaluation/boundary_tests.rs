@@ -62,6 +62,7 @@ fn scratch_pool_obeys_a_smaller_subsequent_budget() {
 #[test]
 fn dispatch_grid_limits_are_admitted_without_source_acquisition() {
     struct NeverRead;
+
     impl Source for NeverRead {
         fn domain(&self) -> Domain {
             Domain {
@@ -70,6 +71,7 @@ fn dispatch_grid_limits_are_admitted_without_source_acquisition() {
                 meaning: Meaning::Neutral,
             }
         }
+
         fn read(&self, _: Rect) -> Result<Vec<[f32; 4]>, Error> {
             panic!("admission must precede acquisition")
         }
@@ -78,7 +80,12 @@ fn dispatch_grid_limits_are_admitted_without_source_acquisition() {
         source(Arc::new(NeverRead)),
         Meaning::Neutral,
         Function {
-            code: "fn identity(p: vec4f, xy: vec2f) -> vec4f { return p; }".into(),
+            code: r#"
+fn identity(p: vec4f, xy: vec2f) -> vec4f {
+    return p;
+}
+"#
+            .into(),
             symbol: "identity",
             bindings: vec![],
         },
@@ -116,7 +123,12 @@ fn operation_constants_must_fit_their_gpu_representation() {
         camera,
         Meaning::Graded,
         Function {
-            code: "fn identity(p: vec4f, xy: vec2f)->vec4f {return p;}".into(),
+            code: r#"
+fn identity(p: vec4f, xy: vec2f) -> vec4f {
+    return p;
+}
+"#
+            .into(),
             symbol: "identity",
             bindings: vec![],
         },
@@ -129,10 +141,12 @@ fn operation_constants_must_fit_their_gpu_representation() {
 fn reconstruction_uses_actual_constant_edges_and_handles_nonunit_near_integer_grids() {
     #[derive(Clone)]
     struct Constant(Domain);
+
     impl Source for Constant {
         fn domain(&self) -> Domain {
             self.0
         }
+
         fn read(&self, r: Rect) -> Result<Vec<[f32; 4]>, Error> {
             assert!(self.0.bounds.contains_region(r));
             Ok(vec![[1., -0.25, 3., 0.]; (r.width * r.height) as usize])
@@ -173,10 +187,12 @@ fn reconstruction_uses_actual_constant_edges_and_handles_nonunit_near_integer_gr
 #[test]
 fn conservative_reconstruction_demand_preserves_nonconstant_nonunit_grid_samples() {
     struct Grid(Domain);
+
     impl Source for Grid {
         fn domain(&self) -> Domain {
             self.0
         }
+
         fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
             assert!(self.0.bounds.contains_region(region));
             Ok((region.y..region.y + region.height)

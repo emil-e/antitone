@@ -1,4 +1,5 @@
 //! Test-only authoring examples: logical values compose nodes without a device or consumer hooks.
+
 use crate::{
     Error,
     geometry::SourceRegion as Rect,
@@ -15,6 +16,7 @@ pub(crate) struct SignedCurve {
     gain: f32,
     curvature: f32,
 }
+
 impl SignedCurve {
     pub fn new(gain: f32, curvature: f32) -> Result<Self, Error> {
         if !gain.is_finite() || !curvature.is_finite() || curvature < 0. {
@@ -23,10 +25,12 @@ impl SignedCurve {
         Ok(Self { gain, curvature })
     }
 }
+
 impl EffectDefinition for SignedCurve {
     fn support(&self, _: [f64; 2]) -> Support {
         Support::NONE
     }
+
     fn compose(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
         if input.domain.meaning != Meaning::Graded {
             return Err(Error::InvalidParameter("example curve requires graded AP1"));
@@ -53,6 +57,7 @@ impl EffectDefinition for SignedCurve {
 pub(crate) struct TentConvolution {
     spacing: f64,
 }
+
 impl TentConvolution {
     pub fn new(spacing: f64) -> Result<Self, Error> {
         if !spacing.is_finite() || spacing <= 0. {
@@ -63,10 +68,12 @@ impl TentConvolution {
         Ok(Self { spacing })
     }
 }
+
 impl EffectDefinition for TentConvolution {
     fn support(&self, pitch: [f64; 2]) -> Support {
         Support(pitch.map(|p| (self.spacing / p).ceil() as u32))
     }
+
     fn compose(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
         if input.domain.meaning != Meaning::Graded {
             return Err(Error::InvalidParameter(
@@ -89,14 +96,17 @@ impl EffectDefinition for TentConvolution {
         ))
     }
 }
+
 struct Tent {
     domain: Domain,
     support: Support,
 }
+
 impl Operation for Tent {
     fn input(&self, output: Rect) -> Result<Option<Rect>, Error> {
         Ok(Some(self.support.expand(output, self.domain.bounds)))
     }
+
     fn lower(
         &self,
         work: &mut Fragment,

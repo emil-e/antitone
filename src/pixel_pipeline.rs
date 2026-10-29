@@ -1,10 +1,14 @@
 //! Ordered effect definitions. Recipe assembly selects effects; evaluation executes their nodes.
+
 use crate::{Error, film_emulation::FilmEmulationSettings, processing_support::Support};
 use std::{any::Any, fmt, sync::Arc};
+
 #[cfg(all(test, feature = "editor"))]
 pub(crate) mod authoring_examples;
+
 #[cfg(all(test, feature = "editor"))]
 pub(crate) mod test_effects;
+
 #[cfg(test)]
 mod tests;
 
@@ -26,6 +30,7 @@ pub struct PixelStage {
     value: Arc<dyn EffectDefinition>,
     equals: fn(&dyn EffectDefinition, &dyn EffectDefinition) -> bool,
 }
+
 impl PixelStage {
     pub fn new<T: EffectDefinition + PartialEq>(value: T) -> Self {
         Self {
@@ -35,12 +40,15 @@ impl PixelStage {
             },
         }
     }
+
     pub fn get<T: EffectDefinition>(&self) -> Option<&T> {
         (self.value.as_ref() as &dyn Any).downcast_ref()
     }
+
     pub fn support(&self, pitch: [f64; 2]) -> Support {
         self.value.support(pitch)
     }
+
     #[cfg(all(feature = "gpu", feature = "render"))]
     pub(crate) fn compose(
         &self,
@@ -49,11 +57,13 @@ impl PixelStage {
         self.value.compose(input)
     }
 }
+
 impl fmt::Debug for PixelStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.value.fmt(f)
     }
 }
+
 impl PartialEq for PixelStage {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.value, &other.value)
@@ -66,10 +76,12 @@ pub struct Grain {
     pub parameters: crate::grain::GrainParameters,
     pub seed: u64,
 }
+
 impl EffectDefinition for Grain {
     fn support(&self, pitch: [f64; 2]) -> Support {
         self.parameters.support(pitch)
     }
+
     #[cfg(all(feature = "gpu", feature = "render"))]
     fn compose(
         &self,
@@ -78,10 +90,12 @@ impl EffectDefinition for Grain {
         crate::gpu::evaluation::grain(input, self.parameters, self.seed)
     }
 }
+
 impl EffectDefinition for crate::image_mtf::ImageMtfParameters {
     fn support(&self, pitch: [f64; 2]) -> Support {
         Self::support(*self, pitch)
     }
+
     #[cfg(all(feature = "gpu", feature = "render"))]
     fn compose(
         &self,
@@ -95,6 +109,7 @@ impl EffectDefinition for crate::image_mtf::ImageMtfParameters {
 pub struct PixelPipeline {
     pub stages: Vec<PixelStage>,
 }
+
 impl PixelPipeline {
     pub fn film(
         settings: FilmEmulationSettings,
@@ -115,6 +130,7 @@ impl PixelPipeline {
         }
         Ok(Self { stages })
     }
+
     pub fn support(&self, pitch: [f64; 2]) -> Result<Support, Error> {
         if pitch.into_iter().any(|p| !p.is_finite() || p <= 0.) {
             return Err(Error::InvalidParameter("invalid processing raster pitch"));
@@ -125,9 +141,11 @@ impl PixelPipeline {
                 support.then(stage.support(pitch))
             })
     }
+
     pub fn is_empty(&self) -> bool {
         self.stages.is_empty()
     }
+
     #[cfg(all(feature = "gpu", feature = "render"))]
     pub(crate) fn compose(
         &self,

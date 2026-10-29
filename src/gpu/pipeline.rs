@@ -8,7 +8,7 @@ use crate::{
 };
 use glam::{DMat3, DVec3};
 
-/// Compiled composition of source interpretation and photographic grading.
+/// Captured composition of source interpretation and photographic grading.
 pub struct GpuPipeline {
     pub(super) parameters: ProcessingParameters,
     input: std::sync::Arc<GpuInputProgram>,

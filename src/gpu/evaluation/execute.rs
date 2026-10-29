@@ -1,9 +1,11 @@
 //! Materialize and execute declared work. No photographic-operation cases live here.
+
 use super::*;
 #[cfg(feature = "export")]
 use crate::export_timing::timed;
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
+
 #[cfg(not(feature = "export"))]
 macro_rules! timed {
     ($stage:ident,$body:expr) => {
@@ -21,6 +23,7 @@ pub struct Stats {
     pub encoded_device_peak: u64,
     pub scratch_bytes: u64,
 }
+
 #[derive(Clone)]
 enum Allocation {
     Input {
@@ -36,6 +39,7 @@ enum Allocation {
     RenderTarget(wgpu::Texture, wgpu::TextureView),
     Retained(Arc<RetainedBuffer>),
 }
+
 impl Allocation {
     fn bytes(&self) -> u64 {
         match self {
@@ -47,6 +51,7 @@ impl Allocation {
             }
         }
     }
+
     fn can_hold(&self, storage: &Storage) -> bool {
         match (self, storage) {
             (
@@ -100,6 +105,7 @@ impl Allocation {
             _ => false,
         }
     }
+
     fn buffer(&self) -> &wgpu::Buffer {
         match self {
             Self::Buffer { buffer, .. } => buffer,
@@ -107,6 +113,7 @@ impl Allocation {
             _ => unreachable!("validated resource class"),
         }
     }
+
     fn binding<'a>(&'a self, bytes: u64, inputs: &[&'a wgpu::Buffer]) -> wgpu::BindingResource<'a> {
         match self {
             Self::Input {
@@ -130,8 +137,10 @@ impl Allocation {
         }
     }
 }
+
 #[derive(Default)]
 pub struct Programs(std::sync::Mutex<HashMap<(Arc<str>, &'static str), wgpu::ComputePipeline>>);
+
 #[cfg(all(test, feature = "editor"))]
 impl Programs {
     pub fn len(&self) -> usize {
@@ -153,26 +162,29 @@ enum Materialization {
 
 #[derive(Default)]
 pub struct Executor {
-    kernels: Arc<Programs>,
+    programs: Arc<Programs>,
     pool: Vec<Option<Allocation>>,
     retained: Vec<Arc<RetainedBuffer>>,
     retention: cache::Retention,
     #[cfg(all(test, target_os = "macos", feature = "export"))]
     pub timestamps: Option<(wgpu::QuerySet, u32)>,
 }
+
 #[cfg(all(test, feature = "editor"))]
 pub struct ResultImage {
     pub pixels: wgpu::Buffer,
     pub stats: Stats,
 }
+
 impl Executor {
     #[cfg(all(test, feature = "editor"))]
-    pub fn with_programs(kernels: Arc<Programs>) -> Self {
-        Self::with_retention(kernels, Default::default())
+    pub fn with_programs(programs: Arc<Programs>) -> Self {
+        Self::with_retention(programs, Default::default())
     }
-    pub(super) fn with_retention(kernels: Arc<Programs>, retention: cache::Retention) -> Self {
+
+    pub(super) fn with_retention(programs: Arc<Programs>, retention: cache::Retention) -> Self {
         Self {
-            kernels,
+            programs,
             pool: Vec::new(),
             retained: Vec::new(),
             retention,
@@ -180,6 +192,7 @@ impl Executor {
             timestamps: None,
         }
     }
+
     pub fn admit(limits: &wgpu::Limits, plan: &Plan) -> Result<(), Error> {
         if !plan.domain.bounds.contains_region(plan.region)
             || plan.peak_scratch_bytes > plan.scratch_budget
@@ -251,9 +264,11 @@ impl Executor {
         }
         Ok(())
     }
+
     pub fn pool_bytes(&self) -> u64 {
         self.pool.iter().flatten().map(Allocation::bytes).sum()
     }
+
     pub fn compile(&mut self, device: &wgpu::Device, plan: &Plan) -> Result<(), Error> {
         Self::admit(&device.limits(), plan)?;
         for tile in &plan.tiles {
@@ -261,6 +276,7 @@ impl Executor {
         }
         Ok(())
     }
+
     pub(crate) fn compile_work(
         &mut self,
         device: &wgpu::Device,
@@ -275,9 +291,10 @@ impl Executor {
             } = work
             {
                 let key = (code.clone(), *entry);
-                if self.kernels.0.lock().unwrap().contains_key(&key) {
+                if self.programs.0.lock().unwrap().contains_key(&key) {
                     continue;
                 }
+
                 let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
                 let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("evaluation contracted GPU code"),
@@ -312,7 +329,8 @@ impl Executor {
                 if let Some(error) = pollster::block_on(scope.pop()) {
                     return Err(Error::Gpu(error.to_string()));
                 }
-                self.kernels
+
+                self.programs
                     .0
                     .lock()
                     .unwrap()
@@ -423,12 +441,15 @@ impl Executor {
                 "buffer sink requires raster storage",
             ));
         }
+
         timed!(Setup, self.compile(device, plan))?;
         let mut stats = Stats::default();
+
         for tile in &plan.tiles {
             if cancelled() {
                 return Ok(None);
             }
+
             self.materialize(
                 device,
                 tile,
@@ -446,6 +467,7 @@ impl Executor {
                     );
                 }
             }
+
             let mut encoder = device.create_command_encoder(&Default::default());
             self.encode_tile(device, Some(queue), &mut encoder, tile, &mut stats, &[])?;
             let output = self.pool[tile.assignment[tile.result.resource.0]]
@@ -462,6 +484,7 @@ impl Executor {
                     .encoded_device_peak
                     .max(crate::gpu::allocated_resource_bytes(device).unwrap_or(0) as u64);
             }
+
             stats.submissions += 1;
             submit(device, queue, gate, encoder, || {
                 self.submitted();
@@ -546,15 +569,19 @@ impl Executor {
                     groups,
                     initialize,
                 } => {
-                    if initialize.is_some_and(
-                        |r| matches!(get(r),Allocation::Retained(value) if value.ready()),
-                    ) {
+                    if initialize.is_some_and(|r| {
+                        matches!(
+                            get(r),
+                            Allocation::Retained(value) if value.ready()
+                        )
+                    }) {
                         continue;
                     }
                     if initialize.is_some() {
                         stats.initializations += 1;
                     }
-                    let pipeline = self.kernels.0.lock().unwrap()[&(code.clone(), *entry)].clone();
+
+                    let pipeline = self.programs.0.lock().unwrap()[&(code.clone(), *entry)].clone();
                     let layout = pipeline.get_bind_group_layout(0);
                     let group = bind(device, &layout, bindings, &bound, inputs)?;
                     let descriptor = wgpu::ComputePassDescriptor::default();
@@ -614,14 +641,17 @@ impl Executor {
 
         Ok(())
     }
+
     pub fn resources(&self) -> Vec<Arc<RetainedBuffer>> {
         self.retained.clone()
     }
+
     pub fn submitted(&self) {
         for value in &self.retained {
             value.submitted();
         }
     }
+
     pub fn prepare(
         mut self,
         device: &wgpu::Device,
@@ -643,6 +673,7 @@ impl Executor {
                 "record-only execution requires resident input",
             ));
         }
+
         self.compile(device, &plan)?;
         let previous: Vec<_> = previous
             .into_iter()
@@ -656,21 +687,27 @@ impl Executor {
             &mut Stats::default(),
             Materialization::Capture,
         )?;
+
         let mut dormant = Vec::new();
         for value in previous {
-            if plan.tiles[0].fragment.resources.iter().any(
-                |storage| matches!(storage,Storage::Retained{key,..} if key.same_type(&value.key)),
-            ) {
+            if plan.tiles[0].fragment.resources.iter().any(|storage| {
+                matches!(
+                    storage,
+                    Storage::Retained { key, .. } if key.same_type(&value.key)
+                )
+            }) {
                 continue;
             }
             dormant.push(value);
         }
+
         Ok(Recorded {
             executor: self,
             plan,
             dormant,
         })
     }
+
     fn materialize(
         &mut self,
         device: &wgpu::Device,
@@ -696,6 +733,7 @@ impl Executor {
             self.pool.clear();
         }
         self.pool.resize_with(tile.slots.len(), || None);
+
         let previous = std::mem::take(&mut self.retained);
         for (index, storage) in tile.slots.iter().enumerate() {
             if self.pool[index]
@@ -707,6 +745,7 @@ impl Executor {
                 }
                 continue;
             }
+
             // The preceding tile completed; drop its incompatible slot before replacement.
             self.pool[index] = None;
             if mode == Materialization::Capture
@@ -714,6 +753,7 @@ impl Executor {
             {
                 continue;
             }
+
             self.pool[index] = Some(match storage {
                 Storage::Input {
                     slot,
@@ -736,6 +776,7 @@ impl Executor {
                             "evaluation resource exceeds GPU limits",
                         ));
                     }
+
                     stats.buffer_allocations += 1;
                     #[cfg(all(test, feature = "editor"))]
                     crate::gpu::test_support::evaluation_buffer_created(bytes);
@@ -787,6 +828,7 @@ impl Executor {
                         if mode == Materialization::Capture && lease.is_none() {
                             continue;
                         }
+
                         stats.buffer_allocations += 1;
                         #[cfg(all(test, feature = "editor"))]
                         crate::gpu::test_support::evaluation_buffer_created(*bytes);
@@ -808,6 +850,7 @@ impl Executor {
                             "evaluation texture exceeds GPU limits",
                         ));
                     }
+
                     stats.texture_allocations += 1;
                     let texture = device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("evaluation scheduled texture slot"),
@@ -832,12 +875,14 @@ impl Executor {
         Ok(())
     }
 }
+
 /// Immutable prepared work for callers that own submission. No source reads or waits occur here.
 pub(crate) struct Recorded {
     executor: Executor,
     plan: Plan,
     dormant: Vec<Arc<RetainedBuffer>>,
 }
+
 impl Recorded {
     #[cfg(test)]
     pub fn encode(
@@ -848,6 +893,7 @@ impl Recorded {
     ) -> Result<(), Error> {
         self.encode_into(device, encoder, input, input)
     }
+
     pub fn encode_into(
         &self,
         device: &wgpu::Device,
@@ -888,7 +934,7 @@ impl Recorded {
             ));
         }
         let mut execution = Executor::with_retention(
-            self.executor.kernels.clone(),
+            self.executor.programs.clone(),
             self.executor.retention.clone(),
         );
         execution.pool = self.executor.pool.clone();
@@ -935,6 +981,7 @@ impl Recorded {
         }
         Ok(())
     }
+
     pub(crate) fn encode_work(
         &self,
         device: &wgpu::Device,
@@ -942,7 +989,7 @@ impl Recorded {
         inputs: &[&wgpu::Buffer],
     ) -> Result<(), Error> {
         let mut execution = Executor::with_retention(
-            self.executor.kernels.clone(),
+            self.executor.programs.clone(),
             self.executor.retention.clone(),
         );
         execution.pool = self.executor.pool.clone();
@@ -957,6 +1004,7 @@ impl Recorded {
         )?;
         execution.encode_tile(device, None, encoder, tile, &mut Stats::default(), inputs)
     }
+
     pub fn resources(&self) -> Vec<Arc<RetainedBuffer>> {
         self.executor
             .resources()
@@ -964,6 +1012,7 @@ impl Recorded {
             .chain(self.dormant.iter().cloned())
             .collect()
     }
+
     #[cfg(test)]
     pub fn cached<T: std::any::Any>(&self) -> Option<&Arc<RetainedBuffer>> {
         self.executor
@@ -972,9 +1021,11 @@ impl Recorded {
             .chain(&self.dormant)
             .find(|value| value.key.get::<T>().is_some())
     }
+
     pub fn submitted(&self) {
         self.executor.submitted();
     }
+
     pub fn byte_len(&self) -> u64 {
         self.executor.pool_bytes()
             + self
@@ -984,6 +1035,7 @@ impl Recorded {
                 .sum::<u64>()
     }
 }
+
 pub(super) fn submit(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1003,6 +1055,7 @@ pub(super) fn submit(
     .map_err(|e| Error::Gpu(e.to_string()))?;
     Ok(())
 }
+
 fn binding_type(resource: &Binding) -> wgpu::BindingType {
     let buffer = |ty| wgpu::BindingType::Buffer {
         ty,

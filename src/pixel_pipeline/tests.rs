@@ -1,12 +1,15 @@
 use super::*;
+
 #[derive(Debug, PartialEq)]
 struct Independent {
     margin: u32,
 }
+
 impl EffectDefinition for Independent {
     fn support(&self, _: [f64; 2]) -> Support {
         Support([self.margin, 0])
     }
+
     #[cfg(all(feature = "gpu", feature = "render"))]
     fn compose(
         &self,
@@ -15,8 +18,9 @@ impl EffectDefinition for Independent {
         Ok(input)
     }
 }
+
 #[test]
-fn independently_defined_layers_have_value_identity_and_declare_their_own_support() {
+fn independently_defined_effects_have_value_identity_and_declare_their_own_support() {
     let a = PixelStage::new(Independent { margin: 3 });
     let b = PixelStage::new(Independent { margin: 3 });
     assert_eq!(a, b);
@@ -28,6 +32,7 @@ fn independently_defined_layers_have_value_identity_and_declare_their_own_suppor
     let pipeline = PixelPipeline { stages: vec![a, b] };
     assert_eq!(pipeline.support([1.; 2]).unwrap(), Support([6, 0]));
 }
+
 #[test]
 fn zero_grain_is_absent_from_the_recipe_while_image_mtf_remains() {
     let settings = FilmEmulationSettings {

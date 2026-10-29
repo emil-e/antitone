@@ -1,4 +1,5 @@
 //! Device-scoped evaluation policy; optional retention is separate from required work budgets.
+
 use super::*;
 use crate::geometry::SourceRegion;
 
@@ -8,6 +9,7 @@ pub struct CachePolicy {
     /// Zero keeps only required active inputs and working storage.
     pub generated_bytes: u64,
 }
+
 impl Default for CachePolicy {
     fn default() -> Self {
         Self {
@@ -28,6 +30,7 @@ pub struct Context {
     pub(crate) programs: Arc<Programs>,
     retention: cache::Retention,
 }
+
 impl Context {
     pub fn new(device: &wgpu::Device, policy: CachePolicy) -> Self {
         Self {
@@ -36,20 +39,24 @@ impl Context {
             retention: cache::Retention::new(policy.generated_bytes),
         }
     }
+
     /// A bounded caller-owned lifetime for optional completed intermediates. Its payloads
     /// share this context's retention allowance with generated values.
     pub fn image_cache(&self, capacity: usize) -> ImageCache {
         ImageCache::new(self.programs.clone(), self.retention.clone(), capacity)
     }
+
     pub fn cache_policy(&self) -> CachePolicy {
         CachePolicy {
             generated_bytes: self.retention.limit(),
         }
     }
+
     /// Payload bytes owned by admitted reusable values, not total GPU allocation.
     pub fn retained_bytes(&self) -> u64 {
         self.retention.bytes()
     }
+
     pub fn request(
         &self,
         image: Arc<ImageNode>,
@@ -65,6 +72,7 @@ impl Context {
             job: Job::new(image, region.bounds, budget)?.with_policy(Policy::Composed),
         })
     }
+
     pub(crate) fn require_device(&self, device: &wgpu::Device) -> Result<(), Error> {
         if device != &self.device {
             return Err(Error::InvalidParameter(
@@ -73,10 +81,12 @@ impl Context {
         }
         Ok(())
     }
+
     /// Compile declared shader work without acquiring or allocating its image resources.
     pub(crate) fn prewarm(&self, work: &[Work]) -> Result<(), Error> {
         self.executor().compile_work(&self.device, work)
     }
+
     /// Prepare component-generated code without acquiring pixels or allocating working images.
     #[cfg(feature = "ui")]
     pub(crate) fn prewarm_image(&self, image: Arc<ImageNode>) -> Result<(), Error> {
@@ -99,9 +109,11 @@ impl Context {
         }
         Ok(())
     }
+
     pub(crate) fn executor(&self) -> Executor {
         Executor::with_retention(self.programs.clone(), self.retention.clone())
     }
+
     pub(crate) fn record(
         &self,
         evaluation: Evaluation,
@@ -118,6 +130,7 @@ impl Context {
         }
         self.executor().prepare(&self.device, plan, previous)
     }
+
     pub(crate) fn record_work(
         &self,
         fragment: Fragment,
@@ -129,6 +142,7 @@ impl Context {
             vec![],
         )
     }
+
     pub(crate) fn encode_work(
         &self,
         fragment: Fragment,
@@ -139,6 +153,7 @@ impl Context {
         self.record_work(fragment, result)?
             .encode_work(&self.device, encoder, inputs)
     }
+
     pub(crate) fn submit(
         &self,
         queue: &wgpu::Queue,
@@ -148,6 +163,7 @@ impl Context {
     ) -> Result<Option<()>, Error> {
         self.submit_with(queue, gate, encoder, cancelled, || {})
     }
+
     pub(crate) fn submit_with(
         &self,
         queue: &wgpu::Queue,
@@ -162,6 +178,7 @@ impl Context {
         execute::submit(&self.device, queue, gate, encoder, submitted)?;
         Ok((!cancelled()).then_some(()))
     }
+
     /// Evaluate captured source/composition pixels on their declared grid into bounded GPU sinks.
     /// Sinks own publication; callers keep their writes private until successful completion.
     pub fn evaluate(
@@ -183,6 +200,7 @@ impl Context {
             },
         )
     }
+
     /// Arm sink readback after each submission, before waiting for that bounded unit.
     pub fn evaluate_with<E, S>(
         &self,
@@ -236,6 +254,7 @@ impl Context {
 pub struct Evaluation {
     job: Job,
 }
+
 impl Evaluation {
     pub(crate) fn plans(&self) -> impl Iterator<Item = Result<Plan, Error>> + '_ {
         self.job.plans()
