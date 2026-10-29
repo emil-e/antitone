@@ -1,4 +1,5 @@
 //! Photographic image boundaries and their contracted camera-cell implementations.
+
 use super::*;
 use crate::gpu::{
     GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSource, SourceGeometry,
@@ -22,6 +23,7 @@ enum Mapping {
     Originals,
     Resident(Option<SourceGeometry>),
 }
+
 impl Mapping {
     fn geometry(self, image: PlannedImage) -> Result<Option<SourceGeometry>, Error> {
         match self {
@@ -34,6 +36,7 @@ impl Mapping {
         }
     }
 }
+
 struct CameraInput {
     matrix: glam::DMat3,
     matrix_buffer: Option<wgpu::Buffer>,
@@ -41,6 +44,7 @@ struct CameraInput {
     continuous: bool,
     mapping: Mapping,
 }
+
 struct Captured {
     program: Option<crate::gpu::GpuInputProgram>,
     source_parameters: Option<ProcessingParameters>,
@@ -54,6 +58,7 @@ struct Captured {
     source_limit: u64,
     code: Arc<str>,
 }
+
 impl Captured {
     fn new(
         device: &wgpu::Device,
@@ -106,6 +111,7 @@ struct Photographic {
     #[cfg(feature = "raw")]
     repairs: crate::gpu::repairs::Snapshot,
 }
+
 enum Output {
     Neutral,
     Roll(Arc<Photographic>),
@@ -215,6 +221,7 @@ impl Photograph {
             #[cfg(feature = "raw")]
             pipeline.validate_repairs(device, input.repairs.bound())?;
         }
+
         let captured = Captured::new(
             device,
             renderer,
@@ -258,6 +265,7 @@ impl Photograph {
         };
         #[cfg(not(feature = "raw"))]
         let neutral = unrepaired.clone();
+
         if !input.parameters().graded() {
             return Ok(Self {
                 camera: source,
@@ -267,6 +275,7 @@ impl Photograph {
                 neutral,
             });
         }
+
         let photographic = Arc::new(Photographic {
             parameters: input.parameters(),
             grade: input.pipeline().map(|pipeline| pipeline.grade.clone()),
@@ -290,6 +299,7 @@ impl Photograph {
             #[cfg(feature = "raw")]
             Mapping::Originals => grading,
         };
+
         let roll = ImageNode::implemented_by(
             grading.roll(neutral.clone())?,
             image(Output::Roll(photographic.clone())),
@@ -298,6 +308,7 @@ impl Photograph {
             grading.layers(roll.clone())?,
             image(Output::Graded(photographic)),
         )?;
+
         Ok(Self {
             camera: source,
             unrepaired,
@@ -316,6 +327,7 @@ pub(crate) struct Neutral {
     pub field: Option<Arc<GpuFlatField>>,
     pub repairs: crate::gpu::repairs::Snapshot,
 }
+
 #[cfg(feature = "editor")]
 impl Neutral {
     pub fn originals(
@@ -345,6 +357,7 @@ impl Neutral {
             },
         )
     }
+
     pub fn resident(
         &self,
         device: &wgpu::Device,
@@ -390,6 +403,7 @@ impl Neutral {
             },
         )
     }
+
     fn compose(
         &self,
         device: &wgpu::Device,
@@ -425,10 +439,12 @@ impl Neutral {
         })
     }
 }
+
 struct ResidentCamera {
     domain: Domain,
     bytes: u64,
 }
+
 impl Operation for ResidentCamera {
     fn input(
         &self,
@@ -436,6 +452,7 @@ impl Operation for ResidentCamera {
     ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
         Ok(None)
     }
+
     fn lower(
         &self,
         fragment: &mut Fragment,
@@ -455,10 +472,12 @@ impl Operation for ResidentCamera {
         Ok(())
     }
 }
+
 struct Camera {
     captured: Arc<Captured>,
     output: Output,
 }
+
 impl Camera {
     fn parameters(&self) -> Result<ProcessingParameters, Error> {
         match &self.output {
@@ -475,6 +494,7 @@ impl Camera {
         }
     }
 }
+
 impl Operation for Camera {
     fn input(
         &self,
@@ -482,6 +502,7 @@ impl Operation for Camera {
     ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
         Ok(Some(region))
     }
+
     fn lower(
         &self,
         f: &mut Fragment,
@@ -598,6 +619,7 @@ impl Operation for Camera {
         Ok(())
     }
 }
+
 #[cfg(feature = "raw")]
 fn repair_geometry(
     geometry: Option<SourceGeometry>,
@@ -606,12 +628,14 @@ fn repair_geometry(
     let region = geometry.region();
     (geometry.size() == [region.width, region.height]).then_some((region, geometry))
 }
+
 #[cfg(feature = "raw")]
 struct Repairs {
     snapshot: crate::gpu::repairs::Snapshot,
     code: Arc<str>,
     mapping: Mapping,
 }
+
 #[cfg(feature = "raw")]
 impl Operation for Repairs {
     fn input(
@@ -620,9 +644,11 @@ impl Operation for Repairs {
     ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
         Ok(Some(region))
     }
+
     fn in_place(&self) -> bool {
         true
     }
+
     fn lower(
         &self,
         f: &mut Fragment,

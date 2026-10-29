@@ -10,6 +10,7 @@ fn buffer(device: &wgpu::Device, values: &[[f32; 4]]) -> wgpu::Buffer {
             | wgpu::BufferUsages::COPY_DST,
     })
 }
+
 fn texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some("acquisition test texture"),
@@ -26,6 +27,7 @@ fn texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
         view_formats: &[],
     })
 }
+
 #[test]
 fn a_partial_copy_clears_old_padding_and_filter_windows_preserve_unwritten_cells() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();

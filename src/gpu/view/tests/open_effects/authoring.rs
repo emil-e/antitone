@@ -85,7 +85,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
         area,
         scan.positive_matrix(&InputSettings::Digital).unwrap(),
     )
-    .with_layers(pipeline.clone());
+    .with_pixel_pipeline(pipeline.clone());
     let frame =
         FrameRaster::full(Composition::new(area, Default::default(), Default::default()).unwrap())
             .unwrap();

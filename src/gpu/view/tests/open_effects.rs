@@ -1,7 +1,10 @@
 use crate::gpu::evaluation::read_buffer;
+
 #[cfg(feature = "ocio-reference")]
 mod authoring;
+
 use std::sync::Arc;
+
 fn max_error(expected: &[DVec3], actual: &[[f32; 4]]) -> f64 {
     assert_eq!(expected.len(), actual.len());
     assert!(expected.iter().all(|v| v.is_finite()));
@@ -16,6 +19,7 @@ fn max_error(expected: &[DVec3], actual: &[[f32; 4]]) -> f64 {
         })
         .fold(0., f64::max)
 }
+
 #[cfg(feature = "ocio-reference")]
 use crate::gpu::SourceGeometry;
 use crate::{
@@ -37,6 +41,7 @@ fn recipe() -> PixelPipeline {
         })],
     }
 }
+
 fn input(
     device: &wgpu::Device,
     area: crate::geometry::SourceRegion,
@@ -53,12 +58,14 @@ fn input(
         )
         .unwrap(),
     ))
-    .with_layers(recipe())
+    .with_pixel_pipeline(recipe())
 }
+
 fn neighbour(left: DVec3, center: DVec3, right: DVec3, position: [f64; 2]) -> DVec3 {
     (left + 2. * center + right) * 0.25 * 1.4
         + DVec3::splat(position[0] * 0.000001 + position[1] * 0.000002)
 }
+
 fn native(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -150,7 +157,7 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
     let clean = native(&device, &queue, &renderer, &scan, PixelPipeline::default());
     assert!(
         max_error(&expected, &clean) > 0.05,
-        "omitting the supplied layer changes the photograph"
+        "omitting the supplied effect changes the photograph"
     );
     let no_neighbours: Vec<_> = (area.y..area.y + area.height)
         .flat_map(|y| (area.x..area.x + area.width).map(move |x| [x, y]))
@@ -330,19 +337,19 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
     assert!(max_error(&expected, &actual) < 2e-5);
     assert!(
         expected[0].x > 1.,
-        "a real neighbour outside the requested frame contributes through the declared layer support"
+        "a real neighbour outside the requested frame contributes through the declared effect support"
     );
     let equal = input(&device, area, DMat3::IDENTITY);
     assert_eq!(
         processing.signature(),
         equal.signature(),
-        "independently assembled equal layer values preserve reuse identity"
+        "independently assembled equal effect values preserve reuse identity"
     );
     assert_ne!(
         processing.signature(),
         processing
             .clone()
-            .with_layers(PixelPipeline::default())
+            .with_pixel_pipeline(PixelPipeline::default())
             .signature()
     );
 }

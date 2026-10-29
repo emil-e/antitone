@@ -3,6 +3,7 @@ use crate::{
     acquisition::Sampling,
     pixel_pipeline::{PixelPipeline, PixelStage},
 };
+
 #[test]
 fn completed_neutral_images_reuse_larger_support_with_content_capabilities_not_publication() {
     pollster::block_on(async {

@@ -1,4 +1,5 @@
 //! Captured creative look and output-reference composition, independent of photographic grading.
+
 use super::*;
 use crate::rendering::{OutputReference, OutputTarget};
 
@@ -6,6 +7,7 @@ pub(crate) struct Reference {
     target: Option<OutputTarget>,
     look: Option<Arc<crate::gpu::look::Lut>>,
 }
+
 impl Reference {
     pub fn prewarm(context: &Context) -> Result<(), Error> {
         context.prewarm(&[Look::work(
@@ -17,6 +19,7 @@ impl Reference {
             1,
         )])
     }
+
     pub fn capture(
         device: &wgpu::Device,
         renderer: &crate::renderer::GpuRenderer,
@@ -30,9 +33,11 @@ impl Reference {
             .transpose()?;
         Ok(Self { target, look })
     }
+
     pub fn look(&self) -> Option<Arc<crate::gpu::look::Lut>> {
         self.look.clone()
     }
+
     pub fn compose(
         &self,
         image: Arc<ImageNode>,
@@ -43,6 +48,7 @@ impl Reference {
         };
         display(self.looked(image, None), renderer, target)
     }
+
     /// Caller supplies fresh admission status in slot one for each encoding, not per recipe.
     pub fn presentation(
         &self,
@@ -55,6 +61,7 @@ impl Reference {
         ))?;
         operators::display_texture(self.looked(image, Some(1)), renderer, target, texture)
     }
+
     fn looked(&self, image: Arc<ImageNode>, status_slot: Option<usize>) -> Arc<ImageNode> {
         match &self.look {
             Some(look) => ImageNode::new(
@@ -69,10 +76,12 @@ impl Reference {
         }
     }
 }
+
 struct Look {
     look: Arc<crate::gpu::look::Lut>,
     status_slot: Option<usize>,
 }
+
 impl Look {
     fn work(
         input: Resource,
@@ -96,6 +105,7 @@ impl Look {
         )
     }
 }
+
 impl Operation for Look {
     fn input(
         &self,
@@ -103,6 +113,7 @@ impl Operation for Look {
     ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
         Ok(Some(r))
     }
+
     fn lower(
         &self,
         f: &mut Fragment,

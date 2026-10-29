@@ -14,10 +14,12 @@ struct Pattern {
     pixels: Vec<[f32; 4]>,
     reads: Arc<AtomicUsize>,
 }
+
 impl Source for Pattern {
     fn domain(&self) -> Domain {
         self.domain
     }
+
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
         self.reads.fetch_add(1, Ordering::Relaxed);
         let bounds = self.domain.bounds;
@@ -30,6 +32,7 @@ impl Source for Pattern {
             .collect())
     }
 }
+
 fn pattern(coverage: u32) -> Pattern {
     let angle = 0.37f64;
     let (c, s) = (angle.cos(), angle.sin());
@@ -65,6 +68,7 @@ fn pattern(coverage: u32) -> Pattern {
         reads: Arc::new(AtomicUsize::new(0)),
     }
 }
+
 fn curve(pixels: &[[f32; 4]], coverage: u32, gain: f32, curvature: f32) -> Vec<[f64; 4]> {
     pixels
         .iter()
@@ -80,6 +84,7 @@ fn curve(pixels: &[[f32; 4]], coverage: u32, gain: f32, curvature: f32) -> Vec<[
         })
         .collect()
 }
+
 fn tent(pixels: &[[f64; 4]], size: [u32; 2], radii: [u32; 2], coverage: u32) -> Vec<[f64; 4]> {
     let mut values = pixels.to_vec();
     for axis in 0..2 {
@@ -115,6 +120,7 @@ fn tent(pixels: &[[f64; 4]], size: [u32; 2], radii: [u32; 2], coverage: u32) -> 
     }
     values
 }
+
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -169,6 +175,7 @@ fn render(
         .unwrap();
     execute::read(device, queue, &output)
 }
+
 fn assert_pixels(actual: &[[f32; 4]], expected: &[[f64; 4]]) {
     assert_eq!(actual.len(), expected.len());
     for (i, (a, e)) in actual.iter().zip(expected).enumerate() {
@@ -182,6 +189,7 @@ fn assert_pixels(actual: &[[f32; 4]], expected: &[[f64; 4]]) {
         }
     }
 }
+
 #[test]
 fn pointwise_definitions_capture_cpu_uniforms_without_shader_specialization_or_a_device() {
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
@@ -244,6 +252,7 @@ fn pointwise_definitions_capture_cpu_uniforms_without_shader_specialization_or_a
         "captured old values survive another definition"
     );
 }
+
 #[test]
 fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_requests() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
@@ -354,6 +363,7 @@ fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_
         );
     }
 }
+
 #[test]
 fn uniform_fusion_requires_identical_captured_values_and_rejects_invalid_authoring_inputs() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
@@ -416,9 +426,22 @@ fn uniform_fusion_requires_identical_captured_values_and_rejects_invalid_authori
         );
     }
     let untouched = pattern(0);
-    let oversized=pointwise(source(Arc::new(untouched.clone())),Meaning::Graded,Function::new(
-        "@group(0) @binding(18) var<uniform> values:array<vec4f,5>; fn choose(p:vec4f,pos:vec2f)->vec4f{return vec4f(p.rgb+values[0].rgb,p.w);}","choose"
-    ).with_uniform(18,&[0f32;20]));
+    let oversized = pointwise(
+        source(Arc::new(untouched.clone())),
+        Meaning::Graded,
+        Function::new(
+            r#"
+@group(0) @binding(18)
+var<uniform> values: array<vec4f, 5>;
+
+fn choose(p: vec4f, pos: vec2f) -> vec4f {
+    return vec4f(p.rgb + values[0].rgb, p.w);
+}
+"#,
+            "choose",
+        )
+        .with_uniform(18, &[0f32; 20]),
+    );
     let plan = Plan::new(
         oversized,
         domain.bounds,
@@ -451,7 +474,11 @@ fn uniform_fusion_requires_identical_captured_values_and_rejects_invalid_authori
         source(Arc::new(data)),
         Meaning::Graded,
         Function::new(
-            "fn identity(p:vec4f,pos:vec2f)->vec4f{return p;}",
+            r#"
+fn identity(p: vec4f, pos: vec2f) -> vec4f {
+    return p;
+}
+"#,
             "identity",
         )
         .with_uniform(20, &[1f32; 4]),

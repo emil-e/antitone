@@ -1,4 +1,5 @@
 //! Declared acquisition IO work; callers own bounded scheduling and private accumulators.
+
 use super::*;
 
 fn external(fragment: &mut Fragment, size: [u32; 2], writable: bool) -> PlannedImage {
@@ -32,6 +33,7 @@ pub fn copy(
         texture,
     )
 }
+
 pub fn copy_sized(
     context: &Context,
     encoder: &mut wgpu::CommandEncoder,
@@ -60,10 +62,12 @@ pub fn copy_sized(
             "acquisition copy requires a writable float texture",
         ));
     }
+
     let size = [texture.width(), texture.height()];
     let mut fragment = Fragment::default();
     let image = external(&mut fragment, source_size, false);
     let dimensions = fragment.uniform(&[source_size[0], source_size[1], 0u32, 0]);
+
     fragment.work.push(Work::Compute {
         code: include_str!("copy_texture.wgsl").into(),
         entry: "main",
@@ -90,6 +94,7 @@ pub fn cover(
 ) -> Result<(), Error> {
     let count = u32::try_from(pixels.size() / 16)
         .map_err(|_| Error::InvalidParameter("proxy coverage exceeds GPU indexing"))?;
+
     let mut fragment = Fragment::default();
     let image = external(&mut fragment, [count, 1], true);
     fragment.compute(
@@ -108,6 +113,7 @@ pub struct Footprint {
     pub origin: [i32; 2],
     pub window: crate::resample::windows::Window,
 }
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Parameters {
@@ -120,6 +126,7 @@ struct Parameters {
     lo: [u32; 2],
     extent: [u32; 2],
 }
+
 pub fn filter(
     context: &Context,
     encoder: &mut wgpu::CommandEncoder,
@@ -134,6 +141,7 @@ pub fn filter(
         origin,
         window: (lo, extent),
     } = footprint;
+
     if source.contains(&0)
         || size.contains(&0)
         || extent.contains(&0)
@@ -152,6 +160,7 @@ pub fn filter(
             "acquisition footprint exceeds GPU precision",
         ));
     }
+
     let parameters = Parameters {
         source,
         output: size,
@@ -174,6 +183,7 @@ pub fn filter(
         )
         .into()
     });
+
     fragment.work.push(Work::Compute {
         code: code.clone(),
         entry: "main",
@@ -204,6 +214,7 @@ pub fn repair_copy(
 ) -> Result<(), Error> {
     let bounds = frame.processing_bounds()?;
     let affine = frame.affine_in(bounds)?;
+
     for patch in &repairs.0 {
         let r = patch.region;
         if !(r.x < bounds.x + bounds.width
@@ -213,6 +224,7 @@ pub fn repair_copy(
         {
             continue;
         }
+
         let mut bytes = bytemuck::cast_slice(&[
             bounds.x,
             bounds.y,
@@ -245,6 +257,7 @@ pub fn repair_copy(
         let Some(buffer) = patch.buffer_for(device, patch.region)? else {
             continue;
         };
+
         let mut fragment = Fragment::default();
         let image = external(&mut fragment, frame.output, true);
         let input = fragment.resource(Storage::Input {

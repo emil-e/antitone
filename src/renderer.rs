@@ -5,6 +5,7 @@ use std::{borrow::Cow, sync::Arc};
 use wgpu::util::DeviceExt;
 
 mod aces;
+
 #[cfg(feature = "project")]
 mod look_reference;
 
@@ -19,6 +20,7 @@ fn main(@builtin(vertex_index) i: u32) -> Vertex {
     let p = array<vec2f, 3>(vec2f(-1., -1.), vec2f(3., -1.), vec2f(-1., 3.))[i];
     return Vertex(vec4f(p, 0., 1.), vec2f(p.x * .5 + .5, .5 - p.y * .5));
 }"#;
+
 #[cfg(feature = "ui")]
 const DISPLAY: &str = r#"
 @group(0) @binding(0) var image: texture_2d<f32>;
@@ -59,6 +61,7 @@ pub(crate) struct RendererCache {
     renderer: std::sync::OnceLock<Result<Arc<GpuRenderer>, Error>>,
     submissions: crate::gpu::SubmissionGate,
 }
+
 #[cfg(feature = "editor")]
 impl RendererCache {
     pub(crate) fn new(submissions: crate::gpu::SubmissionGate) -> Self {
@@ -67,6 +70,7 @@ impl RendererCache {
             ..Default::default()
         }
     }
+
     pub(crate) fn prewarm(self: &Arc<Self>, device: wgpu::Device, queue: wgpu::Queue) {
         let cache = self.clone();
         // Initialization errors remain cached and are reported by foreground consumers.
@@ -114,6 +118,7 @@ pub(crate) struct RenderBinding {
     reference: crate::gpu::evaluation::Reference,
     recorded: crate::gpu::evaluation::Recorded,
 }
+
 impl RenderBinding {
     pub(crate) fn reference_bytes(&self) -> u64 {
         self.reference.look().map_or(0, |look| look.byte_len()) + self.recorded.byte_len()
@@ -179,14 +184,17 @@ pub struct GpuRenderer {
     #[cfg(feature = "ui")]
     pub(crate) average: Arc<AveragePipelines>,
 }
+
 impl GpuRenderer {
     /// Shared device-scoped evaluation and its fixed generated-value retention policy.
     pub fn evaluation(&self) -> &crate::gpu::evaluation::Context {
         &self.evaluation
     }
+
     pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Arc<Self>, Error> {
         Self::new_with_submissions(device, queue, crate::gpu::SubmissionGate::default()).await
     }
+
     pub async fn new_with_submissions(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -194,6 +202,7 @@ impl GpuRenderer {
     ) -> Result<Arc<Self>, Error> {
         Self::new_with_cache_policy(device, queue, submissions, Default::default()).await
     }
+
     pub async fn new_with_cache_policy(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -253,6 +262,7 @@ impl GpuRenderer {
         crate::gpu::evaluation::Recipe::prewarm_resident(device, &renderer)?;
         Ok(renderer)
     }
+
     /// Native worker-only generation. No compiler, Python or OCIO runtime is involved.
     #[cfg(feature = "project")]
     pub fn bake_builtin(
@@ -309,6 +319,7 @@ impl GpuRenderer {
         }
         LookAsset::new(builtin.name().into(), builtin.origin(), lut)
     }
+
     #[cfg(test)]
     pub(crate) fn look_uploads(&self) -> u64 {
         self.look_uploads.load(std::sync::atomic::Ordering::Relaxed)
@@ -404,6 +415,7 @@ impl GpuRenderer {
             recorded,
         })
     }
+
     pub(crate) fn check_look_image(
         &self,
         device: &wgpu::Device,
@@ -412,6 +424,7 @@ impl GpuRenderer {
     ) -> Arc<crate::gpu::look::Check> {
         self.look_validation.check_rendered(device, encoder, image)
     }
+
     pub(crate) fn check_look_projection(
         &self,
         device: &wgpu::Device,
@@ -422,6 +435,7 @@ impl GpuRenderer {
         self.look_validation
             .check_projected(device, encoder, image, mapping)
     }
+
     pub(crate) fn target(&self, target: OutputTarget) -> &TargetResources {
         &self.targets[target as usize]
     }

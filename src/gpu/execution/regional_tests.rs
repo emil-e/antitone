@@ -79,6 +79,7 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
 fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_across_source_units()
 {
     use glam::DVec3;
+
     const TOLERANCE: f64 = 2e-5;
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::dng_fixture::Fixture {

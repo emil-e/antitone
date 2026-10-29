@@ -1,5 +1,6 @@
 use super::*;
 use wgpu::util::DeviceExt;
+
 fn buffer(device: &wgpu::Device, value: f32) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
@@ -7,6 +8,7 @@ fn buffer(device: &wgpu::Device, value: f32) -> wgpu::Buffer {
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
     })
 }
+
 #[test]
 fn image_retention_is_scoped_budgeted_and_lru_without_owning_active_consumers() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
@@ -51,6 +53,7 @@ fn image_retention_is_scoped_budgeted_and_lru_without_owning_active_consumers() 
     drop(renderer);
     assert!(scope.is_empty());
 }
+
 #[test]
 fn disabled_or_busy_retention_cannot_hide_required_images_and_shared_payloads_charge_once() {
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();

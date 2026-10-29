@@ -1,5 +1,6 @@
 use super::*;
 use crate::geometry::SourceRegion as Rect;
+
 #[test]
 fn resident_linear_work_reaches_pixels_beyond_the_first_dispatch_row() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
@@ -13,7 +14,12 @@ fn resident_linear_work_reaches_pixels_beyond_the_first_dispatch_row() {
         resident::raster_input(domain),
         Meaning::Graded,
         Function {
-            code: "fn mark(p:vec4f,position:vec2f)->vec4f{return vec4f(position,0.25,p.w);}".into(),
+            code: r#"
+fn mark(p: vec4f, position: vec2f) -> vec4f {
+    return vec4f(position, 0.25, p.w);
+}
+"#
+            .into(),
             symbol: "mark",
             bindings: vec![],
         },
@@ -97,10 +103,12 @@ fn resident_linear_work_reaches_pixels_beyond_the_first_dispatch_row() {
 struct Resident {
     writable: bool,
 }
+
 impl Operation for Resident {
     fn input(&self, _: Rect) -> Result<Option<Rect>, Error> {
         Ok(None)
     }
+
     fn lower(
         &self,
         f: &mut Fragment,
@@ -115,14 +123,18 @@ impl Operation for Resident {
         Ok(())
     }
 }
+
 struct InPlace;
+
 impl Operation for InPlace {
     fn input(&self, r: Rect) -> Result<Option<Rect>, Error> {
         Ok(Some(r))
     }
+
     fn in_place(&self) -> bool {
         true
     }
+
     fn lower(
         &self,
         f: &mut Fragment,
@@ -134,10 +146,27 @@ impl Operation for InPlace {
             output.resource,
             "an in-place implementation receives one storage identity"
         );
-        f.compute("@group(0) @binding(0) var<storage,read_write> p:array<vec4f>; @compute @workgroup_size(64) fn mutate(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) groups:vec3u){let index=id.x+id.y*groups.x*64u;if index<arrayLength(&p){p[index]=p[index]*2.0;}}","mutate",vec![(0,Binding::Write(output.resource))],output.cells());
+        f.compute(
+            r#"
+@group(0) @binding(0)
+var<storage, read_write> p: array<vec4f>;
+
+@compute @workgroup_size(64)
+fn mutate(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
+    let index = id.x + id.y * groups.x * 64u;
+    if index < arrayLength(&p) {
+        p[index] = p[index] * 2.0;
+    }
+}
+"#,
+            "mutate",
+            vec![(0, Binding::Write(output.resource))],
+            output.cells(),
+        );
         Ok(())
     }
 }
+
 #[test]
 fn borrowed_storage_is_reusable_only_with_explicit_write_permission() {
     let domain = Domain {

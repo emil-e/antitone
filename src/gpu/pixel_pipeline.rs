@@ -1,4 +1,5 @@
-//! Raster adapter for the shared evaluation layer composition and declared-work executor.
+//! Raster adapter for shared image-node composition and declared GPU work.
+
 use super::{
     evaluation,
     raster::{self, Raster},
@@ -13,15 +14,18 @@ pub(crate) struct Kernels {
     pub mtf: super::image_mtf::Kernels,
     crop: wgpu::ComputePipeline,
 }
+
 pub(crate) struct OutputRegion {
     pub size: [u32; 2],
     pub offset: [u32; 2],
 }
+
 pub(crate) struct Prepared {
     pub raster: Raster,
     execution: Option<evaluation::Recorded>,
     context: evaluation::Context,
 }
+
 impl Prepared {
     #[cfg(test)]
     pub fn new(
@@ -36,6 +40,7 @@ impl Prepared {
         );
         Self::with_context(device, pipeline, raster, previous, context)
     }
+
     #[cfg(test)]
     pub fn with_context(
         device: &wgpu::Device,
@@ -59,6 +64,7 @@ impl Prepared {
         let root = pipeline.compose(evaluation::raster_input(domain))?;
         Self::from_composition(device, raster, root, previous, context)
     }
+
     pub fn from_composition(
         device: &wgpu::Device,
         raster: Raster,
@@ -100,10 +106,12 @@ impl Prepared {
             context,
         })
     }
+
     #[cfg(all(test, feature = "editor"))]
     pub fn field(&self) -> Option<&Arc<evaluation::RetainedBuffer>> {
         self.execution.as_ref()?.cached::<super::grain::FieldKey>()
     }
+
     pub fn encode_from(
         &self,
         device: &wgpu::Device,
@@ -116,14 +124,17 @@ impl Prepared {
             .ok_or(Error::InvalidParameter("missing recorded composition"))?
             .encode_into(device, encoder, input, destination)
     }
+
     pub fn submitted(&self) {
         if let Some(execution) = &self.execution {
             execution.submitted();
         }
     }
+
     pub fn byte_len(&self) -> u64 {
         self.execution.as_ref().map_or(0, |p| p.byte_len())
     }
+
     pub fn input_buffer(
         &self,
         device: &wgpu::Device,
@@ -136,6 +147,7 @@ impl Prepared {
         }
     }
 }
+
 impl Kernels {
     pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
         #[cfg(all(test, feature = "editor"))]
@@ -162,6 +174,7 @@ impl Kernels {
             crop,
         })
     }
+
     #[cfg(test)]
     pub fn encode(
         &self,
@@ -175,6 +188,7 @@ impl Kernels {
         }
         Ok(())
     }
+
     pub fn encode_from(
         &self,
         device: &wgpu::Device,
@@ -185,6 +199,7 @@ impl Kernels {
     ) -> Result<(), Error> {
         prepared.encode_from(device, encoder, input, destination)
     }
+
     pub fn extract(
         &self,
         device: &wgpu::Device,

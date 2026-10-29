@@ -1,6 +1,8 @@
-//! Grain's layer implementation; the execution engine only sees declared work.
+//! Grain's effect implementation; the execution engine only sees declared work.
+
 use super::*;
 use crate::geometry::SourceRegion as Rect;
+
 pub(crate) fn grain(
     input: Arc<ImageNode>,
     model: crate::grain::GrainParameters,
@@ -15,20 +17,25 @@ pub(crate) fn grain(
         GrainOperation { model, seed },
     ))
 }
+
 fn raster(image: PlannedImage) -> crate::gpu::raster::Raster {
     image.domain.grid.raster(image.region)
 }
+
 struct GrainOperation {
     model: crate::grain::GrainParameters,
     seed: u64,
 }
+
 impl Operation for GrainOperation {
     fn input(&self, r: Rect) -> Result<Option<Rect>, Error> {
         Ok(Some(r))
     }
+
     fn in_place(&self) -> bool {
         true
     }
+
     fn lower(
         &self,
         f: &mut Fragment,

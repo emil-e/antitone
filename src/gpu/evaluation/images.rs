@@ -1,4 +1,5 @@
 //! Caller-scoped retention of completed immutable images; active consumers independently own pixels.
+
 use super::*;
 use std::{any::Any, collections::VecDeque, sync::Mutex};
 
@@ -6,22 +7,26 @@ use std::{any::Any, collections::VecDeque, sync::Mutex};
 /// provenance and capabilities, never a renderer, publication authority or source-pixel owner.
 #[derive(Clone)]
 pub struct ImageCache(Arc<State>);
+
 struct State {
     programs: Arc<Programs>,
     retention: cache::Retention,
     capacity: usize,
     entries: Mutex<VecDeque<Entry>>,
 }
+
 struct Entry {
     content: RetainedKey,
     descriptor: Arc<dyn Any + Send + Sync>,
     pixels: wgpu::Buffer,
     _lease: Arc<cache::Lease>,
 }
+
 pub struct CachedImage<D> {
     pub descriptor: Arc<D>,
     pub pixels: wgpu::Buffer,
 }
+
 impl ImageCache {
     pub(super) fn new(
         programs: Arc<Programs>,
@@ -35,18 +40,23 @@ impl ImageCache {
             entries: Mutex::new(VecDeque::new()),
         }))
     }
+
     pub(crate) fn belongs_to(&self, context: &Context) -> bool {
         Arc::ptr_eq(&self.0.programs, &context.programs)
     }
+
     pub fn len(&self) -> usize {
         self.0.entries.lock().unwrap().len()
     }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
     pub fn clear(&self) {
         self.0.entries.lock().unwrap().clear();
     }
+
     /// Content includes computation, representation and accuracy. The descriptor's capability
     /// predicate checks the requested grid, valid coverage and neighbourhood support.
     pub fn find<D: Any + Send + Sync>(
@@ -70,6 +80,7 @@ impl ImageCache {
         entries.push_back(entry);
         Some(image)
     }
+
     /// Publish only after successful completion, while pixels remain immutable. A budget miss
     /// drops optional ownership, not the caller's required image. No copy or allocation occurs.
     pub fn retain<D: Any + Send + Sync + PartialEq>(

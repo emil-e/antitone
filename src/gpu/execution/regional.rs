@@ -1,4 +1,5 @@
-//! Original-source layers with bounded lazy processing and affine reconstruction.
+//! Original-source compositions with bounded lazy evaluation and affine reconstruction.
+
 use crate::{
     Error,
     gpu::{GpuFlatField, ProcessingInput, SubmissionGate, evaluation},
@@ -8,6 +9,7 @@ use crate::{
     scan::Scan,
 };
 use std::sync::Arc;
+
 #[cfg(all(test, target_os = "macos"))]
 #[path = "regional_tests.rs"]
 mod tests;
@@ -18,6 +20,7 @@ pub struct Demand {
     pub output: [u32; 2],
     pub frame: Option<crate::frame_raster::FrameRaster>,
 }
+
 pub(crate) struct Request<'a> {
     pub scan: &'a Scan,
     pub field: Option<Arc<GpuFlatField>>,
@@ -25,6 +28,7 @@ pub(crate) struct Request<'a> {
     pub target: OutputTarget,
     pub demand: Demand,
 }
+
 impl Request<'_> {
     pub fn validate(&self) -> Result<(), Error> {
         self.scan.validate_area(self.demand.area)?;
@@ -43,6 +47,7 @@ impl Request<'_> {
         Ok(())
     }
 }
+
 pub(crate) struct Completed {
     pub look_check: Option<Arc<crate::gpu::look::Check>>,
 }

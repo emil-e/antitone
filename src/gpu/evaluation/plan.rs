@@ -1,4 +1,5 @@
 //! Evaluation demand and schedule declared resource lifetimes, without operation-specific dispatch.
+
 use super::*;
 use crate::geometry::SourceRegion as Rect;
 
@@ -14,6 +15,7 @@ pub struct Budget {
     pub tile: [u32; 2],
     pub scratch_bytes: u64,
 }
+
 pub struct Tile {
     pub fragment: Fragment,
     pub result: PlannedImage,
@@ -21,6 +23,7 @@ pub struct Tile {
     pub assignment: Vec<usize>,
     pub last_use: Vec<usize>,
 }
+
 /// Captured, lazy traversal. Only one tile's physical plan is retained during execution.
 pub struct Job {
     root: Arc<ImageNode>,
@@ -28,12 +31,14 @@ pub struct Job {
     budget: Budget,
     policy: Policy,
 }
+
 impl Job {
     pub fn new(root: Arc<ImageNode>, region: Rect, budget: Budget) -> Result<Self, Error> {
         region.validate()?;
         if budget.tile.contains(&0) || !root.domain.bounds.contains_region(region) {
             return Err(Error::InvalidParameter("invalid evaluation job demand"));
         }
+
         Ok(Self {
             root,
             region,
@@ -41,12 +46,15 @@ impl Job {
             policy: Policy::Materialized,
         })
     }
+
     pub fn with_policy(mut self, policy: Policy) -> Self {
         self.policy = policy;
         self
     }
+
     pub fn plans(&self) -> impl Iterator<Item = Result<Plan, Error>> + '_ {
         let area = self.region;
+
         (area.y..area.y + area.height)
             .step_by(self.budget.tile[1] as usize)
             .flat_map(move |y| {
@@ -64,6 +72,7 @@ impl Job {
             })
     }
 }
+
 pub struct Plan {
     pub domain: Domain,
     pub region: Rect,
@@ -71,6 +80,7 @@ pub struct Plan {
     pub peak_scratch_bytes: u64,
     pub scratch_budget: u64,
 }
+
 impl Plan {
     pub(super) fn from_work(
         fragment: Fragment,
@@ -83,6 +93,7 @@ impl Plan {
                 "work result outside declared domain",
             ));
         }
+
         let domain = result.domain;
         let region = result.region;
         let tile = schedule(fragment, result)?;
@@ -100,10 +111,12 @@ impl Plan {
             scratch_budget: budget,
         })
     }
+
     #[cfg(all(test, feature = "editor"))]
     pub fn new(root: Arc<ImageNode>, region: Rect, budget: Budget) -> Result<Self, Error> {
         Self::with_policy(root, region, budget, Policy::Materialized)
     }
+
     pub fn with_policy(
         root: Arc<ImageNode>,
         region: Rect,
@@ -114,8 +127,10 @@ impl Plan {
         if budget.tile.contains(&0) || !root.domain.bounds.contains_region(region) {
             return Err(Error::InvalidParameter("invalid evaluation demand"));
         }
+
         let mut tiles = Vec::new();
         let mut peak_scratch_bytes = 0;
+
         for y in (region.y..region.y + region.height).step_by(budget.tile[1] as usize) {
             for x in (region.x..region.x + region.width).step_by(budget.tile[0] as usize) {
                 let region = Rect {
@@ -124,9 +139,11 @@ impl Plan {
                     width: budget.tile[0].min(region.x + region.width - x),
                     height: budget.tile[1].min(region.y + region.height - y),
                 };
+
                 let mut fragment = Fragment::default();
                 let result = evaluate_region(&root, region, &mut fragment, policy)?;
                 let tile = schedule(fragment, result)?;
+
                 let bytes = tile.slots.iter().map(Storage::bytes).sum();
                 if bytes > budget.scratch_bytes {
                     return Err(Error::InvalidParameter(
@@ -137,6 +154,7 @@ impl Plan {
                 tiles.push(tile);
             }
         }
+
         Ok(Self {
             domain: root.domain,
             region,
@@ -158,6 +176,7 @@ fn evaluate_region(
             "evaluation dependency outside declared domain",
         ));
     }
+
     if policy == Policy::Composed {
         if let Some(implementation) = &node.implementation {
             return evaluate_region(implementation, region, fragment, policy);
@@ -183,6 +202,7 @@ fn evaluate_region(
             return Ok(output);
         }
     }
+
     if let Some(function) = node.operation.pointwise() {
         let mut functions = vec![function];
         let mut cursor = node.clone();
@@ -227,6 +247,7 @@ fn evaluate_region(
         lower_map(fragment, input, output, functions)?;
         return Ok(output);
     }
+
     let mut input = match (&node.input, node.operation.input(region)?) {
         (Some(input), Some(demand)) => Some(evaluate_region(input, demand, fragment, policy)?),
         (None, None) => None,
@@ -259,8 +280,12 @@ fn evaluate_region(
                 input,
                 copy,
                 vec![Function {
-                    code: "fn evaluation_own_input(p:vec4f,position:vec2f)->vec4f{return p;}"
-                        .into(),
+                    code: r#"
+fn evaluation_own_input(p: vec4f, position: vec2f) -> vec4f {
+    return p;
+}
+"#
+                    .into(),
                     symbol: "evaluation_own_input",
                     bindings: vec![],
                 }],
@@ -386,13 +411,19 @@ fn lower_map(
         r#"
 @group(0) @binding(20) var<storage, read> evaluation_input: array<vec4f>;
 @group(0) @binding(21) var<storage, read_write> evaluation_output: array<vec4f>;
-struct EvaluationGeometry {{ size: vec4f, mapping: vec4f, axes: vec4f }}
+struct EvaluationGeometry {{
+    size: vec4f,
+    mapping: vec4f,
+    axes: vec4f
+}}
 @group(0) @binding(22) var<uniform> evaluation_geometry: EvaluationGeometry;
 @compute @workgroup_size(64)
 fn evaluation_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {{
     let index = id.x + id.y * groups.x * 64u;
     let size = vec2u(evaluation_geometry.size.xy);
-    if index >= size.x * size.y {{ return; }}
+    if index >= size.x * size.y {{
+        return;
+    }}
     let xy = vec2f(f32(index % size.x), f32(index / size.x));
     let position = evaluation_geometry.mapping.xy + xy.x * evaluation_geometry.axes.xy + xy.y * evaluation_geometry.axes.zw;
     var pixel = evaluation_input[index];
@@ -461,6 +492,7 @@ fn schedule(fragment: Fragment, result: PlannedImage) -> Result<Tile, Error> {
             "evaluation slice requires one source and an initialized result",
         ));
     }
+
     let mut first = vec![usize::MAX; fragment.resources.len()];
     let mut last = vec![0; fragment.resources.len()];
     for (index, work) in fragment.work.iter().enumerate() {
@@ -471,6 +503,7 @@ fn schedule(fragment: Fragment, result: PlannedImage) -> Result<Tile, Error> {
     }
     first[result.resource.0] = first[result.resource.0].min(end);
     last[result.resource.0] = end;
+
     // CPU uploads precede submission. Immutable uniforms must not alias even when GPU uses
     // do not overlap; otherwise a later upload would overwrite an earlier dispatch's constants.
     for (id, storage) in fragment.resources.iter().enumerate() {
@@ -479,6 +512,7 @@ fn schedule(fragment: Fragment, result: PlannedImage) -> Result<Tile, Error> {
             last[id] = end;
         }
     }
+
     let mut order = (0..first.len()).collect::<Vec<_>>();
     order.sort_by_key(|&i| first[i]);
     let mut slots: Vec<Storage> = Vec::new();
@@ -503,6 +537,7 @@ fn schedule(fragment: Fragment, result: PlannedImage) -> Result<Tile, Error> {
         assignment[id] = slot;
         occupied_until[slot] = last[id];
     }
+
     Ok(Tile {
         fragment,
         result,

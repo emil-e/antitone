@@ -1,4 +1,5 @@
 //! Source interpretation, photographic grade, original repairs and ordered pixel stages.
+
 use crate::{
     Error,
     acquisition::{Plan, Request as AcquisitionRequest, Sampling},

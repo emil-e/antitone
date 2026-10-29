@@ -48,6 +48,7 @@ fn canonical(
     .unwrap();
     pixels.unwrap()
 }
+
 #[test]
 fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_processing() {
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
@@ -285,6 +286,7 @@ fn reconstructed(values: &[[f32; 4]], frame: crate::frame_raster::FrameRaster) -
 #[test]
 fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image() {
     struct Header;
+
     impl Source for Header {
         fn domain(&self) -> Domain {
             Domain {
@@ -293,14 +295,17 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
                 meaning: Meaning::CameraCodes,
             }
         }
+
         fn read(&self, _: crate::geometry::SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
             panic!("planning must not read camera data")
         }
     }
+
     struct Observed {
         inner: Arc<dyn Operation>,
         calls: Arc<std::sync::atomic::AtomicUsize>,
     }
+
     impl Operation for Observed {
         fn input(
             &self,
@@ -308,6 +313,7 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
         ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
             self.inner.input(output)
         }
+
         fn lower(
             &self,
             fragment: &mut Fragment,

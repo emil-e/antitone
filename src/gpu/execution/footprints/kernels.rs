@@ -4,12 +4,14 @@ use super::*;
 pub(crate) struct Kernels {
     pub(crate) stages: crate::gpu::pixel_pipeline::Kernels,
 }
+
 impl Kernels {
     pub async fn new(device: &wgpu::Device) -> Result<Arc<Self>, Error> {
         Ok(Arc::new(Self {
             stages: crate::gpu::pixel_pipeline::Kernels::new(device).await?,
         }))
     }
+
     pub(crate) fn grade(
         &self,
         device: &wgpu::Device,
@@ -47,6 +49,7 @@ impl Kernels {
             );
         }
     }
+
     pub(crate) fn cover_proxy(
         &self,
         context: &crate::gpu::evaluation::Context,
@@ -55,6 +58,7 @@ impl Kernels {
     ) -> Result<(), Error> {
         crate::gpu::evaluation::acquire::cover(context, encoder, pixels)
     }
+
     pub(crate) fn copy(
         &self,
         context: &crate::gpu::evaluation::Context,
@@ -64,6 +68,7 @@ impl Kernels {
     ) -> Result<(), Error> {
         crate::gpu::evaluation::acquire::copy(context, encoder, buffer, texture)
     }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn filter(
         &self,
@@ -88,6 +93,7 @@ impl Kernels {
             window,
         )
     }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn filter_raster(
         &self,
@@ -116,6 +122,7 @@ impl Kernels {
         )
     }
 }
+
 pub(crate) fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,

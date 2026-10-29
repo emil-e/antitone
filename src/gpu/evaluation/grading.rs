@@ -1,4 +1,5 @@
 //! Captured photographic functions over neutral AP1, independent of raster acquisition.
+
 use super::*;
 use crate::gpu::{GpuGrade, ProcessingParameters};
 use std::sync::{Arc, OnceLock};
@@ -18,6 +19,7 @@ struct Captured {
     coverage: u32,
     functions: OnceLock<Functions>,
 }
+
 struct Functions {
     roll: Function,
     layers: Function,
@@ -77,6 +79,7 @@ struct Grade {
     roll: bool,
     coordinates: Option<crate::gpu::SourceGeometry>,
 }
+
 impl Operation for Grade {
     fn input(
         &self,
@@ -84,6 +87,7 @@ impl Operation for Grade {
     ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
         Ok(Some(region))
     }
+
     fn pointwise(&self) -> Option<Function> {
         if !self.roll && self.coordinates.is_some() {
             return None;
@@ -98,6 +102,7 @@ impl Operation for Grade {
             .clone(),
         )
     }
+
     fn lower(
         &self,
         fragment: &mut Fragment,
@@ -169,6 +174,7 @@ impl Grading {
         }
         Ok(())
     }
+
     pub(crate) fn shader() -> String {
         format!(
             "{}\n{}",
@@ -176,6 +182,7 @@ impl Grading {
             include_str!("grading.wgsl")
         )
     }
+
     pub fn new(device: &wgpu::Device, grade: &GpuGrade, coverage: u32) -> Self {
         Self::from_parts(
             device,
@@ -190,6 +197,7 @@ impl Grading {
             coverage,
         )
     }
+
     pub(super) fn from_parts(
         device: &wgpu::Device,
         parameters: ProcessingParameters,

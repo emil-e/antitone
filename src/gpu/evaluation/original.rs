@@ -1,4 +1,5 @@
 //! Original-camera operators. Existing photographic, repair, grain and look shaders own the math.
+
 use super::*;
 use crate::{
     geometry::SourceRegion as Rect,
@@ -8,6 +9,7 @@ use crate::{
 struct Native {
     scan: crate::scan::Scan,
 }
+
 impl Source for Native {
     fn domain(&self) -> Domain {
         Domain {
@@ -16,6 +18,7 @@ impl Source for Native {
             meaning: Meaning::CameraCodes,
         }
     }
+
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
         let values = self.scan.tile_region(
             self.scan.area,

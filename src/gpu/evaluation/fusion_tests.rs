@@ -117,11 +117,14 @@ fn sampling_an_effect_result_is_not_a_mandatory_image_allocation() {
 #[test]
 fn an_independent_sample_component_composes_without_a_planner_pattern_rule() {
     use crate::geometry::SourceRegion as Rect;
+
     struct Gain;
+
     impl SampleProducer for Gain {
         fn access(&self) -> Access {
             Access::Callable
         }
+
         fn emit(
             &self,
             _: &mut Fragment,
@@ -133,7 +136,14 @@ fn an_independent_sample_component_composes_without_a_planner_pattern_rule() {
                 return Err(Error::InvalidParameter("gain requires samples"));
             };
             let code = format!(
-                "{}\nfn independent_sample(p: vec2i)->vec4f {{let value={}(p);return vec4f(value.rgb*0.75,value.w);}}",
+                r#"
+{}
+
+fn independent_sample(p: vec2i) -> vec4f {{
+    let value = {}(p);
+    return vec4f(value.rgb * 0.75, value.w);
+}}
+"#,
                 input.code, input.symbol
             );
             Ok(Sampled {
@@ -143,17 +153,29 @@ fn an_independent_sample_component_composes_without_a_planner_pattern_rule() {
             })
         }
     }
+
     impl Operation for Gain {
         fn input(&self, r: Rect) -> Result<Option<Rect>, Error> {
             Ok(Some(r))
         }
+
         fn pointwise(&self) -> Option<Function> {
-            Some(Function {code:"fn independent_map(p: vec4f, position: vec2f)->vec4f {return vec4f(p.rgb*0.75,p.w);}".into(),
-                symbol:"independent_map",bindings:vec![]})
+            Some(Function {
+                code: r#"
+fn independent_map(p: vec4f, position: vec2f) -> vec4f {
+    return vec4f(p.rgb * 0.75, p.w);
+}
+"#
+                .into(),
+                symbol: "independent_map",
+                bindings: vec![],
+            })
         }
+
         fn sample_producer(&self) -> Option<&dyn SampleProducer> {
             Some(self)
         }
+
         fn lower(
             &self,
             _: &mut Fragment,

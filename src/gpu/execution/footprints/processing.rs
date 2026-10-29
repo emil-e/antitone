@@ -1,4 +1,5 @@
 //! Captured filtered-AP1 grade/inspection preparation and reusable stage resources.
+
 use super::*;
 use crate::gpu::{GpuGrade, ProcessingInput, ProcessingParameters, ProcessingSignature};
 use glam::DMat3;
@@ -14,6 +15,7 @@ pub(crate) struct Processed {
     pub submitted: Mutex<bool>,
     processing: ProcessingSignature,
 }
+
 impl Processed {
     pub fn prepare(
         device: &wgpu::Device,

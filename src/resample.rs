@@ -1,47 +1,84 @@
 use crate::gpu::evaluation::{
     Binding, Domain, Fragment, Grid, Meaning, PlannedImage, Resource, Shared, Storage, Work,
 };
+
 #[cfg(test)]
 mod look_tests;
+
 pub(crate) use crate::acquisition::windows;
 
 const SHADER: &str = r#"
-struct Parameters { source:vec2u, output:vec2u, origin:vec2u, tile:vec2u, output_origin:vec2u, extent:vec2u }
-@group(0) @binding(0) var image:texture_2d<f32>;
-@group(0) @binding(1) var<storage,read_write> sums:array<vec4f>;
-@group(0) @binding(2) var<uniform> p:Parameters;
-@compute @workgroup_size(8,8) fn main(@builtin(global_invocation_id) id:vec3u) {
- if any(id.xy>=p.extent) { return; }
- let xy=id.xy+p.output_origin;
- let scale=vec2f(p.source)/vec2f(p.output);
- let start=vec2f(xy)*scale;
- let end=vec2f(xy+vec2u(1))*scale;
- let lo=max(vec2u(floor(start)),p.origin);
- let hi=min(min(vec2u(ceil(end)),p.origin+p.tile),p.source);
- if any(lo>=hi) {return;}
- var sum=vec3f(0.);
- var invalid=0.;
- for(var y=lo.y;y<hi.y;y++) {
-  let wy=max(0.,min(end.y,f32(y+1))-max(start.y,f32(y)));
-  for(var x=lo.x;x<hi.x;x++) {
-   let wx=max(0.,min(end.x,f32(x+1))-max(start.x,f32(x)));
-   let pixel=textureLoad(image,vec2i(vec2u(x,y)-p.origin),0);
-   if pixel.a<0. && wx*wy>0. { invalid=max(invalid,-pixel.a); }
-   sum+=pixel.rgb*wx*wy;
-  }
- }
- let index=xy.x+xy.y*p.output.x;
- sums[index]=vec4f(sums[index].rgb+sum/(scale.x*scale.y),max(sums[index].a,invalid));
+struct Parameters {
+    source: vec2u,
+    output: vec2u,
+    origin: vec2u,
+    tile: vec2u,
+    output_origin: vec2u,
+    extent: vec2u,
+}
+
+@group(0) @binding(0)
+var image: texture_2d<f32>;
+
+@group(0) @binding(1)
+var<storage, read_write> sums: array<vec4f>;
+
+@group(0) @binding(2)
+var<uniform> p: Parameters;
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+    if any(id.xy >= p.extent) {
+        return;
+    }
+
+    let xy = id.xy + p.output_origin;
+    let scale = vec2f(p.source) / vec2f(p.output);
+    let start = vec2f(xy) * scale;
+    let end = vec2f(xy + vec2u(1)) * scale;
+    let lo = max(vec2u(floor(start)), p.origin);
+    let hi = min(min(vec2u(ceil(end)), p.origin + p.tile), p.source);
+    if any(lo >= hi) {
+        return;
+    }
+
+    var sum = vec3f(0.);
+    var invalid = 0.;
+    for(var y = lo.y; y < hi.y; y++) {
+        let wy = max(0., min(end.y, f32(y + 1)) - max(start.y, f32(y)));
+        for(var x = lo.x; x < hi.x; x++) {
+            let wx = max(0., min(end.x, f32(x + 1)) - max(start.x, f32(x)));
+            let pixel = textureLoad(image, vec2i(vec2u(x, y) - p.origin), 0);
+            if pixel.a < 0. && wx * wy > 0. {
+                invalid = max(invalid, -pixel.a);
+            }
+            sum += pixel.rgb * wx * wy;
+        }
+    }
+
+    let index = xy.x + xy.y * p.output.x;
+    sums[index] = vec4f(sums[index].rgb + sum / (scale.x * scale.y), max(sums[index].a, invalid));
 }
 "#;
+
 const FINISH: &str = r#"
-@group(0) @binding(0) var<storage,read> sums:array<vec4f>;
-@group(0) @binding(1) var<uniform> size:vec4u;
-@vertex fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {
- let p=array<vec2f,3>(vec2f(-1.,-1.),vec2f(3.,-1.),vec2f(-1.,3.))[i];return vec4f(p,0.,1.);
+@group(0) @binding(0)
+var<storage, read> sums: array<vec4f>;
+
+@group(0) @binding(1)
+var<uniform> size: vec4u;
+
+@vertex
+fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+    let p = array<vec2f, 3>(vec2f(-1., -1.), vec2f(3., -1.), vec2f(-1., 3.))[i];
+    return vec4f(p, 0., 1.);
 }
-@fragment fn fragment(@builtin(position) position:vec4f)->@location(0) vec4f {
- let xy=vec2u(position.xy);let value=sums[xy.x+xy.y*size.x];return vec4f(value.rgb,select(1.,-value.a,value.a>0.));
+
+@fragment
+fn fragment(@builtin(position) position: vec4f) -> @location(0) vec4f {
+    let xy = vec2u(position.xy);
+    let value = sums[xy.x + xy.y * size.x];
+    return vec4f(value.rgb, select(1., -value.a, value.a > 0.));
 }
 "#;
 
@@ -59,6 +96,7 @@ impl AveragePipelines {
         )
         .await
     }
+
     pub(crate) async fn with_context(
         device: &wgpu::Device,
         evaluation: crate::gpu::evaluation::Context,
@@ -351,6 +389,7 @@ impl AreaAverage {
             .evaluation
             .encode_work(fragment, image, encoder, &[&self.sums])
     }
+
     fn image(fragment: &mut Fragment, size: [u32; 2], storage: Storage) -> PlannedImage {
         PlannedImage {
             resource: fragment.resource(storage),
