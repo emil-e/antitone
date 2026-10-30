@@ -8,6 +8,7 @@ fn a_tighter_crop_reduces_the_source_gaussian_instead_of_magnifying_uncropped_bl
             enabled: true,
             amount: 0.,
             size: 0.040,
+            image_sigma: 0.040,
             colour: 0.5,
         };
         let values: Vec<[f32; 4]> = (0..65)

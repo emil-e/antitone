@@ -516,7 +516,7 @@ fn film_settings_do_not_change_neutral_repair_admission_or_trigger_rehealing() {
             let previous = e.dust_gpu_snapshot(None).unwrap();
             assert_eq!(previous.0.len(), 1);
             let controls = crate::editor::editing::ControlSettings::capture(e);
-            e.document.film_emulation = FilmEmulationPreset::Medium.settings();
+            e.document.film_emulation = FilmPreset::ThirtyFiveMm.settings();
             e.validate_frame_edits(controls);
             assert!(e.document.film_emulation.enabled);
             let current = e.dust_gpu_snapshot(None).unwrap();

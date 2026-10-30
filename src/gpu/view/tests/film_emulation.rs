@@ -11,6 +11,8 @@ mod reference;
 #[derive(Clone, Copy)]
 struct ProbeConfig {
     side: usize,
+    frame_extent: u32,
+    origin: [f64; 2],
     scale: f64,
     reserve_scale: Option<f64>,
     footprint: f64,
@@ -24,6 +26,8 @@ impl Default for ProbeConfig {
     fn default() -> Self {
         Self {
             side: N,
+            frame_extent: 6000,
+            origin: [1000.; 2],
             scale: 2.,
             reserve_scale: None,
             footprint: 1.,
@@ -71,8 +75,8 @@ fn configured_probe(
         crate::raw::Rect {
             x: 0,
             y: 0,
-            width: 6000,
-            height: 6000,
+            width: config.frame_extent,
+            height: config.frame_extent,
         },
         Default::default(),
         Default::default(),
@@ -80,36 +84,54 @@ fn configured_probe(
     .unwrap();
     let frame = FrameRaster::new(
         composition,
-        FramePoint([1000., 1000.]),
-        FramePoint([1000. + config.side as f64 * config.footprint; 2]),
+        FramePoint(config.origin),
+        FramePoint(
+            config
+                .origin
+                .map(|p| p + config.side as f64 * config.footprint),
+        ),
         [config.side as u32; 2],
     )
     .unwrap();
     let settings = FilmEmulationSettings {
         enabled: config.enabled,
-        size: config.scale * (100. / 6000.),
+        size: config.scale * (100. / f64::from(config.frame_extent)),
+        image_sigma: config.scale * (100. / f64::from(config.frame_extent)),
         amount: config.amount,
         colour: config.colour,
     };
     let acquisition = FilmEmulationSettings {
-        size: config.reserve_scale.unwrap_or(config.scale) * (100. / 6000.),
+        size: config.reserve_scale.unwrap_or(config.scale)
+            * (100. / f64::from(config.frame_extent)),
+        image_sigma: config.reserve_scale.unwrap_or(config.scale)
+            * (100. / f64::from(config.frame_extent)),
         ..settings
     };
     let spec = ViewSourceSpec::new(seed, frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
         .with_pipeline(
-            crate::pixel_pipeline::PixelPipeline::film(acquisition, [6000; 2], seed).unwrap(),
+            crate::pixel_pipeline::PixelPipeline::film(acquisition, [config.frame_extent; 2], seed)
+                .unwrap(),
         )
         .unwrap();
     let size = spec.input_frame().unwrap().output;
     let offset = spec.plan.output_offset().unwrap();
     let mut values = vec![[0.18_f32, 0.18, 0.18, 8.]; (size[0] * size[1]) as usize];
     if config.impulse {
-        let point = [
-            config.side as u32 / 2 + offset[0],
-            config.side as u32 / 2 + offset[1],
-        ];
-        values[(point[1] * size[0] + point[0]) as usize][1] += 0.18;
+        // A destination-cell box impulse has unit area at every acquisition pitch.
+        // Injecting a single finer cell would shrink its energy under reconstruction.
+        let ratio: [f64; 2] =
+            std::array::from_fn(|i| f64::from(spec.plan.output().output[i]) / config.side as f64);
+        let low: [f64; 2] =
+            std::array::from_fn(|i| f64::from(offset[i]) + (config.side / 2) as f64 * ratio[i]);
+        let high: [f64; 2] = std::array::from_fn(|i| low[i] + ratio[i]);
+        for y in low[1].floor() as u32..high[1].ceil() as u32 {
+            for x in low[0].floor() as u32..high[0].ceil() as u32 {
+                let mass = (high[0].min(f64::from(x + 1)) - low[0].max(f64::from(x))).max(0.)
+                    * (high[1].min(f64::from(y + 1)) - low[1].max(f64::from(y))).max(0.);
+                values[(y * size[0] + x) as usize][1] += 0.18 * mass as f32;
+            }
+        }
     }
     let source = Arc::new(ViewSource {
         spec,
@@ -247,6 +269,41 @@ fn diagnostic_dft_recovers_a_declared_sinusoid() {
     assert!((total / (N as f64).powi(4) - 0.5).abs() < 1e-12);
 }
 
+// Independent one-dimensional box impulse → finite Gaussian → cell-area integral.
+fn reconstructed_impulse(view: &RenderedView, sigma: f64) -> Vec<f64> {
+    let spec = &view.graded.as_ref().unwrap().source.spec;
+    let pitch = spec.plan.pitch()[0];
+    let ratio = f64::from(spec.plan.output().output[0]) / N as f64;
+    let offset = f64::from(spec.plan.output_offset().unwrap()[0]);
+    let low = offset + (N / 2) as f64 * ratio;
+    let high = low + ratio;
+    let sigma = sigma / pitch;
+    let radius = (4. * sigma).ceil() as i32;
+    let mass: f64 = (-radius..=radius)
+        .map(|i| (-0.5 * (f64::from(i) / sigma).powi(2)).exp())
+        .sum();
+    (0..N)
+        .map(|x| {
+            let start = offset + x as f64 * ratio;
+            let end = start + ratio;
+            (start.floor() as i32..end.ceil() as i32)
+                .map(|cell| {
+                    let area =
+                        (end.min(f64::from(cell + 1)) - start.max(f64::from(cell))).max(0.) / ratio;
+                    let blurred: f64 = (-radius..=radius)
+                        .map(|tap| {
+                            let source = f64::from(cell + tap);
+                            let impulse = (high.min(source + 1.) - low.max(source)).max(0.);
+                            impulse * (-0.5 * (f64::from(tap) / sigma).powi(2)).exp() / mass
+                        })
+                        .sum();
+                    area * blurred
+                })
+                .sum()
+        })
+        .collect()
+}
+
 #[test]
 fn film_emulation_gpu_bandwidth_and_zoom_scaling() {
     pollster::block_on(async {
@@ -254,7 +311,7 @@ fn film_emulation_gpu_bandwidth_and_zoom_scaling() {
         for scale in [1., 2., 3.5] {
             let mut previous_variance = f64::INFINITY;
             for footprint in [0.5, 1., 2., 4.] {
-                let pixels = render_probe(
+                let view = probe_view(
                     &device,
                     &queue,
                     &renderer,
@@ -263,6 +320,14 @@ fn film_emulation_gpu_bandwidth_and_zoom_scaling() {
                     true,
                     17,
                 );
+                view.ensure_submitted(
+                    &device,
+                    &queue,
+                    &SubmissionGate::default(),
+                    &egui::Context::default(),
+                );
+                let pixels = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+                let expected = reconstructed_impulse(&view, scale);
                 assert!(pixels.iter().flatten().all(|v| v.is_finite()));
                 assert!(
                     pixels.iter().all(|p| p[0] > 0.),
@@ -294,13 +359,28 @@ fn film_emulation_gpu_bandwidth_and_zoom_scaling() {
                 eprintln!(
                     "film_probe L={scale} footprint={footprint} sigma_source={sigma_source:.4} image_bw={image_bandwidth:.4} grain_bw={grain_bandwidth:.4} log_variance={variance:.6}"
                 );
-                // Below half-pixel sigma this view-sampled image kernel no longer resolves
-                // its source PSF. The continuous bandwidth ordering is tested in the model.
-                if scale / footprint >= 0.5 {
+                // The source-cell and destination apertures contribute to measured width
+                // during reduction. Check those composed losses against a scalar box/tap
+                // integral instead of treating the destination second moment as Gaussian sigma.
+                let expected_moment: f64 = expected
+                    .iter()
+                    .enumerate()
+                    .map(|(x, v)| v * (x as f64 - (N / 2) as f64).powi(2))
+                    .sum();
+                assert!(
+                    (second_moment - expected_moment).abs() < 0.0005 * expected_moment.max(1.),
+                    "composed aperture moment L={scale} p={footprint}: {second_moment} vs {expected_moment}"
+                );
+                for (i, value) in psf.iter().enumerate() {
                     assert!(
-                        (sigma_source / scale - 1.).abs() < 0.08,
-                        "source sigma changes with zoom: L={scale}, p={footprint}, sigma={sigma_source}"
+                        (value - expected[i % N] * expected[i / N]).abs() < 3e-6,
+                        "box/tap/area response L={scale} p={footprint} at {i}"
                     );
+                }
+                if footprint <= 1. {
+                    assert!((sigma_source / scale - 1.).abs() < 0.08);
+                }
+                if scale / footprint >= 0.5 {
                     assert!(
                         grain_bandwidth > image_bandwidth,
                         "grain is not sharper: L={scale}, p={footprint}"

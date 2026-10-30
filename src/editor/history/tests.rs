@@ -540,7 +540,13 @@ fn film_emulation_controls_are_saved_dirty_and_undoable_rendering_state() {
     editor.document.accept_save(saved);
     let before = editor.history_snapshot();
     editor.begin_control_history("Rendering settings");
-    editor.document.film_emulation = FilmEmulationPreset::Fine.settings();
+    editor.document.film_emulation = crate::film_emulation::FilmEmulationSettings {
+        enabled: true,
+        size: 0.025,
+        image_sigma: 0.025,
+        amount: 0.040,
+        ..Default::default()
+    };
     finish_controls(&mut editor);
     assert!(editor.document.dirty());
     let entry = &editor.document.history.undo[0];
@@ -561,7 +567,13 @@ fn film_emulation_controls_are_saved_dirty_and_undoable_rendering_state() {
     editor = accept_history(editor, Direction::Redo);
     assert_eq!(
         editor.document.film_emulation,
-        FilmEmulationPreset::Fine.settings()
+        crate::film_emulation::FilmEmulationSettings {
+            enabled: true,
+            size: 0.025,
+            image_sigma: 0.025,
+            amount: 0.040,
+            ..Default::default()
+        }
     );
 }
 

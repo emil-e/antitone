@@ -51,10 +51,13 @@ fn overlap(start: vec2f, cell: vec2f, dx: vec2f, dy: vec2f) -> f32 {
     }
     var poly: Polygon;
     poly.count = 4u;
-    poly.points[0] = start - cell;
-    poly.points[1] = start + dx - cell;
-    poly.points[2] = start + dx + dy - cell;
-    poly.points[3] = start + dy - cell;
+    // Translate before adding cell-sized axes: large raster coordinates must not
+    // round each corner differently and change the footprint area.
+    let local = start - cell;
+    poly.points[0] = local;
+    poly.points[1] = local + dx;
+    poly.points[2] = local + dx + dy;
+    poly.points[3] = local + dy;
     poly = clipped(poly, 0u, 0., true);
     poly = clipped(poly, 0u, 1., false);
     poly = clipped(poly, 1u, 0., true);
@@ -78,20 +81,17 @@ fn extended_overlap(
     source_low: vec2f,
     source_high: vec2f,
 ) -> f32 {
-    let points = array<vec2f, 4>(start, start + dx, start + dx + dy, start + dy);
+    let local = start - cell;
+    let points = array<vec2f, 4>(local, local + dx, local + dx + dy, local + dy);
     var low = points[0];
     var high = low;
     for(var i = 1u; i < 4u; i++) {
         low = min(low, points[i]);
         high = max(high, points[i]);
     }
-    let cell_low = select(cell, min(cell, low), cell == source_low);
-    let cell_high = select(
-            cell + vec2f(1.),
-            max(cell + vec2f(1.), high),
-            cell + vec2f(1.) == source_high,
-        );
-    if all(cell_low == cell) && all(cell_high == cell + vec2f(1.)) {
+    let cell_low = select(vec2f(0.), min(vec2f(0.), low), cell == source_low);
+    let cell_high = select(vec2f(1.), max(vec2f(1.), high), cell + vec2f(1.) == source_high);
+    if all(cell_low == vec2f(0.)) && all(cell_high == vec2f(1.)) {
         return overlap(start, cell, dx, dy);
     }
     var poly: Polygon;

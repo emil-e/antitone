@@ -47,6 +47,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
             .with_film_emulation(FilmEmulationSettings {
                 enabled: true,
                 size: 2. / 6000. * 100.,
+                image_sigma: 2. / 6000. * 100.,
                 amount: 0.,
                 colour: 0.5,
             })
@@ -60,6 +61,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                 .with_frame_size(dimensions)
                 .with_film_emulation(FilmEmulationSettings {
                     size: 2. / f64::from(dimensions[0].min(dimensions[1])) * 100.,
+                    image_sigma: 2. / f64::from(dimensions[0].min(dimensions[1])) * 100.,
                     ..input.film_emulation()
                 });
             let spec =

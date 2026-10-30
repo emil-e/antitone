@@ -29,7 +29,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         .clone()
         .with_pipeline(PixelPipeline {
             stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-                sigma: 1.,
+                sigma: 2.,
             })],
         })
         .unwrap();
@@ -37,7 +37,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         .clone()
         .with_pipeline(PixelPipeline {
             stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-                sigma: 2.,
+                sigma: 3.,
             })],
         })
         .unwrap();
@@ -45,6 +45,23 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
     assert!(!small.same_acquisition(&large));
     assert!(large.satisfies(&small));
     assert!(!small.satisfies(&large));
+    let finer = base
+        .clone()
+        .with_pipeline(PixelPipeline {
+            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
+                sigma: 0.6,
+            })],
+        })
+        .unwrap();
+    assert!(finer.plan.output().output[0] > large.plan.output().output[0]);
+    assert!(
+        !large.satisfies(&finer),
+        "extra coarse neighbours cannot satisfy a finer sampling request"
+    );
+    assert!(
+        !large.compatible_processing(&finer),
+        "a coarse fallback must not run a finer effect request"
+    );
     let moved = large
         .clone()
         .with_frame(FrameRaster {

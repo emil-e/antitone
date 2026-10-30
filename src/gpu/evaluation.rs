@@ -45,6 +45,9 @@ mod grading_tests;
 
 mod grain;
 
+mod halation;
+pub(crate) use halation::halation;
+
 mod images;
 
 #[cfg(all(test, feature = "editor"))]
@@ -91,6 +94,9 @@ mod recipe;
 #[cfg(feature = "render")]
 mod reference;
 
+#[cfg(all(test, feature = "editor"))]
+mod reconstruction_tests;
+
 #[cfg(feature = "render")]
 pub(crate) use reference::Reference;
 
@@ -128,6 +134,8 @@ pub use contract::*;
 pub(crate) use execute::{Executor, Programs, Recorded};
 pub(crate) use grain::grain;
 pub(crate) use operators::gaussian;
+#[cfg(feature = "editor")]
+pub(crate) use operators::reconstruct_cells;
 #[cfg(feature = "render")]
 use operators::*;
 pub use operators::{pointwise, source};

@@ -92,6 +92,7 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
         enabled: true,
         amount: 0.,
         size: crate::film_emulation::MAX_SIZE,
+        image_sigma: crate::film_emulation::MAX_SIZE,
         ..Default::default()
     };
     editor.sync_document();

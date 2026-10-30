@@ -132,15 +132,56 @@ fn recipe_capture_uses_the_requested_reference_source_even_when_it_is_not_in_the
 }
 
 #[test]
+fn halation_is_captured_without_repair_invalidation_or_grain_enablement() {
+    let (mut project, id) = project();
+    let clean = project.image_recipe(id).unwrap();
+    project.output.halation = antitone::halation::HalationSettings {
+        enabled: true,
+        size: 0.125,
+        strength: 0.3,
+    };
+    let captured = project.image_recipe(id).unwrap();
+    assert_ne!(clean, captured);
+    assert!(clean.same_neutral_content(&captured));
+    assert!(!captured.film_emulation.enabled);
+    assert_eq!(captured.pixel_pipeline().unwrap().stages.len(), 1);
+    project.output.halation.strength = 0.4;
+    assert_eq!(
+        captured.halation.strength, 0.3,
+        "captured recipe stays immutable"
+    );
+    assert_ne!(captured, project.image_recipe(id).unwrap());
+    project.output.halation.enabled = false;
+    assert_eq!(
+        clean,
+        project.image_recipe(id).unwrap(),
+        "disabled custom values are not photographic identity"
+    );
+}
+
+#[test]
 fn film_emulation_is_captured_immutably_without_changing_neutral_repair_identity() {
     let (mut project, id) = project();
     let clean = project.image_recipe(id).unwrap();
-    let film = antitone::film_emulation::FilmEmulationPreset::Medium.settings();
+    let film = antitone::film_emulation::FilmPreset::ThirtyFiveMm.settings();
     project.output.film_emulation = film;
     let captured = project.image_recipe(id).unwrap();
     assert_eq!(captured.film_emulation, film);
     assert_ne!(clean, captured);
     assert!(clean.same_neutral_content(&captured));
+    project.output.film_preset = antitone::film_emulation::FilmPreset::MediumFormat;
+    assert_eq!(
+        captured,
+        project.image_recipe(id).unwrap(),
+        "preset provenance must not change pixels or invalidate photographic reuse"
+    );
+    project.output.film_emulation.image_sigma *= 1.5;
+    assert_ne!(
+        captured,
+        project.image_recipe(id).unwrap(),
+        "independently authored image sigma is rendering identity"
+    );
+    project.output.film_emulation.image_sigma = film.image_sigma;
     project.output.film_emulation.amount *= 2.;
     let edited = project.image_recipe(id).unwrap();
     assert_ne!(captured, edited);
@@ -157,6 +198,7 @@ fn emulation_resolves_from_the_captured_crop_not_its_source_bounds_or_orientatio
     project.output.film_emulation = FilmEmulationSettings {
         enabled: true,
         size: 0.040,
+        image_sigma: 0.040,
         ..Default::default()
     };
     let full = project.image_recipe(id).unwrap();
@@ -183,7 +225,7 @@ fn emulation_resolves_from_the_captured_crop_not_its_source_bounds_or_orientatio
             .find_map(|stage| stage.get::<antitone::pixel_pipeline::Grain>())
             .unwrap();
         assert!((mtf.sigma - expected).abs() < 1e-12);
-        assert!((grain.parameters.grain_size - expected).abs() < 1e-12);
+        assert!((grain.parameters.grain_size - expected * 1.375).abs() < 1e-12);
     };
     check(&full, 0.2304);
     check(&cropped, 0.1152);

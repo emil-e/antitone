@@ -3,11 +3,18 @@
 use crate::{Error, film_emulation::FilmEmulationSettings, processing_support::Support};
 use std::{any::Any, fmt, sync::Arc};
 
+// A cost/accuracy choice for view acquisition, not a native kernel parameter. Integral
+// destination subdivisions further constrain the actual working pitch.
+pub(crate) const GAUSSIAN_VIEW_CELLS: f64 = 0.6;
+
 #[cfg(all(test, feature = "editor"))]
 pub(crate) mod authoring_examples;
 
 #[cfg(all(test, feature = "editor"))]
 pub(crate) mod test_effects;
+
+#[cfg(any(test, feature = "editor"))]
+pub(crate) mod sampling;
 
 #[cfg(test)]
 mod tests;
@@ -16,6 +23,17 @@ mod tests;
 /// Composition applies the definition to an image node by constructing operation/result nodes.
 pub trait EffectDefinition: Any + fmt::Debug + Send + Sync {
     fn support(&self, pitch: [f64; 2]) -> Support;
+
+    /// Preferred maximum source units per cell for approximate spatial processing.
+    /// Acquisition may bound refinement; this does not change native effect mathematics.
+    fn view_pitch(&self) -> Option<f64> {
+        None
+    }
+
+    /// Can consume an integrated destination footprint without upstream neighbours.
+    fn integrates_footprint(&self) -> bool {
+        false
+    }
 
     #[cfg(feature = "gpu")]
     fn compose(
@@ -49,6 +67,16 @@ impl PixelStage {
         self.value.support(pitch)
     }
 
+    #[cfg(any(test, feature = "editor"))]
+    pub(crate) fn view_pitch(&self) -> Option<f64> {
+        self.value.view_pitch()
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn integrates_footprint(&self) -> bool {
+        self.value.integrates_footprint()
+    }
+
     #[cfg(feature = "gpu")]
     pub(crate) fn compose(
         &self,
@@ -78,6 +106,10 @@ pub struct Grain {
 }
 
 impl EffectDefinition for Grain {
+    fn integrates_footprint(&self) -> bool {
+        true
+    }
+
     fn support(&self, pitch: [f64; 2]) -> Support {
         self.parameters.support(pitch)
     }
@@ -92,6 +124,10 @@ impl EffectDefinition for Grain {
 }
 
 impl EffectDefinition for crate::image_mtf::ImageMtfParameters {
+    fn view_pitch(&self) -> Option<f64> {
+        Some(self.sigma / GAUSSIAN_VIEW_CELLS)
+    }
+
     fn support(&self, pitch: [f64; 2]) -> Support {
         Self::support(*self, pitch)
     }
@@ -116,13 +152,26 @@ impl PixelPipeline {
         frame_size: [u32; 2],
         seed: u64,
     ) -> Result<Self, Error> {
-        let Some(parameters) = settings.parameters(frame_size)? else {
-            return Ok(Self::default());
-        };
-        let mut stages = vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-            sigma: parameters.image_mtf_sigma,
-        })];
-        if parameters.amplitude > 0. {
+        Self::emulation(settings, Default::default(), frame_size, seed)
+    }
+
+    pub fn emulation(
+        film: FilmEmulationSettings,
+        halation: crate::halation::HalationSettings,
+        frame_size: [u32; 2],
+        seed: u64,
+    ) -> Result<Self, Error> {
+        let film = film.parameters(frame_size)?;
+        let mut stages = Vec::new();
+        if let Some(parameters) = film {
+            stages.push(PixelStage::new(crate::image_mtf::ImageMtfParameters {
+                sigma: parameters.image_mtf_sigma,
+            }));
+        }
+        if let Some(parameters) = halation.parameters(frame_size)? {
+            stages.push(PixelStage::new(parameters));
+        }
+        if let Some(parameters) = film.filter(|p| p.amplitude > 0.) {
             stages.push(PixelStage::new(Grain {
                 parameters: parameters.grain(),
                 seed,
@@ -140,6 +189,14 @@ impl PixelPipeline {
             .try_fold(Support::NONE, |support, stage| {
                 support.then(stage.support(pitch))
             })
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn footprint_suffix(&self) -> usize {
+        self.stages
+            .iter()
+            .rposition(|stage| !stage.integrates_footprint())
+            .map_or(0, |index| index + 1)
     }
 
     pub fn is_empty(&self) -> bool {

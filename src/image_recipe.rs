@@ -41,6 +41,7 @@ pub struct ImageRecipe {
     pub grade: AdjustmentLayerSnapshot,
     pub composition: Composition,
     pub film_emulation: crate::film_emulation::FilmEmulationSettings,
+    pub halation: crate::halation::HalationSettings,
     pub look: Option<Arc<crate::looks::LookAsset>>,
     repairs: Vec<Repair>,
 }
@@ -51,6 +52,8 @@ impl PartialEq for ImageRecipe {
             && self.grade == other.grade
             && self.composition == other.composition
             && self.film_emulation == other.film_emulation
+            && self.halation.active().then_some(self.halation)
+                == other.halation.active().then_some(other.halation)
             && self.look.as_ref().map(|look| look.lut().id())
                 == other.look.as_ref().map(|look| look.lut().id())
             && self.same_neutral_content(other)
@@ -115,8 +118,9 @@ impl ImageRecipe {
     }
 
     pub fn pixel_pipeline(&self) -> Result<crate::pixel_pipeline::PixelPipeline, Error> {
-        crate::pixel_pipeline::PixelPipeline::film(
+        crate::pixel_pipeline::PixelPipeline::emulation(
             self.film_emulation,
+            self.halation,
             self.composition.crop().size,
             self.neutral.source.0,
         )
@@ -209,6 +213,7 @@ impl Project {
             grade: source.grade_snapshot()?,
             composition,
             film_emulation: self.output.film_emulation,
+            halation: self.output.halation,
             look: self.output.look.clone(),
             repairs: if include_repairs {
                 source

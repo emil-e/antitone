@@ -4,7 +4,7 @@ A working positive and a displayed photograph are not the same representation. T
 
 ```text
 signed/HDR AP1 photographic grade
-  → optional Film Emulation (image MTF → grain)
+  → optional emulation (image MTF → independent halation → grain)
   ├→ AP1-to-AP0 → scene-linear EXR
   └→ optional ACEScct/AP1 creative LUT → ACES output transform → linear sRGB or Display P3
        ├→ target encoding + ICC → TIFF

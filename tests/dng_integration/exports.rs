@@ -131,6 +131,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
                 repairs: &[],
                 composition,
                 film_emulation: Default::default(),
+                halation: Default::default(),
                 film_seed: 0,
                 format,
                 look: None,

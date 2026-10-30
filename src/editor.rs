@@ -7,7 +7,7 @@ use crate::{
     coverage::Coverage,
     crop::Crop,
     export::ExrPrecision,
-    film_emulation::{FilmEmulationPreset, FilmEmulationSettings},
+    film_emulation::{FilmEmulationSettings, FilmPreset},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
     platform::host,
@@ -406,6 +406,72 @@ impl Editor {
         }
     }
 
+    fn film_preset_controls(&mut self, ui: &mut egui::Ui) {
+        let current = self.document.project.output.film_preset;
+        let modified = !current.matches(self.document.film_emulation, self.document.halation);
+        let label = if modified {
+            format!("{} · modified", current.label())
+        } else {
+            current.label().to_owned()
+        };
+        let mut selected = None;
+        presentation::inspector_dropdown(ui, "film-preset", "Film preset", &label, |ui| {
+            for preset in [FilmPreset::ThirtyFiveMm, FilmPreset::MediumFormat] {
+                if ui
+                    .selectable_label(preset == current, preset.label())
+                    .clicked()
+                {
+                    selected = Some(preset);
+                }
+            }
+        });
+        if let Some(preset) = selected {
+            self.document.film_emulation = FilmEmulationSettings {
+                enabled: self.document.film_emulation.enabled,
+                ..preset.settings()
+            };
+            self.document.halation = crate::halation::HalationSettings {
+                enabled: self.document.halation.enabled,
+                ..preset.halation()
+            };
+            self.document.project.output.film_preset = preset;
+        }
+    }
+
+    fn halation_controls(&mut self, ui: &mut egui::Ui) {
+        let settings = &mut self.document.halation;
+        let changed = *settings != crate::halation::HalationSettings::default();
+        let summary = if settings.active() {
+            format!("{:.3}%", settings.size)
+        } else {
+            "Off".to_owned()
+        };
+        let (_, action) = presentation::section(
+            ui,
+            "halation",
+            "Halation",
+            presentation::SectionHeader {
+                summary: &summary,
+                changed,
+                reset: Some(changed),
+                tool: None,
+                default_open: Some(true),
+            },
+            |ui| {
+                ui.checkbox(&mut settings.enabled, "Enable halation");
+                controls::parameter(
+                    ui,
+                    controls::Parameter::HalationStrength,
+                    &mut settings.strength,
+                );
+                controls::parameter(ui, controls::Parameter::HalationSize, &mut settings.size);
+            },
+        );
+        if action.reset {
+            *settings = crate::halation::HalationSettings::default();
+        }
+    }
+
     fn film_emulation_controls(&mut self, ui: &mut egui::Ui) {
         let settings = &mut self.document.film_emulation;
         let changed = *settings != FilmEmulationSettings::default();
@@ -417,7 +483,7 @@ impl Editor {
         let (_, action) = presentation::section(
             ui,
             "film-emulation",
-            "Film Emulation",
+            "Film texture",
             presentation::SectionHeader {
                 summary: &summary,
                 changed,
@@ -428,20 +494,17 @@ impl Editor {
             |ui| {
                 ui.checkbox(&mut settings.enabled, "Enable");
                 controls::parameter(ui, controls::Parameter::FilmAmount, &mut settings.amount);
-                controls::parameter(ui, controls::Parameter::FilmSize, &mut settings.size);
+                let mut size = settings.size;
+                controls::parameter(ui, controls::Parameter::FilmSize, &mut size);
+                if size != settings.size {
+                    let resized = settings.resized(size);
+                    if let Err(error) = resized.validate() {
+                        ui.label(error.to_string());
+                    } else {
+                        *settings = resized;
+                    }
+                }
                 controls::parameter(ui, controls::Parameter::FilmColour, &mut settings.colour);
-                ui.horizontal(|ui| {
-                    if ui.button("Fine").clicked() {
-                        *settings = FilmEmulationPreset::Fine.settings();
-                    }
-                    if ui.button("Medium").clicked() {
-                        *settings = FilmEmulationPreset::Medium.settings();
-                    }
-                    if ui.button("Coarse").clicked() {
-                        *settings = FilmEmulationPreset::Coarse.settings();
-                    }
-                });
-                ui.small("Source-anchored MTF and grain, before the creative look.");
             },
         );
         if action.reset {
@@ -780,6 +843,7 @@ impl Editor {
         project.roll = self.document.roll;
         project.orientation = self.document.roll_orientation;
         project.output.film_emulation = self.document.film_emulation;
+        project.output.halation = self.document.halation;
         project.output.tiff = match self.document.target {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
             OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,
@@ -1154,7 +1218,27 @@ impl Editor {
                             && self.document.auto_crop_edit().is_none()
                             && self.document.flat_edit().is_none()
                             && self.document.mask_edit().is_none();
-                        ui.add_enabled_ui(allowed, |ui| self.film_emulation_controls(ui));
+                        ui.add_enabled_ui(allowed, |ui| {
+                            presentation::section(
+                                ui,
+                                "film",
+                                "Film",
+                                SectionHeader {
+                                    summary: self.document.project.output.film_preset.label(),
+                                    changed: false,
+                                    reset: None,
+                                    tool: None,
+                                    default_open: Some(true),
+                                },
+                                |ui| {
+                                    ui.indent("film-controls", |ui| {
+                                        self.film_preset_controls(ui);
+                                        self.film_emulation_controls(ui);
+                                        self.halation_controls(ui);
+                                    });
+                                },
+                            );
+                        });
                     }
                     self.look_controls(ui, cx);
                     ui.add_enabled_ui(

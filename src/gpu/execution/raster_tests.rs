@@ -1,5 +1,5 @@
 use super::*;
-use crate::{film_emulation::FilmEmulationPreset, gpu::SourceGeometry};
+use crate::{film_emulation::FilmPreset, gpu::SourceGeometry};
 
 #[test]
 fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_source_grid() {
@@ -22,7 +22,7 @@ fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_sourc
         [10, 20, 2, 2].into(),
     )
     .unwrap()
-    .with_film_emulation(FilmEmulationPreset::Medium.settings())
+    .with_film_emulation(FilmPreset::ThirtyFiveMm.settings())
     .with_frame_size([2000; 2])
     .with_film_seed(17);
     let plan = resident_plan(&source, &input).unwrap().unwrap();

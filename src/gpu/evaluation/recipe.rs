@@ -102,13 +102,19 @@ impl Recipe {
     }
 
     #[cfg(feature = "editor")]
-    pub fn filtered(&self, neutral: Arc<ImageNode>) -> Result<(Arc<ImageNode>, Grading), Error> {
+    pub fn filtered(
+        &self,
+        neutral: Arc<ImageNode>,
+        output: Domain,
+        offset: [u32; 2],
+        scale: [f64; 2],
+    ) -> Result<(Arc<ImageNode>, Grading), Error> {
         let grade = self
             .input
             .grade()
             .ok_or_else(|| Error::Gpu("positive view requires a processing pipeline".into()))?;
         let grading = grade.for_grid(neutral.domain.grid.coverage);
-        let image = Photograph::filtered(&grading, neutral, &self.stages)?;
+        let image = Photograph::filtered(&grading, neutral, &self.stages, output, offset, scale)?;
         Ok((image, grading))
     }
 

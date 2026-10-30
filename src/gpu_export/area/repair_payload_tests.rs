@@ -71,6 +71,7 @@ fn dense_repaired_unit_accounts_host_and_gpu_uploads_separately_from_retained_re
     let run = |repairs| {
         let request = Request {
             film_emulation: Default::default(),
+            halation: Default::default(),
             film_seed: 17,
             scan: &scan,
             field: None,

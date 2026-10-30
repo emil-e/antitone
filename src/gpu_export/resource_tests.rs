@@ -260,6 +260,7 @@ fn exercise(
                 monitor.phase(&label, || {
                     let request = Request {
                         film_emulation: Default::default(),
+                        halation: Default::default(),
                         film_seed: 17,
                         look: None,
                         scan: &scan,
@@ -497,6 +498,7 @@ fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
     let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
     let request = || Request {
         film_emulation: Default::default(),
+        halation: Default::default(),
         film_seed: 17,
         look: None,
         scan: &scan,

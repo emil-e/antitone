@@ -304,11 +304,18 @@ pub struct Output {
     pub contract: String,
     pub tiff: TiffTarget,
     pub exr: ExrPrecision,
+    #[serde(default)]
+    pub film_preset: crate::film_emulation::FilmPreset,
     #[serde(
         default,
         skip_serializing_if = "crate::film_emulation::FilmEmulationSettings::is_default"
     )]
     pub film_emulation: crate::film_emulation::FilmEmulationSettings,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::halation::HalationSettings::is_default"
+    )]
+    pub halation: crate::halation::HalationSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<std::sync::Arc<crate::looks::LookAsset>>,
 }
@@ -319,7 +326,9 @@ impl Default for Output {
             contract: OUTPUT_CONTRACT.into(),
             tiff: TiffTarget::DisplayP3,
             exr: ExrPrecision::Half,
+            film_preset: Default::default(),
             film_emulation: Default::default(),
+            halation: Default::default(),
             look: None,
         }
     }
@@ -849,6 +858,7 @@ impl Project {
             negative.channel_gammas()?;
         }
         self.output.film_emulation.validate()?;
+        self.output.halation.validate()?;
         wb_matrix(self.roll.wb)?;
         exposure_multiplier(self.roll.exposure)?;
         require(

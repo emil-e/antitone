@@ -18,36 +18,16 @@ impl Kernels {
         encoder: &mut wgpu::CommandEncoder,
         graded: &Processed,
     ) {
-        let working = graded
-            .stages
-            .input_buffer(device, graded.source.spec.frame().output)
-            .expect("validated processing input");
-        let pixels = working.as_ref().unwrap_or(&graded.pixels);
+        debug_assert_eq!(graded.stages.raster.size(), graded.plan.input().size());
         self.stages
             .encode_from(
                 device,
                 encoder,
                 &graded.stages,
                 &graded.source.pixels,
-                pixels,
+                &graded.pixels,
             )
             .expect("validated photographic composition");
-        if let Some(working) = &working {
-            self.stages.extract(
-                device,
-                encoder,
-                working,
-                graded.stages.raster.size(),
-                &graded.pixels,
-                crate::gpu::pixel_pipeline::OutputRegion {
-                    size: graded.plan.output().output,
-                    offset: graded
-                        .plan
-                        .output_offset()
-                        .expect("frame-grid output extraction"),
-                },
-            );
-        }
     }
 
     pub(crate) fn cover_proxy(

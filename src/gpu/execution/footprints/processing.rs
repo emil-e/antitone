@@ -5,6 +5,10 @@ use crate::gpu::{Grading, ProcessingInput, ProcessingParameters, ProcessingSigna
 use glam::DMat3;
 use std::sync::Mutex;
 
+// Required working storage is admitted independently of generated-value retention.
+// Large presentations can keep their grid without an implicit coarse-quality fallback.
+const VIEW_SCRATCH_BYTES: u64 = 1280 << 20;
+
 pub(crate) struct Processed {
     pub source: Arc<Acquired>,
     pub grade: Option<Arc<Grading>>,
@@ -98,19 +102,39 @@ impl Processed {
         let cached = previous
             .filter(|p| p.source.spec.same_source(&source.spec))
             .map(|p| &p.stages);
-        let raster = crate::gpu::raster::Raster::planned(&plan);
+        let mut raster = crate::gpu::raster::Raster::planned(&plan);
+        // Acquired neutral pixels carry coverage, including supplied camera cells whose
+        // original raster carries only inversion-floor flags before cover_proxy.
+        raster.dimensions[2] = 8;
         let domain = crate::gpu::evaluation::Domain {
             bounds: [0, 0, raster.size()[0], raster.size()[1]].into(),
             grid: crate::gpu::evaluation::Grid::from_raster(raster),
             meaning: crate::gpu::evaluation::Meaning::Neutral,
         };
-        let (root, grading) = recipe.filtered(crate::gpu::evaluation::borrowed_input(domain))?;
-        let stages = crate::gpu::pixel_pipeline::Prepared::from_composition(
+        let presentation = source.spec.frame();
+        let output = crate::gpu::evaluation::Domain {
+            bounds: [0, 0, presentation.output[0], presentation.output[1]].into(),
+            grid: crate::gpu::evaluation::Grid::from_raster(crate::gpu::raster::Raster::frame(
+                presentation,
+            )),
+            meaning: crate::gpu::evaluation::Meaning::Graded,
+        };
+        let scale = std::array::from_fn(|i| {
+            f64::from(plan.output().output[i]) / f64::from(presentation.output[i])
+        });
+        let (root, grading) = recipe.filtered(
+            crate::gpu::evaluation::borrowed_input(domain),
+            output,
+            plan.output_offset().expect("frame-grid output"),
+            scale,
+        )?;
+        let stages = crate::gpu::pixel_pipeline::Prepared::record_composition(
             device,
             raster,
             root,
             cached,
             source.renderer.evaluation.clone(),
+            VIEW_SCRATCH_BYTES,
         )?;
         Ok(Arc::new(Self {
             pixels: float_buffer(device, source.spec.frame().output)?,

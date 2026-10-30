@@ -153,7 +153,7 @@ fn kernel_probe(@builtin(global_invocation_id) id: vec3u) {
 fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_range_rejection() {
     pollster::block_on(async {
         let (device, queue, _, kernels) = context().await;
-        let settings = crate::film_emulation::FilmEmulationPreset::Medium.settings();
+        let settings = crate::film_emulation::FilmPreset::ThirtyFiveMm.settings();
         let parameters = settings.parameters([64; 2]).unwrap().unwrap();
         // Small sources integrate many lattice samples; their actual finite gain is exercised.
         let raster = crate::gpu::raster::Raster::native([1000, 1000, 16, 16].into());
@@ -188,9 +188,19 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
                 assert!(p[0] > 0. && p[1] < 0. && p[2] == 0.);
                 assert!((p[0] / value).is_finite() && (p[0] / value) > 0.);
             }
+            let log: Vec<_> = result
+                .iter()
+                .map(|p| f64::from(p[1] / -value).ln())
+                .collect();
+            let mean = log.iter().sum::<f64>() / log.len() as f64;
+            let rms =
+                (log.iter().map(|g| (g - mean).powi(2)).sum::<f64>() / log.len() as f64).sqrt();
+            let expected = settings.amount * parameters.channel_variance(1.)[1].sqrt();
+            // 256 approximately independent samples: 20% allows four RMS standard errors,
+            // while rejecting a bypass or normalization that cancels the sampling loss.
             assert!(
-                result.iter().any(|p| (p[0] / value - 1.).abs() > 0.01),
-                "grain must execute"
+                (rms / expected - 1.).abs() < 0.2,
+                "small-source grain RMS={rms}, expected={expected}"
             );
         }
     });

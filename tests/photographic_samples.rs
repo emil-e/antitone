@@ -189,6 +189,7 @@ fn photographic_tiff_pairs() {
                             repairs: &[],
                             composition,
                             film_emulation: Default::default(),
+                            halation: Default::default(),
                             film_seed: 0,
                             format: Format::Tiff(target),
                             look: None,

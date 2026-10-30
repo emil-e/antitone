@@ -181,6 +181,66 @@ fn drawing_preserves_manual_precision_and_exposure_outside_normal_slider_range()
 }
 
 #[test]
+fn halation_defaults_center_tracks_without_narrowing_typed_or_saved_sizes() {
+    for kind in [Parameter::HalationSize, Parameter::HalationStrength] {
+        let range = kind.slider_range();
+        let position = (kind.default() - range.start()) / (range.end() - range.start());
+        assert!((0.45..=0.55).contains(&position));
+    }
+    for width in [270., 315.] {
+        let context = egui::Context::default();
+        let kind = Parameter::HalationSize;
+        let mut value = 0.4;
+        assert!(!kind.slider_range().contains(&value));
+        assert!(kind.range().contains(&value));
+        let draw = |value: &mut f64, events, modifiers| {
+            frame(&context, value, kind, width, true, events, modifiers)
+        };
+        let (slider, numeric, label) = draw(&mut value, vec![], egui::Modifiers::NONE);
+        assert_eq!(value, 0.4, "painting must not clamp an accepted wide halo");
+        draw(
+            &mut value,
+            pointer(slider.rect.center(), true),
+            egui::Modifiers::SHIFT,
+        );
+        assert_eq!(
+            value, 0.4,
+            "precision press must not jump to the soft bound"
+        );
+        draw(
+            &mut value,
+            pointer(slider.rect.center(), false),
+            egui::Modifiers::SHIFT,
+        );
+        draw(
+            &mut value,
+            alt_click(label.rect.center()),
+            egui::Modifiers::ALT,
+        );
+        assert_eq!(value, crate::halation::DEFAULT_SIZE);
+        for pressed in [true, false] {
+            draw(
+                &mut value,
+                pointer(numeric.rect.center(), pressed),
+                egui::Modifiers::NONE,
+            );
+        }
+        draw(
+            &mut value,
+            vec![egui::Event::Text("0.4".into())],
+            egui::Modifiers::NONE,
+        );
+        draw(
+            &mut value,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            egui::Modifiers::NONE,
+        );
+        draw(&mut value, vec![], egui::Modifiers::NONE);
+        assert_eq!(value, 0.4, "typing retains access to the full model range");
+    }
+}
+
+#[test]
 fn mask_parameters_preserve_precision_clamp_edits_and_reset_only_when_enabled() {
     for width in [270., 315.] {
         for (kind, text, expected) in [Parameter::Strength, Parameter::Feather]

@@ -72,6 +72,7 @@ pub(crate) fn write(
         format: job.format,
         look: job.recipe.look.clone(),
         film_emulation: job.recipe.film_emulation,
+        halation: job.recipe.halation,
         film_seed: job.recipe.neutral.source.0,
     };
     super::area::write_composition(renderer, device, gpu, (request, stages), destination, check)

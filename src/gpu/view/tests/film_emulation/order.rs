@@ -26,6 +26,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
         let settings = FilmEmulationSettings {
             enabled: true,
             size: 1.8 / 6000. * 100.,
+            image_sigma: 1.8 / 6000. * 100.,
             amount: 0.055,
             colour: 0.5,
         };
@@ -53,8 +54,11 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
         let graded = view.graded.as_ref().unwrap();
         let actual = read(&device, &queue, &graded.pixels);
         let field = read(&device, &queue, &graded.stages.field().unwrap().pixels);
-        let field_size = graded.stages.raster.size();
-        let offset = graded.plan.output_offset().unwrap();
+        assert_eq!(
+            field.len(),
+            actual.len(),
+            "grain uses the destination footprint"
+        );
         let grade = |rgb: [f32; 3]| {
             scalar
                 .apply(
@@ -89,8 +93,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
                     (expected_mtf - early_filter).abs().max_element() > 0.0001;
                 let point = [(N as i32 / 2 + dx) as u32, (N as i32 / 2 + dy) as u32];
                 let at = (point[1] * N as u32 + point[0]) as usize;
-                let field_at =
-                    ((point[1] + offset[1]) * field_size[0] + point[0] + offset[0]) as usize;
+                let field_at = at;
                 for c in 0..3 {
                     let expected = expected_mtf[c]
                         * (settings.amount * f64::from(field[field_at][c])

@@ -35,6 +35,85 @@ fn field(view: &RenderedView) -> &Arc<crate::gpu::evaluation::RetainedBuffer> {
 }
 
 #[test]
+fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_support() {
+    pollster::block_on(async {
+        let (device, queue, renderer, kernels) = context().await;
+        let base = configured_probe(
+            &device,
+            &renderer,
+            &kernels,
+            ProbeConfig {
+                reserve_scale: Some(4.),
+                impulse: true,
+                ..Default::default()
+            },
+            17,
+        );
+        let source = base.graded.as_ref().unwrap().source.clone();
+        let make = |strength, previous: &Arc<RenderedView>| {
+            let input = ProcessingInput::new(
+                &device,
+                InputSettings::Digital,
+                RollSettings::default(),
+                AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                source.spec.matrix,
+                source.spec.area,
+            )
+            .unwrap()
+            .with_film_emulation(FilmEmulationSettings {
+                enabled: true,
+                size: 2. / 6000. * 100.,
+                image_sigma: 2. / 6000. * 100.,
+                ..Default::default()
+            })
+            .with_halation(crate::halation::HalationSettings {
+                enabled: true,
+                size: 0.02,
+                strength,
+            })
+            .with_frame_size(source.spec.frame().composition.crop().size)
+            .with_film_seed(17);
+            RenderedView::new(
+                &device,
+                source.clone(),
+                &input,
+                OutputTarget::Srgb,
+                Some(previous),
+            )
+            .unwrap()
+        };
+        let first = make(0.2, &base);
+        first.ensure_submitted(
+            &device,
+            &queue,
+            &SubmissionGate::default(),
+            &egui::Context::default(),
+        );
+        let pixels = read(&device, &queue, &first.graded.as_ref().unwrap().pixels);
+        let noise = read(&device, &queue, &field(&first).pixels);
+        assert!(field(&first).ready());
+        let changed = make(0.8, &first);
+        assert!(Arc::ptr_eq(field(&first), field(&changed)));
+        assert!(field(&changed).ready());
+        changed.ensure_submitted(
+            &device,
+            &queue,
+            &SubmissionGate::default(),
+            &egui::Context::default(),
+        );
+        assert_eq!(noise, read(&device, &queue, &field(&changed).pixels));
+        let rendered = read(&device, &queue, &changed.graded.as_ref().unwrap().pixels);
+        assert!(
+            pixels
+                .iter()
+                .zip(rendered)
+                .any(|(a, b)| (a[1] - b[1]).abs() > 1e-5),
+            "nonconstant fixture must expose the halation edit"
+        );
+    });
+}
+
+#[test]
 fn film_emulation_gpu_encoded_field_survives_owner_retirement_before_submission() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
@@ -96,6 +175,7 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         let settings = FilmEmulationSettings {
             enabled: true,
             size: 2. / 6000. * 100.,
+            image_sigma: 2. / 6000. * 100.,
             amount: 0.1,
             colour: 0.8,
         };
@@ -165,16 +245,13 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             .channel_variance(1.);
         // Red/blue are flat; green carries the impulse. Verify refreshed photographic
         // and colour uniforms per pixel, independently of a small crop's random mean.
-        let graded = edited.graded.as_ref().unwrap();
-        let input_size = graded.stages.raster.size();
-        let output_size = graded.plan.output().output;
-        let offset = graded.plan.output_offset().unwrap();
+        assert_eq!(
+            generated.len(),
+            cached.len(),
+            "grain is integrated on presentation cells"
+        );
         for (index, pixel) in cached.iter().enumerate() {
-            let point = [
-                index as u32 % output_size[0] + offset[0],
-                index as u32 / output_size[0] + offset[1],
-            ];
-            let grain = generated[(point[1] * input_size[0] + point[0]) as usize];
+            let grain = generated[index];
             for c in [0, 2] {
                 let g = grain[1] as f64 + 2. * settings.colour * (grain[c] - grain[1]) as f64;
                 let expected = 0.18
@@ -231,11 +308,41 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             "field reuse must not reuse the previous photographic output"
         );
 
+        let softer = candidate(
+            &device,
+            source.clone(),
+            FilmEmulationSettings {
+                image_sigma: warm_settings.image_sigma * 1.2,
+                ..warm_settings
+            },
+            AdjustmentLayerSettings::default(),
+            Some(&warm),
+        );
+        assert!(
+            Arc::ptr_eq(field(&warm), field(&softer)),
+            "independent image softness must reuse the same grain realization"
+        );
+        softer.ensure_submitted(
+            &device,
+            &queue,
+            &SubmissionGate::default(),
+            &egui::Context::default(),
+        );
+        let softer_pixels = read(&device, &queue, &softer.graded.as_ref().unwrap().pixels);
+        assert!(
+            warm_pixels
+                .iter()
+                .zip(softer_pixels)
+                .any(|(a, b)| (a[1] - b[1]).abs() > 1e-5),
+            "the impulse must expose omitted image-sigma edits"
+        );
+
         let resized = candidate(
             &device,
             source.clone(),
             FilmEmulationSettings {
                 size: settings.size * 1.5,
+                image_sigma: settings.size * 1.5,
                 ..settings
             },
             photo,
@@ -298,14 +405,7 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         );
         let a = read(&device, &queue, &field(&warm).pixels);
         let b = read(&device, &queue, &field(&shifted).pixels);
-        let size = warm
-            .graded
-            .as_ref()
-            .unwrap()
-            .stages
-            .raster
-            .size()
-            .map(|n| n as usize);
+        let size = warm.spec.frame().output.map(|n| n as usize);
         for y in 0..size[1] - 8 {
             for x in 0..size[0] - 8 {
                 assert_eq!(a[(y + 8) * size[0] + x + 8], b[y * size[0] + x]);

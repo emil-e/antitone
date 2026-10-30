@@ -70,7 +70,7 @@ fn submitted_positive_rebinds_publication_without_regrading_or_changing_pixels()
             )
             .unwrap(),
         ))
-        .with_film_emulation(crate::film_emulation::FilmEmulationPreset::Medium.settings())
+        .with_film_emulation(crate::film_emulation::FilmPreset::ThirtyFiveMm.settings())
         .with_frame_size(frame(&scan).composition.crop().size)
         .with_film_seed(17);
         let spec = ViewSourceSpec::new(7, frame(&scan), InputSettings::Digital, matrix, None)

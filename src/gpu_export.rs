@@ -19,6 +19,13 @@ use std::{path::Path, sync::Arc};
 use crate::gpu::ProcessingInput;
 #[cfg(all(test, target_os = "macos"))]
 mod film_tests;
+#[cfg(all(
+    test,
+    target_os = "macos",
+    feature = "editor",
+    feature = "ocio-reference"
+))]
+mod halation_tests;
 
 mod area;
 #[cfg(feature = "project")]
@@ -56,6 +63,7 @@ pub struct Request<'a> {
     pub format: Format,
     pub look: Option<Arc<crate::looks::LookAsset>>,
     pub film_emulation: crate::film_emulation::FilmEmulationSettings,
+    pub halation: crate::halation::HalationSettings,
     pub film_seed: u64,
 }
 

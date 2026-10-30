@@ -52,6 +52,7 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
     .unwrap();
     let request = || Request {
         film_emulation: Default::default(),
+        halation: Default::default(),
         film_seed: 17,
         scan: &scan,
         field: None,

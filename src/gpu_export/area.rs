@@ -16,8 +16,9 @@ pub(super) fn write(
     destination: (&Path, Overwrite),
     check: impl FnMut() -> Result<(), Error>,
 ) -> Result<execution::Stats, Error> {
-    let stages = crate::pixel_pipeline::PixelPipeline::film(
+    let stages = crate::pixel_pipeline::PixelPipeline::emulation(
         request.film_emulation,
+        request.halation,
         request.composition.crop().size,
         request.film_seed,
     )?;
@@ -40,6 +41,7 @@ pub(super) fn write_composition(
         ),
         Format::Exr(_) => (OutputReference::SceneReferred, SampleEncoding::LinearFloat),
     };
+
     execution::execute(
         renderer,
         device,

@@ -58,7 +58,8 @@ fn grain_field(source: vec2f, scale: f32, view_footprint: f32, seed: u32) -> vec
         let factor = GRAIN_FACTORS[i];
         let diagonal = factor[0] * factor[0] + factor[1] * factor[1] + factor[2] * factor[2];
         let power = sigma * sigma / (sigma * sigma + footprint * footprint / 12.0);
-        reference += diagonal.y * sigma * sigma / (sigma * sigma + 1.0 / 12.0);
+        // Amount refers to the continuous field, not a source-pixel aperture.
+        reference += diagonal.y;
         peak_variance += max(max(diagonal.x, diagonal.y), diagonal.z) * power;
     }
     // Maximum Amount/Colour loses at most 6e-5 relative RMS below this budget.

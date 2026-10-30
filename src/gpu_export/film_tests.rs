@@ -1,7 +1,7 @@
 use super::*;
-use crate::film_emulation::{FilmEmulationPreset, FilmEmulationSettings};
+use crate::film_emulation::{FilmEmulationSettings, FilmPreset};
 
-fn exr_pixels(path: &Path) -> Vec<[f32; 3]> {
+pub(super) fn exr_pixels(path: &Path) -> Vec<[f32; 3]> {
     use exr::prelude::{FlatSamples, read_first_flat_layer_from_file};
     let image = read_first_flat_layer_from_file(path).unwrap();
     let mut pixels = vec![[0.; 3]; image.layer_data.size.0 * image.layer_data.size.1];
@@ -29,7 +29,7 @@ fn exr_pixels(path: &Path) -> Vec<[f32; 3]> {
     pixels
 }
 
-fn tiff_pixels(path: &Path) -> Vec<u16> {
+pub(super) fn tiff_pixels(path: &Path) -> Vec<u16> {
     let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
     match decoder.read_image().unwrap() {
         tiff::decoder::DecodingResult::U16(values) => values,
@@ -49,7 +49,7 @@ fn exported_files_include_seeded_film_before_tiff_look_and_keep_it_in_both_scene
     let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
     let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();
-    let film = FilmEmulationPreset::Medium.settings();
+    let film = FilmPreset::ThirtyFiveMm.settings();
     let seed = (1 << 60) + 17;
     let write_file = |name: &str, settings, seed, format, look| {
         let path = directory.path().join(name);
@@ -68,6 +68,7 @@ fn exported_files_include_seeded_film_before_tiff_look_and_keep_it_in_both_scene
                 format,
                 look,
                 film_emulation: settings,
+                halation: Default::default(),
                 film_seed: seed,
             },
             &path,
@@ -178,7 +179,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
         None,
     )
     .unwrap();
-    let film = FilmEmulationPreset::Medium.settings();
+    let film = FilmPreset::ThirtyFiveMm.settings();
     let seed = (1 << 60) + 17;
     let stack = AdjustmentLayerSnapshot::new(vec![
         crate::adjustment_layers::AdjustmentLayer {
@@ -277,6 +278,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
                 format: Format::Tiff(OutputTarget::Srgb),
                 look: None,
                 film_emulation: film,
+                halation: Default::default(),
                 film_seed: seed,
             },
             &path,

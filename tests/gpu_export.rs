@@ -115,6 +115,7 @@ fn gpu_tiff_matches_scalar_ocio_within_one_rgb16_code_on_authored_patches() {
                 repairs: &[],
                 composition,
                 format: Format::Tiff(target),
+                halation: Default::default(),
                 look: None,
             },
             &gpu,
@@ -180,6 +181,7 @@ fn gpu_exr_uses_shared_working_precision_through_linear_ap0_on_authored_patches(
                 repairs: &[],
                 composition,
                 format: Format::Exr(precision),
+                halation: Default::default(),
                 look: None,
             },
             &gpu,
@@ -397,6 +399,7 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
                     (&queue, &SubmissionGate::default()),
                     Request {
                         film_emulation: Default::default(),
+                        halation: Default::default(),
                         film_seed: 17,
                         look: None,
                         scan: &scan,

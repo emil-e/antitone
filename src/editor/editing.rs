@@ -95,6 +95,7 @@ pub(super) struct ControlSettings {
     pub roll: RollSettings,
     pub photo: AdjustmentLayerSettings,
     pub film_emulation: FilmEmulationSettings,
+    pub halation: crate::halation::HalationSettings,
 }
 
 impl ControlSettings {
@@ -104,6 +105,7 @@ impl ControlSettings {
             roll: editor.document.roll,
             photo: editor.document.visit.adjustment_layer_settings,
             film_emulation: editor.document.film_emulation,
+            halation: editor.document.halation,
         }
     }
 
@@ -112,6 +114,7 @@ impl ControlSettings {
         editor.document.roll = self.roll;
         editor.document.visit.adjustment_layer_settings = self.photo;
         editor.document.film_emulation = self.film_emulation;
+        editor.document.halation = self.halation;
     }
 }
 
@@ -226,6 +229,7 @@ impl Editor {
         candidate: ControlSettings,
     ) -> Result<(), Error> {
         candidate.film_emulation.validate()?;
+        candidate.halation.validate()?;
         if candidate == previous || !candidate.input.ready() {
             return Ok(());
         }
@@ -294,10 +298,17 @@ impl Editor {
                             candidate.film_emulation.amount = kind.default()
                         }
                         controls::Parameter::FilmSize => {
-                            candidate.film_emulation.size = kind.default()
+                            candidate.film_emulation =
+                                candidate.film_emulation.resized(kind.default())
                         }
                         controls::Parameter::FilmColour => {
                             candidate.film_emulation.colour = kind.default()
+                        }
+                        controls::Parameter::HalationStrength => {
+                            candidate.halation.strength = kind.default()
+                        }
+                        controls::Parameter::HalationSize => {
+                            candidate.halation.size = kind.default()
                         }
                         _ => {}
                     }

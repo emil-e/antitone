@@ -4,6 +4,7 @@ use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     film_emulation::FilmEmulationSettings,
     geometry::SourceRegion,
+    halation::HalationSettings,
     processing::{InputSettings, RollSettings},
 };
 use glam::{DMat3, DVec3};
@@ -15,6 +16,7 @@ pub struct ProcessingInput {
     processing: Processing,
     look: Option<Arc<crate::looks::LookAsset>>,
     film_emulation: FilmEmulationSettings,
+    halation: HalationSettings,
     film_seed: Option<u64>,
     pixel_pipeline: Option<crate::pixel_pipeline::PixelPipeline>,
     frame_size: [u32; 2],
@@ -73,6 +75,7 @@ impl ProcessingInput {
             frame_size: [0; 2],
             look: None,
             film_emulation: FilmEmulationSettings::default(),
+            halation: HalationSettings::default(),
             film_seed: None,
             pixel_pipeline: None,
             repairs: Default::default(),
@@ -243,6 +246,7 @@ impl ProcessingInput {
         Ok(self
             .with_look(recipe.look.clone())
             .with_film_emulation(recipe.film_emulation)
+            .with_halation(recipe.halation)
             .with_frame_size(recipe.composition.crop().size)
             .with_film_seed(recipe.neutral.source.0)
             .with_pixel_pipeline(recipe.pixel_pipeline()?))
@@ -277,6 +281,20 @@ impl ProcessingInput {
         self
     }
 
+    pub fn with_halation(mut self, halation: HalationSettings) -> Self {
+        self.pixel_pipeline = None;
+        self.halation = if self.parameters().graded() {
+            halation
+        } else {
+            HalationSettings::default()
+        };
+        self
+    }
+
+    pub fn halation(&self) -> HalationSettings {
+        self.halation
+    }
+
     /// Capture the photograph's crop dimensions independently of source/tile/view geometry.
     pub fn with_frame_size(mut self, size: [u32; 2]) -> Self {
         self.frame_size = if self.parameters().graded() {
@@ -306,8 +324,9 @@ impl ProcessingInput {
         if let Some(pipeline) = &self.pixel_pipeline {
             return Ok(pipeline.clone());
         }
-        crate::pixel_pipeline::PixelPipeline::film(
+        crate::pixel_pipeline::PixelPipeline::emulation(
             self.film_emulation,
+            self.halation,
             self.frame_size,
             self.film_seed.unwrap_or(0),
         )
@@ -318,9 +337,11 @@ impl ProcessingInput {
             processing: self.processing.clone(),
             look: self.look.as_ref().map(|look| look.lut().id()),
             film_emulation: self.film_emulation,
+            halation: self.halation.active().then_some(self.halation),
             film_seed: self.film_seed,
             pixel_pipeline: self.pixel_pipeline.clone(),
-            frame_size: self.film_emulation.enabled.then_some(self.frame_size),
+            frame_size: (self.film_emulation.enabled || self.halation.active())
+                .then_some(self.frame_size),
             repairs: self.repairs.clone(),
         }
     }
@@ -407,6 +428,7 @@ pub struct ProcessingSignature {
     processing: Processing,
     look: Option<crate::looks::LookId>,
     film_emulation: FilmEmulationSettings,
+    halation: Option<HalationSettings>,
     film_seed: Option<u64>,
     frame_size: Option<[u32; 2]>,
     pixel_pipeline: Option<crate::pixel_pipeline::PixelPipeline>,
@@ -425,6 +447,7 @@ impl ProcessingSignature {
         }
         self.processing.same_content(&other.processing)
             && self.film_emulation == other.film_emulation
+            && self.halation == other.halation
             && self.film_seed == other.film_seed
             && self.frame_size == other.frame_size
             && self.pixel_pipeline == other.pixel_pipeline
@@ -448,6 +471,7 @@ impl std::fmt::Debug for ProcessingSignature {
             )
             .field("look", &self.look)
             .field("film_emulation", &self.film_emulation)
+            .field("halation", &self.halation)
             .field("film_seed", &self.film_seed)
             .field("pixel_pipeline", &self.pixel_pipeline)
             .field(
@@ -462,9 +486,12 @@ impl std::fmt::Debug for ProcessingSignature {
 }
 
 #[cfg(test)]
+mod halation_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::film_emulation::FilmEmulationPreset;
+    use crate::film_emulation::FilmPreset;
 
     #[cfg(all(
         feature = "project",
@@ -506,6 +533,7 @@ mod tests {
         project.output.film_emulation = crate::film_emulation::FilmEmulationSettings {
             enabled: true,
             size: 0.04,
+            image_sigma: 0.04,
             ..Default::default()
         };
         project.output.look = Some(Arc::new(
@@ -538,7 +566,7 @@ mod tests {
             .find_map(|stage| stage.get::<crate::pixel_pipeline::Grain>())
             .unwrap();
         assert!((mtf.sigma - 0.08).abs() < 1e-12);
-        assert!((grain.parameters.grain_size - 0.08).abs() < 1e-12);
+        assert!((grain.parameters.grain_size - 0.11).abs() < 1e-12);
         assert_eq!(grain.seed, id.0);
         assert_eq!(
             captured.look().unwrap().lut().id(),
@@ -569,9 +597,16 @@ mod tests {
     #[test]
     fn source_inspection_cannot_adopt_film_emulation() {
         let source = ProcessingInput::from(ProcessingParameters::source());
-        let film = source
-            .clone()
-            .with_film_emulation(FilmEmulationPreset::Coarse.settings());
+        let film =
+            source
+                .clone()
+                .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
+                    enabled: true,
+                    size: 0.065,
+                    image_sigma: 0.065,
+                    amount: 0.065,
+                    ..Default::default()
+                });
         assert_eq!(source.signature(), film.signature());
         assert!(!film.film_emulation().enabled);
     }
@@ -590,7 +625,7 @@ mod tests {
             base.clone().with_frame_size([6000, 4000]).signature(),
             base.clone().with_frame_size([3000, 2000]).signature()
         );
-        let film = base.with_film_emulation(FilmEmulationPreset::Medium.settings());
+        let film = base.with_film_emulation(FilmPreset::ThirtyFiveMm.settings());
         assert_ne!(
             film.clone().with_frame_size([6000, 4000]).signature(),
             film.with_frame_size([3000, 2000]).signature()
@@ -608,7 +643,7 @@ mod tests {
             )
             .unwrap(),
         )
-        .with_film_emulation(FilmEmulationPreset::Medium.settings());
+        .with_film_emulation(FilmPreset::ThirtyFiveMm.settings());
         assert!(input.pixel_pipeline().is_err());
         assert!(input.with_frame_size([3000, 2000]).pixel_pipeline().is_ok());
     }
@@ -625,7 +660,13 @@ mod tests {
         );
         let film = base
             .clone()
-            .with_film_emulation(FilmEmulationPreset::Fine.settings());
+            .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
+                enabled: true,
+                size: 0.025,
+                image_sigma: 0.025,
+                amount: 0.040,
+                ..Default::default()
+            });
         assert_ne!(base.signature(), film.signature());
         // Graded pixels cannot be reused when the emulation definition changes.
         assert!(!base.signature().same_photographic(&film.signature()));

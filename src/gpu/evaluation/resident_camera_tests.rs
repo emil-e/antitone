@@ -363,7 +363,7 @@ fn resident_camera_execution_resources() {
             .unwrap(),
         );
         let input = ProcessingInput::from(pipeline.clone())
-            .with_film_emulation(crate::film_emulation::FilmEmulationPreset::Medium.settings())
+            .with_film_emulation(crate::film_emulation::FilmPreset::ThirtyFiveMm.settings())
             .with_frame_size([side; 2])
             .with_film_seed(17);
         let plan = crate::gpu::execution::raster::resident_plan(&source, &input)

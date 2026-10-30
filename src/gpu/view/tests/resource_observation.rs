@@ -28,7 +28,7 @@ fn acquisition_execution_resources() {
         )
         .unwrap();
         let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
-        let settings = crate::film_emulation::FilmEmulationPreset::Medium.settings();
+        let settings = crate::film_emulation::FilmPreset::ThirtyFiveMm.settings();
         let gate = SubmissionGate::default();
         let peak = Arc::new(AtomicU64::new(0));
         let (observed, observed_device) = (peak.clone(), device.clone());

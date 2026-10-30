@@ -55,6 +55,7 @@ fn native_output_resources() {
     let film = crate::film_emulation::FilmEmulationSettings {
         enabled: true,
         size: 0.1,
+        image_sigma: 0.1,
         amount: 0.055,
         colour: 0.7,
     };
@@ -139,6 +140,7 @@ fn native_output_resources() {
                     composition,
                     format,
                     film_emulation: film,
+                    halation: Default::default(),
                     film_seed: (1 << 60) + 17,
                     look: None,
                 },
