@@ -1,130 +1,90 @@
-# Architecture: how the application runs
+# Architecture
 
-Antitone is one Rust package with small native bridges: LibRaw/OpenMP for RAW development, the Adobe DNG SDK behind the `dng-sdk` feature, Metal on macOS and Vulkan on Windows through wgpu, and generated OCIO references behind `ocio-reference`. Cargo features add persistence, RAW development, GPU processing, rendering, export and the editor, so a contributor can work on one boundary without building the desktop stack.
+> Express relationships in the program's structure instead of repeatedly maintaining them through procedure.
 
-This guide owns the application's structure: how work executes, where state lives, and which rules keep it sound. What features *mean* is explained by the topic guides ([README](README.md)); the [module map](README.md#module-map) lives there too.
+Correctness should follow naturally from the shape of the program, rather than from everyone remembering to coordinate things correctly. These principles guide design decisions; existing implementation is not an exemption from them. [Development](development.md) covers engineering and verification; the [topic guides](README.md) explain photographic and feature behavior.
 
-## The event loop owns the UI thread
+## Fundamentals
 
-[`platform/host.rs`](../src/platform/host.rs) runs the winit event loop on the main thread; per-platform modules own window-system integration through [macOS](../src/platform/macos.rs) AppKit and [Windows](../src/platform/windows.rs) Win32, including native menus and presentation. AppKit termination requests use [native quit negotiation](editor.md#native-quit-negotiation). The UI owns live document and view state, and a frame paint must stay fast: no RAW development, GPU waits or file IO happens inside a paint callback.
+### Give responsibilities meaningful owners
 
-## Workflows: slow work without a backend thread
+Ownership should express responsibility, not merely where data happens to be stored. It should be clear who maintains a thing's guarantees, who may change it, and who is responsible for ending it.
 
-Long operations — opening a photo, calibration measurements, Analyze fitting, export — run as async tasks on a [`LocalExecutor`](../src/application.rs) on the UI thread, driven from winit wake events outside layout and painting. Features own their tasks and capture inputs at the UI action; [`UiContext`](../src/application.rs) provides short UI transactions around awaits. [Calibration](../src/editor/calibration.rs) and [white balance](../src/editor/white_balance.rs) supply display information and a measurement operation, then await the whole [interactive pick](../src/editor/picking/measurement.rs). Picking owns selection, measurement and failure feedback; the consuming feature owns validation, edits and history.
+Put related state, behavior and obligations together when they share a reason to exist. Give genuinely independent responsibilities independent ownership.
 
-Three rules keep the borrow sound:
+### Make lifetime dependencies structural
 
-- **Capture inputs at the UI action.** A workflow reads its source, settings and destination from the captured request, never lazily from live state that can change under it.
-- **Never hold an `Editor` borrow or `egui::Ui` across an await.** Use short read/update closures around the state you touch.
-- **Updates request repaint; progress does not require a frame.** A completed development or fit proceeds even while nothing is being painted.
+When something exists only on behalf of an owner, its usable lifetime should follow that owner. Beginning, transferring and ending ownership should naturally establish, transfer and release the corresponding obligations.
 
-The host destroys pending futures before retiring application, window and GPU state, and `UiContext` holds only a weak executor reference, so a workflow cannot outlive what would wake it.
+This is the RAII mentality beyond resource cleanup: ordinary program structure carries the lifecycle. Cleanup should follow ownership, rather than depend on every exit path remembering what to undo. Things with different lifetimes need an explicit relationship, rather than being kept alive together for convenience.
 
-## Scopes: nested, disposable UI state
+### Establish invariants by construction
 
-Editor state is nested scopes rather than one flat struct ([`editor_document_scope.rs`](../src/editor/document_scope.rs)):
+Prefer representations and interfaces that naturally preserve valid relationships. Make invalid situations difficult to create instead of relying on repeated checks to detect them or repair them afterwards.
 
-| Scope | Owns |
-| --- | --- |
-| [`DocumentScope`](../src/editor/document_scope.rs) | Accepted data/history, [spatial metadata](spatial-metadata.md), source/thumbnail/grade retention, correction, one active-tool owner and the dependent photo visit |
-| [`PhotoScope`](../src/editor/photo_scope.rs) | Source readiness, working images/tasks, picker projection, repair evaluation and visit-bound image consumers |
-| [`GradeScope`](../src/editor/grade_scope.rs) | Effective photographic content and original-reconstruction demand, continuation and results |
+Checks remain necessary at boundaries where facts are uncertain or outside the program's control. Distinguish validating genuine uncertainty from continually checking relationships that the program itself could guarantee.
 
-The [tool owner](../src/editor/tool.rs) contains one interaction's drafts/tasks. Starting a tool retires its predecessor, including while numerical work is running; physical jobs retain their inputs through cleanup. Navigation retires photo-bound tools and creates fresh visits without accepting geometry or changing source-owned adjustments. Ordinary picking stays on the current photo; flat-reference sessions and Analyze reviews span visits under the document owner. Rejected navigation or failed candidates preserve the current visit. Document replacement drops its RAM retention; captured documents contain data, while physical jobs retain their required pixel leases through cleanup. Accepted state, drafts and durable preferences are separated in [editor](editor.md#accepted-state-and-drafts).
+### Keep authority unambiguous
 
-Document-owned export captures a batch of fixed recipes, resolved paths, correction and service handles. It acquires originals directly from the shared backend, one at a time, without preparing viewer resources or retaining a document cache. The current UI blocks document replacement and closing during export.
+A fact should have a clear authoritative home. Derive what follows from it rather than maintaining several independent accounts that must stay synchronized.
 
-## Services and workers
+Multiple representations can be useful, provided their meanings and relationship are explicit. The problem is competing authority or redundant bookkeeping, not copying data in itself.
 
-Workflows never block; services run the work off the UI thread and workflows await typed results:
+### Enable local reasoning
 
-- **Synchronous work** runs on the shared blocking pool through [`background.rs`](../src/background.rs), with worker panics returned as errors. Each job owns its captured inputs; unrelated features can proceed concurrently.
-- **Two native owners at most** ([`source/loader.rs`](../src/source/loader.rs)) serve foreground, visible and eager development; each runs one non-interruptible call with worker-local mutable RAW handles, and background work yields to foreground demand. [Scheduling rationale](native-development.md#editor-scheduling) describes the tradeoff.
-- **Thumbnail processing** ([`production_worker.rs`](../src/editor/thumbnails/production_worker.rs)) awaits source acquisition, runs disk/CPU work on the shared blocking pool, and serializes ready processing by priority. GPU waits stay off the UI thread; obsolete tickets never install images.
-- **Lazy photo preparation** ([`photo_preparation`](../src/photo_preparation.rs)) resolves Digital starting exposure before processed-positive publication. The document owns recorded values and per-photo initialization through [`exposure_metadata`](../src/exposure_metadata.rs); operations capture the completed value separately from shared native/proxy pixels. Camera preview display and metering share decoded leases and in-flight extraction. AP1 production folds the captured gain into its source transform.
-- **The source cache** is a byte-bounded, oldest-unprotected LRU for native data, proxies and decoded camera references: active leases survive eviction, selected/visible proxies are protected separately, and native cache ownership is always optional. Retention settings and pressure behavior: [editor](editor.md#retention-settings-and-pressure).
+A component should be understandable through its own responsibilities and contracts. Using or changing it should not require knowing all of its consumers, their internal state, or their cleanup obligations.
 
-Presentation follows the same separation: [`editor_activity.rs`](../src/editor/activity.rs) owns one foreground task-activity lifecycle (typed requests, progress, cancellation state), and [`editor_ui_dialogs.rs`](../src/editor/presentation/dialogs.rs) owns decision framing, button focus and dismissal — controllers keep the payloads and dispatch.
+Good encapsulation lets someone safely ignore implementation details. Dependencies and effects should be apparent at the boundary rather than hidden in ambient state or distant conventions.
 
-## Source acquisition and retention
+### Compose coherent behavior
 
-The [`source` module](../src/source/mod.rs) separates retention from execution. `SourceProvider` acquires immutable native pixels, camera proxies and embedded previews through one object-safe interface. Cache-backed and cacheless implementations serve the same consumers:
+Build larger behavior from parts with clear meanings and useful contracts. Boundaries should follow responsibilities and purpose, not merely technical stages or superficial similarities.
 
-```mermaid
-flowchart LR
-    Consumer[Scoped acquisition] -->|await key and priority| Provider[SourceProvider]
-    Document[DocumentScope] -->|owns retention| Cache[SourceCache]
-    Provider -->|optional reuse| Cache
-    Provider -->|miss| Loader[SourceLoader]
-    Loader --> Native[Native owners]
-    Provider -->|owning pixel lease| Worker[Physical work]
-```
+When an action naturally consists of a sequence, express that sequence coherently. Other parts of the program should not have to reconstruct where it was, what it meant, and how to resume it. Introduce independent coordination when there is genuine independence to represent.
 
-[`SourceLoader`](../src/source/loader.rs) owns native execution and joining, independently of document stores. Cache misses forward the request's priority; joined work uses the highest active priority, so selecting a queued thumbnail promotes its existing load. Weak discovery of completed live results covers the handoff before cache publication. Waiting occupies no blocking-pool thread.
+### Prefer the least machinery that expresses the design
 
-RAWs are treated as immutable while open. Import/Open captures file identity for persisted-cache validity; acquisitions reuse it. Cache lookup/publication and request joining are in-memory operations.
+An abstraction earns its place by reducing what a reader must understand or coordinate. More types, layers, indirection or genericity do not automatically produce better structure.
 
-Each `DocumentScope` owns one [`SourceCache`](../src/source/cache.rs) and photo exposure initialization across same-document preparation, Save As and Undo. The owner binds [`providers`](../src/source/provider.rs); feature workflows receive acquisition capabilities. [Photo preparation](../src/photo_preparation.rs) resolves captured exposure separately from pixel compatibility. Blocking jobs receive pixel leases and captured inputs; optional retention stays with providers or the scope's continuation. New/Open prepares independently and seeds the accepted scope.
+Prefer names that reveal intent and focused operations that explain the whole. Measure simplicity by the number of independent concepts and relationships, not just by line count or the amount of code moved behind an interface.
 
-`SourceCache` owns weak live lookup and optional strong ownership under an LRU byte budget. Eviction preserves consumer leases; zero retention still permits live reuse. Retiring document-owned continuations releases their demand and retention references; running physical calls finish with their captured inputs. After every strong pixel reference disappears, reacquisition can develop again. Selected/visible protection applies to proxies, not full-resolution sources. [Retention settings](editor.md#retention-settings-and-pressure) govern optional ownership.
+### Applying the principles
 
-Camera display and exposure preparation share [`preview acquisition`](../src/source/preview.rs): one background extraction/decode serves async joiners. The worker owns decode inputs through completion; departing waiters leave other consumers intact. Decoded pixels use the same optional byte LRU as native/proxy data.
+Use judgment, not maximal enforcement through types or a single architectural template. Ask:
 
-Analysis owns measured samples through fitting rather than a full-roll set of source leases.
+- Does the structure tell us who is responsible, and for how long?
+- Which guarantees follow from the representation, and which depend on discipline elsewhere?
+- How much unrelated machinery must someone understand to change this part safely?
+- Does an abstraction remove complexity, or merely relocate it?
 
-## Results are proposals
+## Current execution model
 
-Validate domain candidates before promotion. Interaction ownership withdraws unfinished work when its context ends; request IDs or generations distinguish superseded demand within a surviving owner where needed. Successful candidates promote atomically — the UI installs Analyze's support and grade together, or not at all.
+Antitone is a Rust application with native RAW bridges and wgpu. The boundaries below describe its current mechanisms, not a required feature layout or universal task/service abstraction. [README](README.md#module-map) maps the implementation.
+
+The [host](../src/platform/host.rs) owns the UI thread. [Application tasks](../src/application.rs) advance outside painting; updates request repaint without requiring a paint to make progress. Features capture operation inputs and edit targets at the relevant action and use short `UiContext` transactions around awaits. Validate candidates before promotion; accepted edits and their history form one transaction. Never hold an Editor or UI borrow across an await, or perform RAW development, GPU waits or file IO in a paint callback. Shutdown destroys pending futures before retiring host/GPU state.
+
+### Scopes: nested, disposable UI state
+
+The [document](../src/editor/document_scope.rs), [photo visit](../src/editor/photo_scope.rs) and [grade](../src/editor/grade_scope.rs) own accepted state/retention, visit-bound interaction and effective-image demand respectively. The [tool owner](../src/editor/tool.rs) contains the unfinished interaction; replacement retires it without discarding accepted edits. Document-owned interactions can span photo visits. [Editor](editor.md#accepted-state-and-drafts) describes their actual admission and navigation behavior.
+
+### Services and workers
+
+Synchronous work runs through [the blocking pool](../src/background.rs); each job retains its captured inputs and returns panics as errors. [Native owners](native-development.md#editor-scheduling) keep mutable RAW handles worker-local. [Photo preparation](../src/photo_preparation.rs) resolves recorded starting exposure separately from shared pixels before publishing a processed positive. Resource ownership can justify a service; stateless work can remain an ordinary function.
+
+### Source acquisition and retention
+
+[Source acquisition](../src/source/mod.rs) supplies compatible immutable pixel leases independently of optional retention. The document owns RAM retention and recorded interpretation; jobs own their inputs. Eviction or zero retention preserves active leases. Joined demands share execution at the highest active priority while retaining independent cancellation. File identity is captured at Import/Open; RAWs are treated as immutable while open. [Editor retention](editor.md#responsiveness-and-optional-caches) and [native scheduling](native-development.md#editor-scheduling) explain current policy.
 
 ### Cooperative cancellation
 
-Each [`background::run`](../src/background.rs) wait owns a [cancellation signal](../src/cancellation.rs) passed to its blocking job. Dropping the waiting future signals stop; the job checks at safe checkpoints. Task retirement propagates when the executor destroys its future. Explicit user cancellation can also signal work while retaining the continuation for acknowledgement; analysis, region preparation and export own signals for that purpose. Replacing a tool instead drops its continuation immediately, allowing the replacement to start while physical cleanup continues.
+A [background wait](../src/background.rs) owns a cancellation signal for its job. Retirement withdraws continuation rights; physical work retains inputs through safe cleanup and checks stop at appropriate boundaries. Explicit Cancel can retain the continuation for acknowledgement. A departing acquisition consumer does not cancel independent joined consumers. Represent cancellation distinctly from failure, and preserve already-committed side effects as successes. [Editor](editor.md#working-feedback-follows-what-remains-usable) owns the interaction choices; [output](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns file publication.
 
-These operations keep the continuation and cancelling feedback until acknowledgement. Owner retirement drops continuation rights while running work retains its inputs through cleanup. Dropping a source future retires that demand independently of joined consumers; running native calls finish on their owner. CPU work checks cancellation at its safe checkpoints. Return cancellation distinctly from failure, never by parsing diagnostic text, and preserve already-committed side effects as successes. [Development checks](development.md#cancellation-checks) exercise these boundaries.
+### Native and GPU ownership
 
-## Native and GPU ownership
+Frozen native source leases remain valid through their last consumer; interpretation is captured per consumer rather than mutated globally. One device/queue serves GPU consumers. The shared [submission gate](../src/gpu/submission.rs) excludes submission during surface reconfiguration; encoding, uploads and completion waits stay outside it. Workers submit and await completion off the UI thread; resident rendering records into its caller's encoder. Jobs and recorded commands retain resources through their actual use, independently of optional cache ownership. [Output](colour-and-output.md) and [native development](native-development.md) own the detailed contracts.
 
-- **Native development is consumed, not shared.** A mutable `RawFile` stays worker-local; a successful development becomes private frozen native ownership. A [`Scan`](../src/scan.rs) leases an immutable `DevelopedSource` — native RGB16, Sony-corrected f32 or direct-SDK DNG f32 samples with original CFA and metadata — keeping its own illumination-correction context. Native leases remain stable across processing choices. Each `Scan` or prepared camera proxy carries its own fixed exposure value and correction context, so another document's baseline cannot mutate an existing consumer. Final destruction follows the last storage lease, including synchronized transfer to another thread.
-- **One wgpu device/queue** serves view rendering, measurements, Analyze, export and repairs; mutable processing state stays image/job-owned. The [bounded original-sample executor](../src/gpu/execution.rs) owns acquisition, processing, reconstruction and destination readback independently of file encoding. The shared submission gate ([`gpu_submission.rs`](../src/gpu/submission.rs)) excludes new submissions while wgpu drains GPU work during a resize.
-- **Pipeline routing captures source execution separately from photographic constants.** A GPU source program and independent Roll/layer grade compose into an immutable execution plan; the CPU-side encoder binds their resources and can execute the stages in one compiled kernel. View state and metadata are excluded from photographic content identity. [Output](colour-and-output.md#tiff-and-exr-serve-different-purposes) owns reconstruction and lifetime detail.
-- **Image recipes capture accepted intent** ([processing](processing.md#one-accepted-image-recipe)): viewer, reference, scopes and export share accepted repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) prioritize inexpensive proxy rendering.
+Production photographic measurements, Analyze and repair inputs share the [ordered photographic definition](processing.md#input-and-grading-have-separate-contracts) with rendering. Adapters supply captured inputs and request endpoints rather than rebuilding stage order; consumers own publication of query results.
 
 ### Pixel stages and spatial support
 
-[`PixelPipeline`](../src/pixel_pipeline.rs) holds ordered, value-identified `EffectDefinition` settings after photographic grading. Applying a definition to an `ImageNode` builds result nodes containing captured `Operation` implementations. Operations declare upstream regions and GPU work; the [evaluation context](../src/gpu/evaluation/context.rs) plans and executes requested results. `PlannedImage` identifies a region/resource during that planning, not a logical image. Nodes need not introduce buffers or passes.
-
-Recipe assembly chooses definitions and order: Film Emulation supplies image MTF followed by active grain. Add an effect by implementing `EffectDefinition` and inserting its value into recipe assembly. The post-grade collection preserves grid and AP1 meaning; one definition may assemble several operations. [Authoring fixtures](../src/pixel_pipeline/authoring_examples.rs) demonstrate a parameterized pointwise function and a two-pass convolution. `Function::with_uniform` captures CPU parameter bytes without a device or shader specialization; convolution operations declare their neighbourhood and work explicitly.
-
-Each stage declares its input neighbourhood at the raster's explicit grid pitch. Use that declared pitch for kernel preparation: recomputing lengths from rounded affine vectors can change finite radii. The pure [acquisition planner](../src/acquisition.rs) records backward per-stage dependencies, real-source reads and valid-output mapping, distinguishing original-cell support from processing-raster support.
-
-Native export and regional references use original reads with valid-cell mappings. Shared [raster execution](../src/gpu/execution/raster.rs) applies source interpretation, photographic grading, original repairs and pixel stages for complete resident camera grids. Original tiles carry real-source support rather than treating their supplied edges as source boundaries. Export's [file adapter](../src/gpu_export/area.rs) selects scene-/display-referred processing and sample storage independently, then supplies the codec/publication sink. The [output guide](colour-and-output.md#tiff-and-exr-serve-different-purposes) explains rendering order and encoding.
-
-The [footprint adapter](../src/gpu/execution/footprints.rs) schedules bounded source units and destination windows from immutable acquisition plans. Common evaluation acquires and neutralizes each original region before repairs and filtering. [Declared acquisition IO](../src/gpu/evaluation/acquire.rs) handles float-texture delivery, footprint accumulation and sparse repair restoration; source inspection is a pointwise transform over covered neutral light. Submission waits use the shared executor, while resident recording preserves caller-owned submission. Captured requests contain content identity; presentation adds publication authority. Reuse checks representation, support and output layout, and larger retained inputs can satisfy smaller demands without relabelling their grid. View/refinement adapters retain presentation and publication.
-
-Accepted [image recipes](../src/image_recipe.rs) supply the same post-grade component definitions to viewer/thumbnail inputs and export, including captured crop scale and seed. Interactive overlays capture a separate recipe without changing accepted export intent. A [GPU recipe](../src/gpu/evaluation/recipe.rs) supplies captured components to [one ordered photographic assembly](../src/gpu/evaluation/photograph/assembly.rs): corrected camera light, native response, working positives, repairs, Roll, adjustment layers and post-grade effects. Complete photographs and prefix requests follow that definition; adapters supply input representations and settings rather than independently rebuilding stage order. Insert an upstream operation there so every downstream endpoint includes it.
-
-[Photographic image handles](../src/gpu/evaluation/photograph.rs) identify logical results, not mandatory buffers. Fused camera implementations cover known component runs; inserting another operation ends that run instead of skipping it. Originals retain canonical folded exposure/inversion arithmetic, while a materialized neutral prefix must independently fit f32. Resident conversion borrows packed RGB16 or continuous camera buffers. Camera-proxy masks use captured nearest-original centres; filtered-neutral masks use footprint centres. These coordinate choices stay explicit in assembly.
-
-The [resident adapter](../src/gpu/pixel_pipeline.rs) records complete camera or neutral-AP1 compositions into the caller's encoder. The [planner](../src/gpu/evaluation/plan.rs) lowers demanded regions into symbolic resources and opaque work. Recipe components can supply equivalent physical implementations across logical boundaries; function and callable-sampling contracts also compose without requiring an image per stage. A [captured output reference](../src/gpu/evaluation/reference.rs) appends the creative look and selected display transform independently of photographic grading. Original recipes evaluate that display image before reconstruction. Resident viewers record the same components directly into caller-owned RGBA32Float attachments; OS presentation remains separate. Covered pixels retain look-admission markers, with fresh status for each encoding and projected checks for proxy consumers.
-
-The device-scoped [evaluation context](../src/gpu/evaluation/context.rs) validates requested regions/grids and owns contracted-work programs and a fixed payload-retention policy. Resampling belongs in the supplied composition. Generated values and completed intermediates share its optional byte allowance; zero or exhausted retention regenerates values without changing composed arithmetic. Required scratch, active inputs and output images remain independently owned.
-
-Worker-side [host delivery](../src/gpu/evaluation/context/readback.rs) streams admitted float blocks through the same evaluator, with one additional bounded staging buffer. Measurement, repair and analysis adapters supply their intended compositions; CPU statistics, search and healing consume the results. Component-owned readouts can fold exposure and supply a decode gain when a standalone neutral bound would exceed f32. Decode a statistic in f64, or require each needed repair pixel to fit f32. Cancellation discards partial query results; publication remains the consumer's responsibility.
-
-[Image-cache scopes](../src/gpu/evaluation/images.rs) retain completed immutable payloads under bounded LRU ownership. Components supply numerical content keys and grid/support/accuracy capabilities, independently of publication tickets. The selected view uses one such scope for neutral detail/underlay; sufficient larger same-grid margins can serve smaller demands without relabelling the acquired raster. Eviction or scope retirement releases optional ownership while active consumers remain valid. Generated values instead share leases through prepared owners. Payload accounting is not total driver allocation.
-
-Renderer initialization compiles common camera, Roll/full-stack and inspection templates so painting binds captured constants rather than compiling those variants. The [executor](../src/gpu/evaluation/execute.rs) admits GPU limits and working budgets, binds resources and records work. Workers use its bounded submission/completion loop; resident rendering records into the caller's encoder without submitting or waiting. Immutable uniforms may survive in prepared work; resident scratch, looked-AP1 intermediates and uncached generated buffers live through recorded commands rather than with the view. Explicitly writable resident inputs can become storage slots after their input lifetime ends. Source leases remain job-owned.
-
-Regional output's bounded affine accumulation and texture delivery are declared work under the same context; its sink schedules destination windows and completion. Native output adds exact affine reconstruction as an operator and reads back destination blocks; its sink arms mapping after submission, before the common completion wait. Neither retains a full-source processed image or all tile plans. RAW decoding still produces a complete native source.
-
-Acquisition clips to actual source bounds; their outermost cells extend constantly for filtering. Intermediate viewport, composition and tile edges retain the declared neighbours. Extract or reconstruct the requested output after processing, preserving the distinction between original-sample execution and neutral-footprint view approximations.
-
-## UI test boundary
-
-The opt-in `ui-tests` feature keeps egui_kittest cases in the Editor's private [test module](../src/editor/kittest_tests.rs). The harness invokes production `host::App::ui` and drives the live application between frames, independently of painting, on an RGBA16Float renderer that shares the real device/queue and submission gate.
-
-The separate [native-host executable](../tests/native_host.rs) runs the production host and launches a window only with explicit `--run`. [Development checks](development.md#explicit-native-host-checks) distinguish that composition coverage from physical input and appearance acceptance.
-
-## Finding the right explanation
-
-[README](README.md) maps questions to topic guides and files. [Development](development.md) maps changes to checks; [build and delivery](build-and-delivery.md) maps the local setup/check/package workflow and its limits.
+[Recipes](processing.md#one-accepted-image-recipe) compose captured photographic intent; [evaluation](../src/gpu/evaluation.rs) plans the supplied operations and resources. Each stage declares its upstream neighbourhood on an explicit raster grid. Propagate support backwards and use the declared grid pitch rather than recomputing it from rounded geometry. Only actual source bounds extend constantly for filtering: viewport, composition and tile edges retain their declared neighbours. Extract the requested output after processing. Preserve the distinction between original-sample execution and view approximations described in [processing](processing.md#physical-view-processing-is-an-approximation) and [geometry](geometry.md#process-before-averaging).

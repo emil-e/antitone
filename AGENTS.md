@@ -1,10 +1,14 @@
 # Working on Antitone
 
-## Find your bearings
+## Mandatory reading before application code
 
-Use [docs/README.md](docs/README.md) to find the guides relevant to your task—not to read everything.
+**Before writing or modifying any application code, read [architecture](docs/architecture.md) and [development](docs/development.md) in full. This is mandatory for every task, including small edits. Do not produce application code until you have read both.** Refresh your understanding when the guidance changes.
 
-Consult [architecture](docs/architecture.md) when changing unfamiliar boundaries or consequential choices. Investigate disagreements between documentation and implementation.
+Most application code is written by agents. **Existing code—including recently merged code—is not an endorsed design pattern.** Its presence, passing tests or consistency with neighboring code does not excuse a conflict with the architectural principles. Apply the principles; do not reproduce a conflicting pattern or silently weaken the guidance to justify it. Surface material conflicts for clarification.
+
+Recognizing a design defect does not authorize an unrelated rewrite. Address what is necessary within the agreed scope and report the rest.
+
+Then use [docs/README.md](docs/README.md) to find the topic guides relevant to your task; you do not need to read every topic guide.
 
 ## Requirements and design choices
 
@@ -38,7 +42,7 @@ Before editing any guide or README, including the root `README.md`, follow the [
 
 For editor work, follow [shared presentation](docs/editor.md#build-ui-from-shared-presentation) and the [tooltip/contextual-help guidance](docs/editor.md#tooltips-and-contextual-help). Verify the component and its composed feature.
 
-Write `docs/` for human contributors. Keep agent-only execution instructions here or in skills.
+Write `docs/` for human contributors. Keep agent-only execution instructions here, in skills or in the [review policy](.pi/REVIEW.md).
 
 ## Build and deliver
 
@@ -48,7 +52,7 @@ Use `.cache/` for disposable experiments, dependencies and generated outputs. Ma
 
 Samples are private, read-only, ignored and never committed. System installations and automation of other applications require explicit authorization; respect environment approval requirements for setup and downloads.
 
-An independent, fresh-context agent review against the [development guide](docs/development.md) and relevant topic guides is required before integrating substantial changes. Keep its depth proportionate to the change's breadth and risk. Review supplements verification; assess findings with evidence rather than treating the review as an approval gate.
+An independent, fresh-context agent review against the [development guide](docs/development.md) and relevant topic guides is required before integrating substantial changes. The reviewer must follow the [repository review policy](.pi/REVIEW.md). Keep its depth proportionate to the change's breadth and risk. Review supplements verification; assess findings with evidence rather than treating the review as an approval gate.
 
 Explicitly include [test quality](docs/development.md#meaningful-tests) in the review request at both whole-case and individual-assertion level, including fixture/control-discovery assumptions. Ask reviewers to distinguish meaningful protection from incidental implementation or UX lock-in, not merely confirm passing tests or agreement with current code/docs. Review reports should identify the test scope examined, concrete findings and coverage limits.
 
