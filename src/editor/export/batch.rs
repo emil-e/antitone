@@ -6,13 +6,13 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Scope {
+pub(in crate::editor) enum Scope {
     Selected,
     All,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Collision {
+pub(in crate::editor) enum Collision {
     KeepBoth,
     Skip,
     Replace,
@@ -21,7 +21,7 @@ pub(super) enum Collision {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Kind {
+pub(in crate::editor) enum Kind {
     Tiff,
     Exr,
 }
@@ -35,7 +35,7 @@ impl Kind {
     }
 }
 
-pub(super) struct Draft {
+pub(in crate::editor) struct Draft {
     pub scope: Scope,
     pub folder: PathBuf,
     pub kind: Kind,
@@ -70,32 +70,32 @@ impl Draft {
     }
 }
 
-pub(super) enum Input {
+pub(in crate::editor) enum Input {
     Ready(source::Context),
     Acquire(Box<source::Request>),
 }
 
-pub(super) struct Photo {
+pub(in crate::editor) struct Photo {
     pub input: Input,
     pub recipe: ImageRecipe,
     pub path: PathBuf,
 }
 
-pub(super) struct Request {
+pub(in crate::editor) struct Request {
     pub photos: Vec<Photo>,
     pub format: OutputFormat,
     pub collision: Collision,
     pub protected: Vec<PathBuf>,
 }
 
-pub(super) enum Outcome {
+pub(in crate::editor) enum Outcome {
     Exported(PathBuf),
     Skipped(PathBuf),
     Failed { path: PathBuf, error: String },
 }
 
 #[derive(Default)]
-pub(super) struct Summary {
+pub(in crate::editor) struct Summary {
     pub total: usize,
     pub outcomes: Vec<Outcome>,
     pub stopped: bool,
@@ -134,7 +134,11 @@ impl Summary {
     }
 }
 
-pub(super) fn filename(source: &Path, suffix: &str, kind: Kind) -> Result<PathBuf, Error> {
+pub(in crate::editor) fn filename(
+    source: &Path,
+    suffix: &str,
+    kind: Kind,
+) -> Result<PathBuf, Error> {
     if suffix
         .chars()
         .any(|c| c == '/' || c == '\\' || c == ':' || c.is_control())
@@ -154,7 +158,7 @@ pub(super) fn filename(source: &Path, suffix: &str, kind: Kind) -> Result<PathBu
     Ok(PathBuf::from(name))
 }
 
-pub(super) fn numbered(path: &Path, index: usize) -> PathBuf {
+pub(in crate::editor) fn numbered(path: &Path, index: usize) -> PathBuf {
     let mut stem = path.file_stem().unwrap_or_default().to_os_string();
     stem.push(format!(" ({index})"));
     if let Some(extension) = path.extension() {
@@ -164,7 +168,7 @@ pub(super) fn numbered(path: &Path, index: usize) -> PathBuf {
     path.with_file_name(stem)
 }
 
-pub(super) fn destination(
+pub(in crate::editor) fn destination(
     path: &Path,
     policy: Collision,
     protected: &[PathBuf],
@@ -210,7 +214,7 @@ fn same_destination(a: &Path, b: &Path) -> bool {
     crate::sys::same_file(a, b)
 }
 
-pub(super) fn require_safe(path: &Path, protected: &[PathBuf]) -> Result<(), Error> {
+pub(in crate::editor) fn require_safe(path: &Path, protected: &[PathBuf]) -> Result<(), Error> {
     if protected.iter().any(|input| same_destination(path, input)) {
         return Err(Error::Export(
             "destination is a project document or source file".into(),
@@ -223,7 +227,7 @@ pub(super) fn require_safe(path: &Path, protected: &[PathBuf]) -> Result<(), Err
 }
 
 impl Editor {
-    pub(super) fn export_ids(&self, scope: Scope) -> Vec<SourceId> {
+    pub(in crate::editor) fn export_ids(&self, scope: Scope) -> Vec<SourceId> {
         self.document
             .state
             .project
@@ -234,7 +238,7 @@ impl Editor {
             .collect()
     }
 
-    pub(super) fn batch_input(&mut self, draft: &Draft) -> Result<Request, Error> {
+    pub(in crate::editor) fn capture_export(&mut self, draft: &Draft) -> Result<Request, Error> {
         if self.dust_search_pending() {
             return Err(Error::InvalidParameter(
                 "wait for donor selection before exporting",

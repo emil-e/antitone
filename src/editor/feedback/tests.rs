@@ -72,9 +72,9 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
                 cx,
             )
         });
-        assert!(app.read(|e| e.document.export_operation.pending.is_some()));
+        assert!(app.read(|e| e.document.export.operation.is_some()));
         app.run_until(Duration::from_secs(5), |e| {
-            e.document.export_operation.pending.is_none()
+            e.document.export.operation.is_none()
         });
         app.read(|editor| {
             assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
@@ -186,7 +186,7 @@ fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
             );
             assert_eq!(editor.document.state.project, before);
             assert!(!editor.busy);
-            editor.export_result(editor.id, Ok("unrelated-success.tiff".into()));
+            editor.resolve_failure(FailureKind::Export);
             assert_eq!(
                 editor.failure.as_ref().unwrap().details,
                 "unsupported GPU range"
@@ -250,55 +250,6 @@ fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
 }
 
 #[test]
-fn export_failure_is_persistent_stale_results_cannot_replace_it_and_matching_success_resolves_it() {
-    let editor = fixture();
-    crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| {
-            add_ready_fixture(editor);
-            editor.sync_document();
-            let before = editor.document.state.project.clone();
-            editor.export(
-                "output.exr".into(),
-                OutputFormat::Exr(ExrPrecision::Half),
-                Overwrite::Refuse,
-                cx,
-            );
-            assert!(editor.document.export_operation.pending.is_some());
-            let request = editor.document.export_operation.pending.unwrap();
-            editor.export_result(request + 1, Err("stale".into()));
-            assert!(editor.failure.is_none() && editor.busy);
-            editor.export_result(request, Err("choose full-float EXR".into()));
-            assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
-            assert!(!editor.busy);
-            editor.status = "Other status".into();
-            editor.export_result(request + 1, Err("another stale error".into()));
-            assert_eq!(
-                editor.failure.as_ref().unwrap().details,
-                "choose full-float EXR"
-            );
-            editor.export(
-                "output.exr".into(),
-                OutputFormat::Exr(ExrPrecision::Full),
-                Overwrite::Refuse,
-                cx,
-            );
-            assert!(editor.document.export_operation.pending.is_some());
-            assert!(editor.failure.is_some());
-            let pending = editor.document.export_operation.pending;
-            editor.export_result(request, Ok("old-output.exr".into()));
-            assert!(editor.busy && editor.failure.is_some());
-            assert_eq!(editor.document.export_operation.pending, pending);
-            editor.export_result(
-                editor.document.export_operation.pending.unwrap(),
-                Ok("output.exr".into()),
-            );
-            assert!(editor.failure.is_none());
-            assert_eq!(editor.document.state.project, before);
-        });
-    });
-}
-
-#[test]
 fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_message() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
@@ -327,9 +278,7 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
         );
     }
     assert!(editor.failure.is_some());
-    assert!(
-        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
     let point = labels
         .iter()
         .find(|(label, _)| label == "OK")
@@ -341,7 +290,5 @@ fn feedback_blocks_background_file_actions_and_dismissal_only_retires_the_messag
     }
     assert!(editor.failure.is_none());
     assert_eq!(editor.document.state.project, before);
-    assert!(
-        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
 }

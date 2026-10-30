@@ -131,9 +131,7 @@ fn native_quit_and_close_wait_for_the_document_decision() {
         frame(&mut editor, &context);
         assert_eq!(editor.transition, Some(Transition::Close));
         assert!(!editor.allow_close);
-        assert!(
-            editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-        );
+        assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
     }
 }
 
@@ -153,9 +151,7 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         assert!(!editor.application_menu_state().enabled(action));
         host::App::menu_action(&mut editor, action);
         frame(&mut editor, &context);
-        assert!(
-            editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-        );
+        assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
         assert!(editor.transition.is_none());
     }
     assert_eq!(editor.active_pick(), Some(Pick::Dmin.display()));
@@ -190,9 +186,7 @@ fn closing_settings_preserves_the_document_and_quit_still_uses_its_guard() {
     assert!(editor.menus.panel.is_none());
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(
-        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
 }
 
 #[test]

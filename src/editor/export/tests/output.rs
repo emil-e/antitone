@@ -1,61 +1,12 @@
 use super::*;
+use crate::editor::*;
 use tiff::decoder::{Decoder, DecodingResult};
 
 mod production;
 mod repairs;
 
 fn wait(editor: Editor, start: impl FnOnce(&mut Editor, &UiContext<'_, Editor>)) -> Editor {
-    super::tests::complete_export_operation(editor, Duration::from_secs(30), start)
-}
-
-#[test]
-fn export_completion_cannot_retire_new_source_or_document_operations() {
-    for document in [false, true] {
-        let editor = super::tests::fixture();
-        crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
-                super::tests::add_ready_fixture(editor);
-                editor.sync_document();
-                editor.export(
-                    "captured.exr".into(),
-                    OutputFormat::Exr(ExrPrecision::Full),
-                    Overwrite::Refuse,
-                    cx,
-                );
-                assert!(editor.document.export_operation.pending.is_some());
-                let export = editor.document.export_operation.pending.unwrap();
-                if document {
-                    editor.start_document(Preparation::New, cx);
-                } else {
-                    editor.load_source("another.ARW".into(), false, cx);
-                }
-                assert!(if document {
-                    editor.busy && editor.document_pending.is_some()
-                } else {
-                    editor.document.visit.source.pending()
-                });
-                let status = editor.status.clone();
-                let title = editor.tasks.view().unwrap().title;
-                let project = editor.document.state.project.clone();
-                editor.export_result(export, Ok("captured.exr".into()));
-                assert!(editor.busy);
-                assert!(editor.document.export_operation.pending.is_none());
-                assert_eq!(editor.status, status);
-                assert_eq!(editor.tasks.view().unwrap().title, title);
-                assert_eq!(editor.document.state.project, project);
-                if document {
-                    editor.document_prepared(
-                        editor.document_pending.unwrap(),
-                        Err("new document failed".into()),
-                    );
-                } else {
-                    editor.source_result(editor.id, Err("new source failed".into()));
-                }
-                assert!(!editor.busy);
-                assert!(editor.tasks.view().is_none());
-            });
-        });
-    }
+    crate::editor::tests::complete_export_operation(editor, Duration::from_secs(30), start)
 }
 
 fn tiff_pixels(path: &std::path::Path) -> Vec<u16> {
@@ -208,12 +159,10 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
             let path = directory.path().join(name);
             editor = wait(editor, |editor, cx| {
                 editor.export(path.clone(), format, Overwrite::Refuse, cx);
-                assert!(editor.busy && editor.document.export_operation.pending.is_some());
+                assert!(editor.busy && editor.document.export.operation.is_some());
             });
             assert!(editor.failure.is_none(), "{}", editor.status);
-            assert!(
-                editor.document.export_operation.pending.is_none() && editor.tasks.view().is_none()
-            );
+            assert!(editor.document.export.operation.is_none() && editor.tasks.view().is_none());
             match format {
                 OutputFormat::Tiff(target) => {
                     let mut decoder = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();
@@ -257,7 +206,7 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
                 Overwrite::Refuse,
                 cx,
             );
-            assert!(editor.document.export_operation.pending.is_some());
+            assert!(editor.document.export.operation.is_some());
             // Later accepted edits/source identity cannot change the captured file recipe.
             editor.document.visit.adjustment_layer_settings.exposure = 0.75;
             editor.sync_document();

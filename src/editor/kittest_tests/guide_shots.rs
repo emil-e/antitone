@@ -133,7 +133,7 @@ fn documented_states_render() {
 
         // The export dialog.
         harness.update(|editor| {
-            editor.document.export_dialog = Some(export_batch::Draft::new(
+            editor.document.export.draft = Some(crate::editor::export::batch::Draft::new(
                 OutputTarget::Srgb,
                 PathBuf::from("/exports"),
             ));
@@ -141,7 +141,7 @@ fn documented_states_render() {
         frames(&mut harness);
         settle_view(&mut harness);
         capture(&mut harness, "export-dialog");
-        harness.update(|editor| editor.document.export_dialog = None);
+        harness.update(|editor| editor.document.export.draft = None);
 
         // The overview last, back on the first photograph: both photographs are
         // developed by now, so the filmstrip and the canvas show graded

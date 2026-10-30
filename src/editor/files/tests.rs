@@ -379,9 +379,7 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     );
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(
-        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
     let mut output = context.run_ui(input, |ui| {
         egui::CentralPanel::default().show(ui, |ui| {
             crate::editor::tests::paint_controller(&mut editor, ui)
@@ -395,9 +393,7 @@ fn viewport_close_is_vetoed_until_the_dirty_document_decision() {
     );
     assert_eq!(editor.transition, Some(Transition::Close));
     assert!(!editor.allow_close);
-    assert!(
-        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
 }
 
 #[test]
@@ -416,7 +412,7 @@ fn export_cannot_replace_the_open_project_document() {
         Overwrite::Confirmed,
         &UiContext::render_only(),
     );
-    assert!(editor.document.export_operation.pending.is_none());
+    assert!(editor.document.export.operation.is_none());
     assert_eq!(std::fs::read(path).unwrap(), before);
     assert!(!editor.busy);
     assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
@@ -436,7 +432,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                 0 => editor.transition = Some(Transition::Close),
                 1 => editor.project_overwrite = Some((path.clone(), Some(Transition::New))),
                 _ => {
-                    editor.document.export_dialog = Some(export_batch::Draft::new(
+                    editor.document.export.draft = Some(export::batch::Draft::new(
                         OutputTarget::Srgb,
                         directory.path().to_owned(),
                     ))
@@ -449,21 +445,19 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
             assert!(
                 editor.transition.is_some()
                     || editor.project_overwrite.is_some()
-                    || editor.document.export_dialog.is_some()
+                    || editor.document.export.draft.is_some()
             );
             assert!(
-                editor.document_pending.is_none()
-                    && editor.document.export_operation.pending.is_none()
+                editor.document_pending.is_none() && editor.document.export.operation.is_none()
             );
             ui_frame(&mut editor, &context, key(cancel_key));
             assert!(
                 editor.transition.is_none()
                     && editor.project_overwrite.is_none()
-                    && editor.document.export_dialog.is_none()
+                    && editor.document.export.draft.is_none()
             );
             assert!(
-                editor.document_pending.is_none()
-                    && editor.document.export_operation.pending.is_none()
+                editor.document_pending.is_none() && editor.document.export.operation.is_none()
             );
             assert!(!editor.allow_close && !editor.busy);
             assert_eq!(editor.document.state.project, before);
@@ -627,17 +621,17 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             editor.document.visit.crop.unwrap()
         );
         let services = editor.export_services.as_ref().unwrap().clone();
-        let mut draft = export_batch::Draft::new(OutputTarget::Srgb, directory.path().to_owned());
+        let mut draft = export::batch::Draft::new(OutputTarget::Srgb, directory.path().to_owned());
         match format {
             OutputFormat::Tiff(target) => draft.target = target,
             OutputFormat::Exr(precision) => {
-                draft.kind = export_batch::Kind::Exr;
+                draft.kind = export::batch::Kind::Exr;
                 draft.precision = precision;
             }
         }
-        draft.collision = export_batch::Collision::Replace;
+        draft.collision = export::batch::Collision::Replace;
         draft.confirming_replace = true;
-        editor.document.export_dialog = Some(draft);
+        editor.document.export.draft = Some(draft);
         let before = editor.document.state.project.clone();
         let context = egui::Context::default();
         with_application(editor, |app| {
@@ -651,13 +645,10 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
                 .center();
             click(app, &context, point);
             app.read(|e| {
-                assert!(
-                    e.document.export_dialog.is_none()
-                        && e.document.export_operation.pending.is_some()
-                )
+                assert!(e.document.export.draft.is_none() && e.document.export.operation.is_some())
             });
             app.run_until(Duration::from_secs(30), |e| {
-                e.document.export_operation.pending.is_none()
+                e.document.export.operation.is_none()
             });
             app.read(|e| {
                 assert!(e.failure.is_none() && !e.busy, "{}", e.status);
@@ -1059,9 +1050,7 @@ fn dirty_open_new_and_close_are_guarded_without_dispatching_or_allowing_close() 
     ] {
         editor.guard_transition(transition.clone(), &UiContext::render_only());
         assert_eq!(editor.transition, Some(transition));
-        assert!(
-            editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-        );
+        assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
         assert!(!editor.allow_close);
         editor.transition = None;
     }

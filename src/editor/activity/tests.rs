@@ -219,7 +219,7 @@ fn unavailable_export_and_analysis_services_leave_no_working_feedback() {
                         Overwrite::Refuse,
                         access,
                     );
-                    assert!(editor.document.export_operation.pending.is_some());
+                    assert!(editor.document.export.operation.is_some());
                 } else {
                     editor.begin_analysis(access);
                 }
@@ -234,10 +234,10 @@ fn unavailable_export_and_analysis_services_leave_no_working_feedback() {
 }
 
 #[test]
-fn export_activity_preserves_identity_and_closes_before_failure_feedback() {
+fn export_activity_closes_before_awaited_failure_feedback() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| {
+        let before = app.enter(|editor, cx| {
             add_ready_fixture(editor);
             editor.sync_document();
             let before = editor.document.state.project.clone();
@@ -247,15 +247,21 @@ fn export_activity_preserves_identity_and_closes_before_failure_feedback() {
                 Overwrite::Refuse,
                 cx,
             );
-            assert!(editor.document.export_operation.pending.is_some());
-            let id = editor.document.export_operation.pending.unwrap();
-            editor.status = "Settled preview failed: unrelated".into();
+            assert!(editor.document.export.operation.is_some());
+            editor.status = "Unrelated preview status".into();
             assert_eq!(editor.tasks.view().unwrap().title, "Exporting…");
-            editor.export_result(id + 1, Err("stale".into()));
-            assert!(editor.tasks.view().is_some());
-            editor.export_result(id, Err("destination unavailable".into()));
-            assert!(editor.tasks.view().is_none());
+            before
+        });
+        app.run_until(Duration::from_secs(5), |editor| {
+            editor.document.export.operation.is_none()
+        });
+        app.read(|editor| {
+            assert!(editor.tasks.view().is_none() && !editor.busy);
             assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
+            assert_eq!(
+                editor.failure.as_ref().unwrap().details,
+                "Export services unavailable"
+            );
             assert_eq!(editor.document.state.project, before);
         });
     });
@@ -414,14 +420,14 @@ fn export_blocks_the_workspace_before_its_progress_modal_becomes_prominent() {
                     .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
                     .is_some()
             );
-            assert!(editor.busy && editor.document.export_operation.pending.is_some());
+            assert!(editor.busy && editor.document.export.operation.is_some());
         });
     });
 }
 
 #[test]
-fn matching_success_retires_source_save_measurement_and_export_activity() {
-    for operation in 0..4 {
+fn matching_success_retires_source_save_and_measurement_activity() {
+    for operation in 0..3 {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
         let hold = crate::background::testing::pause();
@@ -432,7 +438,6 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
             }
             let mut source_completion = None;
             let mut save_completion = None;
-            let mut export_completion = None;
             app.enter(|editor, access| match operation {
                 0 => {
                     let ready = editor.document.visit.canvas.ready.take().unwrap();
@@ -451,7 +456,7 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
                     save_completion =
                         Some((editor.document_pending.unwrap(), editor.document.capture()));
                 }
-                2 => {
+                _ => {
                     let source = editor
                         .document
                         .visit
@@ -473,16 +478,6 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
                     editor.apply_pick(access);
                     assert!(editor.measurement_pending());
                 }
-                _ => {
-                    editor.export(
-                        "output.exr".into(),
-                        OutputFormat::Exr(ExrPrecision::Full),
-                        Overwrite::Refuse,
-                        access,
-                    );
-                    assert!(editor.document.export_operation.pending.is_some());
-                    export_completion = editor.document.export_operation.pending;
-                }
             });
             assert!(app.read(|editor| editor.tasks.view().is_some()));
             if let Some((id, saved)) = save_completion {
@@ -490,9 +485,6 @@ fn matching_success_retires_source_save_measurement_and_export_activity() {
             }
             if let Some((view, ready)) = source_completion {
                 app.update(|e| e.source_result(view, Ok(Box::new(ready))));
-            }
-            if let Some(id) = export_completion {
-                app.update(|e| e.export_result(id, Ok("output.exr".into())));
             }
             app.pump();
             drop(hold);

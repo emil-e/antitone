@@ -1,6 +1,6 @@
 use super::{
     Editor, UiContext,
-    export_batch::{self, Collision, Draft, Kind, Scope},
+    batch::{self, Collision, Draft, Kind, Scope},
     presentation,
 };
 use crate::{export::ExrPrecision, rendering::OutputTarget};
@@ -145,7 +145,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
                 ui.add(egui::TextEdit::singleline(&mut draft.suffix).desired_width(240.))
                     .labelled_by(label);
             });
-            if let Ok(name) = export_batch::filename(
+            if let Ok(name) = batch::filename(
                 std::path::Path::new("DSC01234.RAW"),
                 &draft.suffix,
                 draft.kind,
@@ -209,26 +209,26 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
 }
 
 impl Editor {
-    pub(super) fn export_modal(&self) -> bool {
-        self.document.export_dialog.is_some() || self.document.export_summary.is_some()
+    pub(in crate::editor) fn export_modal(&self) -> bool {
+        self.document.export.draft.is_some() || self.document.export.summary.is_some()
     }
 
-    pub(super) fn open_export_dialog(&mut self) {
+    pub(in crate::editor) fn open_export_dialog(&mut self) {
         if self.dust_search_pending() {
             self.status = "Wait for donor selection before exporting".into();
             return;
         }
         let folder = self.preferences.export_folder.clone().unwrap_or_default();
-        self.document.export_dialog = Some(Draft::new(self.document.target, folder));
+        self.document.export.draft = Some(Draft::new(self.document.target, folder));
     }
 
-    pub(super) fn export_dialogs(
+    pub(in crate::editor) fn export_dialogs(
         &mut self,
         context: &egui::Context,
         escape: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        if let Some(mut draft) = self.document.export_dialog.take() {
+        if let Some(mut draft) = self.document.export.draft.take() {
             if draft.confirming_replace {
                 let choice = presentation::DecisionDialog::new("Replace existing exported files?", "Existing files with the generated names in the destination folder will be replaced. Completed replacements cannot be undone.", "Replace and export")
                     .warning().detail(&draft.folder.display().to_string()).show(context, egui::Id::new("confirm-batch-replace"), escape);
@@ -236,9 +236,9 @@ impl Editor {
                     Some(presentation::DialogChoice::Confirm) => self.accept_export(draft, cx),
                     Some(presentation::DialogChoice::Cancel) => {
                         draft.confirming_replace = false;
-                        self.document.export_dialog = Some(draft);
+                        self.document.export.draft = Some(draft);
                     }
-                    _ => self.document.export_dialog = Some(draft),
+                    _ => self.document.export.draft = Some(draft),
                 }
                 return;
             }
@@ -266,14 +266,14 @@ impl Editor {
             if response.inner.export {
                 if draft.collision == Collision::Replace {
                     draft.confirming_replace = true;
-                    self.document.export_dialog = Some(draft);
+                    self.document.export.draft = Some(draft);
                 } else {
                     self.accept_export(draft, cx);
                 }
             } else {
-                self.document.export_dialog = Some(draft);
+                self.document.export.draft = Some(draft);
             }
-        } else if let Some(summary) = self.document.export_summary.take() {
+        } else if let Some(summary) = self.document.export.summary.take() {
             let response = presentation::modal(context, egui::Id::new("export-summary"), |ui| {
                 ui.heading(if summary.stopped {
                     "Export stopped"
@@ -286,10 +286,10 @@ impl Editor {
                     .show(ui, |ui| {
                         for outcome in &summary.outcomes {
                             match outcome {
-                                export_batch::Outcome::Failed { path, error } => {
+                                batch::Outcome::Failed { path, error } => {
                                     ui.label(format!("{}: {error}", path.display()));
                                 }
-                                export_batch::Outcome::Skipped(path) => {
+                                batch::Outcome::Skipped(path) => {
                                     ui.label(format!("Skipped {}", path.display()));
                                 }
                                 _ => {}
@@ -297,10 +297,10 @@ impl Editor {
                         }
                     });
                 let mut reveal = None;
-                if let Some(export_batch::Outcome::Exported(path)) = summary
+                if let Some(batch::Outcome::Exported(path)) = summary
                     .outcomes
                     .iter()
-                    .find(|o| matches!(o, export_batch::Outcome::Exported(_)))
+                    .find(|o| matches!(o, batch::Outcome::Exported(_)))
                     && presentation::TextAction::new("Show in Finder")
                         .show(ui)
                         .clicked()
@@ -315,22 +315,22 @@ impl Editor {
                 reveal_file(path.clone());
             }
             if !response.inner.0 && !presentation::escape_requested(&response, escape) {
-                self.document.export_summary = Some(summary);
+                self.document.export.summary = Some(summary);
             }
         }
     }
 
     fn accept_export(&mut self, mut draft: Draft, cx: &UiContext<'_, Self>) {
-        match self.batch_input(&draft) {
+        match self.capture_export(&draft) {
             Ok(request) => {
                 self.preferences.export_folder = Some(draft.folder);
                 self.persist_preferences();
-                self.start_export(request, cx);
+                self.export_photos(request, cx);
             }
             Err(error) => {
                 draft.error = Some(error.to_string());
                 draft.confirming_replace = false;
-                self.document.export_dialog = Some(draft);
+                self.document.export.draft = Some(draft);
             }
         }
     }

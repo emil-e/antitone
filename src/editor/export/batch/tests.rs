@@ -101,7 +101,7 @@ fn filenames_preserve_dotted_stems_and_do_not_accept_path_injection() {
 fn captured_multisource_batch_finishes_without_paint_after_live_selection_changes() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
-    let request = editor.batch_input(&draft(directory.path())).unwrap();
+    let request = editor.capture_export(&draft(directory.path())).unwrap();
     assert!(
         request
             .photos
@@ -113,11 +113,11 @@ fn captured_multisource_batch_finishes_without_paint_after_live_selection_change
     let second = directory.path().join("roll-1.exr");
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.start_export(request, cx);
+            editor.export_photos(request, cx);
             editor.document.state.project.order.clear();
         });
         app.run_until(Duration::from_secs(30), |editor| {
-            editor.document.export_operation.pending.is_none()
+            editor.document.export.operation.is_none()
         });
         app.read(|editor| {
             assert!(
@@ -125,7 +125,7 @@ fn captured_multisource_batch_finishes_without_paint_after_live_selection_change
                 "{}",
                 editor.status
             );
-            let summary = editor.document.export_summary.as_ref().unwrap();
+            let summary = editor.document.export.summary.as_ref().unwrap();
             assert_eq!(
                 (summary.exported(), summary.failed(), summary.unattempted()),
                 (2, 0, 0)
@@ -161,13 +161,14 @@ fn batch_selection_uses_filmstrip_order_and_never_exports_nonordered_sources() {
 fn per_photo_acquisition_failure_does_not_discard_later_success() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
-    let mut request = editor.batch_input(&draft(directory.path())).unwrap();
+    let mut request = editor.capture_export(&draft(directory.path())).unwrap();
     let mut unavailable = editor.source_input(directory.path().join("missing.dng"));
     unavailable.sources = None;
     request.photos[0].input = Input::Acquire(Box::new(unavailable));
     let services = editor.export_services.take().unwrap();
     drop(editor);
-    let summary = pollster::block_on(services.batch(request, Cancellation::default(), |_, _| {}));
+    let summary =
+        pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
     assert_eq!(
         (summary.exported(), summary.failed(), summary.unattempted()),
         (1, 1, 0)
@@ -177,19 +178,54 @@ fn per_photo_acquisition_failure_does_not_discard_later_success() {
 }
 
 #[test]
+fn skipping_an_existing_destination_does_not_require_its_original() {
+    let mut editor = fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let mut settings = draft(directory.path());
+    settings.collision = Collision::Skip;
+    let mut request = editor.capture_export(&settings).unwrap();
+    request.photos.truncate(1);
+    let path = request.photos[0].path.clone();
+    std::fs::write(&path, b"existing destination").unwrap();
+    let mut unavailable = editor.source_input(directory.path().join("missing.dng"));
+    unavailable.sources = None;
+    request.photos[0].input = Input::Acquire(Box::new(unavailable));
+    let services = editor.export_services.take().unwrap();
+    drop(editor);
+    let summary =
+        pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
+    assert_eq!(
+        (
+            summary.exported(),
+            summary.skipped(),
+            summary.failed(),
+            summary.unattempted()
+        ),
+        (0, 1, 0, 0)
+    );
+    assert!(!summary.stopped);
+    assert!(matches!(&summary.outcomes[0], Outcome::Skipped(skipped) if skipped == &path));
+    assert_eq!(std::fs::read(path).unwrap(), b"existing destination");
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn cancellation_between_photos_preserves_published_output_and_reports_unattempted_work() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
-    let request = editor.batch_input(&draft(directory.path())).unwrap();
+    let request = editor.capture_export(&draft(directory.path())).unwrap();
     let services = editor.export_services.take().unwrap();
     let cancellation = Cancellation::default();
     let stop = cancellation.clone();
     drop(editor);
-    let summary = pollster::block_on(services.batch(request, cancellation, move |done, _| {
-        if done == 1 {
-            stop.cancel();
-        }
-    }));
+    let summary =
+        pollster::block_on(
+            services.export_batch(request, cancellation, move |done, _| {
+                if done == 1 {
+                    stop.cancel();
+                }
+            }),
+        );
     assert!(summary.stopped);
     assert_eq!(
         (summary.exported(), summary.failed(), summary.unattempted()),
@@ -214,8 +250,8 @@ fn keep_both_and_skip_preserve_existing_destinations() {
         std::fs::write(&existing, b"existing destination").unwrap();
         let mut settings = draft(&folder);
         settings.collision = collision;
-        let request = editor.batch_input(&settings).unwrap();
-        let summary = pollster::block_on(editor.export_services.clone().unwrap().batch(
+        let request = editor.capture_export(&settings).unwrap();
+        let summary = pollster::block_on(editor.export_services.clone().unwrap().export_batch(
             request,
             Cancellation::default(),
             |_, _| {},

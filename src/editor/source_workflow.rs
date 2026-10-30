@@ -119,8 +119,8 @@ impl Editor {
         self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
         self.document.visit.canvas.viewport.fit();
-        self.document.export_dialog = None;
-        self.document.export_summary = None;
+        self.document.export.draft = None;
+        self.document.export.summary = None;
         self.document.visit.return_notice = None;
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);

@@ -387,8 +387,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
         );
         assert_eq!(editor.document.state.project, before);
         assert!(
-            !editor.document.visit.source.pending()
-                && editor.document.export_operation.pending.is_none()
+            !editor.document.visit.source.pending() && editor.document.export.operation.is_none()
         );
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("existing.tif");
@@ -405,10 +404,9 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             editor.status
         );
         assert!(!editor.busy);
-        assert!(editor.document.export_operation.pending.is_none());
+        assert!(editor.document.export.operation.is_none());
         assert!(
-            !editor.document.visit.source.pending()
-                && editor.document.export_operation.pending.is_none()
+            !editor.document.visit.source.pending() && editor.document.export.operation.is_none()
         );
         assert_eq!(std::fs::read(&destination).unwrap(), b"keep destination");
         assert_eq!(editor.document.state.project, before);

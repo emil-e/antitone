@@ -1,6 +1,6 @@
 use super::*;
 use crate::editor::{
-    export_batch::{Draft, Kind, Scope},
+    export::batch::{Draft, Kind, Scope},
     source_loading,
     tests::authored_fixture,
 };
@@ -19,7 +19,7 @@ fn a_cached_renderer_failure_stops_before_acquiring_later_photos() {
     );
     settings.scope = Scope::All;
     settings.kind = Kind::Exr;
-    let mut request = editor.batch_input(&settings).unwrap();
+    let mut request = editor.capture_export(&settings).unwrap();
     let Input::Acquire(second) = &mut request.photos[1].input else {
         panic!("second photo must exercise cold acquisition");
     };
@@ -41,7 +41,8 @@ fn a_cached_renderer_failure_stops_before_acquiring_later_photos() {
     cache.fail_initialization(injected.clone());
     services.renderers = cache;
     drop(editor);
-    let summary = pollster::block_on(services.batch(request, Cancellation::default(), |_, _| {}));
+    let summary =
+        pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
     assert!(summary.stopped);
     assert_eq!(
         (summary.failed(), summary.exported(), summary.unattempted()),

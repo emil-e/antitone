@@ -242,9 +242,7 @@ fn cancelling_guarded_new_from_rendering_preserves_tab_document_and_preferences(
     assert_eq!(editor.tab, 2);
     assert_eq!(editor.document.state.project, project);
     assert_eq!(editor.preferences, preferences);
-    assert!(
-        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
 }
 
 #[test]
