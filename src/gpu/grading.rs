@@ -27,18 +27,25 @@ pub(super) struct AdjustmentLayerContext {
     count: [u32; 4],
 }
 
-/// Photographic constants independent of input interpretation and camera conversion.
-pub struct GpuGrade {
+/// Prepared Roll/layer controls and image operations, independent of source interpretation.
+#[derive(Clone)]
+pub struct Grading {
+    pub(super) device: wgpu::Device,
     pub(super) parameters: ProcessingParameters,
     pub(super) roll: RollSettings,
     pub(super) snapshot: AdjustmentLayerSnapshot,
     pub(super) buffer: wgpu::Buffer,
     pub(super) context: wgpu::Buffer,
     pub(super) area: SourceRegion,
-    spatial: bool,
+    pub(super) spatial: bool,
+    pub(super) functions:
+        std::sync::Arc<std::sync::OnceLock<super::evaluation::grading::Functions>>,
+    pub(super) coverage: u32,
+    pub(super) coordinates: Option<SourceGeometry>,
+    pub(super) active_layers: bool,
 }
 
-impl GpuGrade {
+impl Grading {
     pub fn validate(
         limits: &wgpu::Limits,
         roll: RollSettings,
@@ -70,6 +77,7 @@ impl GpuGrade {
             .iter()
             .any(|layer| layer.is_active() && layer.mask != AdjustmentLayerCoverage::Global {});
         Ok(Self {
+            device: device.clone(),
             parameters,
             roll,
             snapshot,
@@ -77,7 +85,63 @@ impl GpuGrade {
             context,
             area,
             spatial,
+            functions: Default::default(),
+            coverage: 0,
+            coordinates: None,
+            active_layers: active != 0,
         })
+    }
+
+    /// Evaluate the same effective layer weights used by photographic grading, even for an
+    /// identity-valued layer omitted from the active grade traversal.
+    #[cfg(feature = "editor")]
+    pub(crate) fn weight_image(
+        device: &wgpu::Device,
+        input: std::sync::Arc<super::evaluation::ImageNode>,
+        mut layer: AdjustmentLayer,
+    ) -> Result<std::sync::Arc<super::evaluation::ImageNode>, Error> {
+        use super::evaluation::{Function, Meaning, Shared, pointwise};
+
+        layer.validate()?;
+        if !layer.enabled {
+            layer.strength = 0.;
+        }
+
+        let parameters = AdjustmentLayerParameters::new(layer, input.domain.bounds)?;
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("captured adjustment-layer query weights"),
+            contents: bytemuck::bytes_of(&parameters),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let code = format!(
+            "{}\n{}",
+            Self::shader(),
+            include_str!("evaluation/layer_weight.wgsl")
+        );
+
+        Ok(pointwise(
+            input,
+            Meaning::Weight,
+            Function::new(code, "evaluation_layer_weight").with_shared(6, Shared::Buffer(buffer)),
+        ))
+    }
+
+    pub(crate) fn admit_layers(
+        layers: &AdjustmentLayerSnapshot,
+        mut bound: f64,
+    ) -> Result<(), Error> {
+        for layer in layers
+            .layers()
+            .iter()
+            .copied()
+            .filter(|layer| layer.is_active())
+        {
+            let (peak, output) = stage_bounds(layer, bound)?;
+            supported(peak)?;
+            bound = output;
+        }
+        Ok(())
     }
 
     pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {

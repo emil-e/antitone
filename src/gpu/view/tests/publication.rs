@@ -60,7 +60,7 @@ fn submitted_positive_rebinds_publication_without_regrading_or_changing_pixels()
         let scan = scan();
         let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
         let input = ProcessingInput::from(Arc::new(
-            GpuPipeline::new(
+            ProcessingInput::new(
                 &device,
                 InputSettings::Digital,
                 Default::default(),

@@ -4,7 +4,7 @@ use crate::{
         AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
     },
     geometry::{SourcePoint, SourceRegion as Rect},
-    gpu::GpuGrade,
+    gpu::Grading,
     processing::{RollPipeline, RollSettings},
     rendering::OutputTarget,
 };
@@ -137,7 +137,7 @@ pub(super) fn chain(
     node = grade(
         node,
         device,
-        Arc::new(GpuGrade::new(device, roll, snapshot, domain.bounds).unwrap()),
+        Arc::new(Grading::new(device, roll, snapshot, domain.bounds).unwrap()),
     )
     .unwrap();
     if sigma > 0. {

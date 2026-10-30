@@ -96,7 +96,12 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
             drop(hold);
             app.run_until(Duration::from_secs(5), |editor| !editor.busy);
             app.read(|editor| {
-                assert_eq!(editor.dmin(), Some(expected), "{}", editor.status);
+                let actual = editor.dmin().expect("captured camera measurement");
+                assert!(
+                    (actual - expected).abs().max_element() / expected.abs().max_element() < 2e-6,
+                    "{}: {actual:?} != {expected:?}",
+                    editor.status
+                );
                 assert!(editor.active_pick().is_none() && !editor.measurement_pending());
                 assert_eq!(
                     editor.history_label(crate::editor::history::Direction::Undo),
@@ -153,7 +158,7 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
 
 #[test]
 fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
-    let mut editor = crate::editor::tests::fixture();
+    let mut editor = crate::editor::tests::with_document_services(crate::editor::tests::fixture());
     crate::editor::tests::add_ready_fixture(&mut editor);
     editor.sync_document();
     let area = Scan::from_source(

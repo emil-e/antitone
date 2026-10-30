@@ -430,6 +430,9 @@ fn matching_success_retires_source_save_and_measurement_activity() {
     for operation in 0..3 {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
+        if operation == 2 {
+            editor = crate::editor::tests::with_document_services(editor);
+        }
         let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
             if operation == 2 {

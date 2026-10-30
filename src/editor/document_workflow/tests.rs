@@ -389,7 +389,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             )
             .unwrap();
         let parameters = crate::gpu::ProcessingInput::from(Arc::new(
-            crate::gpu::GpuPipeline::new(
+            crate::gpu::ProcessingInput::new(
                 device,
                 InputSettings::Digital,
                 Default::default(),

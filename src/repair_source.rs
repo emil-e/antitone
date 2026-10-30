@@ -7,9 +7,8 @@ use crate::{
     dust_repair::{self, EvaluatedRepair, Execution, Repair},
     scan::{ImageSource, Scan},
 };
-use std::time::Instant;
 
-/// Every repair reads the same unrepaired working positive, evaluated in f64 then stored as f32.
+/// Evaluate against this source's unrepaired working positive, storing f64 source values as f32.
 pub fn evaluate(source: &ImageSource<'_>, repair: &Repair) -> Result<EvaluatedRepair, Error> {
     evaluate_with(source, repair, &mut Execution::default())
         .map(|result| result.expect("uncancelled repair evaluation"))
@@ -34,33 +33,6 @@ pub(crate) fn evaluate_with(
                 Err(Error::NumericalOverflow)
             }
         },
-        execution,
-    )
-}
-
-pub(crate) fn search(
-    source: &ImageSource<'_>,
-    support: &dust_repair::SupportMask,
-    preferred: Option<[i32; 2]>,
-    execution: &mut Execution<'_>,
-) -> Result<dust_repair::SearchOutcome, Error> {
-    if (execution.cancelled)() {
-        return Ok(dust_repair::SearchOutcome::Cancelled);
-    }
-    dust_repair::search_donor(
-        support,
-        preferred,
-        source.area(),
-        &mut |point| {
-            let value = source.sample(point)?.as_vec3().to_array();
-            if value.iter().all(|channel| channel.is_finite()) {
-                Ok(value)
-            } else {
-                Err(Error::NumericalOverflow)
-            }
-        },
-        Instant::now() + dust_repair::SEARCH_BUDGET,
-        dust_repair::SEARCH_ACCEPTABLE_SCORE,
         execution,
     )
 }
@@ -110,19 +82,51 @@ pub(crate) fn resolve_plan_with(
     plan: &crate::acquisition::Plan,
     execution: &mut Execution<'_>,
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
+    require_plan(recipe, plan)?;
+    resolve_matching(scan, recipe, execution, |repair| {
+        selected_by_plan(plan, repair)
+    })
+}
+
+#[cfg(feature = "project")]
+pub(crate) fn resolve_plan_using(
+    scan: &Scan,
+    recipe: &crate::image_recipe::ImageRecipe,
+    plan: &crate::acquisition::Plan,
+    execution: &mut Execution<'_>,
+    evaluate: impl FnMut(&Repair, &mut Execution<'_>) -> Result<Option<EvaluatedRepair>, Error>,
+) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
+    require_plan(recipe, plan)?;
+    recipe.neutral.require_scan(scan)?;
+    resolve_selected(
+        recipe,
+        execution,
+        |repair| selected_by_plan(plan, repair),
+        evaluate,
+    )
+}
+
+#[cfg(feature = "project")]
+fn require_plan(
+    recipe: &crate::image_recipe::ImageRecipe,
+    plan: &crate::acquisition::Plan,
+) -> Result<(), Error> {
     if plan.output().composition != recipe.composition {
         return Err(Error::InvalidParameter(
             "repair plan differs from captured composition",
         ));
     }
-    resolve_matching(scan, recipe, execution, |repair| {
-        for point in repair.support.selected_points() {
-            if plan.original_repair_contributes(point)? {
-                return Ok(true);
-            }
+    Ok(())
+}
+
+#[cfg(feature = "project")]
+fn selected_by_plan(plan: &crate::acquisition::Plan, repair: &Repair) -> Result<bool, Error> {
+    for point in repair.support.selected_points() {
+        if plan.original_repair_contributes(point)? {
+            return Ok(true);
         }
-        Ok(false)
-    })
+    }
+    Ok(false)
 }
 
 #[cfg(feature = "project")]
@@ -134,12 +138,24 @@ fn resolve_matching(
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
     recipe.neutral.require_scan(scan)?;
     let source = ImageSource::new(scan, recipe.neutral.processing_input()?)?;
+    resolve_selected(recipe, execution, applicable, |repair, execution| {
+        evaluate_with(&source, repair, execution)
+    })
+}
+
+#[cfg(feature = "project")]
+fn resolve_selected(
+    recipe: &crate::image_recipe::ImageRecipe,
+    execution: &mut Execution<'_>,
+    applicable: impl Fn(&Repair) -> Result<bool, Error>,
+    mut evaluate: impl FnMut(&Repair, &mut Execution<'_>) -> Result<Option<EvaluatedRepair>, Error>,
+) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
     let mut evaluated = Vec::new();
     for repair in recipe.repairs() {
         if !applicable(repair)? {
             continue;
         }
-        let Some(result) = evaluate_with(&source, repair, execution)
+        let Some(result) = evaluate(repair, execution)
             .map_err(|error| Error::Raw(format!("repair {}: {error}", repair.id.0)))?
         else {
             return Ok(None);

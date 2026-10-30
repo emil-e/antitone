@@ -1,9 +1,11 @@
 use super::*;
 use crate::{
-    adjustment_layers::AdjustmentLayerStack,
+    adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
+    },
     geometry::{SourcePoint, SourceRegion},
-    gpu::GpuGrade,
-    processing::RollPipeline,
+    gpu::Grading,
+    processing::RollSettings,
 };
 use glam::DVec3;
 use wgpu::util::DeviceExt;
@@ -113,9 +115,28 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
         meaning: Meaning::Neutral,
     };
     let area = [45, 70, 48, 48].into();
-    let (roll, snapshot) = super::tests::settings(area);
-    let gpu_grade = GpuGrade::new(&device, roll, snapshot.clone(), area).unwrap();
-    let grading = Grading::new(&device, &gpu_grade, domain.grid.coverage);
+    let roll = RollSettings {
+        exposure: 1.,
+        ..Default::default()
+    };
+    let global = AdjustmentLayer::global(AdjustmentLayerSettings {
+        exposure: -2.,
+        ..Default::default()
+    });
+    let local = AdjustmentLayer {
+        mask: AdjustmentLayerCoverage::Linear {
+            start: SourcePoint([45., 70.]),
+            end: SourcePoint([93., 118.]),
+        },
+        strength: 0.5,
+        ..AdjustmentLayer::global(AdjustmentLayerSettings {
+            exposure: 2.,
+            ..Default::default()
+        })
+    };
+    let snapshot = AdjustmentLayerSnapshot::new(vec![global, local]).unwrap();
+    let gpu_grade = Grading::new(&device, roll, snapshot, area).unwrap();
+    let grading = gpu_grade.for_grid(domain.grid.coverage);
     let pixels: Vec<_> = (0..63)
         .map(|i| {
             [
@@ -132,7 +153,7 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
     let roll_image = grading.roll(root.clone()).unwrap();
     let full_image = grading.compose(root).unwrap();
     assert_eq!(
-        grading.byte_len(),
+        grading.operation_bytes(),
         0,
         "logical image handles do not allocate unused photographic uniforms"
     );
@@ -140,7 +161,7 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
     let (roll_pixels, roll_work) = record(&device, &queue, &renderer, roll_image, region, &source);
     let (full_pixels, full_work) = record(&device, &queue, &renderer, full_image, region, &source);
     assert!(
-        grading.byte_len() > 0,
+        grading.operation_bytes() > 0,
         "planned photographic functions own their captured uniforms"
     );
     assert_eq!(
@@ -152,8 +173,6 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
         pixels,
         "prefix and full requests preserve the captured neutral samples"
     );
-    let scalar_roll = RollPipeline::new(roll).unwrap();
-    let scalar_layers = AdjustmentLayerStack::new(snapshot.layers().to_vec()).unwrap();
     let mut effect = 0_f64;
     let mut signed_and_hdr = [false; 2];
     for (i, (prefix, complete)) in roll_pixels.iter().zip(&full_pixels).enumerate() {
@@ -167,15 +186,12 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
         }
         signed_and_hdr[0] |= input[0] < 0.;
         signed_and_hdr[1] |= input[1] > 1.;
-        let expected_roll = scalar_roll
-            .apply(DVec3::new(
-                input[0] as f64,
-                input[1] as f64,
-                input[2] as f64,
-            ))
-            .unwrap();
-        let position = SourcePoint(domain.point([x as f64 + 0.5, y as f64 + 0.5]));
-        let expected_full = scalar_layers.apply_rgb(expected_roll, position).unwrap();
+        let expected_roll = DVec3::new(input[0] as f64, input[1] as f64, input[2] as f64) * 2.;
+        let [sx, sy] = domain.point([x as f64 + 0.5, y as f64 + 0.5]);
+        // A smoothstep on a 48×48 diagonal, half strength; weights scale stops, not pixels.
+        let t = ((sx - 45. + sy - 70.) / 96.).clamp(0., 1.);
+        let weight = t * t * (3. - 2. * t) * 0.5;
+        let expected_full = expected_roll * 0.25 * (2. * weight).exp2();
         effect = effect.max((expected_full - expected_roll).abs().max_element());
         for (actual, expected) in [(prefix, expected_roll), (complete, expected_full)] {
             assert!(actual.iter().all(|v| v.is_finite()));

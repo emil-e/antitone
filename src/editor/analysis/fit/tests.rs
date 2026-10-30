@@ -54,7 +54,7 @@ fn input(services: &Services, request: &Request) -> source::Context {
 
 #[test]
 fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_frame() {
-    let (mut request, _directory, device) = request();
+    let (mut request, _directory, device, queue) = request();
     approved(&mut request);
     request.document.project.set_gamma(0.7);
     let before = request.document.project.clone();
@@ -63,6 +63,8 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
+        queue,
+        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
     // Inspect the sampling boundary directly: every ordered frame contributes both
@@ -77,7 +79,7 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
         ))
         .unwrap()
         .unwrap();
-        assert!(state.sample(index, scan, || false).unwrap());
+        assert!(state.sample(index, scan, &services, || false).unwrap());
         let frame = &state.owned[index];
         assert!(frame.film.pixels.len() <= MAX_SAMPLES_PER_FRAME);
         assert!(
@@ -139,7 +141,7 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
 
 #[test]
 fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
-    let (mut request, _directory, device) = request();
+    let (mut request, _directory, device, queue) = request();
     approved(&mut request);
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
@@ -147,6 +149,8 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
+        queue,
+        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
     let cancelled = Cancellation::default();

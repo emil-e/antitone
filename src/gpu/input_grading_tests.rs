@@ -1,10 +1,50 @@
 use super::*;
+use crate::gpu::camera_fixture::CameraFixture;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
     color::Balance,
     geometry::SourceRegion,
     processing::{Calibration, NegativeInput, Response},
 };
+
+#[test]
+fn packed_camera_constants_do_not_stand_in_for_a_captured_photograph() {
+    pollster::block_on(async {
+        let adapter = instance()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        let (device, _queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let fixture = CameraFixture::new(&device).await.unwrap();
+        let source =
+            ProcessingSource::new(&device, &[[20000, 30000, 40000, 0]], DMat3::IDENTITY).unwrap();
+        let output = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let parameters = ProcessingParameters::interpret(
+            InputSettings::Digital,
+            Default::default(),
+            DMat3::IDENTITY,
+        )
+        .unwrap();
+        let mut encoder = device.create_command_encoder(&Default::default());
+        assert!(matches!(
+            fixture.encode_grade(
+                &device,
+                &mut encoder,
+                &source,
+                &output,
+                &ProcessingInput::from(parameters)
+            ),
+            Err(Error::InvalidParameter(
+                "photographic input requires captured interpretation and grading"
+            ))
+        ));
+    });
+}
 
 #[test]
 fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_inputs() {
@@ -14,7 +54,7 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
             .await
             .unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = CameraFixture::new(&device).await.unwrap();
         let area = SourceRegion::from([0, 0, 2, 1]);
         let roll = RollSettings {
             exposure: 0.5,
@@ -26,7 +66,7 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
                 ..Default::default()
             })])
             .unwrap();
-        let grade = Arc::new(GpuGrade::new(&device, roll, layers, area).unwrap());
+        let grade = Arc::new(Grading::new(&device, roll, layers, area).unwrap());
         let negative = InputSettings::from(NegativeInput {
             calibration: Calibration {
                 dmin: DVec3::splat(0.8),
@@ -46,7 +86,9 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -79,7 +121,8 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
                     let mut source = program.source_continuous(&device, &pixels).unwrap();
                     source.set_geometry(geometry).unwrap();
                     let pipeline =
-                        GpuPipeline::compose(&device, program, grade.clone(), source_area).unwrap();
+                        ProcessingInput::compose(&device, program, grade.clone(), source_area)
+                            .unwrap();
                     let mut encoder = device.create_command_encoder(&Default::default());
                     kernel
                         .encode_grade(&device, &mut encoder, &source, &output, &pipeline)

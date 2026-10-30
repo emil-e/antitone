@@ -34,7 +34,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
     let logical = crate::gpu::repairs::Snapshot::logical(vec![evaluated.clone()]).unwrap();
     let photo = AdjustmentLayerSettings::default();
     let grade = Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             &device,
             Calibration {
                 dmin: DVec3::splat(0.8),
@@ -51,8 +51,10 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         )
         .unwrap(),
     );
-    let scalar = crate::photographic::Grade::new(photo).unwrap();
-    let kernel = &renderer.kernel;
+    let kernel = crate::gpu::camera_fixture::CameraFixture::with_context(
+        renderer.camera.clone(),
+        renderer.evaluation.clone(),
+    );
     let reconstruction = Reconstructor::new(&device).unwrap();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -85,22 +87,18 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         let working = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: u64::from(size[0]) * u64::from(size[1]) * 16,
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let render = |repaired| {
             let mut encoder = device.create_command_encoder(&Default::default());
-            kernel
-                .encode_grade(&device, &mut encoder, &source, &working, &grade)
-                .unwrap();
+            let mut input = crate::gpu::ProcessingInput::from(grade.clone());
             if repaired {
-                let mut input = crate::gpu::ProcessingInput::from(grade.clone());
                 input.repairs = logical.clone();
-                renderer
-                    .repairs
-                    .original(&device, &mut encoder, kernel, &working, &input, geometry)
-                    .unwrap();
             }
+            kernel
+                .encode_grade(&device, &mut encoder, &source, &working, &input)
+                .unwrap();
             reconstruction
                 .encode(&device, &mut encoder, &unit, &texture, &working)
                 .unwrap();
@@ -117,11 +115,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
             ];
             if evaluated.support().contains(point) {
                 repaired_count += 1;
-                let expected = scalar
-                    .apply(DVec3::from_array(
-                        evaluated.pixel(point, [0.; 3]).map(f64::from),
-                    ))
-                    .unwrap();
+                let expected = evaluated.pixel(point, [0.; 3]).map(f64::from);
                 for c in 0..3 {
                     assert!(
                         (f64::from(actual[c]) - expected[c]).abs()

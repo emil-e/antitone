@@ -36,10 +36,13 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                         input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
                     })
                     .unwrap();
-                let parameters = ProcessingParameters::positive(
+                let parameters = antitone::gpu::ProcessingInput::new(
+                    &device,
                     calibration,
                     RollSettings::default(),
+                    antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
                     DMat3::IDENTITY,
+                    [12, 7, 8, 4].into(),
                 )
                 .unwrap();
                 let pixels: Vec<_> = (0..32u16)
@@ -72,29 +75,43 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     ..Default::default()
                 };
                 let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
-                let scope = ScopePaint::new(
+                let scope = ScopePaint::with_processing(
                     gpu.clone(),
                     image.clone(),
-                    parameters,
+                    parameters.clone(),
                     frame,
                     settings,
                     egui::Context::default(),
-                );
-                let viewer = ImagePaint::new(image.clone(), Some(parameters), [0.25, 0., 0.5, 1.]);
+                )
+                .unwrap();
+                let viewer = ImagePaint::with_processing(
+                    image.clone(),
+                    Some(parameters.clone()),
+                    [0.25, 0., 0.5, 1.],
+                )
+                .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 if viewer_first {
                     viewer.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-                    assert!(!image.prepare(&device, &mut encoder, parameters));
+                    assert!(
+                        !image
+                            .prepare_processing(&device, &mut encoder, &parameters)
+                            .unwrap()
+                    );
                     scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
                 } else {
                     scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-                    assert!(!image.prepare(&device, &mut encoder, parameters));
+                    assert!(
+                        !image
+                            .prepare_processing(&device, &mut encoder, &parameters)
+                            .unwrap()
+                    );
                     viewer.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
                 }
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 let counts = gpu
-                    .status(&image, parameters, frame, settings)
+                    .status_processing(&image, &parameters, frame, settings)
                     .unwrap()
                     .unwrap();
                 assert_eq!(
@@ -142,7 +159,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                         ),
                     ])
                     .and_then(|snapshot| {
-                        antitone::gpu::GpuPipeline::new(
+                        antitone::gpu::ProcessingInput::new(
                             &device,
                             calibration,
                             RollSettings::default(),
@@ -158,19 +175,23 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 tile.encode_processing(&device, &mut encoder, &tile_parameters)
                     .unwrap();
                 scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-                assert!(!image.prepare(&device, &mut encoder, parameters));
+                assert!(
+                    !image
+                        .prepare_processing(&device, &mut encoder, &parameters)
+                        .unwrap()
+                );
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 assert_eq!(gpu.reduction_count(), 1);
                 assert_eq!(
-                    gpu.status(&image, parameters, frame, settings)
+                    gpu.status_processing(&image, &parameters, frame, settings)
                         .unwrap()
                         .unwrap(),
                     counts
                 );
                 assert_eq!(read(&device, &queue, &gpu.bins), bins);
                 assert!(
-                    gpu.status(&thumbnail, parameters, frame, settings)
+                    gpu.status_processing(&thumbnail, &parameters, frame, settings)
                         .is_none(),
                     "renderer identity must not substitute for image identity"
                 );
@@ -178,16 +199,26 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 let revision = image.source_revision();
                 assert!(image.write_source(&queue, &pixels[..31]).is_err());
                 assert_eq!(image.source_revision(), revision);
-                assert!(gpu.status(&image, parameters, frame, settings).is_some());
+                assert!(
+                    gpu.status_processing(&image, &parameters, frame, settings)
+                        .is_some()
+                );
                 image
                     .write_source(&queue, &[[8000, 16000, 24000, 0]; 32])
                     .unwrap();
                 assert_eq!(image.source_revision(), revision + 1);
-                assert!(gpu.status(&image, parameters, frame, settings).is_none());
+                assert!(
+                    gpu.status_processing(&image, &parameters, frame, settings)
+                        .is_none()
+                );
                 let mut encoder = device.create_command_encoder(&Default::default());
                 scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
                 viewer.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-                assert!(!image.prepare(&device, &mut encoder, parameters));
+                assert!(
+                    !image
+                        .prepare_processing(&device, &mut encoder, &parameters)
+                        .unwrap()
+                );
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 assert_eq!(gpu.reduction_count(), 2);

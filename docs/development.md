@@ -28,6 +28,8 @@ Keep tooling that has current use: the build chain, regenerators with a document
 
 For each test, ask: **What plausible defect would this catch, and why would that defect matter?** Derive expectations from requirements, justified invariants or independent references — agreement between two paths can establish consistency without establishing that either is correct.
 
+For photographic processing, GPU-rendered output is the implementation under assessment. An independent CPU renderer does not become an oracle through agreement. Prefer materially simpler analytic helpers, justified invariants or fixtures with established provenance; recording current output alone does not establish that provenance. Keep test-only implementations in helpers or fixtures.
+
 Apply this scrutiny at both whole-case and individual-assertion level, including fixture setup and control discovery. For UX regressions, distinguish user-visible protection from locking down the current arrangement: fixed dimensions, wording, colours or widget placement need a reason beyond matching today's UI, and finding a control through its painted colour can impose the same lock indirectly. The reverse also holds: for accessibility, serialization, resource lifetime and performance, exact assertions can be the essential protection, not incidental lock-in.
 
 Watch for self-comparisons, expectations that mirror implementation calculations, mocks that confirm their own arrangement, and broad snapshots that obscure the meaningful expectation — review signals, not automatic deletion rules. Test names and assertions should describe the scenario and invariant actually exercised. Establish why a new expected value or tolerance is correct before updating it; a green test is not that justification. Before deleting a test, identify the protection being removed and whether it is still needed or covered elsewhere.
@@ -80,10 +82,10 @@ Production and reference dependencies are separate:
 | `raw,gpu,render` | Bounded scene-/display-referred original-sample execution; no file encoder, desktop or OCIO |
 | `raw,gpu,export` | Original-sample execution with file encoding/publication; no desktop or OCIO |
 | `editor` | Application, including direct DNG SDK development and GPU export; no OCIO |
-| `ocio-reference` | Independent OCIO renderer and scalar composed export oracles |
+| `ocio-reference` | Independent OCIO renderer and scalar composed export diagnostics |
 | `ui-tests` | Editor interaction checks, including independent OCIO assertions |
 
-Tests that explicitly use the CPU/OCIO oracle require `ocio-reference`; this is not a production fallback. Editor and `--all-features` builds compile the [vendored SDK](build-and-delivery.md#build-ownership) through CMake/Ninja. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
+Tests using OCIO require `ocio-reference`; production has no OCIO fallback. Editor and `--all-features` builds compile the [vendored SDK](build-and-delivery.md#build-ownership) through CMake/Ninja. Verify the production configuration separately so reference-feature unification cannot hide a runtime dependency.
 
 Production GPU checks use Metal on macOS and Vulkan on Windows. [Windows setup](build-and-run.md#windows) prepares production dependencies; OCIO reference checks require a separate OCIO build, and AppKit/native-window checks below are macOS-specific. Shell examples use POSIX syntax. Choose checks for the boundary you changed rather than running every native/sample-dependent exercise:
 
@@ -136,13 +138,13 @@ cargo test --locked --features editor --lib editor::source_workflow::
 cargo test --locked --features editor --lib authored_
 
 # Production GPU math; requires a GPU, not native RAW/rendering libraries.
-cargo test --locked --features gpu --test gpu_processing --test gpu_film_response
+cargo test --locked --features gpu --lib -- gpu::tests::gpu_processing gpu::tests::gpu_film_response
 
 # Composed editor, scopes and viewer; native setup, OCIO and GPU required.
 cargo test --locked --features editor,ocio-reference --lib --test scopes --test viewer
 ```
 
-The [authored RAW fixtures](../tests/fixtures/raw/README.md) supply declared sensor data for API, worker and UI checks. The photographic tests use an independent scalar oracle in [test support](../tests/support/photographic_reference.rs); a missing GPU device is a verification limit, not a numerical pass. A command runs its tests concurrently, so a test that only passes serially depends on shared state that needs fixing rather than on a pinned runner.
+The [authored RAW fixtures](../tests/fixtures/raw/README.md) supply declared sensor data for API, worker and UI checks. A missing GPU device is a verification limit, not a numerical pass. A command runs its tests concurrently, so a test that only passes serially depends on shared state that needs fixing rather than on a pinned runner.
 
 After native setup, use broader integration/lints when the change warrants them:
 
@@ -194,12 +196,13 @@ cargo test --locked --features editor --lib -- \
 ```sh
 cargo test --locked --no-default-features --test roll_analysis --test roll_sampling
 cargo test --locked --lib roll_analysis::
+cargo test --locked --features editor --lib gpu::analysis::
 cargo test --locked --features editor --lib editor::analysis::
 cargo test --locked --features editor --lib editor::analysis_review::
 cargo test --locked --features editor --lib editor::analysis_workflow::
 ```
 
-Core checks use synthetic populations. Editor checks exercise preparation and transactional installation; changes to inference scratch must preserve exact outputs and source freshness across reuse and reacquisition.
+Core checks use synthetic populations. GPU checks compare forward responses and fitted proposals with independent scalar references, and check complete original-footprint eligibility. Editor checks exercise preparation and transactional installation; changes to inference scratch must preserve exact outputs and source freshness across reuse and reacquisition.
 
 For the actual sampling-area review and Analyze controls with authored RAWs, use the [framework prerequisites](#framework-ui-regressions) and run:
 
@@ -255,7 +258,7 @@ cargo test --locked --no-default-features --test adjustment_layers
 cargo test --locked --features project --test adjustment_layer_project
 cargo test --locked --features export,project,ocio-reference --test adjustment_layer_export
 cargo test --locked --features gpu --lib gpu::
-cargo test --locked --features gpu --test gpu_adjustment_layers
+cargo test --locked --features gpu --lib gpu::tests::gpu_adjustment_layers
 cargo test --locked --features editor,ocio-reference --test adjustment_layer_consumers --test viewer --test scopes
 cargo test --locked --features editor --lib editor::processing::tests
 cargo test --locked --features editor --lib editor::adjustment_layers::tests

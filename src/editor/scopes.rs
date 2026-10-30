@@ -326,7 +326,7 @@ impl Editor {
             .proxy
             .image(self.document.target)
             .map_err(|_| "View unavailable")?;
-        if parameters.pipeline().is_some() {
+        if parameters.grade().is_some() {
             image
                 .require_processing(&parameters)
                 .map_err(|_| "Positive grade unavailable")?;

@@ -123,7 +123,7 @@ fn configured_probe(
     });
     let snapshot = AdjustmentLayerSnapshot::new(vec![]).unwrap();
     let grade = Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             device,
             InputSettings::Digital,
             RollSettings::default(),

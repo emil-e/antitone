@@ -4,6 +4,8 @@ use super::{
 };
 use async_executor::Task;
 
+mod query;
+
 #[cfg(test)]
 mod tests;
 
@@ -16,10 +18,14 @@ pub(super) fn pick_dmin<'scope>(
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
     let mut image = measurement::capture_scan(editor)?;
+    let services = editor.source_services.clone();
     cx.spawn(move |cx| async move {
         let Some(value) = measurement::pick(
             DMIN,
-            move |region, _| image.reference_coverage(region),
+            move |region, cancelled| {
+                let services = measurement::query_services(services.as_ref())?;
+                query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+            },
             cx.clone(),
         )
         .await
@@ -40,10 +46,14 @@ pub(super) fn pick_dmax<'scope>(
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
     let mut image = measurement::capture_scan(editor)?;
+    let services = editor.source_services.clone();
     cx.spawn(move |cx| async move {
         let Some(value) = measurement::pick(
             DMAX,
-            move |region, _| image.reference_coverage(region),
+            move |region, cancelled| {
+                let services = measurement::query_services(services.as_ref())?;
+                query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+            },
             cx.clone(),
         )
         .await
@@ -64,11 +74,17 @@ pub(super) fn pick_gamma<'scope>(
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
     let mut image = measurement::capture_scan(editor)?;
+    let services = editor.source_services.clone();
     let input = editor.input();
     cx.spawn(move |cx| async move {
         let Some(value) = measurement::pick(
             GAMMA,
-            move |region, _| image.roll_neutral_coverage(region, &input),
+            move |region, cancelled| {
+                let services = measurement::query_services(services.as_ref())?;
+                query::gamma(services, &mut image, region, input, &|| {
+                    cancelled.is_cancelled()
+                })
+            },
             cx.clone(),
         )
         .await

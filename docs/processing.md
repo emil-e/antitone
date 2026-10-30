@@ -84,7 +84,7 @@ After input interpretation, each source's metadata-derived camera matrix maps th
 
 ### Ungraded positive and repair placement
 
-The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, including fixed Digital brightness normalization, but before Roll or layer controls. `InputPipeline` consumes the resolved production transform and omits photographic grading. `ImageSource` supplies original-coordinate samples with correction and interpretation resolved for its captured source.
+The ungraded positive is full-resolution signed/HDR AP1 after input interpretation and camera conversion, including fixed Digital brightness normalization, but before Roll or layer controls. Production repair inputs evaluate this composition on the original grid, with correction and interpretation resolved for the captured source.
 
 The provisional Dust tool heals here. RAW-development WB, gamma balance and fixed Digital normalization are upstream; Roll and adjustment-layer controls are downstream. Calibration, response, correction or development changes legitimately require asynchronous reevaluation; downstream grading does not. Every independent repair reads the same unrepaired input and preserves signed/HDR values.
 
@@ -94,11 +94,13 @@ Healing and nonlinear grading do not commute, so pre-grade donor matching can di
 
 ### Input and grading have separate contracts
 
-CPU `GradingPipeline` and GPU `GpuGrade` consume working positives and own Roll/layer controls, independently of calibration and camera conversion. The GPU source adapter is [`GpuInputProgram`](../src/gpu/input_program.rs); [`GpuPipeline`](../src/gpu/pipeline.rs) composes source execution with a grade, retains the original source extent for spatial execution and checks the complete operation. Source programs own their transforms and opaque signatures, so reconstruction obtains source execution from the input rather than retrieving a camera matrix from a grade. CPU sampling and GPU command encoding express the same stage boundary differently; GPU composition retains fused shader execution.
+[`GpuInputProgram`](../src/gpu/input_program.rs) prepares source interpretation and camera conversion; [`Grading`](../src/gpu/grading.rs) owns captured Roll/layer controls, prepared resources and grading operations on working positives. [`ProcessingInput`](../src/gpu/input.rs) captures these independently, including the original extent for spatial admission.
+
+The [ordered photographic definition](../src/gpu/photograph.rs) drives both component admission and [image assembly](../src/gpu/evaluation/photograph/assembly.rs). Full photographs and requested prefixes follow that definition; source adapters supply captured settings and coordinate mappings rather than separate upstream operation lists. Recognized folded camera implementations preserve their arithmetic and representable range without requiring each logical boundary to become a buffer.
 
 ### One accepted image recipe
 
-[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, Film Emulation, composition and the immutable creative-look asset. Navigation recipes retain grade/emulation/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. [Resolved image sources](../src/scan/image_source.rs) share the input sampling boundary across interactive and offscreen [repair evaluation](../src/repair_source.rs).
+[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, Film Emulation, composition and the immutable creative-look asset. Navigation recipes retain grade/emulation/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. Interactive and offscreen repairs use a [shared GPU source](../src/gpu/repair_source.rs) to supply bounded crops to the CPU matching and healing algorithms.
 
 ### Photo contrast and saturation
 
@@ -108,7 +110,7 @@ Contrast scales a log-like ACEScct signal around a pivot; its Colour preservatio
 
 Each layer has the same photographic controls and global, linear-gradient or radial-gradient coverage. Layers run bottom to top in the editor's list, applying exposure, Bradford WB, contrast and saturation in AP1 before rendering or geometric averaging. Global coverage is simply weight one; a whole-image finishing grade can follow a gradient, and nonlinear stages make order significant.
 
-Coverage, inversion and strength produce a weight between zero and one: exposure and WB scale by it, while contrast and saturation interpolate toward identity. Thus half coverage of +1 EV means +0.5 EV — not a halfway blend of two output pixels. Masks are analytic gradients, not retained rasters; [geometry](geometry.md#source-anchored-local-masks) explains why composition and navigation must not move them. The scalar pipeline and GPU grades consume immutable snapshots; full-stack preflight rejects nonfinite constants and overflowing intermediates rather than clamping.
+Coverage, inversion and strength produce a weight between zero and one: exposure and WB scale by it, while contrast and saturation interpolate toward identity. Thus half coverage of +1 EV means +0.5 EV — not a halfway blend of two output pixels. Masks are analytic gradients, not retained rasters; [geometry](geometry.md#source-anchored-local-masks) explains why composition and navigation must not move them. Grading consumes immutable snapshots; full-stack preflight rejects nonfinite constants and overflowing intermediates rather than clamping.
 
 ### Film Emulation
 
@@ -120,9 +122,9 @@ Disabling emulation produces the clean plate; Amount zero retains image MTF and 
 
 ### One f32 photographic implementation
 
-GPU source conversion, illumination correction, inversion, camera matrices, repairs and photographic grades use ordinary f32 arithmetic. Preview and export share those operators. Signed and above-one working values remain available to downstream stages; area reconstruction separately accumulates original-cell contributions.
+GPU source conversion, illumination correction, inversion, camera matrices, repairs and photographic grades use ordinary f32 arithmetic. Preview, export, photographic measurements, candidate responses and repair inputs share those operators. Signed and above-one working values remain available to downstream stages; area reconstruction separately accumulates original-cell contributions.
 
-Additional precision carries compilation and execution costs on every photograph. It needs evidence of a meaningful difference in real photographic output, rather than disagreement with f64 in a constructed cancellation case. CPU measurements, Analyze and repair preparation use ordinary f64 arithmetic; the scalar pipeline also serves as an independent model reference for stage order, equations and output comparisons. [Photographic diagnostics](diagnostics.md#photographic-arithmetic) produce paired rendered files for that assessment.
+Additional precision carries compilation and execution costs on every photograph. It needs evidence of a meaningful difference in real photographic output, rather than disagreement with f64 in a constructed cancellation case. CPU statistics, fitting and repair reconstruction retain f64 arithmetic, consuming shared f32 forward pixels. GPU fitters account for their forward model's residual resolution while retaining conditioning checks. [Photographic diagnostics](diagnostics.md#photographic-arithmetic) produce paired rendered files for that assessment.
 
 Continuous signed contrast and the film-base continuation retain explicit zero-input limits. The shaders otherwise use built-in f32 exponentials and logarithms. Preflight checks representable constants and finite intermediate ranges, including response evaluation after f32 packing.
 
@@ -145,6 +147,6 @@ The current model is **5**. Negative calibration must be finite and satisfy `Dmi
 - [Photographic grading](../src/photographic.rs): contrast/saturation and stable signed evaluation.
 - [Sampling](../src/sampling.rs): manual reference and neutral fitting.
 - [GPU processing](../src/gpu.rs): the production implementation and preflight.
-- [Adjustment layers](../src/adjustment_layers.rs) and [GPU grades](../src/gpu/adjustment_layers.rs): coverage, shared control settings and complete ordered snapshots.
+- [Adjustment layers](../src/adjustment_layers.rs) and [GPU grading](../src/gpu/grading.rs): coverage, shared control settings and complete ordered snapshots.
 
-The scalar photographic implementation is the f64 reference. Exact equations, supported ranges and numerical gates live with the implementation and its tests: [camera inversion](../tests/camera_inversion.rs), [film response](../tests/film_response.rs), [photographic grading](../tests/photographic.rs) and [GPU processing](../tests/gpu_processing.rs). Start with the relevant [development checks](development.md#feature-specific-checks).
+GPU photographic components define the rendered pixels; CPU calculations prepare parameters and bounds and perform statistics, fitting and healing. Test expectations need their own justification: a second renderer establishes agreement, not photographic correctness. Start with the [test guidance](development.md#meaningful-tests) and relevant [development checks](development.md#feature-specific-checks).

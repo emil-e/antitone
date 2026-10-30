@@ -74,7 +74,7 @@ fn acquisition_execution_resources() {
 
         let make_input = |ev: f64| {
             ProcessingInput::from(Arc::new(
-                GpuPipeline::new(
+                ProcessingInput::new(
                     device,
                     InputSettings::Digital,
                     Default::default(),

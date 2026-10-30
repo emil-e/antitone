@@ -17,7 +17,7 @@ mod tests;
 pub trait EffectDefinition: Any + fmt::Debug + Send + Sync {
     fn support(&self, pitch: [f64; 2]) -> Support;
 
-    #[cfg(all(feature = "gpu", feature = "render"))]
+    #[cfg(feature = "gpu")]
     fn compose(
         &self,
         input: Arc<crate::gpu::evaluation::ImageNode>,
@@ -49,7 +49,7 @@ impl PixelStage {
         self.value.support(pitch)
     }
 
-    #[cfg(all(feature = "gpu", feature = "render"))]
+    #[cfg(feature = "gpu")]
     pub(crate) fn compose(
         &self,
         input: Arc<crate::gpu::evaluation::ImageNode>,
@@ -82,7 +82,7 @@ impl EffectDefinition for Grain {
         self.parameters.support(pitch)
     }
 
-    #[cfg(all(feature = "gpu", feature = "render"))]
+    #[cfg(feature = "gpu")]
     fn compose(
         &self,
         input: Arc<crate::gpu::evaluation::ImageNode>,
@@ -96,7 +96,7 @@ impl EffectDefinition for crate::image_mtf::ImageMtfParameters {
         Self::support(*self, pitch)
     }
 
-    #[cfg(all(feature = "gpu", feature = "render"))]
+    #[cfg(feature = "gpu")]
     fn compose(
         &self,
         input: Arc<crate::gpu::evaluation::ImageNode>,
@@ -146,7 +146,7 @@ impl PixelPipeline {
         self.stages.is_empty()
     }
 
-    #[cfg(all(feature = "gpu", feature = "render"))]
+    #[cfg(feature = "gpu")]
     pub(crate) fn compose(
         &self,
         mut input: Arc<crate::gpu::evaluation::ImageNode>,

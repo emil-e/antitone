@@ -2,7 +2,7 @@
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
-use antitone::gpu::{GpuPipeline, ProcessingInput};
+use antitone::gpu::ProcessingInput;
 use antitone::{
     color::{Balance, ap1_to_ap0},
     flat_field::FlatField,
@@ -93,9 +93,15 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             };
             let pipeline = Pipeline::new(input, roll, matrix).unwrap();
             cases.push((
-                ProcessingParameters::positive(input.negative_input().unwrap(), roll, matrix)
-                    .map(ProcessingInput::from)
-                    .unwrap(),
+                ProcessingInput::new(
+                    &device,
+                    input,
+                    roll,
+                    AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                    matrix,
+                    [12, 12, 8640, 5760].into(),
+                )
+                .unwrap(),
                 scans
                     .iter()
                     .map(|p| pipeline.apply(*p).unwrap().rgb)
@@ -244,7 +250,7 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
             .unwrap();
             let parameters = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                 .and_then(|snapshot| {
-                    GpuPipeline::new(
+                    ProcessingInput::new(
                         &device,
                         calibration,
                         roll,
@@ -515,7 +521,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             (
                 AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                     .and_then(|snapshot| {
-                        GpuPipeline::new(
+                        ProcessingInput::new(
                             &device,
                             settings.negative_input().unwrap(),
                             roll,
@@ -555,7 +561,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                 (
                     AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                         .and_then(|snapshot| {
-                            GpuPipeline::new(
+                            ProcessingInput::new(
                                 &device,
                                 input.negative_input().unwrap(),
                                 roll,

@@ -16,7 +16,7 @@ use glam::{DVec3, Vec3};
 use std::{path::Path, sync::Arc};
 
 #[cfg(all(test, target_os = "macos", feature = "editor"))]
-use crate::gpu::GpuPipeline;
+use crate::gpu::ProcessingInput;
 #[cfg(all(test, target_os = "macos"))]
 mod film_tests;
 

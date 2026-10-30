@@ -150,7 +150,7 @@ fn exercise(
         )
         .map_err(|e| e.to_string())?;
         let input: ProcessingInput = Arc::new(
-            GpuPipeline::new(
+            ProcessingInput::new(
                 device,
                 adjusted,
                 roll,
@@ -399,7 +399,7 @@ fn exercise(
                             .chain(snapshot.layers().to_vec())
                             .collect(),
                         )?;
-                        let edited_input: ProcessingInput = Arc::new(GpuPipeline::new(
+                        let edited_input: ProcessingInput = Arc::new(ProcessingInput::new(
                             device,
                             adjusted,
                             roll,

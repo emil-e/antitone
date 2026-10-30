@@ -271,7 +271,7 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
 }
 
 #[test]
-fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
+fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let reference = directory.path().join("bare-light.dng");
     std::fs::copy(fixture("bare-light.dng"), &reference).unwrap();
@@ -446,9 +446,15 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
             })
             .expect("ordered corrected RGB pair");
         pick_patch(&mut harness, "Pick Dmin (film base)", dmin.0);
-        harness.read(|editor| assert_eq!(editor.dmin(), Some(dmin.1)));
+        harness.read(|editor| {
+            let actual = editor.dmin().expect("measured corrected camera RGB");
+            assert!((actual - dmin.1).abs().max_element() / dmin.1.abs().max_element() < 2e-6);
+        });
         pick_patch(&mut harness, "Pick Dmax", dmax.0);
-        harness.read(|editor| assert_eq!(editor.dmax(), Some(dmax.1)));
+        harness.read(|editor| {
+            let actual = editor.dmax().expect("measured corrected camera RGB");
+            assert!((actual - dmax.1).abs().max_element() / dmax.1.abs().max_element() < 2e-6);
+        });
         let (editor_input, _roll) = harness.read(|editor| (editor.input(), editor.document.roll));
         let (region, balance) = patches
             .iter()
@@ -465,7 +471,25 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
         harness.try_run_realtime().unwrap();
         // The roll neutral reference drives gamma balance; roll WB fills per-photo WB.
         pick_patch(&mut harness, "Pick neutral for gamma balance", region);
-        harness.read(|editor| assert_eq!(editor.balance(), balance));
+        harness.read(|editor| {
+            let actual = editor.balance();
+            assert!(
+                (actual.warmth - balance.warmth).abs() < 2e-6,
+                "{actual:?} != {balance:?}"
+            );
+            assert!(
+                (actual.tint - balance.tint).abs() < 2e-6,
+                "{actual:?} != {balance:?}"
+            );
+        });
+        // Give the layer pick a real upstream cast, independent of gamma-fit rounding residuals.
+        harness.update(|editor| {
+            editor.document.roll.wb = Balance {
+                warmth: 0.15,
+                tint: -0.1,
+            };
+            editor.sync_document();
+        });
         let (editor_input, roll, photo) = harness.read(|editor| {
             (
                 editor.input(),
@@ -487,10 +511,20 @@ fn correction_widgets_measure_exactly_render_thumbnails_toggle_and_reopen() {
                 .map(|b| (*r, b))
             })
             .expect("usable corrected photo-neutral patch");
+        assert!((balance.warmth - photo.wb.warmth).hypot(balance.tint - photo.wb.tint) > 0.05);
         stage(&mut harness, "Photo");
         pick_patch(&mut harness, "Pick neutral for white balance", region);
-        harness
-            .read(|editor| assert_eq!(editor.document.visit.adjustment_layer_settings.wb, balance));
+        harness.read(|editor| {
+            let actual = editor.document.visit.adjustment_layer_settings.wb;
+            assert!(
+                (actual.warmth - balance.warmth).abs() < 2e-6,
+                "{actual:?} != {balance:?}"
+            );
+            assert!(
+                (actual.tint - balance.tint).abs() < 2e-6,
+                "{actual:?} != {balance:?}"
+            );
+        });
         harness.update(|editor| {
             adjustment_layers::install_layers(editor);
             editor

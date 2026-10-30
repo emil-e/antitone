@@ -418,6 +418,71 @@ pub fn exposure_multiplier(stops: f64) -> Result<f64, Error> {
     Ok(stops.exp2())
 }
 
+/// Validated coefficients and conservative bounds used to prepare the GPU response.
+#[derive(Debug, Clone)]
+pub(crate) struct NegativeParameters {
+    calibration: Calibration,
+    gammas: DVec3,
+    pub(crate) anchor_exponents: DVec3,
+    shape: (f64, f64),
+}
+
+impl NegativeInput {
+    pub(crate) fn parameters(self) -> Result<NegativeParameters, Error> {
+        let negative = self;
+        let calibration = negative.calibration;
+        calibration.validate()?;
+        let gammas = negative.channel_gammas()?;
+        let (toe, shoulder) = negative.response.shape()?;
+        for c in 0..3 {
+            let density =
+                log_ratio(calibration.dmin[c], calibration.input_floor) / std::f64::consts::LN_10;
+            if gammas[c] - shoulder * density <= 0.0 {
+                return Err(Error::InvalidParameter(
+                    "shoulder pole falls within the scan-floor domain; reduce shoulder",
+                ));
+            }
+        }
+        let anchor_exponents = DVec3::from_array(std::array::from_fn(|c| {
+            let l = log_ratio(calibration.dmin[c], calibration.dmax[c]);
+            toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10)
+        }));
+        if !anchor_exponents.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
+        Ok(NegativeParameters {
+            calibration,
+            gammas,
+            anchor_exponents,
+            shape: (toe, shoulder),
+        })
+    }
+}
+
+impl NegativeParameters {
+    pub(crate) fn floor_bound(&self) -> Result<DVec3, Error> {
+        let (toe, shoulder) = self.shape;
+        let bound = DVec3::from_array(std::array::from_fn(|channel| {
+            let density = log_ratio(self.calibration.dmin[channel], self.calibration.input_floor);
+            if toe == 1. && shoulder == 0. {
+                expm1_ratio(
+                    density / self.gammas[channel],
+                    self.anchor_exponents[channel],
+                )
+            } else {
+                let exponent = toe * density
+                    / (self.gammas[channel] - shoulder * density / std::f64::consts::LN_10);
+                ((log_abs_expm1(exponent) - log_abs_expm1(self.anchor_exponents[channel])) / toe)
+                    .exp()
+            }
+        }));
+        if !bound.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
+        Ok(bound)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Inversion {
     calibration: Calibration,
@@ -463,32 +528,12 @@ impl Interpretation {
 
 impl Inversion {
     pub fn new(negative: impl Into<NegativeInput>) -> Result<Self, Error> {
-        let negative = negative.into();
-        let calibration = negative.calibration;
-        calibration.validate()?;
-        let gammas = negative.channel_gammas()?;
-        let (toe, shoulder) = negative.response.shape()?;
-        for c in 0..3 {
-            let density =
-                log_ratio(calibration.dmin[c], calibration.input_floor) / std::f64::consts::LN_10;
-            if gammas[c] - shoulder * density <= 0.0 {
-                return Err(Error::InvalidParameter(
-                    "shoulder pole falls within the scan-floor domain; reduce shoulder",
-                ));
-            }
-        }
-        let anchor_exponents = DVec3::from_array(std::array::from_fn(|c| {
-            let l = log_ratio(calibration.dmin[c], calibration.dmax[c]);
-            toe * l / (gammas[c] - shoulder * l / std::f64::consts::LN_10)
-        }));
-        if !anchor_exponents.is_finite() {
-            return Err(Error::NumericalOverflow);
-        }
+        let prepared = negative.into().parameters()?;
         Ok(Self {
-            calibration,
-            gammas,
-            anchor_exponents,
-            shape: (toe, shoulder),
+            calibration: prepared.calibration,
+            gammas: prepared.gammas,
+            anchor_exponents: prepared.anchor_exponents,
+            shape: prepared.shape,
         })
     }
 

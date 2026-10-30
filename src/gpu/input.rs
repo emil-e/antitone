@@ -1,17 +1,15 @@
-#[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
-use super::ProcessingSource;
-use super::{GpuPipeline, ProcessingParameters};
-#[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
-use crate::Error;
-use crate::film_emulation::FilmEmulationSettings;
+use super::{GpuInputProgram, Grading, ProcessingParameters, ProcessingSource};
+use crate::{
+    Error,
+    adjustment_layers::AdjustmentLayerSnapshot,
+    film_emulation::FilmEmulationSettings,
+    geometry::SourceRegion,
+    processing::{InputSettings, RollSettings},
+};
+use glam::{DMat3, DVec3};
 use std::sync::Arc;
 
-/// Immutable processing input shared by image consumers, never their mutable image storage.
-///
-/// Positive execution composes input and grading in a [`GpuPipeline`], retaining the semantic
-/// [`crate::adjustment_layers::AdjustmentLayerSnapshot`] it captures. Bare
-/// [`ProcessingParameters`] are reserved for source inspection and low-level GPU fixtures;
-/// they are not an alternative grade representation.
+/// Captured source and photographic settings. Components prepare their own GPU work.
 #[derive(Clone)]
 pub struct ProcessingInput {
     processing: Processing,
@@ -20,43 +18,208 @@ pub struct ProcessingInput {
     film_seed: Option<u64>,
     pixel_pipeline: Option<crate::pixel_pipeline::PixelPipeline>,
     frame_size: [u32; 2],
-    #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
     pub(crate) repairs: super::repairs::Snapshot,
 }
 
 #[derive(Clone)]
 enum Processing {
     Parameters(Arc<ProcessingParameters>),
-    Pipeline(Arc<GpuPipeline>),
+    Photograph {
+        source: Arc<GpuInputProgram>,
+        grading: Arc<Grading>,
+        area: SourceRegion,
+    },
 }
 
-impl From<ProcessingParameters> for ProcessingInput {
-    fn from(parameters: ProcessingParameters) -> Self {
-        Self {
-            processing: Processing::Parameters(Arc::new(parameters)),
-            frame_size: [0; 2],
-            look: None,
-            film_emulation: FilmEmulationSettings::default(),
-            film_seed: None,
-            pixel_pipeline: None,
-            #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
-            repairs: super::repairs::Snapshot::default(),
+impl Processing {
+    fn same_content(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Parameters(a), Self::Parameters(b)) => {
+                bytemuck::bytes_of(a.as_ref()) == bytemuck::bytes_of(b.as_ref())
+            }
+            (
+                Self::Photograph {
+                    source: a,
+                    grading: ag,
+                    area: aa,
+                },
+                Self::Photograph {
+                    source: b,
+                    grading: bg,
+                    area: ba,
+                },
+            ) => a == b && ag.roll == bg.roll && ag.snapshot() == bg.snapshot() && aa == ba,
+            _ => false,
         }
     }
 }
 
-impl From<Arc<GpuPipeline>> for ProcessingInput {
-    fn from(pipeline: Arc<GpuPipeline>) -> Self {
+impl From<ProcessingParameters> for ProcessingInput {
+    fn from(parameters: ProcessingParameters) -> Self {
+        Self::capture(Processing::Parameters(Arc::new(parameters)))
+    }
+}
+
+impl From<Arc<ProcessingInput>> for ProcessingInput {
+    fn from(input: Arc<ProcessingInput>) -> Self {
+        input.as_ref().clone()
+    }
+}
+
+impl ProcessingInput {
+    fn capture(processing: Processing) -> Self {
         Self {
-            processing: Processing::Pipeline(pipeline),
+            processing,
             frame_size: [0; 2],
             look: None,
             film_emulation: FilmEmulationSettings::default(),
             film_seed: None,
             pixel_pipeline: None,
-            #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
-            repairs: super::repairs::Snapshot::default(),
+            repairs: Default::default(),
         }
+    }
+
+    pub fn new(
+        device: &wgpu::Device,
+        input: impl Into<InputSettings>,
+        roll: RollSettings,
+        layers: AdjustmentLayerSnapshot,
+        matrix: DMat3,
+        area: SourceRegion,
+    ) -> Result<Self, Error> {
+        Self::compose(
+            device,
+            GpuInputProgram::new(input, matrix)?,
+            Arc::new(Grading::new(device, roll, layers, area)?),
+            area,
+        )
+    }
+
+    pub fn compose(
+        device: &wgpu::Device,
+        input: GpuInputProgram,
+        grading: Arc<Grading>,
+        area: SourceRegion,
+    ) -> Result<Self, Error> {
+        grading.require_extent(area)?;
+        Self::validate(
+            device,
+            input.input,
+            grading.roll,
+            grading.snapshot(),
+            input.matrix,
+            area,
+        )?;
+        Ok(Self::capture(Processing::Photograph {
+            source: Arc::new(input),
+            grading,
+            area,
+        }))
+    }
+
+    pub fn validate(
+        device: &wgpu::Device,
+        input: impl Into<InputSettings>,
+        roll: RollSettings,
+        layers: &AdjustmentLayerSnapshot,
+        matrix: DMat3,
+        area: SourceRegion,
+    ) -> Result<(), Error> {
+        Self::validate_limits(&device.limits(), input, roll, layers, matrix, area)
+    }
+
+    pub fn validate_limits(
+        limits: &wgpu::Limits,
+        input: impl Into<InputSettings>,
+        roll: RollSettings,
+        layers: &AdjustmentLayerSnapshot,
+        matrix: DMat3,
+        area: SourceRegion,
+    ) -> Result<(), Error> {
+        super::photograph::prepare(
+            limits,
+            input.into(),
+            roll,
+            layers,
+            matrix,
+            area,
+            DVec3::ZERO,
+        )
+        .map(|_| ())
+    }
+
+    pub(crate) fn validate_repaired(
+        device: &wgpu::Device,
+        input: impl Into<InputSettings>,
+        roll: RollSettings,
+        layers: &AdjustmentLayerSnapshot,
+        matrix: DMat3,
+        area: SourceRegion,
+        bound: DVec3,
+    ) -> Result<(), Error> {
+        super::photograph::prepare(
+            &device.limits(),
+            input.into(),
+            roll,
+            layers,
+            matrix,
+            area,
+            bound,
+        )
+        .map(|_| ())
+    }
+
+    pub(crate) fn validate_repairs(
+        &self,
+        device: &wgpu::Device,
+        bound: DVec3,
+    ) -> Result<(), Error> {
+        if let Processing::Photograph {
+            source,
+            grading,
+            area,
+        } = &self.processing
+        {
+            Self::validate_repaired(
+                device,
+                source.input,
+                grading.roll,
+                grading.snapshot(),
+                source.matrix,
+                *area,
+                bound,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn input_program(&self) -> &GpuInputProgram {
+        match &self.processing {
+            Processing::Photograph { source, .. } => source,
+            _ => panic!("source inspection has no photographic input program"),
+        }
+    }
+
+    pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {
+        self.grade()
+            .expect("source inspection has no grade")
+            .snapshot()
+    }
+
+    pub fn byte_len(&self) -> u64 {
+        self.grade().map_or(0, |grade| grade.byte_len())
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn byte_len_for(layers: &AdjustmentLayerSnapshot) -> u64 {
+        let active = layers
+            .layers()
+            .iter()
+            .filter(|layer| layer.is_active())
+            .count()
+            .max(1);
+        (active * std::mem::size_of::<super::grading::AdjustmentLayerParameters>()
+            + std::mem::size_of::<super::grading::AdjustmentLayerContext>()) as u64
     }
 }
 
@@ -137,7 +300,6 @@ impl ProcessingInput {
         self.film_emulation
     }
 
-    #[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
     pub(crate) fn pixel_pipeline(
         &self,
     ) -> Result<crate::pixel_pipeline::PixelPipeline, crate::Error> {
@@ -153,53 +315,88 @@ impl ProcessingInput {
 
     pub fn signature(&self) -> ProcessingSignature {
         ProcessingSignature {
-            parameters: bytemuck::bytes_of(&self.parameters()).try_into().unwrap(),
-            pipeline: match &self.processing {
-                Processing::Parameters(_) => None,
-                Processing::Pipeline(pipeline) => Some(pipeline.clone()),
-            },
+            processing: self.processing.clone(),
             look: self.look.as_ref().map(|look| look.lut().id()),
             film_emulation: self.film_emulation,
             film_seed: self.film_seed,
             pixel_pipeline: self.pixel_pipeline.clone(),
             frame_size: self.film_emulation.enabled.then_some(self.frame_size),
-            #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
             repairs: self.repairs.clone(),
         }
     }
 }
 
-#[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
 impl ProcessingInput {
     pub(crate) fn require_source(&self, source: &ProcessingSource) -> Result<(), Error> {
-        if let Processing::Pipeline(pipeline) = &self.processing {
-            pipeline.require_source(source)?;
+        if let Processing::Parameters(parameters) = &self.processing
+            && parameters.graded()
+        {
+            return Err(Error::InvalidParameter(
+                "photographic input requires captured interpretation and grading",
+            ));
+        }
+        if let Processing::Photograph {
+            source: program,
+            grading,
+            area,
+        } = &self.processing
+        {
+            program.require_source(source)?;
+            grading.require_geometry(source.geometry)?;
+            if let Some(geometry) = source.geometry.filter(|geometry| geometry.is_pair()) {
+                for region in geometry.regions() {
+                    if region.x < area.x
+                        || region.y < area.y
+                        || region.x >= area.x + area.width
+                        || region.y >= area.y + area.height
+                    {
+                        return Err(Error::Gpu(
+                            "composed input and source geometry regions differ".into(),
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
     }
 }
 
 impl ProcessingInput {
-    #[cfg(feature = "editor")]
     pub(crate) fn is_positive(&self) -> bool {
-        self.parameters().graded()
+        match &self.processing {
+            Processing::Parameters(parameters) => parameters.graded(),
+            Processing::Photograph { .. } => true,
+        }
     }
 
     pub(crate) fn parameters(&self) -> ProcessingParameters {
         match &self.processing {
             Processing::Parameters(parameters) => **parameters,
-            Processing::Pipeline(pipeline) => pipeline.parameters,
+            Processing::Photograph {
+                source, grading, ..
+            } => ProcessingParameters::interpret(source.input, grading.roll, source.matrix)
+                .expect("captured photographic constants were admitted"),
         }
     }
 
-    pub(crate) fn grade(&self) -> Option<&super::GpuGrade> {
-        self.pipeline().map(|pipeline| pipeline.grade.as_ref())
+    pub(crate) fn grade(&self) -> Option<&super::Grading> {
+        match &self.processing {
+            Processing::Photograph { grading, .. } => Some(grading),
+            _ => None,
+        }
     }
 
-    pub(crate) fn pipeline(&self) -> Option<&GpuPipeline> {
+    pub(crate) fn source_program(&self) -> Option<&GpuInputProgram> {
         match &self.processing {
-            Processing::Parameters(_) => None,
-            Processing::Pipeline(pipeline) => Some(pipeline),
+            Processing::Photograph { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn grade_shared(&self) -> Option<&Arc<Grading>> {
+        match &self.processing {
+            Processing::Photograph { grading, .. } => Some(grading),
+            _ => None,
         }
     }
 }
@@ -207,14 +404,12 @@ impl ProcessingInput {
 /// Content identity excludes GPU allocation identity and document-only adjustment metadata.
 #[derive(Clone)]
 pub struct ProcessingSignature {
-    parameters: [u8; ProcessingParameters::BYTE_LEN],
-    pipeline: Option<Arc<GpuPipeline>>,
+    processing: Processing,
     look: Option<crate::looks::LookId>,
     film_emulation: FilmEmulationSettings,
     film_seed: Option<u64>,
     frame_size: Option<[u32; 2]>,
     pixel_pipeline: Option<crate::pixel_pipeline::PixelPipeline>,
-    #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
     repairs: super::repairs::Snapshot,
 }
 
@@ -225,20 +420,14 @@ impl ProcessingSignature {
 
     /// Look changes rerender, but may reuse an immutable graded AP1 prefix.
     pub(crate) fn same_photographic(&self, other: &Self) -> bool {
-        #[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
         if self.repairs != other.repairs {
             return false;
         }
-        self.parameters == other.parameters
+        self.processing.same_content(&other.processing)
             && self.film_emulation == other.film_emulation
             && self.film_seed == other.film_seed
             && self.frame_size == other.frame_size
             && self.pixel_pipeline == other.pixel_pipeline
-            && match (&self.pipeline, &other.pipeline) {
-                (None, None) => true,
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a.same_content(b),
-                _ => false,
-            }
     }
 }
 
@@ -253,12 +442,21 @@ impl PartialEq for ProcessingSignature {
 impl std::fmt::Debug for ProcessingSignature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProcessingSignature")
-            .field("parameters", &self.parameters)
+            .field(
+                "inspection",
+                &matches!(self.processing, Processing::Parameters(_)),
+            )
             .field("look", &self.look)
             .field("film_emulation", &self.film_emulation)
             .field("film_seed", &self.film_seed)
             .field("pixel_pipeline", &self.pixel_pipeline)
-            .field("snapshot", &self.pipeline.as_ref().map(|p| p.snapshot()))
+            .field(
+                "snapshot",
+                &match &self.processing {
+                    Processing::Photograph { grading, .. } => Some(grading.snapshot()),
+                    _ => None,
+                },
+            )
             .finish_non_exhaustive()
     }
 }

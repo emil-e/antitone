@@ -59,8 +59,15 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             )
         })
         .unwrap();
-        let parameters =
-            ProcessingParameters::positive(calibration, roll, scan.camera_to_ap1).unwrap();
+        let parameters = crate::gpu::ProcessingInput::new(
+            &device,
+            calibration,
+            roll,
+            crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            scan.camera_to_ap1,
+            scan.area,
+        )
+        .unwrap();
         let renderer = RendererCache::default().get(&device, &queue).unwrap();
         let generation = AtomicU64::new(0);
         for angle in [-23.7_f64, 31.2] {
@@ -119,7 +126,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                     &device,
                     (&queue, &crate::platform::SubmissionGate::default()),
                     (&scan, Some(gpu_field.clone())),
-                    parameters,
+                    parameters.clone(),
                     target,
                     (&generation, 0),
                     view,
@@ -160,7 +167,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                         &device,
                         (&queue, &crate::platform::SubmissionGate::default()),
                         (&scan, Some(gpu_field.clone())),
-                        parameters,
+                        parameters.clone(),
                         target,
                         (&generation, 1),
                         view
@@ -178,7 +185,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
                         &device,
                         (&queue, &crate::platform::SubmissionGate::default()),
                         (&scan, Some(gpu_field.clone())),
-                        parameters,
+                        parameters.clone(),
                         target,
                         (&generation, 0),
                         inconsistent
@@ -236,14 +243,17 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         let _ = file;
         use egui_wgpu::CallbackTrait;
         let image = ready.proxy.image(OutputTarget::DisplayP3).unwrap();
-        let parameters = ProcessingParameters::positive(
+        let parameters = crate::gpu::ProcessingInput::new(
+            &device,
             Calibration {
                 dmin: DVec3::new(0.28, 0.23, 0.25),
                 dmax: DVec3::new(0.01, 0.005, 0.001),
                 input_floor: scan.input_floor,
             },
             RollSettings::default(),
+            crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
             scan.camera_to_ap1,
+            scan.area,
         )
         .unwrap();
         let composition = Composition::with_crop(
@@ -265,14 +275,15 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
             ..Default::default()
         };
         let gpu = Arc::new(crate::gpu_scopes::GpuScopes::new(&device).await.unwrap());
-        let scope = crate::gpu_scopes::ScopePaint::new(
+        let scope = crate::gpu_scopes::ScopePaint::with_processing(
             gpu.clone(),
             image.clone(),
-            parameters,
+            parameters.clone(),
             scope_frame,
             settings,
             egui::Context::default(),
-        );
+        )
+        .unwrap();
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [1100, 800],
             pixels_per_point: 1.,
@@ -288,13 +299,17 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         );
         let mut encoder = device.create_command_encoder(&Default::default());
         scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-        assert!(!image.prepare(&device, &mut encoder, parameters));
+        assert!(
+            !image
+                .prepare_processing(&device, &mut encoder, &parameters)
+                .unwrap()
+        );
         queue.submit([encoder.finish()]);
         tests::complete_service_request(&mut seeded, &document, job);
         assert_eq!(seeded.ready_count(&document, OutputTarget::DisplayP3), 1);
         wait(&device, &queue);
         let counts = gpu
-            .status(&image, parameters, scope_frame, settings)
+            .status_processing(&image, &parameters, scope_frame, settings)
             .unwrap()
             .unwrap();
         assert!(counts.valid > 0);
@@ -321,12 +336,16 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         assert_eq!(restarted.ready_count(&document, OutputTarget::DisplayP3), 1);
         let mut encoder = device.create_command_encoder(&Default::default());
         scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-        assert!(!image.prepare(&device, &mut encoder, parameters));
+        assert!(
+            !image
+                .prepare_processing(&device, &mut encoder, &parameters)
+                .unwrap()
+        );
         queue.submit([encoder.finish()]);
         wait(&device, &queue);
         assert_eq!(gpu.reduction_count(), 1);
         assert_eq!(
-            gpu.status(&image, parameters, scope_frame, settings)
+            gpu.status_processing(&image, &parameters, scope_frame, settings)
                 .unwrap()
                 .unwrap(),
             counts

@@ -67,7 +67,7 @@ fn render_repaired(
         crate::adjustment_layers::AdjustmentLayer::global(photo),
     ])
     .and_then(|snapshot| {
-        crate::gpu::GpuPipeline::new(
+        crate::gpu::ProcessingInput::new(
             device,
             calibration(),
             roll,
@@ -275,7 +275,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
         };
         let roll = RollSettings::default();
         let mut input: ProcessingInput = Arc::new(
-            GpuPipeline::new(
+            ProcessingInput::new(
                 &device,
                 negative,
                 roll,
@@ -328,7 +328,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             crate::adjustment_layers::AdjustmentLayer::global(photo),
         ])
         .and_then(|snapshot| {
-            crate::gpu::GpuPipeline::new(
+            crate::gpu::ProcessingInput::new(
                 &device,
                 calibration(),
                 roll,
@@ -340,7 +340,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
         .map(Arc::new)
         .unwrap();
         assert!(
-            GpuPipeline::validate_repaired(
+            ProcessingInput::validate_repaired(
                 &device,
                 calibration(),
                 roll,

@@ -13,6 +13,7 @@ use std::{path::Path, sync::Arc};
 
 type Result<T> = std::result::Result<T, Error>;
 
+mod analysis;
 mod identity;
 pub use identity::CameraIdentity;
 mod image_source;
@@ -523,7 +524,7 @@ impl Scan {
         calibration.validate()
     }
 
-    fn refined_input(&self, input: &InputSettings) -> Result<InputSettings> {
+    pub(crate) fn refined_input(&self, input: &InputSettings) -> Result<InputSettings> {
         match input.calibration() {
             Some(base) => Ok(input.with_calibration(self.processing_calibration(base)?)),
             None => Ok(*input),
@@ -575,82 +576,35 @@ impl Scan {
         &mut self,
         area: Rect,
         budget: usize,
-        mut inside: impl FnMut(Rect) -> bool,
+        inside: impl FnMut(Rect) -> bool,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Option<AnalysisSamples>> {
-        if cancelled() {
+        let Some(mut plan) = self.analysis_plan(area, budget, inside, &mut cancelled)? else {
             return Ok(None);
-        }
-        self.validate_area(area)?;
-        if budget == 0 || budget > crate::roll_analysis::MAX_SAMPLES_PER_FRAME {
-            return Err(Error::InvalidParameter("invalid analysis sampling budget"));
-        }
-        if area.width < 8 || area.height < 8 {
-            return Err(Error::UnusableSample(
-                "analysis area is smaller than a capture footprint",
-            ));
-        }
-        let columns = ((budget as f64 * f64::from(area.width) / f64::from(area.height)).sqrt()
-            as usize)
-            .max(1)
-            .min(budget)
-            .min((area.width / 8) as usize);
-        let rows = (budget / columns).min((area.height / 8) as usize);
-        let grid = crate::geometry::SourceRaster::new(area, [columns as u32, rows as u32])?;
-        let image = self.source.camera_image()?;
-        let mut result = AnalysisSamples {
-            pixels: Vec::with_capacity(columns * rows),
-            ..AnalysisSamples::default()
         };
-        for gy in 0..rows {
+        for footprint in plan.footprints {
             if cancelled() {
                 return Ok(None);
             }
-            for gx in 0..columns {
-                let [x, y] = grid.source_pixel([gx as u32, gy as u32])?;
-                let footprint = Rect {
-                    x: x - 4,
-                    y: y - 4,
-                    width: 8,
-                    height: 8,
-                };
-                if !inside(footprint) {
-                    continue;
-                }
-                result.attempted += 1;
-                let diagnostic = self.source.capture_eligibility(footprint)?;
-                if !diagnostic.eligible() {
-                    result.rejected_capture += 1;
-                    continue;
-                }
-                let mut white = false;
-                let mut floor = false;
-                for yy in footprint.y..footprint.y + 8 {
-                    for xx in footprint.x..footprint.x + 8 {
-                        white |= !image.is_continuous()
-                            && image.pixel_samples(xx, yy)?[..3]
-                                .iter()
-                                .any(|&v| v >= 65535.);
-                        let p = self.pixel(xx, yy)?;
-                        if !p.is_finite() {
-                            return Err(Error::NumericalOverflow);
-                        }
-                        floor |= p.min_element() <= self.corrected_floor;
+            let mut floor = false;
+            for y in footprint.region.y..footprint.region.y + footprint.region.height {
+                for x in footprint.region.x..footprint.region.x + footprint.region.width {
+                    let pixel = self.pixel(x, y)?;
+                    if !pixel.is_finite() {
+                        return Err(Error::NumericalOverflow);
                     }
-                }
-                if white {
-                    result.rejected_development += 1;
-                } else if floor {
-                    result.rejected_floor += 1;
-                } else {
-                    result.pixels.push(self.pixel(x, y)?);
+                    floor |= pixel.min_element() <= self.corrected_floor;
                 }
             }
+            if floor {
+                plan.samples.rejected_floor += 1;
+            } else {
+                plan.samples
+                    .pixels
+                    .push(self.pixel(footprint.centre[0], footprint.centre[1])?);
+            }
         }
-        if cancelled() {
-            return Ok(None);
-        }
-        Ok(Some(result))
+        Ok((!cancelled()).then_some(plan.samples))
     }
 
     pub fn reference(&mut self, region: Rect) -> Result<DVec3> {
@@ -704,7 +658,7 @@ impl Scan {
         sampling::roll_neutral(negative, &self.patch(region)?, matrix)
     }
 
-    fn checked_coverage(&mut self, coverage: Coverage) -> Result<()> {
+    pub(crate) fn checked_coverage(&mut self, coverage: Coverage) -> Result<()> {
         for span in coverage.row_spans(self.area)? {
             self.checked_region(span)?;
         }

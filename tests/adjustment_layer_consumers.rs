@@ -6,7 +6,7 @@ use antitone::{
     flat_field::FlatField,
     frame_raster::FrameRaster,
     geometry::{Composition, SourcePoint, SourceRegion},
-    gpu::{GpuFlatField, GpuPipeline, ProcessingInput, ProcessingParameters, SourceGeometry},
+    gpu::{GpuFlatField, ProcessingInput, ProcessingParameters, SourceGeometry},
     gpu_scopes::{GpuScopes, ScopePaint},
     processing::{Calibration, Pipeline, RollSettings},
     rendering::{CpuRenderer, OutputTarget},
@@ -78,7 +78,7 @@ fn layers() -> Vec<AdjustmentLayer> {
 
 fn input(device: &wgpu::Device, cal: Calibration, layers: Vec<AdjustmentLayer>) -> ProcessingInput {
     Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             device,
             cal,
             RollSettings::default(),
@@ -357,7 +357,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             ),
         ] {
             let changed: ProcessingInput = Arc::new(
-                GpuPipeline::new(
+                ProcessingInput::new(
                     &device,
                     calibration(),
                     roll,
@@ -409,7 +409,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
                 .is_err()
         );
         let wrong_basis: ProcessingInput = Arc::new(
-            GpuPipeline::new(
+            ProcessingInput::new(
                 &device,
                 calibration(),
                 RollSettings::default(),

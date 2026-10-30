@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::Composition,
-    gpu::{GpuGrade, GpuPipeline, ProcessingInput},
+    gpu::{Grading, ProcessingInput},
     processing::{InputSettings, RollSettings},
     rendering::OutputTarget,
 };
@@ -49,7 +49,7 @@ fn case(
         .unwrap()
         .image_mtf_sigma;
     let input = ProcessingInput::from(Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             device,
             InputSettings::Digital,
             roll,
@@ -66,7 +66,7 @@ fn case(
     node = grade(
         node,
         device,
-        Arc::new(GpuGrade::new(device, roll, snapshot, area).unwrap()),
+        Arc::new(Grading::new(device, roll, snapshot, area).unwrap()),
     )
     .unwrap();
     node = gaussian(node, sigma).unwrap();

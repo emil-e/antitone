@@ -3,6 +3,8 @@
 use super::*;
 use crate::geometry::SourceRegion;
 
+mod readback;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CachePolicy {
     /// Optional generated/intermediate-buffer payload bytes across prepared work and image scopes.

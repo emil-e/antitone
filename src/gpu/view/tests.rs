@@ -91,7 +91,7 @@ fn processing_input(
     photo: AdjustmentLayerSettings,
     scan: &Scan,
 ) -> ProcessingInput {
-    crate::gpu::GpuPipeline::new(
+    crate::gpu::ProcessingInput::new(
         device,
         input,
         roll,

@@ -12,6 +12,10 @@ use crate::{
 };
 
 mod gamma;
+mod model;
+
+pub(crate) use model::ForwardModel;
+use model::SampleBatch;
 
 pub const MAX_SAMPLES_PER_FRAME: usize = 8192;
 const BALANCE_SAMPLES_PER_FRAME: usize = 2048;
@@ -87,6 +91,24 @@ pub fn estimate(
     current: impl Into<InputSettings>,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<Option<Proposal>, Error> {
+    estimate_with_model(
+        frames,
+        effective_floor,
+        camera_to_ap1,
+        current,
+        &mut model::ScalarReference,
+        &mut cancelled,
+    )
+}
+
+pub(crate) fn estimate_with_model(
+    frames: &[FrameSamples<'_>],
+    effective_floor: f64,
+    camera_to_ap1: DMat3,
+    current: impl Into<InputSettings>,
+    model: &mut impl ForwardModel,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<Proposal>, Error> {
     if cancelled() {
         return Ok(None);
     }
@@ -156,29 +178,24 @@ pub fn estimate(
         balance: Balance::default(),
         ..current
     };
-    let baseline = Inversion::new(initial)?;
-    let mut eligible = Vec::with_capacity(frames.len());
-    for frame in frames {
-        if cancelled() {
-            return Ok(None);
+    let picture_batch = SampleBatch::new(frames.iter().map(|frame| frame.picture));
+    let mut eligible: Vec<Vec<DVec3>> = frames.iter().map(|_| Vec::new()).collect();
+    if !picture_batch.read(model, initial, cancelled, |frame, sample, positive| {
+        let y = (AP1_TO_XYZ * (camera_to_ap1 * positive)).y;
+        if !y.is_finite() {
+            return Err(Error::NumericalOverflow);
         }
-        let mut pixels = Vec::new();
-        for &p in frame.picture {
-            let v = baseline.apply(p)?;
-            let y = (AP1_TO_XYZ * (camera_to_ap1 * v.rgb)).y;
-            if !y.is_finite() {
-                return Err(Error::NumericalOverflow);
-            }
-            if v.rgb.min_element() > 1e-8 && y > 1e-8 {
-                pixels.push(p);
-            }
+        if positive.min_element() > 1e-8 && y > 1e-8 {
+            eligible[frame].push(frames[frame].picture[sample]);
         }
-        if pixels.is_empty() {
-            return Err(Error::UnusableSample(
-                "analysis frame has no positive balance samples",
-            ));
-        }
-        eligible.push(pixels);
+        Ok(())
+    })? {
+        return Ok(None);
+    }
+    if eligible.iter().any(Vec::is_empty) {
+        return Err(Error::UnusableSample(
+            "analysis frame has no positive balance samples",
+        ));
     }
     let balance_count = eligible
         .iter()
@@ -194,14 +211,15 @@ pub fn estimate(
                 .collect()
         })
         .collect();
-    let Some(balance) = gamma::fit(
+    let Some(balance) = gamma::fit_with_model(
         NegativeInput {
             calibration,
             ..current
         },
         camera_to_ap1,
         &selected,
-        &mut cancelled,
+        model,
+        cancelled,
     )?
     else {
         return Ok(None);
@@ -211,43 +229,47 @@ pub fn estimate(
         balance,
         ..initial
     };
-    let inversion = Inversion::new(negative)?;
-    let mut means = Vec::with_capacity(selected.len());
-    for frame in &selected {
-        if cancelled() {
-            return Ok(None);
+    let selected_batch = SampleBatch::new(selected.iter().map(Vec::as_slice));
+    let mut means = vec![DVec3::ZERO; selected.len()];
+    if !selected_batch.read(model, negative, cancelled, |frame, _, positive| {
+        means[frame] += positive;
+        Ok(())
+    })? {
+        return Ok(None);
+    }
+    for (mean, group) in means.iter_mut().zip(&selected_batch.groups) {
+        *mean /= group.len() as f64;
+        if !mean.is_finite() {
+            return Err(Error::NumericalOverflow);
         }
-        means.push(
-            camera_to_ap1
-                * sampling::weighted_mean_iter(
-                    frame
-                        .iter()
-                        .map(|&p| inversion.apply(p).map(|v| (v.rgb, 1.))),
-                )?,
-        );
+        *mean = camera_to_ap1 * *mean;
     }
     let mut roll = RollSettings {
         wb: neutral_wb(sampling::mean(&means)?)?,
         ..RollSettings::default()
     };
     let post = wb_matrix(roll.wb)? * camera_to_ap1;
+    let mut luminances: Vec<Vec<f64>> = frames.iter().map(|_| Vec::new()).collect();
+    if !picture_batch.read(model, negative, cancelled, |frame, _, positive| {
+        let y = (AP1_TO_XYZ * (post * positive)).y;
+        if !y.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
+        if y > 1e-8 {
+            luminances[frame].push(y);
+        }
+        Ok(())
+    })? {
+        return Ok(None);
+    }
+
     let mut totals = Vec::with_capacity(frames.len());
     let mut statistics = Vec::with_capacity(frames.len());
     for (index, frame) in frames.iter().enumerate() {
         if cancelled() {
             return Ok(None);
         }
-        let mut luminances = Vec::new();
-        for &p in frame.picture {
-            let v = inversion.apply(p)?;
-            let y = (AP1_TO_XYZ * (post * v.rgb)).y;
-            if !y.is_finite() {
-                return Err(Error::NumericalOverflow);
-            }
-            if y > 1e-8 {
-                luminances.push(y);
-            }
-        }
+        let luminances = &mut luminances[index];
         if luminances.is_empty() {
             return Err(Error::UnusableSample(
                 "analysis frame has no positive exposure samples",
@@ -260,7 +282,7 @@ pub fn estimate(
             balance_samples: balance_count,
             exposure_samples: luminances.len(),
         });
-        let p99 = quantile(&mut luminances, 0.99);
+        let p99 = quantile(luminances, 0.99);
         // Cap the statistic only: signed/HDR working pixels remain unchanged.
         let capped_mean = luminances
             .iter()

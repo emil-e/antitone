@@ -2,10 +2,15 @@ use super::*;
 use crate::region_timing;
 use std::sync::{Arc, atomic::AtomicUsize};
 
-pub(in crate::editor) fn request() -> (analysis::Request, tempfile::TempDir, wgpu::Device) {
+pub(in crate::editor) fn request() -> (
+    analysis::Request,
+    tempfile::TempDir,
+    wgpu::Device,
+    wgpu::Queue,
+) {
     let instance = crate::gpu::instance();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
-    let (device, _) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
     let paths: Vec<_> = ["roll-0.dng", "roll-1.dng"]
@@ -36,6 +41,7 @@ pub(in crate::editor) fn request() -> (analysis::Request, tempfile::TempDir, wgp
         },
         directory,
         device,
+        queue,
     )
 }
 
@@ -55,7 +61,7 @@ pub(in crate::editor) fn observed() -> (source_loading::SourceLoader, Arc<Atomic
 
 #[test]
 fn scratch_and_unavailable_storage_produce_identical_areas_without_additional_native_retention() {
-    let (request, _directory, device) = request();
+    let (request, _directory, device, _queue) = request();
     let before = request.document.project.clone();
     let generation = AtomicU64::new(1);
     let (scheduler, count) = observed();
@@ -110,7 +116,7 @@ fn scratch_and_unavailable_storage_produce_identical_areas_without_additional_na
 
 #[test]
 fn cancellation_at_the_roll_barrier_neither_reads_scratch_nor_promotes_partial_areas() {
-    let (request, _directory, device) = request();
+    let (request, _directory, device, _queue) = request();
     let before = request.document.project.clone();
     let generation = AtomicU64::new(1);
     let (scheduler, count) = observed();
@@ -149,7 +155,7 @@ fn cancellation_at_the_roll_barrier_neither_reads_scratch_nor_promotes_partial_a
 
 #[test]
 fn authored_areas_remain_authoritative_and_complete_edits_need_no_fine_capture() {
-    let (mut request, _directory, device) = request();
+    let (mut request, _directory, device, _queue) = request();
     let mut areas = Areas::default();
     let opening = Coverage::rectangle(crate::geometry::SourceRegion {
         x: 16,

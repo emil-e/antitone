@@ -32,16 +32,29 @@ fn patch(editor: &Editor) -> crate::coverage::Coverage {
     })
 }
 
+fn measured_reference(editor: &Editor, region: crate::coverage::Coverage) -> DVec3 {
+    let reference = measurement::capture_scan(editor)
+        .unwrap()
+        .reference_coverage(region)
+        .unwrap();
+    let actual = query::reference(
+        editor.source_services.as_ref().unwrap(),
+        &mut measurement::capture_scan(editor).unwrap(),
+        region,
+        &|| false,
+    )
+    .unwrap();
+    assert!((actual - reference).abs().max_element() / reference.abs().max_element() < 2e-6);
+    actual
+}
+
 #[test]
 fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_its_endpoint() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     for kind in [Pick::Dmin, Pick::Dmax] {
         let editor = setup(file.path().to_str().unwrap());
         let region = patch(&editor);
-        let expected = measurement::capture_scan(&editor)
-            .unwrap()
-            .reference_coverage(region)
-            .unwrap();
+        let expected = measured_reference(&editor, region);
         assert!(expected.min_element() > 0.005 && expected.max_element() < 0.2);
         let before = editor.document.state.project.clone();
         with_application(editor, |app| {
@@ -116,10 +129,20 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
     editor.sync_document();
     let region = crate::coverage::Coverage::rectangle(patch_at(144));
     let input = editor.input();
-    let expected = measurement::capture_scan(&editor)
+    let reference = measurement::capture_scan(&editor)
         .unwrap()
         .roll_neutral_coverage(region, &input)
         .unwrap();
+    let expected = query::gamma(
+        editor.source_services.as_ref().unwrap(),
+        &mut measurement::capture_scan(&editor).unwrap(),
+        region,
+        input,
+        &|| false,
+    )
+    .unwrap();
+    assert!((expected.warmth - reference.warmth).abs() < 1e-6);
+    assert!((expected.tint - reference.tint).abs() < 1e-6);
     let before = (
         editor.document.roll,
         editor.document.visit.adjustment_layer_settings,
@@ -172,10 +195,7 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
     );
     editor.sync_document();
     let region = patch(&editor);
-    let expected = measurement::capture_scan(&editor)
-        .unwrap()
-        .reference_coverage(region)
-        .unwrap();
+    let expected = measured_reference(&editor, region);
     assert!(expected.min_element() > 0.005 && expected.max_element() < 1.);
     let before = editor.document.state.project.clone();
     let undo = editor.history_label(Direction::Undo).map(str::to_owned);

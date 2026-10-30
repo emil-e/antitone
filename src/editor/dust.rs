@@ -45,6 +45,19 @@ pub(super) struct Response {
     pub evaluated: Arc<EvaluatedRepair>,
 }
 
+impl Response {
+    fn new(request: &Request, evaluated: EvaluatedRepair) -> Self {
+        Self {
+            request: request.request,
+            loaded: request.loaded,
+            source: request.source,
+            signature: request.signature,
+            repair: request.repair.clone(),
+            evaluated: Arc::new(evaluated),
+        }
+    }
+}
+
 fn repair_bound(repair: &EvaluatedRepair) -> DVec3 {
     repair.pixels().fold(DVec3::ZERO, |bound, (_, value)| {
         bound.max(DVec3::from_array(value.map(f64::from)).abs())
@@ -421,34 +434,40 @@ impl State {
 
 #[cfg(test)]
 pub(super) fn evaluate(scan: &Scan, request: &Request) -> Result<Response, Error> {
-    evaluate_with(scan, request, &|| false).map(|r| r.expect("uncancelled test evaluation"))
+    let source = crate::scan::ImageSource::new(scan, request.input)?;
+    let evaluated = crate::repair_source::evaluate(&source, &request.repair)?;
+    Ok(Response::new(request, evaluated))
 }
 
 pub(super) fn evaluate_with(
     scan: &Scan,
     request: &Request,
+    services: &source::Services,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<Response>, Error> {
     if cancelled() {
         return Ok(None);
     }
-    let source = crate::scan::ImageSource::new(scan, request.input)?;
-    let Some(evaluated) = crate::repair_source::evaluate_with(
-        &source,
+
+    let renderer = services.renderers.get(&services.device, &services.queue)?;
+    let mut source = crate::gpu::repair_source::Source::new(
+        &services.device,
+        &renderer,
+        (&services.queue, services.renderers.submissions()),
+        scan,
+        request.input,
+    )?;
+    let Some(evaluated) = crate::dust_repair::evaluate_image(
         &request.repair,
+        scan.area,
+        &mut source,
         &mut crate::dust_repair::Execution { cancelled },
     )?
     else {
         return Ok(None);
     };
-    Ok(Some(Response {
-        request: request.request,
-        loaded: request.loaded,
-        source: request.source,
-        signature: request.signature,
-        repair: request.repair.clone(),
-        evaluated: Arc::new(evaluated),
-    }))
+
+    Ok(Some(Response::new(request, evaluated)))
 }
 
 fn brush_dab(
@@ -1878,8 +1897,9 @@ impl Editor {
         self.status = "Evaluating full-resolution dust repair…".into();
         let id = request.request;
         let epoch = self.source_epoch.clone();
+        let services = self.source_services.clone();
         let Some(task) = cx.spawn(move |cx| async move {
-            let result = worker::evaluate(request, input, epoch).await;
+            let result = worker::evaluate(request, input, epoch, services).await;
             cx.update(|editor| {
                 editor.receive_dust(id, result);
                 if let Some(signature) = editor.dust_signature() {

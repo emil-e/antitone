@@ -1,29 +1,34 @@
 use bytemuck::Zeroable;
-use std::{num::NonZeroU64, sync::Arc};
+use std::sync::Arc;
 
 #[cfg(any(feature = "render", feature = "project"))]
 pub(crate) mod aces;
-#[cfg(feature = "render")]
+#[cfg(feature = "editor")]
+pub(crate) mod analysis;
 pub mod evaluation;
 #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
 pub(crate) mod execution;
 mod flat;
 pub mod look;
+#[cfg(all(
+    feature = "raw",
+    feature = "render",
+    feature = "project",
+    any(feature = "editor", feature = "export")
+))]
+pub(crate) mod repair_source;
 #[cfg(all(feature = "raw", feature = "render"))]
 pub(crate) mod rgb16;
 #[cfg(all(test, feature = "render"))]
 pub(crate) mod test_support;
 pub use flat::{GpuFlatField, SourceGeometry};
-mod adjustment_layers;
-pub use adjustment_layers::GpuGrade;
+mod grading;
+pub use grading::Grading;
 mod input_program;
 pub use input_program::{GpuInputProgram, InputSignature};
-mod pipeline;
-pub use pipeline::GpuPipeline;
+mod photograph;
 
-#[cfg(feature = "render")]
 pub(crate) mod grain;
-#[cfg(feature = "render")]
 pub(crate) mod image_mtf;
 #[cfg(any(
     feature = "editor",
@@ -31,7 +36,6 @@ pub(crate) mod image_mtf;
     all(feature = "raw", feature = "render")
 ))]
 pub(crate) mod pixel_pipeline;
-#[cfg(feature = "render")]
 pub(crate) mod raster;
 
 mod input;
@@ -49,7 +53,7 @@ use wgpu::util::DeviceExt;
 use crate::Error;
 use crate::color::wb_matrix;
 use crate::processing::{
-    InputSettings, Inversion, NegativeInput, RollSettings, exposure_multiplier, log_abs_expm1,
+    InputSettings, NegativeInput, RollSettings, exposure_multiplier, log_abs_expm1,
     validate_camera_matrix,
 };
 
@@ -169,14 +173,14 @@ impl ProcessingParameters {
     ) -> Result<(Self, f64), Error> {
         validate_camera_matrix(camera_to_ap1)?;
         CameraMatrix::new(camera_to_ap1)?;
-        let inversion = Inversion::new(negative)?;
+        let response = negative.parameters()?;
         let gain = exposure_multiplier(roll.exposure)?;
         let matrix = wb_matrix(roll.wb)?;
         let (toe, shoulder) = negative.response.shape()?;
         let reference =
             packed_constants(negative.calibration.dmin, negative.calibration.input_floor)?;
         let gamma = packed_constants(negative.channel_gammas()?, 0.)?;
-        let anchor = packed_constants(inversion.anchor_exponents.map(log_abs_expm1), gain.ln())?;
+        let anchor = packed_constants(response.anchor_exponents.map(log_abs_expm1), gain.ln())?;
         let mut packed_floor_bound = DVec3::ZERO;
         for c in 0..3 {
             let density = (reference[c] / reference.w).ln();
@@ -202,12 +206,9 @@ impl ProcessingParameters {
             }
             packed_floor_bound[c] = f64::from(value);
         }
-        let floor_bound = inversion
-            .apply(DVec3::splat(negative.calibration.input_floor))?
-            .rgb
-            .abs();
+        let floor_bound = response.floor_bound()?;
         // Above-base continuation is bounded by |expm1(a)| <= 1 for a <= 0.
-        let negative_bound = inversion
+        let negative_bound = response
             .anchor_exponents
             .map(|a| (-log_abs_expm1(a) / toe).exp());
         let largest = (floor_bound.max(negative_bound) * gain).max(packed_floor_bound);
@@ -380,7 +381,6 @@ impl CameraMatrix {
     }
 }
 
-#[cfg(any(feature = "editor", all(feature = "raw", feature = "render")))]
 pub(crate) mod repairs;
 
 pub struct ProcessingSource {
@@ -568,252 +568,7 @@ impl ProcessingSource {
     }
 }
 
-pub struct ProcessingKernel {
-    #[cfg(all(test, feature = "editor"))]
-    module: wgpu::ShaderModule,
-    pipeline: wgpu::ComputePipeline,
-    #[cfg(test)]
-    repair: wgpu::ComputePipeline,
-    output_binding: u32,
-    output_stride: u64,
-    workgroup_size: u32,
-    identity: wgpu::Buffer,
-    empty_adjustment_layers: wgpu::Buffer,
-    empty_adjustment_layer_context: wgpu::Buffer,
-}
-
-impl ProcessingKernel {
-    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
-        Self::build_pipeline(device, Self::module_shader()).await
-    }
-
-    /// The exact module text the pipelines compile, exposed for device-free validation.
-    pub(crate) fn module_shader() -> String {
-        [
-            Self::kernel_shader(),
-            include_str!("shaders/footprint.wgsl").to_owned(),
-            include_str!("shaders/repairs.wgsl").to_owned(),
-        ]
-        .join("\n")
-    }
-
-    /// One implementation serves the viewport, export and analysis: the near-base ratio response
-    /// and the f32 colour operators.
-    pub(crate) fn kernel_shader() -> String {
-        let common = [
-            include_str!("shaders/camera_conversion.wgsl"),
-            include_str!("shaders/flat_field.wgsl"),
-            include_str!("shaders/film_response.wgsl"),
-            include_str!("shaders/film_inversion_export.wgsl"),
-            include_str!("shaders/photographic.wgsl"),
-            include_str!("shaders/adjustment_layers.wgsl"),
-            include_str!("shaders/photographic_colour.wgsl"),
-            include_str!("shaders/photographic_export.wgsl"),
-        ]
-        .join("\n");
-        [common.as_str(), include_str!("shaders/processing.wgsl")].join("\n")
-    }
-
-    async fn build_pipeline(device: &wgpu::Device, shader: String) -> Result<Self, Error> {
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("camera originals to AP1 photographic processing"),
-            source: wgpu::ShaderSource::Wgsl(shader.into()),
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Antitone processing"),
-            layout: None,
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        #[cfg(test)]
-        let repair = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("source-coordinate repair grading"),
-            layout: None,
-            module: &module,
-            entry_point: Some("repair_original"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        if let Some(error) = scope.pop().await {
-            return Err(Error::Gpu(error.to_string()));
-        }
-        Ok(Self {
-            #[cfg(all(test, feature = "editor"))]
-            module,
-            pipeline,
-            #[cfg(test)]
-            repair,
-            output_binding: 1,
-            output_stride: 16,
-            workgroup_size: 64,
-            identity: flat::identity_nodes(device),
-            empty_adjustment_layers: adjustment_layers::empty_buffer(device),
-            empty_adjustment_layer_context: adjustment_layers::context_buffer(device, 0, [0; 4])?,
-        })
-    }
-
-    pub fn encode(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        source: &ProcessingSource,
-        output: &wgpu::Buffer,
-        parameters: ProcessingParameters,
-    ) {
-        self.encode_resources(
-            device,
-            encoder,
-            source,
-            output,
-            parameters,
-            (
-                &self.empty_adjustment_layers,
-                &self.empty_adjustment_layer_context,
-            ),
-            #[cfg(test)]
-            (None, None),
-        );
-    }
-
-    pub fn encode_grade(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        source: &ProcessingSource,
-        output: &wgpu::Buffer,
-        grade: &GpuPipeline,
-    ) -> Result<(), Error> {
-        grade.require_source(source)?;
-        self.encode_resources(
-            device,
-            encoder,
-            source,
-            output,
-            grade.parameters,
-            (&grade.grade.buffer, &grade.grade.context),
-            #[cfg(test)]
-            (None, None),
-        );
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn encode_resources(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        source: &ProcessingSource,
-        output: &wgpu::Buffer,
-        parameters: ProcessingParameters,
-        (layers, context): (&wgpu::Buffer, &wgpu::Buffer),
-        #[cfg(test)] diagnostics: (Option<(&wgpu::QuerySet, u32)>, Option<&wgpu::Buffer>),
-    ) {
-        let pixels = source.pixels;
-        let size = NonZeroU64::new(u64::from(pixels) * self.output_stride).unwrap();
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("processing parameters"),
-            contents: bytemuck::bytes_of(&parameters),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let (nodes, geometry) = match &source.flat_field {
-            Some(field) => (
-                &field.nodes,
-                flat::FieldGeometry::new(
-                    field,
-                    source.geometry.expect("corrected source geometry"),
-                ),
-            ),
-            None => (
-                &self.identity,
-                flat::FieldGeometry::uncorrected(source.geometry),
-            ),
-        };
-        let field_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("processing source geometry"),
-            contents: bytemuck::bytes_of(&geometry),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let entries = vec![
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: source.input.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: self.output_binding,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: output,
-                    offset: 0,
-                    size: Some(size),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: uniform.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: source.matrix.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: nodes.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: field_uniform.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 6,
-                resource: layers.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 7,
-                resource: context.as_entire_binding(),
-            },
-        ];
-        #[cfg(test)]
-        let mut entries = entries;
-        #[cfg(test)]
-        if let Some(prepared) = diagnostics.1 {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 9,
-                resource: prepared.as_entire_binding(),
-            });
-        }
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("processing pixels"),
-            layout: &self.pipeline.get_bind_group_layout(0),
-            entries: &entries,
-        });
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("inversion/edits"),
-            timestamp_writes: {
-                #[cfg(test)]
-                {
-                    diagnostics
-                        .0
-                        .map(|(query_set, index)| wgpu::ComputePassTimestampWrites {
-                            query_set,
-                            beginning_of_pass_write_index: Some(index),
-                            end_of_pass_write_index: Some(index + 1),
-                        })
-                }
-                #[cfg(not(test))]
-                {
-                    None
-                }
-            },
-        });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        let groups = pixels.div_ceil(self.workgroup_size);
-        let x = groups.min(device.limits().max_compute_workgroups_per_dimension);
-        pass.dispatch_workgroups(x, groups.div_ceil(x), 1);
-    }
-}
+pub use photograph::CameraResources;
 
 /// Retained GPU resource bytes where the platform can report them; not total process memory.
 #[cfg(any(test, feature = "ui"))]
@@ -833,8 +588,8 @@ pub fn instance() -> wgpu::Instance {
     })
 }
 
-#[cfg(all(test, target_os = "macos"))]
-mod execution_tests;
+#[cfg(test)]
+pub(crate) use evaluation::camera_fixture;
 #[cfg(test)]
 mod flat_tests;
 #[cfg(test)]

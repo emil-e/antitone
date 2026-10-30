@@ -15,7 +15,7 @@ eligible camera samples
 
 ## 1. Choose what to sample
 
-The analysis uses original developed camera pixels, with accepted scan correction applied — never a displayed preview or an embedded camera JPEG. Two sample populations have different jobs: the film population supplies the low-density reference; the picture population supplies dense tails, colour trends and exposure statistics. Sampling is bounded so a roll does not require retaining every developed RAW at once, and local capture/development checks reject clipped or precision-floored footprints before retaining their original centre pixels.
+The analysis uses original developed camera pixels, with accepted scan correction applied — never a displayed preview or an embedded camera JPEG. Two sample populations have different jobs: the film population supplies the low-density reference; the picture population supplies dense tails, colour trends and exposure statistics. Sampling batches only selected 8×8 camera cells, retaining their original coordinates for correction. Local capture/development checks reject clipped or precision-floored footprints before retaining their original centre pixels; fitting retains samples rather than every developed RAW.
 
 Those checks establish numerical eligibility, **not that a pixel is film material** — they cannot reliably distinguish a holder, an exposed edge or damaged film from an ordinary subject.
 
@@ -40,6 +40,8 @@ These are useful statistical anchors, not guaranteed observations of clean film 
 A constant WB adjustment cannot fix every shadow-to-highlight colour trend. Channel gamma balance can, because its effect varies with density. The analysis therefore fits curves first and WB afterward.
 
 Each photo is divided into shadow, middle and highlight bands using its positive luminance ranks with zero gamma balance. These memberships stay fixed during fitting, so a candidate cannot improve its score simply by moving samples into different bands.
+
+The [production forward model](../src/gpu/analysis.rs) evaluates shared photographic GPU components for every candidate, not just the initial samples. Captured camera vectors use an index grid after original-footprint eligibility; they need no image reconstruction. CPU ranking, reduction and search consume these f32 responses, while the public scalar estimator remains an independent f64 reference.
 
 For each candidate:
 
@@ -108,7 +110,7 @@ Faint/off-image or scene-confounded boundaries can defeat area suggestions; hold
 
 ## Working on this area
 
-- [Sampler](../src/scan.rs) and [Dmin estimator](../src/sampling.rs): eligible original pixels and endpoint statistics.
+- [Footprint selection](../src/scan/analysis.rs), [GPU camera sampling](../src/gpu/analysis/sampling.rs) and [Dmin estimator](../src/sampling.rs): eligible original pixels and endpoint statistics.
 - [Estimator](../src/roll_analysis.rs) and [curve fitter](../src/roll_analysis/gamma.rs): the numerical proposal.
 - [Spatial hypotheses](../src/scan_regions.rs), [staged preparation](../src/editor/analysis_review/preparation.rs), [source services](../src/editor/analysis_services.rs) and [review controller](../src/editor/analysis_review.rs): source-owned support, bounded scratch/fallback, drafts and review lifecycle.
 - [Captured sampling/fitting](../src/editor/analysis/fit.rs) and [action](../src/editor/analysis_workflow.rs): awaited preparation, review decisions, fitting, cancellation acknowledgement and validated acceptance.

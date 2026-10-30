@@ -121,6 +121,7 @@ impl Fit {
         &mut self,
         index: usize,
         mut scan: Scan,
+        services: &Services,
         cancelled: impl Fn() -> bool,
     ) -> Result<bool, Error> {
         if cancelled() {
@@ -176,7 +177,14 @@ impl Fit {
         };
         // Physical film support supplements even authored areas. It must not resize the
         // canonical grid, alter accepted geometry, or turn unknown/camera limits into edges.
-        let film_samples = scan.analysis_samples_in(
+        let renderer = services.renderers.get(&services.device, &services.queue)?;
+        let sampler = crate::gpu::analysis::CameraSampler::new(
+            &services.device,
+            &renderer,
+            (&services.queue, services.renderers.submissions()),
+            &scan,
+        )?;
+        let film_samples = sampler.sample(
             if frame_areas.is_some() {
                 active
             } else {
@@ -192,7 +200,7 @@ impl Fit {
         let Some(film) = film_samples else {
             return Ok(false);
         };
-        let picture_samples = scan.analysis_samples_in(
+        let picture_samples = sampler.sample(
             if frame_areas.is_some() {
                 active
             } else {
@@ -220,9 +228,10 @@ impl Fit {
 
     fn finish(
         mut self,
-        device: &wgpu::Device,
+        services: &Services,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Outcome>, Error> {
+        let device = &services.device;
         if cancelled() {
             return Ok(None);
         }
@@ -237,8 +246,19 @@ impl Fit {
                 picture: &frame.picture.pixels,
             })
             .collect();
-        let Some(proposal) =
-            roll_analysis::estimate(&frames, floor, self.matrix, project.input, &cancelled)?
+        let renderer = services.renderers.get(device, &services.queue)?;
+        let mut model = crate::gpu::analysis::ResponseModel::new(
+            renderer.evaluation(),
+            (&services.queue, services.renderers.submissions()),
+        );
+        let Some(proposal) = roll_analysis::estimate_with_model(
+            &frames,
+            floor,
+            self.matrix,
+            project.input,
+            &mut model,
+            &mut || cancelled(),
+        )?
         else {
             return Ok(None);
         };
@@ -350,9 +370,10 @@ pub(in crate::editor) async fn run(
             return Ok(None);
         };
         let retired = cancelled.clone();
+        let queries = services.clone();
         let Some((next, keep)) = services
             .cpu(&cancelled, move || {
-                let keep = state.sample(index, scan, || retired.is_cancelled())?;
+                let keep = state.sample(index, scan, &queries, || retired.is_cancelled())?;
                 Ok((state, keep))
             })
             .await?
@@ -365,11 +386,11 @@ pub(in crate::editor) async fn run(
         }
     }
     progress(total, total);
-    let device = services.device.clone();
+    let queries = services.clone();
     let retired = cancelled.clone();
     Ok(services
         .cpu(&cancelled, move || {
-            state.finish(&device, || retired.is_cancelled())
+            state.finish(&queries, || retired.is_cancelled())
         })
         .await?
         .flatten())

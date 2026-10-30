@@ -35,18 +35,19 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
             )
             .unwrap(),
         );
-        let input = ProcessingInput::from(
-            ProcessingParameters::positive(
-                Calibration {
-                    dmin: DVec3::splat(0.7),
-                    dmax: DVec3::splat(0.003),
-                    input_floor: crate::processing::CAMERA_INPUT_FLOOR,
-                },
-                RollSettings::default(),
-                DMat3::IDENTITY,
-            )
-            .unwrap(),
+        let input = ProcessingInput::new(
+            &device,
+            Calibration {
+                dmin: DVec3::splat(0.7),
+                dmax: DVec3::splat(0.003),
+                input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            },
+            RollSettings::default(),
+            crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            DMat3::IDENTITY,
+            [0, 0, 2, 2].into(),
         )
+        .unwrap()
         .with_look(Some(look));
         let mut encoder = device.create_command_encoder(&Default::default());
         image

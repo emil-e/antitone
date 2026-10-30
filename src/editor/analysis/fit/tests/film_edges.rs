@@ -79,7 +79,7 @@ fn inset_checks_the_complete_pixel_footprint_on_both_axis_and_oblique_edges() {
 #[test]
 fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the_photo() {
     for reviewed in [true, false] {
-        let (mut request, _directory, device) = request();
+        let (mut request, _directory, device, queue) = request();
         if reviewed {
             approved(&mut request);
         } else {
@@ -97,6 +97,8 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
             exposures: Arc::default(),
             sources: scheduler.provider(None),
             device,
+            queue,
+            renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
         };
         let captured = input(&services, &request);
         let mut state = Fit::new(&services.device, request.clone(), captured.clone()).unwrap();
@@ -136,7 +138,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
                     }
                 }
             }
-            assert!(state.sample(index, scan, || false).unwrap());
+            assert!(state.sample(index, scan, &services, || false).unwrap());
             let frame = &state.owned[index];
             let expected = if index == 0 {
                 [3100, 1560]
@@ -150,9 +152,10 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
             ] {
                 assert_eq!(samples.pixels.len(), pixels.len());
                 for (i, (actual, expected)) in samples.pixels.iter().zip(pixels).enumerate() {
-                    assert_eq!(
-                        *actual, expected,
-                        "surviving sample {i} retains its original source position"
+                    assert!(
+                        (*actual - expected).abs().max_element()
+                            < 4. * f64::from(f32::EPSILON) * expected.abs().max_element(),
+                        "sample {i} must match the independently enumerated original-camera value"
                     );
                 }
             }
@@ -173,7 +176,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
                 frame.picture.pixels.len()
             );
         }
-        let outcome = state.finish(&services.device, || false).unwrap().unwrap();
+        let outcome = state.finish(&services, || false).unwrap().unwrap();
         assert_eq!(
             outcome.frames, 2,
             "the edge source remains a contributing photograph"
@@ -211,7 +214,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
 
 #[test]
 fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_population() {
-    let (mut request, _directory, device) = request();
+    let (mut request, _directory, device, queue) = request();
     approved(&mut request);
     for row in &mut request.areas.as_mut().unwrap().entries {
         row.areas
@@ -263,6 +266,8 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
+        queue,
+        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
     let mut state = Fit::new(&services.device, request.clone(), captured).unwrap();
@@ -297,7 +302,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
                 }
             }
         }
-        assert!(state.sample(index, scan, || false).unwrap());
+        assert!(state.sample(index, scan, &services, || false).unwrap());
         let expected = if index == 0 {
             [3100, 1560]
         } else {
@@ -316,11 +321,15 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
             (&state.owned[index].picture.pixels, picture),
         ] {
             for (i, (a, b)) in actual.iter().zip(expected).enumerate() {
-                assert_eq!(*a, b, "source sample {i}");
+                assert!(
+                    (*a - b).abs().max_element()
+                        < 4. * f64::from(f32::EPSILON) * b.abs().max_element(),
+                    "original-camera sample {i}"
+                );
             }
         }
     }
-    let outcome = state.finish(&services.device, || false).unwrap().unwrap();
+    let outcome = state.finish(&services, || false).unwrap().unwrap();
     assert_eq!(outcome.frames, 2);
     assert!(
         outcome
@@ -339,7 +348,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
 
 #[test]
 fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop() {
-    let (mut request, _directory, device) = request();
+    let (mut request, _directory, device, queue) = request();
     approved(&mut request);
     attach_film(&mut request, 0, std::array::from_fn(|_| Boundary::Unknown));
     let metadata = Arc::make_mut(&mut request.document.spatial_metadata);
@@ -380,6 +389,8 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
+        queue,
+        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
     let mut state = Fit::new(&services.device, request.clone(), captured).unwrap();
@@ -391,7 +402,7 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
     ))
     .unwrap()
     .unwrap();
-    assert!(state.sample(0, scan, || false).unwrap());
+    assert!(state.sample(0, scan, &services, || false).unwrap());
     // Source centres12..300retain37film rows; picture centres100..300retain26.
     assert_eq!(state.owned[0].film.pixels.len(), 2294);
     assert_eq!(state.owned[0].picture.pixels.len(), 1040);
@@ -401,7 +412,7 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
 
 #[test]
 fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
-    let (mut request, _directory, device) = request();
+    let (mut request, _directory, device, queue) = request();
     approved(&mut request);
     attach_film(
         &mut request,
@@ -425,6 +436,8 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
+        queue,
+        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
     let mut state = Fit::new(&services.device, request.clone(), captured).unwrap();
@@ -437,13 +450,13 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         ))
         .unwrap()
         .unwrap();
-        assert!(state.sample(index, scan, || false).unwrap());
+        assert!(state.sample(index, scan, &services, || false).unwrap());
         // Fourteen retained grid columns leave enough picture statistics, but
         // their 868 film samples per photo cannot satisfy the 2048 roll minimum.
         assert_eq!(state.owned[index].picture.pixels.len(), 560);
         assert_eq!(state.owned[index].film.pixels.len(), 868);
     }
-    let error = state.finish(&services.device, || false).err().unwrap();
+    let error = state.finish(&services, || false).err().unwrap();
     assert!(
         error
             .to_string()
@@ -456,7 +469,7 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
 
 #[test]
 fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
-    let (mut request, _directory, device) = request();
+    let (mut request, _directory, device, queue) = request();
     approved(&mut request);
     attach_film(
         &mut request,
@@ -475,6 +488,8 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
+        queue,
+        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
     let mut state = Fit::new(&services.device, request.clone(), captured).unwrap();
@@ -486,7 +501,7 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
     ))
     .unwrap()
     .unwrap();
-    assert!(state.sample(0, scan, || false).unwrap());
+    assert!(state.sample(0, scan, &services, || false).unwrap());
     assert_eq!(state.owned[0].film.pixels.len(), 3844);
     assert_eq!(state.owned[0].picture.pixels.len(), 1600);
     scheduler.close_and_wait().unwrap();
@@ -494,7 +509,7 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
 
 #[test]
 fn too_little_picture_after_edge_exclusion_fails_without_relaxing_or_installing_partial_grade() {
-    let (mut request, _directory, device) = request();
+    let (mut request, _directory, device, queue) = request();
     approved(&mut request);
     attach_film(&mut request, 1, left_edge(400.));
     let before = request.document.project.clone();
@@ -503,6 +518,8 @@ fn too_little_picture_after_edge_exclusion_fails_without_relaxing_or_installing_
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
+        queue,
+        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
     let error = futures_lite::future::block_on(run(

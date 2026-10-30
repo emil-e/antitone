@@ -1,6 +1,47 @@
 use super::*;
 
 #[test]
+fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
+    pollster::block_on(async {
+        let (device, _queue, renderer, _kernels) = context().await;
+        let image = Arc::new(
+            GpuImage::new_shared(
+                &renderer,
+                &device,
+                2,
+                2,
+                &[[32000, 20000, 10000, 0]; 4],
+                DMat3::IDENTITY,
+                OutputTarget::Srgb,
+            )
+            .await
+            .unwrap(),
+        );
+        let packed = ProcessingParameters::interpret(
+            InputSettings::Digital,
+            Default::default(),
+            DMat3::IDENTITY,
+        )
+        .unwrap();
+        assert!(matches!(
+            crate::viewer::ImagePaint::with_processing(
+                image.clone(),
+                Some(packed.into()),
+                [0., 0., 1., 1.],
+            ),
+            Err(Error::InvalidParameter(
+                "photographic input requires captured interpretation and grading"
+            ))
+        ));
+        let inspection = ProcessingInput::from(ProcessingParameters::source());
+        assert!(
+            crate::viewer::ImagePaint::with_processing(image, Some(inspection), [0., 0., 1., 1.],)
+                .is_ok()
+        );
+    });
+}
+
+#[test]
 fn fresh_resident_camera_paints_without_incidental_acquisition_or_thumbnail_compilation() {
     pollster::block_on(async {
         let (device, queue, renderer, _kernels) = context().await;
@@ -18,14 +59,15 @@ fn fresh_resident_camera_paints_without_incidental_acquisition_or_thumbnail_comp
         let compiled = renderer.evaluation.programs.len();
         for input in [
             ProcessingInput::from(ProcessingParameters::source()),
-            ProcessingInput::from(
-                ProcessingParameters::interpret(
-                    InputSettings::Digital,
-                    Default::default(),
-                    DMat3::IDENTITY,
-                )
-                .unwrap(),
-            ),
+            ProcessingInput::new(
+                &device,
+                InputSettings::Digital,
+                Default::default(),
+                AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+                DMat3::IDENTITY,
+                [0, 0, 4, 2].into(),
+            )
+            .unwrap(),
         ] {
             let mut encoder = device.create_command_encoder(&Default::default());
             image

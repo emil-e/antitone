@@ -8,7 +8,7 @@ use crate::{
     crop::Crop,
     frame_raster::FrameRaster,
     geometry::{Composition, FramePoint},
-    gpu::GpuPipeline,
+    gpu::ProcessingInput,
     processing::{InputSettings, RollSettings},
 };
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -131,7 +131,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         .unwrap();
     let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital).unwrap();
     let gpu = Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             &device,
             InputSettings::Digital,
             roll,

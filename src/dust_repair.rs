@@ -32,8 +32,10 @@ const SEARCH_COMPETITIVE_FRACTION: f64 = 0.10;
 pub(crate) const SEARCH_BUDGET: Duration = Duration::from_millis(300);
 pub(crate) const AUTOMATIC_PADDING: u32 = 128 + 4;
 
+mod base_image;
 mod matching;
 mod support;
+pub(crate) use base_image::BaseImage;
 #[cfg(all(test, feature = "editor"))]
 pub(crate) use support::{MAX_MASK_PIXELS, MAX_MASK_WORK_PIXELS};
 pub use support::{
@@ -272,6 +274,15 @@ pub(crate) fn evaluate_with(
     mut base: impl FnMut([u32; 2]) -> Result<Ap1, Error>,
     execution: &mut Execution<'_>,
 ) -> Result<Option<EvaluatedRepair>, Error> {
+    evaluate_image(repair, active, &mut base, execution)
+}
+
+pub(crate) fn evaluate_image(
+    repair: &Repair,
+    active: SourceRegion,
+    base: &mut impl BaseImage,
+    execution: &mut Execution<'_>,
+) -> Result<Option<EvaluatedRepair>, Error> {
     if (execution.cancelled)() {
         return Ok(None);
     }
@@ -305,18 +316,11 @@ pub(crate) fn evaluate_with(
         if (execution.cancelled)() {
             return Ok(None);
         }
-        let Some(target) =
-            build_search_target(&repair.support, group, active, &mut base, execution)?
+        let Some(target) = build_search_target(&repair.support, group, active, base, execution)?
         else {
             continue;
         };
-        let Some(donor) = fetch_crop(
-            &mut base,
-            target.origin,
-            target.size,
-            repair.offset,
-            execution,
-        )?
+        let Some(donor) = fetch_crop(base, target.origin, target.size, repair.offset, execution)?
         else {
             return Ok(None);
         };
@@ -348,24 +352,20 @@ pub(crate) fn evaluate_with(
 }
 
 fn fetch_crop(
-    base: &mut impl FnMut([u32; 2]) -> Result<Ap1, Error>,
+    base: &mut impl BaseImage,
     origin: [u32; 2],
     size: [usize; 2],
     offset: [i32; 2],
     execution: &mut Execution<'_>,
 ) -> Result<Option<Vec<Ap1>>, Error> {
-    let x0 = origin[0] as i32 + offset[0];
-    let y0 = origin[1] as i32 + offset[1];
-    let mut crop = Vec::with_capacity(size[0] * size[1]);
-    for y in 0..size[1] {
-        for x in 0..size[0] {
-            if (execution.cancelled)() {
-                return Ok(None);
-            }
-            crop.push(base([(x0 + x as i32) as u32, (y0 + y as i32) as u32])?);
-        }
-    }
-    Ok(Some(crop))
+    let region = SourceRegion {
+        x: (origin[0] as i32 + offset[0]) as u32,
+        y: (origin[1] as i32 + offset[1]) as u32,
+        width: size[0] as u32,
+        height: size[1] as u32,
+    };
+
+    base_image::read(base, region, None, execution)
 }
 
 type HealedComponent = (DonorMatch, Vec<(usize, Ap1)>);
@@ -546,7 +546,7 @@ fn build_search_target(
     support: &SupportMask,
     group: &SupportMask,
     active: SourceRegion,
-    base: &mut impl FnMut([u32; 2]) -> Result<Ap1, Error>,
+    base: &mut impl BaseImage,
     execution: &mut Execution<'_>,
 ) -> Result<Option<SearchTarget>, Error> {
     let points = group.selected_points().collect::<Vec<_>>();
@@ -563,7 +563,6 @@ fn build_search_target(
     let y1 = (max_y + CONTEXT_PADDING + 1).min(active.y + active.height);
     let width = (x1 - x0) as usize;
     let height = (y1 - y0) as usize;
-    let mut image = vec![[0.; 3]; width * height];
     let mut known = vec![false; width * height];
     let mut local = vec![false; width * height];
     let mut mask = vec![false; width * height];
@@ -578,11 +577,24 @@ fn build_search_target(
             mask[index] = masked;
             local[index] = group.contains(point);
             known[index] = !masked;
-            if !masked {
-                image[index] = base(point)?;
-            }
         }
     }
+
+    let Some(image) = base_image::read(
+        base,
+        SourceRegion {
+            x: x0,
+            y: y0,
+            width: width as u32,
+            height: height as u32,
+        },
+        Some(&known),
+        execution,
+    )?
+    else {
+        return Ok(None);
+    };
+
     let required = dilate(&local, width, height, 2);
     for index in 0..local.len() {
         if required[index] && mask[index] && !local[index] {
@@ -774,6 +786,20 @@ pub(crate) fn search_donor(
     preferred: Option<[i32; 2]>,
     active: SourceRegion,
     base: &mut impl FnMut([u32; 2]) -> Result<Ap1, Error>,
+    deadline: Instant,
+    threshold: f64,
+    execution: &mut Execution<'_>,
+) -> Result<SearchOutcome, Error> {
+    search_image(
+        support, preferred, active, base, deadline, threshold, execution,
+    )
+}
+
+pub(crate) fn search_image(
+    support: &SupportMask,
+    preferred: Option<[i32; 2]>,
+    active: SourceRegion,
+    base: &mut impl BaseImage,
     deadline: Instant,
     threshold: f64,
     execution: &mut Execution<'_>,

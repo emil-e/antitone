@@ -169,13 +169,13 @@ impl Worker {
             source
         };
         let tick = std::time::Instant::now();
-        let grade = Arc::new(crate::gpu::GpuGrade::new(
+        let grade = Arc::new(crate::gpu::Grading::new(
             &self.device,
             recipe.roll,
             recipe.grade.clone(),
             recipe.neutral.source_development.active_area.into(),
         )?);
-        let grade = Arc::new(crate::gpu::GpuPipeline::compose(
+        let grade = Arc::new(crate::gpu::ProcessingInput::compose(
             &self.device,
             source
                 .input_program()

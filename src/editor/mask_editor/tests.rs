@@ -328,7 +328,7 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        let snapshot = input.pipeline().unwrap().snapshot().clone();
+        let snapshot = input.grade().unwrap().snapshot().clone();
         editor.begin_linear_mask(Some(id));
         assert!(editor.document.mask_edit().is_some());
         assert!(!editor.roll_edit_available());
@@ -358,7 +358,7 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             editor.adjustment_layer_target(),
             adjustment_layers::Target::Layer(id)
         );
-        assert_eq!(input.pipeline().unwrap().snapshot(), &snapshot);
+        assert_eq!(input.grade().unwrap().snapshot(), &snapshot);
         let before = editor.document.state.project.clone();
         editor.begin_linear_mask(Some(id));
         editor.document.mask_edit_mut().unwrap().mask = Some(AdjustmentLayerCoverage::Linear {

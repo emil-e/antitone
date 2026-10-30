@@ -1,39 +1,42 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
+use crate::gpu::camera_fixture::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 
 use antitone::{
-    gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource},
+    gpu::{ProcessingParameters, ProcessingSource},
     processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
 };
 use glam::{DMat3, DVec3};
 
-#[path = "support/gpu_headroom.rs"]
+#[path = "../../../tests/support/gpu_headroom.rs"]
 mod headroom;
 
-async fn context() -> (wgpu::Device, wgpu::Queue, ProcessingKernel) {
+async fn context() -> (wgpu::Device, wgpu::Queue, CameraFixture) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::METAL,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let adapter = instance.request_adapter(&Default::default()).await.unwrap();
     let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-    let kernel = ProcessingKernel::new(&device).await.unwrap();
+    let kernel = CameraFixture::new(&device).await.unwrap();
     (device, queue, kernel)
 }
 
 fn process(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    kernel: &ProcessingKernel,
+    kernel: &CameraFixture,
     source: &ProcessingSource,
     count: usize,
     parameters: ProcessingParameters,
-    grade: Option<&antitone::gpu::GpuPipeline>,
+    grade: Option<&antitone::gpu::ProcessingInput>,
 ) -> Vec<[f32; 4]> {
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("continuous camera test"),
         size: count as u64 * 16,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -109,7 +112,7 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
         };
         let parameters =
             ProcessingParameters::positive(calibration, roll, DMat3::IDENTITY).unwrap();
-        let grade = antitone::gpu::GpuPipeline::new(
+        let grade = antitone::gpu::ProcessingInput::new(
             &device,
             calibration,
             roll,

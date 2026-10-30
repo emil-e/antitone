@@ -55,7 +55,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
         let (device, queue, renderer, kernels) = context().await;
         let frame = rotated_frame([1., 1.]);
         let input = ProcessingInput::from(Arc::new(
-            GpuPipeline::new(
+            ProcessingInput::new(
                 &device,
                 InputSettings::Digital,
                 Default::default(),

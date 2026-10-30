@@ -105,11 +105,6 @@ path = "src/bin/dng_probe.rs"
 required-features = ["dng-sdk"]
 
 [[bin]]
-name = "antitone-camera-reference"
-path = "scripts/camera-reference.rs"
-required-features = ["raw", "gpu"]
-
-[[bin]]
 name = "antitone-gpu-probe"
 path = "src/bin/gpu_probe.rs"
 required-features = ["gpu"]

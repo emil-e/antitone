@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     adjustment_layers::AdjustmentLayerStack,
     geometry::{SourcePoint, SourceRegion},
-    gpu::{GpuFlatField, GpuPipeline, ProcessingInput},
+    gpu::{GpuFlatField, ProcessingInput},
     processing::{Calibration, InputPipeline, InputSettings, RollPipeline},
 };
 use glam::DVec3;
@@ -64,6 +64,106 @@ fn evaluate(
 }
 
 #[test]
+fn camera_light_uses_original_coordinates_and_shared_correction_before_interpretation() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let area = SourceRegion::from([11, 17, 13, 9]);
+    let pixels: Vec<_> = (0..area.width * area.height)
+        .map(|index| {
+            let value = [0.002, 0.12, 0.8, 1.7][index as usize % 4];
+            [
+                (value * 65535.) as f32,
+                (value * 0.7 * 65535.) as f32,
+                (value * 0.4 * 65535.) as f32,
+                0.,
+            ]
+        })
+        .collect();
+    let field = Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            [area.x, area.y, area.width, area.height],
+            [2, 2],
+            vec![
+                DVec3::new(1.2, 0.9, 1.1),
+                DVec3::new(0.95, 1.1, 0.85),
+                DVec3::new(1.1, 1.3, 0.95),
+                DVec3::new(0.9, 1.05, 1.2),
+            ],
+        )
+        .unwrap(),
+    );
+    let region = SourceRegion::from([12, 18, 10, 7]);
+    let root = Photograph::camera_light(
+        &device,
+        &renderer.camera,
+        source(Arc::new(Codes {
+            area,
+            pixels: pixels.clone(),
+        })),
+        Some(Arc::new(GpuFlatField::new(&device, field.clone()).unwrap())),
+    )
+    .unwrap();
+    assert_eq!(root.domain.meaning, Meaning::Camera);
+    let evaluation = renderer
+        .evaluation()
+        .request(
+            root,
+            Region {
+                bounds: region,
+                grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+            },
+            Budget {
+                tile: [4, 3],
+                scratch_bytes: 1 << 20,
+            },
+        )
+        .unwrap();
+    let mut count = 0;
+    let mut correction_difference: f64 = 0.;
+    renderer
+        .evaluation()
+        .read(
+            &queue,
+            &Default::default(),
+            &evaluation,
+            || false,
+            |block, actual| {
+                for (index, pixel) in actual.iter().enumerate() {
+                    let point = [
+                        block.x + index as u32 % block.width,
+                        block.y + index as u32 / block.width,
+                    ];
+                    let codes =
+                        pixels[((point[1] - area.y) * area.width + point[0] - area.x) as usize];
+                    let raw = DVec3::new(
+                        f64::from(codes[0]),
+                        f64::from(codes[1]),
+                        f64::from(codes[2]),
+                    ) / 65535.;
+                    let expected = raw
+                        * field
+                            .gain([f64::from(point[0]) + 0.5, f64::from(point[1]) + 0.5])
+                            .unwrap();
+                    for channel in 0..3 {
+                        assert!((f64::from(pixel[channel]) - expected[channel]).abs() < 2e-5);
+                    }
+                    assert_eq!(pixel[3], 0.);
+                    correction_difference =
+                        correction_difference.max((expected - raw).abs().max_element());
+                    count += 1;
+                }
+                Ok(())
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(count, 70);
+    assert!(
+        correction_difference > 0.05,
+        "the fixture distinguishes correction from raw camera light"
+    );
+}
+
+#[test]
 fn camera_neutral_repair_roll_and_stack_are_requestable_images_with_a_fused_original_implementation()
  {
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
@@ -120,14 +220,14 @@ fn camera_neutral_repair_roll_and_stack_are_requestable_images_with_a_fused_orig
         }),
     ] {
         let pipeline = Arc::new(
-            GpuPipeline::new(&device, settings, roll, stack.clone(), matrix, area).unwrap(),
+            ProcessingInput::new(&device, settings, roll, stack.clone(), matrix, area).unwrap(),
         );
         let scalar_input = InputPipeline::new(settings, matrix).unwrap();
         let mut input = ProcessingInput::from(pipeline);
         input.repairs = snapshot.clone();
         let photo = Photograph::new(
             &device,
-            &renderer,
+            &renderer.camera,
             source(codes.clone()),
             Some(gpu_field.clone()),
             &input,
@@ -228,7 +328,7 @@ fn camera_neutral_repair_roll_and_stack_are_requestable_images_with_a_fused_orig
             work[3][1] < work[3][0],
             "addressable photographic boundaries need not add original processing passes"
         );
-        let grading = Grading::new(&device, input.grade().unwrap(), 0);
+        let grading = input.grade().unwrap().for_grid(0);
         let doubled = pointwise(
             photo.neutral.clone(),
             Meaning::Neutral,
@@ -323,7 +423,7 @@ fn folded_negative_original_does_not_require_a_representable_neutral_intermediat
     };
     let matrix = glam::DMat3::IDENTITY;
     let pipeline = Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             &device,
             settings,
             roll,
@@ -342,7 +442,7 @@ fn folded_negative_original_does_not_require_a_representable_neutral_intermediat
         area,
         pixels: vec![[0.; 4]; 6],
     }));
-    let photo = Photograph::new(&device, &renderer, codes, None, &input, matrix).unwrap();
+    let photo = Photograph::new(&device, &renderer.camera, codes, None, &input, matrix).unwrap();
     let actual = evaluate(
         &device,
         &queue,
@@ -496,7 +596,7 @@ fn keeping_a_neutral_image_does_not_retain_its_downstream_grade() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let area = SourceRegion::from([11, 17, 3, 2]);
     let pipeline = Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             &device,
             InputSettings::Digital,
             Default::default(),
@@ -506,12 +606,12 @@ fn keeping_a_neutral_image_does_not_retain_its_downstream_grade() {
         )
         .unwrap(),
     );
-    let grade = Arc::downgrade(&pipeline.grade);
+    let grade = Arc::downgrade(pipeline.grade_shared().unwrap());
     let input = ProcessingInput::from(pipeline);
     let pixels = vec![[0.25 * 65535., 0.5 * 65535., 1.5 * 65535., 0.]; 6];
     let photo = Photograph::new(
         &device,
-        &renderer,
+        &renderer.camera,
         source(Arc::new(Codes { area, pixels })),
         None,
         &input,

@@ -4,13 +4,15 @@ use crate::editor::analysis_services::Services;
 
 #[test]
 fn awaited_native_stages_reuse_exact_scratch_and_fall_back_without_changing_areas() {
-    let (request, _directory, device) = request();
+    let (request, _directory, device, queue) = request();
     let before = request.document.project.clone();
     let (scheduler, count) = observed();
     let services = Services {
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
+        queue,
+        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let run = |measurements| {
         futures_lite::future::block_on(prepare_staged(
@@ -41,7 +43,7 @@ fn awaited_native_stages_reuse_exact_scratch_and_fall_back_without_changing_area
 
 #[test]
 fn async_roll_barrier_cancellation_does_not_reacquire_or_return_partial_support() {
-    let (request, _directory, device) = request();
+    let (request, _directory, device, queue) = request();
     let before = request.document.project.clone();
     let (scheduler, count) = observed();
     let cancelled = Cancellation::default();
@@ -52,6 +54,8 @@ fn async_roll_barrier_cancellation_does_not_reacquire_or_return_partial_support(
             exposures: Arc::default(),
             sources: scheduler.provider(None),
             device,
+            queue,
+            renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
         },
         cancelled,
         move |index, total| {

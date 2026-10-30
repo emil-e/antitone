@@ -1,5 +1,5 @@
 // Generates upstream OCIO AP1/AP0 equivalence references, GLSL and LUTs for both SDR targets.
-// Requires pinned OCIO and an existing .cache/probes; --camera requests authored AP1 inputs.
+// Requires pinned OCIO and an existing .cache/probes.
 // Gates finite outputs/LUTs, neutral spread and basis agreement; prints resource/error statistics.
 // Writes regenerable reference artifacts, not photographic or physical-display acceptance.
 #include "rendering_transform.h"
@@ -7,7 +7,6 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -42,10 +41,9 @@ static void neutralExposureReference() {
         throw std::runtime_error("unable to write neutral exposure reference");
 }
 
-int main(int argc, char **argv) try {
-    const bool withCamera = argc == 2 && std::strcmp(argv[1], "--camera") == 0;
-    if (argc != 1 && !withCamera) {
-        std::fprintf(stderr, "Usage: ocio-probe [--camera]\n");
+int main(int argc, char **) try {
+    if (argc != 1) {
+        std::fprintf(stderr, "Usage: ocio-probe\n");
         return 1;
     }
     std::printf("OCIO %s / input_space=ACEScg (linear AP1, D60)\n", OCIO::GetVersion());
@@ -65,25 +63,6 @@ int main(int argc, char **argv) try {
         inputs.push_back({0.f, value, 0.f, 1.f});
         inputs.push_back({0.f, 0.f, value, 1.f});
     }
-    size_t cameraCount = 0;
-    if (withCamera) {
-        std::ifstream camera(".cache/probes/camera-working-ap1-model5.f32",
-                             std::ios::binary | std::ios::ate);
-        if (!camera) {
-            std::fprintf(stderr, "Generate camera references before requesting --camera\n");
-            return 7;
-        }
-        const auto bytes = camera.tellg();
-        if (bytes <= 0 || bytes % sizeof(inputs[0]) != 0)
-            return 7;
-        cameraCount = bytes / sizeof(inputs[0]);
-        const auto offset = inputs.size();
-        inputs.resize(offset + cameraCount);
-        camera.seekg(0);
-        if (!camera.read(reinterpret_cast<char *>(inputs.data() + offset), bytes))
-            return 7;
-    }
-    std::printf("camera_pixels=%zu (explicit --camera extension)\n", cameraCount);
     std::ofstream inputFile(".cache/probes/aces-inputs-ap1.f32", std::ios::binary);
     inputFile.write(reinterpret_cast<const char *>(inputs.data()),
                     inputs.size() * sizeof(inputs[0]));

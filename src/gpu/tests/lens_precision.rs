@@ -4,12 +4,14 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
+use crate::gpu::camera_fixture::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 
+use crate::raw_test_support::train_raw;
 use antitone as api;
 use api::{
     flat_field::FlatField,
-    gpu::{GpuFlatField, ProcessingKernel, ProcessingParameters, ProcessingSource, SourceGeometry},
+    gpu::{GpuFlatField, ProcessingParameters, ProcessingSource, SourceGeometry},
     lens::EmbeddedLensGeometry,
     processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
     raw::{RawFile, Rect},
@@ -24,8 +26,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-#[path = "support/train_raw.rs"]
-mod train_raw;
 
 struct Dataset {
     label: String,
@@ -183,13 +183,13 @@ fn synthetic(near_base: bool) -> Dataset {
 
 enum ProcessingCase {
     Source(ProcessingParameters),
-    Layers(antitone::gpu::GpuPipeline),
+    Layers(antitone::gpu::ProcessingInput),
 }
 
 struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    kernel: ProcessingKernel,
+    kernel: CameraFixture,
 }
 
 impl Gpu {
@@ -201,7 +201,7 @@ impl Gpu {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         println!("precision adapter={:?}", adapter.get_info());
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = CameraFixture::new(&device).await.unwrap();
         Self {
             device,
             queue,
@@ -391,7 +391,9 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
     let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("precision timing output"),
         size: dataset.codes.len() as u64 * 16,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let fractional = dataset
@@ -554,7 +556,7 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
                 antitone::adjustment_layers::AdjustmentLayer::global(photo),
             ])
             .and_then(|snapshot| {
-                antitone::gpu::GpuPipeline::new(
+                antitone::gpu::ProcessingInput::new(
                     &gpu.device,
                     cal,
                     roll,

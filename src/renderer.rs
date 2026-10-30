@@ -1,6 +1,6 @@
 #[cfg(feature = "ui")]
 use crate::resample::AveragePipelines;
-use crate::{Error, gpu::ProcessingKernel, rendering::OutputTarget};
+use crate::{Error, gpu::CameraResources, rendering::OutputTarget};
 use std::{borrow::Cow, sync::Arc};
 use wgpu::util::DeviceExt;
 
@@ -158,7 +158,7 @@ pub(crate) struct TargetResources {
 /// Shared processing/rendering infrastructure for foreground images, thumbnails and refinement.
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
-    pub(crate) kernel: ProcessingKernel,
+    pub(crate) camera: CameraResources,
     pub(crate) submissions: crate::gpu::SubmissionGate,
     #[cfg(all(
         test,
@@ -204,7 +204,7 @@ impl GpuRenderer {
         submissions: crate::gpu::SubmissionGate,
         policy: crate::gpu::evaluation::CachePolicy,
     ) -> Result<Arc<Self>, Error> {
-        let kernel = ProcessingKernel::new(device).await?;
+        let camera = CameraResources::new(device)?;
         let evaluation = crate::gpu::evaluation::Context::new(device, policy);
         #[cfg(feature = "ui")]
         let average = Arc::new(AveragePipelines::with_context(device, evaluation.clone()).await?);
@@ -212,7 +212,7 @@ impl GpuRenderer {
             test,
             any(feature = "editor", all(feature = "raw", feature = "render"))
         ))]
-        let repairs = crate::gpu::repairs::Kernels::new(device, &kernel).await?;
+        let repairs = crate::gpu::repairs::Kernels::new(device, &camera).await?;
         let look_validation = crate::gpu::look::Validation::new(device).await?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -232,7 +232,7 @@ impl GpuRenderer {
         #[cfg(feature = "editor")]
         crate::gpu::evaluation::Recipe::prewarm_filtered(device, &evaluation)?;
         let renderer = Arc::new(Self {
-            kernel,
+            camera,
             submissions,
             #[cfg(all(
                 test,

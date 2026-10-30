@@ -1,32 +1,17 @@
 //! Captured photographic functions over neutral AP1, independent of raster acquisition.
 
 use super::*;
-use crate::gpu::{GpuGrade, ProcessingParameters};
-use std::sync::{Arc, OnceLock};
+use crate::gpu::Grading;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
-pub(crate) struct Grading {
-    captured: Arc<Captured>,
-    active_layers: bool,
-    coordinates: Option<crate::gpu::SourceGeometry>,
-}
-
-struct Captured {
-    device: wgpu::Device,
-    parameters: ProcessingParameters,
-    layers: wgpu::Buffer,
-    context: wgpu::Buffer,
-    coverage: u32,
-    functions: OnceLock<Functions>,
-}
-
-struct Functions {
+pub(crate) struct Functions {
     roll: Function,
     layers: Function,
     bytes: u64,
 }
 
-impl Captured {
+impl Grading {
     fn functions(&self) -> &Functions {
         self.functions.get_or_init(|| {
             let parameters = self
@@ -63,7 +48,7 @@ impl Captured {
                     code,
                     symbol: "evaluation_adjustments",
                     bindings: vec![
-                        (6, Shared::Buffer(self.layers.clone()).into()),
+                        (6, Shared::Buffer(self.buffer.clone()).into()),
                         (7, Shared::Buffer(self.context.clone()).into()),
                         (8, Shared::Buffer(context).into()),
                     ],
@@ -75,7 +60,7 @@ impl Captured {
 }
 
 struct Grade {
-    captured: Arc<Captured>,
+    captured: Arc<Grading>,
     roll: bool,
     coordinates: Option<crate::gpu::SourceGeometry>,
 }
@@ -155,21 +140,15 @@ impl Grading {
         context: &Context,
         domain: Domain,
     ) -> Result<(), Error> {
-        let grade = GpuGrade::new(
+        let grade = Self::new(
             device,
             Default::default(),
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![])?,
             [0, 0, 1, 1].into(),
         )?;
         for active_layers in [false, true] {
-            let grading = Self::from_parts(
-                device,
-                grade.parameters,
-                grade.buffer.clone(),
-                grade.context.clone(),
-                active_layers,
-                domain.grid.coverage,
-            );
+            let mut grading = grade.for_grid(domain.grid.coverage);
+            grading.active_layers = active_layers;
             context.prewarm_image(grading.compose(borrowed_input(domain))?)?;
         }
         Ok(())
@@ -178,46 +157,18 @@ impl Grading {
     pub(crate) fn shader() -> String {
         format!(
             "{}\n{}",
-            crate::gpu::ProcessingKernel::kernel_shader(),
+            crate::gpu::CameraResources::kernel_shader(),
             include_str!("grading.wgsl")
         )
     }
 
-    pub fn new(device: &wgpu::Device, grade: &GpuGrade, coverage: u32) -> Self {
-        Self::from_parts(
-            device,
-            grade.parameters,
-            grade.buffer.clone(),
-            grade.context.clone(),
-            grade
-                .snapshot()
-                .layers()
-                .iter()
-                .any(|layer| layer.is_active()),
-            coverage,
-        )
-    }
-
-    pub(super) fn from_parts(
-        device: &wgpu::Device,
-        parameters: ProcessingParameters,
-        layers: wgpu::Buffer,
-        context: wgpu::Buffer,
-        active_layers: bool,
-        coverage: u32,
-    ) -> Self {
-        Self {
-            captured: Arc::new(Captured {
-                device: device.clone(),
-                parameters,
-                layers,
-                context,
-                coverage,
-                functions: OnceLock::new(),
-            }),
-            active_layers,
-            coordinates: None,
+    pub fn for_grid(&self, coverage: u32) -> Self {
+        let mut prepared = self.clone();
+        if prepared.coverage != coverage {
+            prepared.coverage = coverage;
+            prepared.functions = Default::default();
         }
+        prepared
     }
 
     pub(super) fn with_camera_coordinates(
@@ -239,7 +190,7 @@ impl Grading {
             },
             Some(input),
             Grade {
-                captured: self.captured.clone(),
+                captured: Arc::new(self.clone()),
                 roll: true,
                 coordinates: None,
             },
@@ -257,7 +208,7 @@ impl Grading {
                 input.domain,
                 Some(input),
                 Grade {
-                    captured: self.captured.clone(),
+                    captured: Arc::new(self.clone()),
                     roll: false,
                     coordinates: self.coordinates,
                 },
@@ -271,10 +222,7 @@ impl Grading {
         self.layers(self.roll(input)?)
     }
 
-    pub fn byte_len(&self) -> u64 {
-        self.captured
-            .functions
-            .get()
-            .map_or(0, |functions| functions.bytes)
+    pub fn operation_bytes(&self) -> u64 {
+        self.functions.get().map_or(0, |functions| functions.bytes)
     }
 }

@@ -2,9 +2,16 @@
 
 use super::*;
 use crate::gpu::{
-    GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSource, SourceGeometry,
-    flat::FieldGeometry,
+    CameraResources, GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSource,
+    SourceGeometry, flat::FieldGeometry,
 };
+
+mod assembly;
+#[cfg(test)]
+pub(crate) mod test_support;
+
+use crate::gpu::photograph::Boundary;
+use assembly::Assembly;
 
 /// Captured camera, neutral and photographic image boundaries.
 /// Canonical implementations fold exposure into inversion; a separately materialized neutral
@@ -15,19 +22,22 @@ pub struct Photograph {
     pub neutral: Arc<ImageNode>,
     pub roll: Arc<ImageNode>,
     pub graded: Arc<ImageNode>,
+    pub(crate) processed: Arc<ImageNode>,
 }
 
 #[derive(Clone, Copy)]
 enum Mapping {
-    #[cfg(feature = "raw")]
     Originals,
     Resident(Option<SourceGeometry>),
 }
 
 impl Mapping {
+    fn originals() -> Self {
+        Self::Originals
+    }
+
     fn geometry(self, image: PlannedImage) -> Result<Option<SourceGeometry>, Error> {
         match self {
-            #[cfg(feature = "raw")]
             Self::Originals => {
                 let r = image.region;
                 SourceGeometry::original_tile([r.x, r.y, r.width, r.height], image.size()).map(Some)
@@ -62,7 +72,7 @@ struct Captured {
 impl Captured {
     fn new(
         device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
+        resources: &CameraResources,
         definition: CameraInput,
         program: Option<crate::gpu::GpuInputProgram>,
         source_parameters: Option<ProcessingParameters>,
@@ -92,41 +102,223 @@ impl Captured {
             matrix_buffer,
             field,
             mapping,
-            nodes: renderer.kernel.identity.clone(),
-            empty_layers: renderer.kernel.empty_adjustment_layers.clone(),
-            empty_context: renderer.kernel.empty_adjustment_layer_context.clone(),
+            nodes: resources.identity.clone(),
+            empty_layers: resources.empty_adjustment_layers.clone(),
+            empty_context: resources.empty_adjustment_layer_context.clone(),
             source_limit: device
                 .limits()
                 .max_storage_buffer_binding_size
                 .min(device.limits().max_buffer_size)
                 / 16,
-            code: crate::gpu::ProcessingKernel::module_shader().into(),
+            code: crate::gpu::CameraResources::module_shader().into(),
         }))
     }
 }
 
 struct Photographic {
     parameters: ProcessingParameters,
-    grade: Option<Arc<crate::gpu::GpuGrade>>,
-    #[cfg(feature = "raw")]
+    grade: Option<Arc<crate::gpu::Grading>>,
     repairs: crate::gpu::repairs::Snapshot,
 }
 
 enum Output {
+    Camera,
     Neutral,
     Roll(Arc<Photographic>),
     Graded(Arc<Photographic>),
 }
 
 impl Photograph {
-    #[cfg(feature = "raw")]
+    #[cfg(all(
+        feature = "raw",
+        feature = "project",
+        any(feature = "editor", feature = "export")
+    ))]
+    pub(super) fn unrepaired_readout(
+        device: &wgpu::Device,
+        resources: &CameraResources,
+        source: Arc<ImageNode>,
+        field: Option<Arc<GpuFlatField>>,
+        program: crate::gpu::GpuInputProgram,
+        encoding: crate::processing::RollSettings,
+    ) -> Result<Arc<ImageNode>, Error> {
+        if source.domain.meaning != Meaning::CameraCodes
+            || source.domain.grid != Grid::axis_aligned([0.; 2], [1.; 2])
+        {
+            return Err(Error::InvalidParameter(
+                "photographic conversion requires original camera cells",
+            ));
+        }
+
+        let parameters = ProcessingParameters::interpret(program.input, encoding, program.matrix)?;
+        let capture = Captured::new(
+            device,
+            resources,
+            CameraInput {
+                matrix: program.matrix,
+                matrix_buffer: None,
+                field,
+                continuous: true,
+                mapping: Mapping::Originals,
+            },
+            None,
+            Some(parameters),
+        )?;
+
+        let mut assembly = Assembly::captured(capture);
+        assembly.encoded = encoding.exposure != 0.;
+
+        assembly.prefix(source, Boundary::Codes, Boundary::Unrepaired)
+    }
+
+    #[cfg(feature = "editor")]
+    pub(super) fn native_positive(
+        camera: Arc<ImageNode>,
+        program: crate::gpu::GpuInputProgram,
+        encoding: crate::processing::RollSettings,
+    ) -> Result<Arc<ImageNode>, Error> {
+        Assembly::native(program, encoding).prefix(camera, Boundary::Camera, Boundary::Native)
+    }
+
+    #[cfg(feature = "editor")]
+    pub(super) fn filtered(
+        grading: &Grading,
+        neutral: Arc<ImageNode>,
+        stages: &crate::pixel_pipeline::PixelPipeline,
+    ) -> Result<Arc<ImageNode>, Error> {
+        Assembly::filtered(grading.clone()).filtered_image(neutral, stages)
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn camera_footprints(
+        device: &wgpu::Device,
+        resources: &CameraResources,
+        source: Arc<ImageNode>,
+        field: Option<Arc<GpuFlatField>>,
+        origins: &[[u32; 2]],
+    ) -> Result<Arc<ImageNode>, Error> {
+        use wgpu::util::DeviceExt;
+
+        let height = u32::try_from(origins.len())
+            .ok()
+            .and_then(|count| count.checked_mul(8))
+            .filter(|height| *height > 0)
+            .ok_or(Error::InvalidParameter("invalid camera footprint batch"))?;
+
+        if source.domain.meaning != Meaning::CameraCodes
+            || source.domain.bounds != [0, 0, 8, height].into()
+            || source.domain.grid != Grid::axis_aligned([0.; 2], [1.; 2])
+        {
+            return Err(Error::InvalidParameter(
+                "camera footprints require an original-cell index grid",
+            ));
+        }
+
+        let captured = Captured::new(
+            device,
+            resources,
+            CameraInput {
+                matrix: glam::DMat3::IDENTITY,
+                matrix_buffer: None,
+                field,
+                continuous: true,
+                mapping: Mapping::Resident(None),
+            },
+            None,
+            None,
+        )?;
+        let positions = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("captured original camera footprint origins"),
+            contents: bytemuck::cast_slice(origins),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let geometry = if let Some(field) = &captured.field {
+            let mapping = SourceGeometry::new(field.field().area(), [1, 1])?;
+            FieldGeometry::new(field, mapping)
+        } else {
+            FieldGeometry::uncorrected(None)
+        };
+        let nodes = captured
+            .field
+            .as_ref()
+            .map_or(&captured.nodes, |field| &field.nodes)
+            .clone();
+        let function = Function::new(
+            format!(
+                "{}\n{}",
+                crate::gpu::CameraResources::kernel_shader(),
+                include_str!("photograph/gathered.wgsl")
+            ),
+            "gathered_camera_light",
+        )
+        .with_shared(4, Shared::Buffer(nodes))
+        .with_uniform(5, &geometry)
+        .with_shared(18, Shared::Buffer(positions));
+        let mut assembly = Assembly::captured(captured);
+        assembly.camera_function = Some(function);
+
+        assembly.prefix(source, Boundary::Codes, Boundary::Camera)
+    }
+
+    /// Corrected original camera light, excluding interpretation and recorded positive exposure.
+    pub fn camera_light(
+        device: &wgpu::Device,
+        resources: &CameraResources,
+        source: Arc<ImageNode>,
+        field: Option<Arc<GpuFlatField>>,
+    ) -> Result<Arc<ImageNode>, Error> {
+        if source.domain.meaning != Meaning::CameraCodes
+            || source.domain.grid != Grid::axis_aligned([0.; 2], [1.; 2])
+        {
+            return Err(Error::InvalidParameter(
+                "camera-light conversion requires original camera cells",
+            ));
+        }
+
+        let captured = Captured::new(
+            device,
+            resources,
+            CameraInput {
+                matrix: glam::DMat3::IDENTITY,
+                matrix_buffer: None,
+                field,
+                continuous: true,
+                mapping: Mapping::Originals,
+            },
+            None,
+            None,
+        )?;
+
+        Assembly::captured(captured).prefix(source, Boundary::Codes, Boundary::Camera)
+    }
+
     pub fn new(
         device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
+        resources: &CameraResources,
         source: Arc<ImageNode>,
         field: Option<Arc<GpuFlatField>>,
         input: &ProcessingInput,
         matrix: glam::DMat3,
+    ) -> Result<Self, Error> {
+        Self::new_with_stages(
+            device,
+            resources,
+            source,
+            field,
+            input,
+            matrix,
+            &Default::default(),
+        )
+    }
+
+    pub(crate) fn new_with_stages(
+        device: &wgpu::Device,
+        resources: &CameraResources,
+        source: Arc<ImageNode>,
+        field: Option<Arc<GpuFlatField>>,
+        input: &ProcessingInput,
+        matrix: glam::DMat3,
+        stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Self, Error> {
         if source.domain.meaning != Meaning::CameraCodes
             || source.domain.grid != Grid::axis_aligned([0.; 2], [1.; 2])
@@ -136,30 +328,32 @@ impl Photograph {
             ));
         }
         input.repairs.require_area(source.domain.bounds)?;
-        if let Some(pipeline) = input.pipeline() {
-            pipeline.grade.require_extent(source.domain.bounds)?;
+        if let Some(grading) = input.grade() {
+            grading.require_extent(source.domain.bounds)?;
         }
         Self::capture(
             device,
-            renderer,
+            resources,
             source,
             CameraInput {
                 matrix,
                 matrix_buffer: None,
                 field,
                 continuous: true,
-                mapping: Mapping::Originals,
+                mapping: Mapping::originals(),
             },
             input,
+            stages,
         )
     }
 
-    pub(crate) fn from_resident(
+    pub(crate) fn from_resident_with_stages(
         device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
+        resources: &CameraResources,
         source: &ProcessingSource,
         input: &ProcessingInput,
         raster: crate::gpu::raster::Raster,
+        stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Self, Error> {
         input.require_source(source)?;
         if u64::from(raster.size()[0]) * u64::from(raster.size()[1])
@@ -169,8 +363,7 @@ impl Photograph {
                 "processing source layout differs from plan",
             ));
         }
-        #[cfg(feature = "raw")]
-        if !input.repairs.0.is_empty() && source.geometry().is_none() {
+        if !input.repairs.0.is_empty() && source.geometry.is_none() {
             return Err(Error::Gpu(
                 "repair rendering needs original source geometry".into(),
             ));
@@ -190,132 +383,70 @@ impl Photograph {
         );
         Self::capture(
             device,
-            renderer,
+            resources,
             camera,
             CameraInput {
                 matrix: source.camera_to_ap1,
                 matrix_buffer: Some(source.matrix.clone()),
                 field: source.flat_field.clone(),
                 continuous: source.continuous,
-                mapping: Mapping::Resident(source.geometry()),
+                mapping: Mapping::Resident(source.geometry),
             },
             input,
+            stages,
         )
     }
 
     fn capture(
         device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
+        resources: &CameraResources,
         source: Arc<ImageNode>,
         definition: CameraInput,
         input: &ProcessingInput,
+        stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Self, Error> {
         let matrix = definition.matrix;
         let mapping = definition.mapping;
-        if let Some(pipeline) = input.pipeline() {
-            if pipeline.input_program().matrix != matrix {
+        if let Some(program) = input.source_program() {
+            if program.matrix != matrix {
                 return Err(Error::InvalidParameter(
                     "photographic conversion matrix differs from captured input",
                 ));
             }
-            #[cfg(feature = "raw")]
-            pipeline.validate_repairs(device, input.repairs.bound())?;
+            input.validate_repairs(device, input.repairs.bound())?;
         }
 
         let captured = Captured::new(
             device,
-            renderer,
+            resources,
             definition,
-            input
-                .pipeline()
-                .map(|pipeline| pipeline.input_program().clone()),
+            input.source_program().cloned(),
             (!input.parameters().graded()).then_some(input.parameters()),
         )?;
-        let image = |output| {
-            ImageNode::new(
-                Domain {
-                    meaning: if matches!(output, Output::Neutral) {
-                        Meaning::Neutral
-                    } else {
-                        Meaning::Graded
-                    },
-                    ..source.domain
-                },
-                Some(source.clone()),
-                Camera {
-                    captured: captured.clone(),
-                    output,
-                },
-            )
-        };
-        let unrepaired = image(Output::Neutral);
-        #[cfg(feature = "raw")]
-        let neutral = if input.parameters().graded() && !input.repairs.0.is_empty() {
-            ImageNode::new(
-                unrepaired.domain,
-                Some(unrepaired.clone()),
-                Repairs {
-                    snapshot: input.repairs.clone(),
-                    code: captured.code.clone(),
-                    mapping,
-                },
-            )
-        } else {
-            unrepaired.clone()
-        };
-        #[cfg(not(feature = "raw"))]
-        let neutral = unrepaired.clone();
+        let mut assembly = Assembly::captured(captured.clone());
+        if input.parameters().graded() {
+            assembly.repairs = input.repairs.clone();
+        }
 
-        if !input.parameters().graded() {
-            return Ok(Self {
-                camera: source,
-                unrepaired,
-                roll: neutral.clone(),
-                graded: neutral.clone(),
-                neutral,
+        if input.parameters().graded() {
+            assembly.photographic = Some(Arc::new(Photographic {
+                parameters: input.parameters(),
+                grade: input.grade_shared().cloned(),
+                repairs: input.repairs.clone(),
+            }));
+            let grading = input
+                .grade()
+                .ok_or(Error::InvalidParameter(
+                    "photographic input requires captured interpretation and grading",
+                ))?
+                .for_grid(0);
+            assembly.grading = Some(match mapping {
+                Mapping::Resident(geometry) => grading.with_camera_coordinates(geometry),
+                Mapping::Originals => grading,
             });
         }
 
-        let photographic = Arc::new(Photographic {
-            parameters: input.parameters(),
-            grade: input.pipeline().map(|pipeline| pipeline.grade.clone()),
-            #[cfg(feature = "raw")]
-            repairs: input.repairs.clone(),
-        });
-        let grading = if let Some(grade) = input.grade() {
-            Grading::new(device, grade, 0)
-        } else {
-            Grading::from_parts(
-                device,
-                input.parameters(),
-                captured.empty_layers.clone(),
-                captured.empty_context.clone(),
-                false,
-                0,
-            )
-        };
-        let grading = match mapping {
-            Mapping::Resident(geometry) => grading.with_camera_coordinates(geometry),
-            #[cfg(feature = "raw")]
-            Mapping::Originals => grading,
-        };
-
-        let roll = ImageNode::implemented_by(
-            grading.roll(neutral.clone())?,
-            image(Output::Roll(photographic.clone())),
-        )?;
-        let graded = ImageNode::implemented_by(
-            grading.layers(roll.clone())?,
-            image(Output::Graded(photographic)),
-        )?;
-
-        Ok(Self {
-            camera: source,
-            unrepaired,
-            neutral,
-            roll,
-            graded,
-        })
+        assembly.photograph(source, stages)
     }
 }
 
@@ -333,7 +464,7 @@ impl Neutral {
     pub fn originals(
         &self,
         device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
+        resources: &CameraResources,
         source: Arc<ImageNode>,
     ) -> Result<Arc<ImageNode>, Error> {
         if source.domain.meaning != Meaning::CameraCodes
@@ -346,7 +477,7 @@ impl Neutral {
         self.repairs.require_area(source.domain.bounds)?;
         self.compose(
             device,
-            renderer,
+            resources,
             source,
             CameraInput {
                 matrix: self.matrix,
@@ -361,7 +492,7 @@ impl Neutral {
     pub fn resident(
         &self,
         device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
+        resources: &CameraResources,
         source: &ProcessingSource,
         raster: crate::gpu::raster::Raster,
     ) -> Result<Arc<ImageNode>, Error> {
@@ -392,14 +523,14 @@ impl Neutral {
         );
         self.compose(
             device,
-            renderer,
+            resources,
             image,
             CameraInput {
                 matrix: self.matrix,
                 matrix_buffer: Some(source.matrix.clone()),
-                field: source.flat_field.clone(),
+                field: self.field.clone(),
                 continuous: source.continuous,
-                mapping: Mapping::Resident(source.geometry()),
+                mapping: Mapping::Resident(source.geometry),
             },
         )
     }
@@ -407,36 +538,15 @@ impl Neutral {
     fn compose(
         &self,
         device: &wgpu::Device,
-        renderer: &crate::renderer::GpuRenderer,
+        resources: &CameraResources,
         source: Arc<ImageNode>,
         definition: CameraInput,
     ) -> Result<Arc<ImageNode>, Error> {
-        let mapping = definition.mapping;
-        let captured = Captured::new(device, renderer, definition, None, Some(self.parameters))?;
-        let image = ImageNode::new(
-            Domain {
-                meaning: Meaning::Neutral,
-                ..source.domain
-            },
-            Some(source),
-            Camera {
-                captured: captured.clone(),
-                output: Output::Neutral,
-            },
-        );
-        Ok(if self.repairs.0.is_empty() {
-            image
-        } else {
-            ImageNode::new(
-                image.domain,
-                Some(image),
-                Repairs {
-                    snapshot: self.repairs.clone(),
-                    code: captured.code.clone(),
-                    mapping,
-                },
-            )
-        })
+        let captured = Captured::new(device, resources, definition, None, Some(self.parameters))?;
+        let mut assembly = Assembly::captured(captured);
+        assembly.repairs = self.repairs.clone();
+
+        assembly.prefix(source, Boundary::Codes, Boundary::Neutral)
     }
 }
 
@@ -481,6 +591,7 @@ struct Camera {
 impl Camera {
     fn parameters(&self) -> Result<ProcessingParameters, Error> {
         match &self.output {
+            Output::Camera => Ok(ProcessingParameters::source()),
             Output::Neutral => match &self.captured.program {
                 Some(program) => program.neutral_parameters(),
                 None => self
@@ -537,10 +648,16 @@ impl Operation for Camera {
         };
         let packed = self.parameters()?;
         let parameters = f.uniform(&packed);
-        let matrix = capture.matrix_buffer.as_ref().map_or_else(
-            || f.uniform(&capture.matrix),
-            |buffer| Binding::Shared(Shared::Buffer(buffer.clone())),
-        );
+        let matrix = if matches!(self.output, Output::Camera) {
+            let mut matrix = crate::gpu::CameraMatrix::new(glam::DMat3::IDENTITY)?;
+            matrix.columns[0].w = capture.matrix.columns[0].w;
+            f.uniform(&matrix)
+        } else {
+            capture.matrix_buffer.as_ref().map_or_else(
+                || f.uniform(&capture.matrix),
+                |buffer| Binding::Shared(Shared::Buffer(buffer.clone())),
+            )
+        };
         let coordinates = f.uniform(&field);
         f.compute(
             capture.code.clone(),
@@ -566,10 +683,9 @@ impl Operation for Camera {
             ],
             output.cells(),
         );
-        #[cfg(feature = "raw")]
         {
             let photo = match &self.output {
-                Output::Neutral => return Ok(()),
+                Output::Camera | Output::Neutral => return Ok(()),
                 Output::Roll(photo) | Output::Graded(photo) => photo,
             };
             if !packed.graded() || photo.repairs.0.is_empty() {
@@ -620,7 +736,6 @@ impl Operation for Camera {
     }
 }
 
-#[cfg(feature = "raw")]
 fn repair_geometry(
     geometry: Option<SourceGeometry>,
 ) -> Option<(crate::geometry::SourceRegion, SourceGeometry)> {
@@ -629,14 +744,12 @@ fn repair_geometry(
     (geometry.size() == [region.width, region.height]).then_some((region, geometry))
 }
 
-#[cfg(feature = "raw")]
 struct Repairs {
     snapshot: crate::gpu::repairs::Snapshot,
     code: Arc<str>,
     mapping: Mapping,
 }
 
-#[cfg(feature = "raw")]
 impl Operation for Repairs {
     fn input(
         &self,
