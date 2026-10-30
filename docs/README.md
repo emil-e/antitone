@@ -1,10 +1,10 @@
 # Contributing to Antitone
 
-Start with [build and run](build-and-run.md), then choose the part of the project you want to understand or change. You do not need to read the whole documentation set first.
+Before changing application code, read [architecture](architecture.md) and [development](development.md). Use [build and run](build-and-run.md) for setup, then choose the relevant topic guides; you do not need to read the whole documentation set.
 
 ## Understand the system
 
-[Architecture](architecture.md) explains how the application runs: the event loop, workflows, scopes, services and ownership. The topic guides explain the models behind the code:
+[Architecture](architecture.md) establishes the design fundamentals and essential execution boundaries. The topic guides explain the models behind the code:
 
 | If you are wondering… | Read… |
 | --- | --- |
