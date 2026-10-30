@@ -52,15 +52,14 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             |editor, cx| editor.request_analysis(cx),
         );
         assert!(
-            editor.document.analysis_review.is_some(),
+            editor.document.analysis_review().is_some(),
             "{}",
             editor.status
         );
         assert_eq!(editor.document.state.project, before);
         let approved = editor
             .document
-            .analysis_review
-            .as_ref()
+            .analysis_review()
             .unwrap()
             .approved
             .entries
@@ -90,7 +89,7 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
         assert_eq!(editor.document.state.project, before);
         editor = wait_with_limit(editor, Duration::from_secs(240), |e, cx| {
             e.confirm_analysis_review(cx);
-            assert!(e.document.analysis_pending.is_some(), "{}", e.status);
+            assert!(e.analysis_fitting(), "{}", e.status);
         });
         assert!(editor.status.starts_with("Analyzed"), "{}", editor.status);
         assert_eq!(editor.document.visit.current_source, first);
@@ -128,13 +127,7 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             |editor, cx| editor.request_analysis(cx),
         );
         assert_eq!(
-            editor
-                .document
-                .analysis_review
-                .as_ref()
-                .unwrap()
-                .approved
-                .entries,
+            editor.document.analysis_review().unwrap().approved.entries,
             approved
         );
         editor.finish_pick(&crate::application::UiContext::render_only());

@@ -37,11 +37,7 @@ impl Editor {
             self.status = "Wait for donor selection before changing the document".into();
             return;
         }
-        self.finish_flat_edit();
         self.cancel_spatial();
-        self.finish_auto_crop(false);
-        self.document.analysis_regions = None;
-        self.retire_pick_actions();
         self.document.history.finish_group();
         self.history_pending = match &work {
             Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
@@ -62,12 +58,12 @@ impl Editor {
                 direction: *direction,
                 cleanup: self
                     .document
-                    .visit
-                    .dust
-                    .cleanup
+                    .dust()
+                    .is_some()
                     .then_some(self.document.visit.dust.show_masks),
             }),
         };
+        self.cancel_active_tool();
         let id =
             self.begin_document_operation(matches!(&work, Preparation::New | Preparation::Open(_)));
         self.tasks.begin(match &work {
@@ -168,7 +164,7 @@ impl Editor {
             Ok(prepared) => {
                 let input_changed = self.document.input.is_negative()
                     != prepared.document.project.input.is_negative();
-                self.document.flat_edit = None;
+                self.document.set_flat_edit(None);
 
                 if self.reset_repairs_pending {
                     self.document.dust = dust::State::default();
@@ -198,7 +194,7 @@ impl Editor {
                 }
                 self.remember_current_look();
                 self.document.visit.adjustment_layers = layer_selection;
-                self.document.visit.mask_edit = None;
+                self.document.set_mask_edit(None);
                 if new_project {
                     self.tab = 0;
                     self.preferences
@@ -254,7 +250,7 @@ impl Editor {
                     .selected
                     .and_then(|id| self.document.state.project.source(id).ok())
                     .and_then(|source| source.crop);
-                self.document.visit.crop_edit = None;
+                self.document.set_crop_edit(None);
                 self.document.visit.canvas.last_layout = None;
                 self.document.film_emulation = self.document.state.project.output.film_emulation;
                 self.document.target = match self.document.state.project.output.tiff {

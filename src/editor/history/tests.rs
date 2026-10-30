@@ -85,14 +85,14 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
     editor.tab = 1;
     let before_crop = editor.history_snapshot();
     editor.begin_crop();
-    editor.document.visit.crop_edit.as_mut().unwrap().draft.size = [256, 256];
+    editor.document.crop_edit_mut().unwrap().draft.size = [256, 256];
     editor.finish_crop(false);
     assert_eq!(
         editor.document.state.project, before_crop,
         "cancelled crops are not edits"
     );
     editor.begin_crop();
-    editor.document.visit.crop_edit.as_mut().unwrap().draft.size = [256, 256];
+    editor.document.crop_edit_mut().unwrap().draft.size = [256, 256];
     editor.finish_crop(true);
     let cropped = editor.document.state.project.clone();
     editor = round_trip(editor, &before_crop, &cropped);
@@ -136,7 +136,7 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
     assert_eq!(repaired.source(id).unwrap().repairs.repairs().len(), 1);
     editor = round_trip(editor, &cropped, &repaired);
     assert!(
-        editor.document.visit.dust.cleanup,
+        editor.document.dust().is_some(),
         "undo/redo between strokes must keep the tool usable"
     );
     editor.delete_selected_dust_repair();

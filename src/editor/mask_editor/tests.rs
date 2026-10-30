@@ -184,25 +184,16 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
             )
             .unwrap();
         editor.begin_linear_mask(Some(id));
-        editor.document.visit.mask_edit.as_mut().unwrap().mask =
-            Some(AdjustmentLayerCoverage::Linear {
-                start: SourcePoint([122., 75.]),
-                end: SourcePoint([140., 88.]),
-            });
-        let candidate = editor
-            .document
-            .visit
-            .mask_edit
-            .as_ref()
-            .unwrap()
-            .candidate()
-            .unwrap()
-            .0;
+        editor.document.mask_edit_mut().unwrap().mask = Some(AdjustmentLayerCoverage::Linear {
+            start: SourcePoint([122., 75.]),
+            end: SourcePoint([140., 88.]),
+        });
+        let candidate = editor.document.mask_edit().unwrap().candidate().unwrap().0;
         editor.validate_source_candidate(&candidate).unwrap();
-        editor.document.visit.mask_edit.as_mut().unwrap().preview = Some(candidate);
+        editor.document.mask_edit_mut().unwrap().preview = Some(candidate);
         assert!(editor.mask_preview_source().is_some());
         editor.finish_adjustment_layer_interaction();
-        assert!(editor.document.visit.mask_edit.is_none());
+        assert!(editor.document.mask_edit().is_none());
         assert!(editor.document.visit.working_view.compare);
         assert_eq!(
             editor.adjustment_layer_target(),
@@ -267,49 +258,29 @@ fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
         editor.document.visit.working_view.compare = true;
         editor.begin_linear_mask(None);
         assert!(!editor.document.visit.working_view.compare);
-        assert!(editor.document.visit.mask_edit.is_some());
-        assert!(!editor.document.visit.mask_edit.as_ref().unwrap().valid());
-        editor.document.visit.mask_edit.as_mut().unwrap().mask =
-            Some(AdjustmentLayerCoverage::Linear {
-                start: SourcePoint([121., 74.]),
-                end: SourcePoint([141., 90.]),
-            });
-        let (_, first) = editor
-            .document
-            .visit
-            .mask_edit
-            .as_ref()
-            .unwrap()
-            .candidate()
-            .unwrap();
-        let (_, repeated) = editor
-            .document
-            .visit
-            .mask_edit
-            .as_ref()
-            .unwrap()
-            .candidate()
-            .unwrap();
+        assert!(editor.document.mask_edit().is_some());
+        assert!(!editor.document.mask_edit().unwrap().valid());
+        editor.document.mask_edit_mut().unwrap().mask = Some(AdjustmentLayerCoverage::Linear {
+            start: SourcePoint([121., 74.]),
+            end: SourcePoint([141., 90.]),
+        });
+        let (_, first) = editor.document.mask_edit().unwrap().candidate().unwrap();
+        let (_, repeated) = editor.document.mask_edit().unwrap().candidate().unwrap();
         assert_eq!(first, repeated);
         assert_eq!(editor.document.state.project, before);
         editor.document.visit.canvas.viewport.zoom = Some(3.);
         editor.finish_mask(false);
-        assert!(editor.document.visit.mask_edit.is_none());
+        assert!(editor.document.mask_edit().is_none());
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert!(editor.document.visit.working_view.compare);
         assert_eq!(editor.document.state.project, before);
         editor.begin_linear_mask(None);
-        editor.document.visit.mask_edit.as_mut().unwrap().mask =
-            Some(AdjustmentLayerCoverage::Linear {
-                start: SourcePoint([121., 74.]),
-                end: SourcePoint([141., 90.]),
-            });
+        editor.document.mask_edit_mut().unwrap().mask = Some(AdjustmentLayerCoverage::Linear {
+            start: SourcePoint([121., 74.]),
+            end: SourcePoint([141., 90.]),
+        });
         editor.finish_mask(true);
-        assert!(
-            editor.document.visit.mask_edit.is_none(),
-            "{}",
-            editor.status
-        );
+        assert!(editor.document.mask_edit().is_none(), "{}", editor.status);
         let source = editor
             .document
             .project
@@ -359,23 +330,15 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
             .unwrap();
         let snapshot = input.pipeline().unwrap().snapshot().clone();
         editor.begin_linear_mask(Some(id));
-        assert!(editor.document.visit.mask_edit.is_some());
-        editor.begin_crop();
-        editor.preview_picker(Pick::Wb);
-        editor.request_analysis(&UiContext::render_only());
-        assert!(
-            editor.document.visit.crop_edit.is_none()
-                && editor.active_pick().is_none()
-                && editor.document.analysis_pending.is_none()
-        );
+        assert!(editor.document.mask_edit().is_some());
         assert!(!editor.roll_edit_available());
         let mask = AdjustmentLayerCoverage::Linear {
             start: SourcePoint([100., 70.]),
             end: SourcePoint([149., 99.]),
         };
-        editor.document.visit.mask_edit.as_mut().unwrap().mask = Some(mask);
+        editor.document.mask_edit_mut().unwrap().mask = Some(mask);
         editor.finish_mask(true);
-        assert!(editor.document.visit.mask_edit.is_none());
+        assert!(editor.document.mask_edit().is_none());
         let accepted = editor
             .document
             .project
@@ -398,14 +361,13 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         assert_eq!(input.pipeline().unwrap().snapshot(), &snapshot);
         let before = editor.document.state.project.clone();
         editor.begin_linear_mask(Some(id));
-        editor.document.visit.mask_edit.as_mut().unwrap().mask =
-            Some(AdjustmentLayerCoverage::Linear {
-                start: SourcePoint([0., 0.]),
-                end: SourcePoint([0., 0.]),
-            });
+        editor.document.mask_edit_mut().unwrap().mask = Some(AdjustmentLayerCoverage::Linear {
+            start: SourcePoint([0., 0.]),
+            end: SourcePoint([0., 0.]),
+        });
         editor.finish_mask(true);
         assert!(
-            editor.document.visit.mask_edit.is_none(),
+            editor.document.mask_edit().is_none(),
             "rejected refinements return to the accepted selected mask"
         );
         assert_eq!(editor.document.state.project, before);
@@ -417,7 +379,7 @@ fn accepted_mask_edit_retains_ids_numeric_controls_and_immutable_snapshots() {
         editor.document.roll.exposure += 0.1;
         editor.finish_mask(true);
         assert!(
-            editor.document.visit.mask_edit.is_none(),
+            editor.document.mask_edit().is_none(),
             "changed processing cannot accept a stale mask draft"
         );
         assert!(

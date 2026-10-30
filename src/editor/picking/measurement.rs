@@ -65,16 +65,14 @@ where
     F: FnOnce(Coverage, Cancellation) -> Result<T, Error> + Send + 'static,
 {
     let (selection, receive) = cx.update(|editor| {
-        let admitted = !editor.busy
-            && editor.document.visit.crop_edit.is_none()
-            && editor.document.auto_crop_edit.is_none()
-            && editor.document.visit.mask_edit.is_none()
-            && editor.document.flat_edit.is_none()
-            && editor.document.analysis_review.is_none()
-            && (editor.active_pick().is_none()
-                || editor.document.visit.picking.selection.is_some());
-        if !admitted {
-            return None;
+        if !matches!(
+            editor.document.tool,
+            Some(super::super::tool::Tool::Pick(_))
+        ) {
+            if !editor.prepare_tool() {
+                return None;
+            }
+            editor.document.tool = Some(super::super::tool::Tool::Pick(Vec::new()));
         }
         if editor.document.visit.picking.selection.is_some() {
             editor.cancel_picker();

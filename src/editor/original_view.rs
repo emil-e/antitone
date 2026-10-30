@@ -216,7 +216,7 @@ impl Editor {
                 frame
             }
         };
-        let field = if self.document.flat_edit.is_some() {
+        let field = if self.document.flat_edit().is_some() {
             None
         } else {
             self.document

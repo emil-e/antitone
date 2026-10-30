@@ -30,7 +30,7 @@ pub(super) struct DocumentScope {
     pub export_dialog: Option<super::export_batch::Draft>,
     pub export_summary: Option<super::export_batch::Summary>,
     pub correction: Option<Arc<super::Correction>>,
-    pub flat_edit: Option<super::FlatEdit>,
+    pub tool: Option<super::tool::Tool>,
     pub state: Document,
     pub cache: Arc<crate::source::SourceCache>,
     pub exposures: Arc<crate::exposure_metadata::Store>,
@@ -50,13 +50,12 @@ pub(super) struct DocumentScope {
     pub write: super::save::State,
     pub look: Option<super::look_ui::Pending>,
     pub dust: super::dust::State,
-    pub auto_crop_edit: Option<super::auto_crop::Draft>,
-    pub auto_crop_operation: Option<super::auto_crop::Operation>,
-    pub analysis_regions: Option<async_executor::Task<()>>,
-    pub analysis_preparing: Option<super::analysis_workflow::Pending>,
-    pub analysis_pending: Option<super::analysis_workflow::Pending>,
-    pub analysis_review: Option<super::analysis_review::Review>,
-    pub analysis_generation: Arc<std::sync::atomic::AtomicU64>,
+    #[cfg(test)]
+    pub analysis_preparation_work:
+        Option<super::analysis_workflow::testing::Work<super::analysis_review::Approved>>,
+    #[cfg(test)]
+    pub analysis_fit_work:
+        Option<super::analysis_workflow::testing::Work<Box<super::analysis::Outcome>>>,
 }
 
 impl DocumentScope {
@@ -166,7 +165,7 @@ impl From<Document> for DocumentScope {
             thumbnails: super::Thumbnails::for_sources(cache.clone()),
             grades: super::Grades::default(),
             correction: None,
-            flat_edit: None,
+            tool: None,
             selected: 0,
             roll_selection: super::RollSelection::default(),
             removal_pending: None,
@@ -196,13 +195,10 @@ impl From<Document> for DocumentScope {
             write: super::save::State::default(),
             look: None,
             dust: super::dust::State::default(),
-            auto_crop_edit: None,
-            auto_crop_operation: None,
-            analysis_regions: None,
-            analysis_preparing: None,
-            analysis_pending: None,
-            analysis_review: None,
-            analysis_generation: Arc::default(),
+            #[cfg(test)]
+            analysis_preparation_work: None,
+            #[cfg(test)]
+            analysis_fit_work: None,
         }
     }
 }

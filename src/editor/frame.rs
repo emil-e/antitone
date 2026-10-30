@@ -122,7 +122,11 @@ impl Editor {
         text_was_focused: bool,
         dialog_escape_available: bool,
     ) {
-        if self.document.spatial_preparing.is_some()
+        if self
+            .document
+            .spatial_preparing
+            .as_ref()
+            .is_some_and(|work| self.tasks.is_current(TaskRequest::Regions(work.id)))
             && self.failure.is_none()
             && dialog_escape_available
             && !text_was_focused
@@ -131,7 +135,7 @@ impl Editor {
         {
             self.cancel_spatial();
         }
-        if self.document.analysis_preparing.is_some()
+        if self.analysis_preparing()
             && dialog_escape_available
             && !text_was_focused
             && !ui.ctx().egui_wants_keyboard_input()
@@ -139,8 +143,8 @@ impl Editor {
         {
             self.cancel_analysis();
         }
-        if self.document.analysis_review.is_some()
-            && self.document.analysis_pending.is_none()
+        if self.document.analysis_review().is_some()
+            && !self.analysis_fitting()
             && dialog_escape_available
             && !text_was_focused
             && !ui.ctx().egui_wants_keyboard_input()
@@ -190,12 +194,7 @@ impl Editor {
             && !egui::Popup::is_any_open(ui.ctx())
         {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
-                && !self
-                    .document
-                    .visit
-                    .mask_edit
-                    .as_ref()
-                    .is_some_and(MaskEdit::dragging)
+                && !self.document.mask_edit().is_some_and(MaskEdit::dragging)
             {
                 self.active_canvas_mut().viewport.fit();
             }
@@ -219,7 +218,7 @@ impl Editor {
         {
             self.apply_pick(cx);
         }
-        if self.document.visit.crop_edit.is_some() {
+        if self.document.crop_edit().is_some() {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 self.finish_crop(false);
             } else if ui
@@ -228,7 +227,7 @@ impl Editor {
                 self.finish_crop(true);
             }
         }
-        if self.document.auto_crop_edit.is_some() {
+        if self.document.auto_crop_edit().is_some() {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 self.finish_auto_crop(false);
             } else if ui
@@ -237,12 +236,12 @@ impl Editor {
                 self.finish_auto_crop(true);
             }
         }
-        if self.document.visit.mask_edit.is_some()
+        if self.document.mask_edit().is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.finish_mask(false);
         }
-        if self.document.visit.dust.cleanup
+        if self.document.dust().is_some()
             && ui.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -250,7 +249,7 @@ impl Editor {
         {
             self.delete_selected_dust_repair();
         }
-        if self.document.visit.dust.cleanup
+        if self.document.dust().is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.finish_dust_cleanup();
@@ -273,8 +272,8 @@ impl Editor {
         {
             self.delete_selected_adjustment_layer();
         }
-        if !self.document.visit.dust.cleanup
-            && self.document.auto_crop_edit.is_none()
+        if !self.document.dust().is_some()
+            && self.document.auto_crop_edit().is_none()
             && !adjustment_delete
             && !self.document.visit.adjustment_layers.dragging()
             && self.roll_edit_available()
@@ -286,8 +285,8 @@ impl Editor {
             *file_action = Some(FileAction::Remove);
         }
         if self.active_pick().is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
+            && self.document.crop_edit().is_none()
+            && self.document.mask_edit().is_none()
             && !self.document.visit.adjustment_layers.dragging()
             && !self.document.state.project.order.is_empty()
         {
@@ -310,10 +309,10 @@ impl Editor {
 
     pub(super) fn disable_blocked_workspace(&self, ui: &mut egui::Ui) {
         if self.menus.panel.is_some()
-            || self.tasks.blocks_workspace()
+            || self.tasks.blocks_workspace() && self.tool_activity().is_none()
             || self.failure.is_some()
             || self.export_modal()
-            || self.document_pending.is_some()
+            || self.document_pending.is_some() && self.tool_activity().is_none()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
             || self.document.removal_pending.is_some()
@@ -347,7 +346,10 @@ impl Editor {
         egui::Panel::bottom("status")
             .exact_size(presentation::ACTIVITY_BAR_HEIGHT)
             .show(ui, |ui| {
-                if let Some(view) = self.tasks.view() {
+                if let Some(mut view) = self.tasks.view() {
+                    if self.tool_activity().is_some() {
+                        view.modal = false;
+                    }
                     if let Some(request) = view.compact(ui) {
                         self.cancel_task(request);
                     }
@@ -471,13 +473,13 @@ impl Editor {
     ) {
         let auto_crop = self.document.auto_crop_requested.take();
         if let Some(action) = actions.file {
-            if self.document.visit.mask_edit.is_none() {
+            if self.document.mask_edit().is_none() {
                 self.file_action(action, cx);
             } else {
                 self.status = "Apply or cancel the mask before a file action".into();
             }
         } else if actions.export {
-            if self.document.visit.mask_edit.is_none() {
+            if self.document.mask_edit().is_none() {
                 self.open_export_dialog();
             } else {
                 self.status = "Apply or cancel the mask before exporting".into();
@@ -520,6 +522,7 @@ impl Editor {
         self.adjustment_layer_dialog(ui.ctx(), dialog_escape_available);
         self.export_dialogs(ui.ctx(), dialog_escape_available, cx);
         if self.failure.is_none()
+            && self.tool_activity().is_none()
             && let Some(request) = self
                 .tasks
                 .modal(ui.ctx(), egui::Id::new("working-document"))

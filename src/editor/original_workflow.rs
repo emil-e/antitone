@@ -177,8 +177,7 @@ impl Editor {
             Some(&mut self.document.visit.canvas)
         } else {
             self.document
-                .flat_edit
-                .as_mut()
+                .flat_edit_mut()
                 .filter(|flat| Arc::ptr_eq(generation, &flat.view.grade.original.generation))
                 .map(|flat| &mut flat.view)
         };

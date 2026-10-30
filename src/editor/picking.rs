@@ -76,7 +76,7 @@ impl Session {
 
 impl Editor {
     pub(super) fn active_pick(&self) -> Option<Display> {
-        if self.document.flat_edit.is_some() {
+        if self.document.flat_edit().is_some() {
             Some(flat::DISPLAY)
         } else {
             self.document.visit.picking.display
@@ -85,15 +85,14 @@ impl Editor {
 
     pub(super) fn pick_region(&self) -> Option<Coverage> {
         self.document
-            .flat_edit
-            .as_ref()
+            .flat_edit()
             .map_or(self.document.visit.picking.region, |reference| {
                 reference.region
             })
     }
 
     pub(super) fn set_pick_region(&mut self, region: Option<Coverage>) {
-        if let Some(reference) = &mut self.document.flat_edit {
+        if let Some(reference) = self.document.flat_edit_mut() {
             reference.region = region;
         } else {
             self.document.visit.picking.region = region;
@@ -101,6 +100,11 @@ impl Editor {
     }
 
     pub(super) fn cancel_picker(&mut self) {
+        if self.document.visit.picking.selection.is_none()
+            && self.document.visit.picking.display.is_none()
+        {
+            return;
+        }
         if let Some(selection) = self.document.visit.picking.selection.clone() {
             selection.cancelled.cancel();
             selection.reply.borrow_mut().take();
@@ -184,11 +188,15 @@ impl Editor {
                     .reframe(layout, next, pixels_per_point);
             }
         }
-        self.document.visit.picking.view = Some(PickView {
-            source,
-            viewport,
-            anchored: self.document.visit.canvas.viewport,
-        });
+        self.document.visit.picking.view =
+            self.document
+                .analysis_review()
+                .is_none()
+                .then_some(PickView {
+                    source,
+                    viewport,
+                    anchored: self.document.visit.canvas.viewport,
+                });
     }
 
     pub(super) fn submit_picker(&mut self) -> bool {
@@ -219,6 +227,8 @@ impl Editor {
         if self.document.visit.picking.selection.is_some() {
             self.cancel_picker();
         }
-        self.document.visit.pick_actions.clear();
+        if matches!(self.document.tool, Some(tool::Tool::Pick(_))) {
+            self.document.tool = None;
+        }
     }
 }

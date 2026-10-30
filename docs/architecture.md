@@ -26,11 +26,11 @@ Editor state is nested scopes rather than one flat struct ([`editor_document_sco
 
 | Scope | Owns |
 | --- | --- |
-| [`DocumentScope`](../src/editor/document_scope.rs) | Accepted data/history, [spatial metadata](spatial-metadata.md), source/thumbnail/grade retention, correction, cross-visit tool sessions and the dependent photo visit |
-| [`PhotoScope`](../src/editor/photo_scope.rs) | Source readiness, working images/tasks, picker UI and consuming feature tasks, Crop/gradient/Dust interaction and donor searches, repair evaluation and visit-bound region consumers |
+| [`DocumentScope`](../src/editor/document_scope.rs) | Accepted data/history, [spatial metadata](spatial-metadata.md), source/thumbnail/grade retention, correction, one active-tool owner and the dependent photo visit |
+| [`PhotoScope`](../src/editor/photo_scope.rs) | Source readiness, working images/tasks, picker projection, repair evaluation and visit-bound image consumers |
 | [`GradeScope`](../src/editor/grade_scope.rs) | Effective photographic content and original-reconstruction demand, continuation and results |
 
-Navigation creates fresh visits, dropping their transient tools and image ownership without accepting geometry or changing source-owned adjustments. Ordinary picking stays on the current photo; flat-reference sessions and Analyze reviews span visits under the document owner. Rejected navigation or failed candidates preserve the current visit. Document replacement drops its RAM retention; captured documents contain data, while physical jobs retain their required pixel leases through cleanup. Accepted state, drafts and durable preferences are separated in [editor](editor.md#accepted-state-and-drafts).
+The [tool owner](../src/editor/tool.rs) contains one interaction's drafts/tasks. Starting a tool retires its predecessor, including while numerical work is running; physical jobs retain their inputs through cleanup. Navigation retires photo-bound tools and creates fresh visits without accepting geometry or changing source-owned adjustments. Ordinary picking stays on the current photo; flat-reference sessions and Analyze reviews span visits under the document owner. Rejected navigation or failed candidates preserve the current visit. Document replacement drops its RAM retention; captured documents contain data, while physical jobs retain their required pixel leases through cleanup. Accepted state, drafts and durable preferences are separated in [editor](editor.md#accepted-state-and-drafts).
 
 Document-owned export captures a batch of fixed recipes, resolved paths, correction and service handles. It acquires originals directly from the shared backend, one at a time, without preparing viewer resources or retaining a document cache. The current UI blocks document replacement and closing during export.
 
@@ -78,7 +78,7 @@ Validate domain candidates before promotion. Interaction ownership withdraws unf
 
 ### Cooperative cancellation
 
-Each [`background::run`](../src/background.rs) wait owns a [cancellation signal](../src/cancellation.rs) passed to its blocking job. Dropping the waiting future signals stop; the job checks at safe checkpoints. Task retirement propagates when the executor destroys its future. Explicit user cancellation can also signal work while retaining the continuation for acknowledgement; analysis, region preparation and export own signals for that purpose.
+Each [`background::run`](../src/background.rs) wait owns a [cancellation signal](../src/cancellation.rs) passed to its blocking job. Dropping the waiting future signals stop; the job checks at safe checkpoints. Task retirement propagates when the executor destroys its future. Explicit user cancellation can also signal work while retaining the continuation for acknowledgement; analysis, region preparation and export own signals for that purpose. Replacing a tool instead drops its continuation immediately, allowing the replacement to start while physical cleanup continues.
 
 These operations keep the continuation and cancelling feedback until acknowledgement. Owner retirement drops continuation rights while running work retains its inputs through cleanup. Dropping a source future retires that demand independently of joined consumers; running native calls finish on their owner. CPU work checks cancellation at its safe checkpoints. Return cancellation distinctly from failure, never by parsing diagnostic text, and preserve already-committed side effects as successes. [Development checks](development.md#cancellation-checks) exercise these boundaries.
 

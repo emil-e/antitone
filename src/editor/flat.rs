@@ -79,14 +79,10 @@ pub(super) struct FlatPreview {
 
 impl Editor {
     pub(super) fn flat_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        let editing = self.document.flat_edit.is_some();
+        let editing = self.document.flat_edit().is_some();
         let settings = self.document.state.project.flat_field();
         let configured = settings.is_some();
-        let available = !self.busy
-            && self.active_pick().is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.auto_crop_edit.is_none()
-            && self.document.visit.mask_edit.is_none();
+        let available = self.tool_start_available();
         let summary = match settings {
             Some(settings) if settings.enabled => "Enabled",
             Some(_) => "Disabled",
@@ -99,7 +95,7 @@ impl Editor {
             presentation::SectionHeader {
                 summary,
                 changed: configured,
-                reset: Some(configured && available),
+                reset: Some(configured && !self.busy && !self.tool_interacting()),
                 tool: None,
                 default_open: if editing { None } else { Some(false) },
             },
@@ -152,15 +148,9 @@ impl Editor {
         region: Option<Rect>,
         cx: &UiContext<'_, Self>,
     ) {
-        if self.busy
-            || self.active_pick().is_some()
-            || self.document.visit.crop_edit.is_some()
-            || self.document.auto_crop_edit.is_some()
-            || self.document.visit.mask_edit.is_some()
-        {
+        if !self.prepare_tool() {
             return;
         }
-        self.finish_dust_cleanup();
         self.sync_document();
         self.document.thumbnails.cancel();
         let id = self.request_id();
@@ -172,13 +162,13 @@ impl Editor {
             selection: Some(selection),
             activity: Some(TaskRequest::Reference(id)),
         };
-        self.document.flat_edit = Some(context);
+        self.document.set_flat_edit(Some(context));
         self.busy = true;
         self.status = "Preparing uncorrected flat-field reference…".into();
         self.tasks.begin(Task::Reference(id));
         let request = self.reference_preview_input(path);
         if let Some(task) = operation::setup(request, self.source_services.clone(), receive, cx) {
-            self.document.flat_edit.as_mut().unwrap().task = Some(task);
+            self.document.flat_edit_mut().unwrap().task = Some(task);
         } else {
             self.finish_flat_edit();
             self.status = "Application stopped".into();
@@ -216,7 +206,7 @@ impl Editor {
     }
 
     pub(super) fn finish_flat_edit(&mut self) {
-        let Some(context) = self.document.flat_edit.take() else {
+        let Some(context) = self.document.take_flat_edit() else {
             return;
         };
         if let Some(activity) = context.activity {
@@ -244,8 +234,7 @@ impl Editor {
         };
         let Some(reference) = self
             .document
-            .flat_edit
-            .as_ref()
+            .flat_edit()
             .and_then(|edit| edit.view.ready.as_ref())
         else {
             return;
@@ -257,8 +246,7 @@ impl Editor {
         };
         let Some(selection) = self
             .document
-            .flat_edit
-            .as_mut()
+            .flat_edit_mut()
             .and_then(|edit| edit.selection.take())
         else {
             return;
@@ -271,7 +259,7 @@ impl Editor {
         self.busy = true;
         self.document_pending = Some(self.id);
         self.document_failure = Some(FailureKind::FlatCorrection);
-        self.document.flat_edit.as_mut().unwrap().activity = Some(TaskRequest::Document(self.id));
+        self.document.flat_edit_mut().unwrap().activity = Some(TaskRequest::Document(self.id));
         self.tasks.begin(Task::Correction(self.id));
         self.status = "Estimating and validating full-resolution correction…".into();
         if selection.send((self.id, region)).is_err() {

@@ -30,10 +30,7 @@ fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
 
             e.begin_dust_mask(Some(RepairId(1)));
             e.document
-                .visit
-                .dust
-                .mask_draft
-                .as_mut()
+                .dust_mask_draft_mut()
                 .unwrap()
                 .pixels
                 .insert([54, 50]);
@@ -45,16 +42,13 @@ fn released_edits_dirty_the_document_but_selection_drafts_and_noops_do_not() {
             e.commit_dust_mask(cx);
             assert!(!e.document.dirty(), "an unchanged release must not dirty");
             e.begin_dust_mask(Some(RepairId(1)));
-            e.document.visit.dust.mask_draft.as_mut().unwrap().rejected = true;
+            e.document.dust_mask_draft_mut().unwrap().rejected = true;
             e.commit_dust_mask(cx);
             assert!(!e.document.dirty());
 
             e.begin_dust_mask(Some(RepairId(1)));
             e.document
-                .visit
-                .dust
-                .mask_draft
-                .as_mut()
+                .dust_mask_draft_mut()
                 .unwrap()
                 .pixels
                 .insert([54, 50]);

@@ -786,7 +786,7 @@ impl Editor {
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
-        if self.document.flat_edit.is_some() {
+        if self.document.flat_edit().is_some() {
             return Ok(None);
         }
         let previous = self.document.visit.working_view.displayed.take();
@@ -807,8 +807,8 @@ impl Editor {
         if self.busy
             && self.document_pending.is_none()
             && self.active_pick().is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.flat_edit.is_none()
+            && self.document.crop_edit().is_none()
+            && self.document.flat_edit().is_none()
         {
             let mut mailbox = self.document.visit.working_view.mailbox.0.lock().unwrap();
             mailbox.wanted = None;
@@ -857,8 +857,8 @@ impl Editor {
 
         if input.repairs.0.is_empty()
             && (self.active_pick().is_some()
-                || self.document.visit.crop_edit.is_some()
-                || self.document.flat_edit.is_some())
+                || self.document.crop_edit().is_some()
+                || self.document.flat_edit().is_some())
         {
             self.document.visit.working_view.clear();
             return Ok(None);

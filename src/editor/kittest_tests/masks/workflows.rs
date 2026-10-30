@@ -16,13 +16,8 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
                 geometry.image.min + egui::vec2(30., 40.),
                 geometry.image.max - egui::vec2(30., 40.),
             );
-            harness.read(|editor| {
-                assert!(
-                    editor.document.visit.mask_edit.is_none(),
-                    "{}",
-                    editor.status
-                )
-            });
+            harness
+                .read(|editor| assert!(editor.document.mask_edit().is_none(), "{}", editor.status));
             workflow::enter_numeric(&mut harness, "Exposure", exposure);
         }
         click(&mut harness, "Add global");

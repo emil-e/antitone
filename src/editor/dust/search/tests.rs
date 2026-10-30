@@ -23,14 +23,7 @@ fn stroke_tasks_return_their_outcome_and_completion_withdraws_pending_geometry()
         with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.begin_dust_mask(None);
-                editor
-                    .document
-                    .visit
-                    .dust
-                    .mask_draft
-                    .as_mut()
-                    .unwrap()
-                    .pixels = (80..83)
+                editor.document.dust_mask_draft_mut().unwrap().pixels = (80..83)
                     .flat_map(|y| (80..83).map(move |x| [x, y]))
                     .collect();
                 editor.commit_dust_mask(cx);
@@ -42,7 +35,13 @@ fn stroke_tasks_return_their_outcome_and_completion_withdraws_pending_geometry()
             });
             app.update(|editor| {
                 assert!(editor.pending_dust_strokes().is_empty());
-                let task = &mut editor.document.visit.dust.searches.tasks[0].task;
+                let task = &mut editor
+                    .document
+                    .dust_mut()
+                    .expect("active Dust cleanup")
+                    .searches
+                    .tasks[0]
+                    .task;
                 assert!(task.is_finished());
                 let actual = futures_lite::future::block_on(futures_lite::future::poll_once(task));
                 assert_eq!(actual, Some(expected.clone()));
@@ -51,8 +50,21 @@ fn stroke_tasks_return_their_outcome_and_completion_withdraws_pending_geometry()
                     editor.dust_repairs(source).is_some(),
                     matches!(expected, Ok(Some(_)))
                 );
-                editor.document.visit.dust.searches.prune();
-                assert!(editor.document.visit.dust.searches.tasks.is_empty());
+                editor
+                    .document
+                    .dust_mut()
+                    .expect("active Dust cleanup")
+                    .searches
+                    .prune();
+                assert!(
+                    editor
+                        .document
+                        .dust_mut()
+                        .expect("active Dust cleanup")
+                        .searches
+                        .tasks
+                        .is_empty()
+                );
             });
         });
     }

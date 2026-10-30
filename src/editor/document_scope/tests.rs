@@ -38,7 +38,7 @@ fn document_retirement_drops_child_continuations_and_cache_despite_captured_snap
             .unwrap();
         app.update(|scope| {
             scope.visit.picking.display = Some(Pick::Dmin.display());
-            scope.visit.pick_actions.push(task);
+            scope.tool = Some(super::super::tool::Tool::Pick(vec![task]));
         });
         app.pump();
         app.update(|scope| *scope = Document::default().into());
@@ -48,6 +48,50 @@ fn document_retirement_drops_child_continuations_and_cache_despite_captured_snap
         assert!(dropped.get());
         assert!(send.send(()).is_err());
         assert!(!resumed.get());
+    });
+}
+
+#[test]
+fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifetime() {
+    let dropped = Rc::new(Cell::new(false));
+    with_application(DocumentScope::from(Document::default()), |app| {
+        let guard = Dropped(dropped.clone());
+        let task = app
+            .access()
+            .spawn(move |_| async move {
+                let _guard = guard;
+                futures_lite::future::pending::<()>().await;
+            })
+            .unwrap();
+        app.update(|scope| {
+            assert!(scope.tool.is_none());
+            scope.tool = Some(super::super::tool::Tool::Pick(vec![task]));
+        });
+        app.pump();
+        app.update(|scope| {
+            assert!(scope.take_crop_edit().is_none());
+            assert!(scope.take_mask_edit().is_none());
+            assert!(scope.take_flat_edit().is_none());
+            scope.set_crop_edit(None);
+            scope.set_mask_edit(None);
+            scope.set_flat_edit(None);
+            scope.set_analysis_operation(None);
+            scope.set_auto_crop_operation(None);
+            scope.clear_dust();
+            assert!(matches!(
+                scope.tool,
+                Some(super::super::tool::Tool::Pick(_))
+            ));
+        });
+        app.pump();
+        assert!(!dropped.get());
+        let owner = app.update(|scope| scope.tool.take().unwrap());
+        app.read(|scope| assert!(scope.tool.is_none()));
+        app.pump();
+        assert!(!dropped.get());
+        drop(owner);
+        app.pump();
+        assert!(dropped.get());
     });
 }
 

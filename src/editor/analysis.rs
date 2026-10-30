@@ -8,7 +8,6 @@ pub(super) const AREA_DISPLAY: picking::Display = picking::Display {
     help: Some("Picture statistics only · source-aligned · not an output crop"),
 };
 use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
-use std::sync::atomic::Ordering;
 
 #[cfg(all(test, feature = "ocio-reference"))]
 mod diagnostics;
@@ -28,7 +27,7 @@ pub(super) enum Orientation {
 
 #[derive(Clone)]
 pub(super) struct Request {
-    pub loaded: u64,
+    #[cfg(test)]
     pub revision: u64,
     pub document: Document,
     pub selected: SourceId,
@@ -270,15 +269,16 @@ impl Editor {
     pub(super) fn roll_tool_shelf(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) -> bool {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
-        let reviewing = self.document.analysis_review.is_some();
+        let reviewing = self.document.analysis_review().is_some();
+        let analyzing = self.document.analysis_operation().is_some();
         let capabilities = self.document.input.capabilities();
         let commands = !self.busy
             && self.document.visit.canvas.ready.is_some()
             && self.active_pick().is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.auto_crop_edit.is_none()
-            && self.document.flat_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
+            && self.document.crop_edit().is_none()
+            && self.document.auto_crop_edit().is_none()
+            && self.document.flat_edit().is_none()
+            && self.document.mask_edit().is_none()
             && !self.document.visit.adjustment_layers.confirming()
             && !reviewing
             && self.document.removal_pending.is_none();
@@ -335,21 +335,21 @@ impl Editor {
                     Icon::Analyze,
                     "Analyze",
                     "Prepare and review sampling areas, then estimate the roll's starting grade.",
-                    reviewing,
+                    analyzing,
                 )
-                .enabled(!self.busy && (reviewing || commands))
+                .enabled(self.tool_start_available() && self.document.visit.canvas.ready.is_some())
                 .show(ui)
                 .clicked()
                 {
-                    if reviewing {
-                        self.finish_pick(cx);
+                    if analyzing {
+                        self.cancel_active_tool();
                     } else {
                         analyze = true;
                     }
                 }
             }
             if capabilities.auto_crop {
-                let cropping = self.document.auto_crop_edit.is_some();
+                let cropping = self.document.auto_crop_operation().is_some();
                 if ToolButton::tool(
                     Icon::Crop,
                     "Auto-crop roll",
@@ -361,7 +361,7 @@ impl Editor {
                 .clicked()
                 {
                     if cropping {
-                        self.finish_auto_crop(false);
+                        self.cancel_active_tool();
                     } else {
                         self.document.auto_crop_requested = Some(auto_crop::Action::Batch {
                             photos: self.document.project.order.clone(),
@@ -376,20 +376,15 @@ impl Editor {
 
     pub(super) fn analysis_request(&mut self) -> Option<Request> {
         if self.busy
-            || self.active_pick().is_some()
-            || self.document.visit.crop_edit.is_some()
-            || self.document.auto_crop_edit.is_some()
-            || self.document.visit.mask_edit.is_some()
-            || self.document.visit.adjustment_layers.confirming()
             || self.document.visit.canvas.ready.is_none()
-            || self.document.state.project.order.is_empty()
+            || self.document.project.order.is_empty()
         {
             return None;
         }
         self.sync_document();
         Some(Request {
-            loaded: self.id,
-            revision: self.document.analysis_generation.load(Ordering::Relaxed),
+            #[cfg(test)]
+            revision: 0,
             document: self.document.capture(),
             selected: self.document.visit.current_source?,
             film: self.analysis_support(),
@@ -405,39 +400,6 @@ impl Editor {
         })
     }
 
-    pub(super) fn request_analysis(&mut self, cx: &UiContext<'_, Self>) {
-        let Some(request) = self.analysis_request() else {
-            return;
-        };
-        let Some(regions) = self.prepare_regions(cx) else {
-            return;
-        };
-        self.document.analysis_regions = cx.spawn(move |cx| async move {
-            let prepared = regions.await;
-            cx.update(|editor| {
-                editor.document.analysis_regions = None;
-                if prepared.is_none() {
-                    return;
-                }
-                let mut request = request;
-                document::rebase_project(
-                    &mut request.document.project,
-                    request.document.path.as_deref(),
-                    editor.document.path.as_deref(),
-                );
-                if editor.id != request.loaded
-                    || editor.document.visit.current_source != Some(request.selected)
-                    || editor.document.state.project != request.document.project
-                {
-                    editor.status = "Regions ready; analysis request no longer current".into();
-                    return;
-                }
-                request.document = editor.document.capture();
-                editor.prepare_analysis_review(request, &cx);
-            });
-        });
-    }
-
     #[cfg(test)]
     pub(super) fn begin_analysis(&mut self, cx: &UiContext<'_, Self>) {
         let Some(request) = self.analysis_request() else {
@@ -446,64 +408,16 @@ impl Editor {
         self.start_analysis(request, cx);
     }
 
-    pub(super) fn cancel_analysis(&mut self) {
-        if self.document.analysis_regions.take().is_some() {
-            self.cancel_spatial();
-            return;
-        }
-        self.document
-            .analysis_generation
-            .fetch_add(1, Ordering::Relaxed);
-        let id = self
-            .document
-            .analysis_pending
-            .as_ref()
-            .map(|pending| {
-                pending.cancel();
-                pending.id
-            })
-            .or_else(|| {
-                self.document.analysis_preparing.as_ref().map(|pending| {
-                    pending.cancel();
-                    pending.id
-                })
-            });
-        if let Some(id) = id {
-            self.tasks.cancelling(TaskRequest::Analyze(id));
-        }
-        self.status = "Cancelling analysis…".into();
-    }
-
-    pub(super) fn analysis_result(
+    pub(super) fn accept_analysis(
         &mut self,
-        id: u64,
+        snapshot: &Request,
         result: Result<Option<Box<Outcome>>, String>,
+        cancelled: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        if !self
-            .document
-            .analysis_pending
-            .as_ref()
-            .is_some_and(|p| p.id == id)
-        {
-            return;
-        }
-        let pending = self.document.analysis_pending.take().unwrap();
-        self.tasks.finish(TaskRequest::Analyze(id));
-        self.busy = false;
         self.sync_document();
-        let snapshot = &pending.request;
-        if self.document.analysis_generation.load(Ordering::Relaxed) != snapshot.revision {
+        if cancelled {
             self.status = "Analysis cancelled".into();
-            self.end_analysis_review(cx);
-            return;
-        }
-        if self.id != snapshot.loaded
-            || self.document.visit.current_source != Some(snapshot.selected)
-            || self.document.path != snapshot.document.path
-            || self.document.state.project != snapshot.document.project
-        {
-            self.status = "Analysis discarded: document or settings changed".into();
             self.end_analysis_review(cx);
             return;
         }

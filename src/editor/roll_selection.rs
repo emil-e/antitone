@@ -42,9 +42,9 @@ impl Editor {
                 && self.document.visit.canvas.selection_timing.is_some())
             && self.fullscreen.is_none()
             && self.active_pick().is_none()
-            && self.document.flat_edit.is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
+            && self.document.flat_edit().is_none()
+            && self.document.crop_edit().is_none()
+            && self.document.mask_edit().is_none()
             && self.failure.is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
@@ -167,7 +167,7 @@ impl Editor {
 
     pub(super) fn request_removal(&mut self) {
         if !self.roll_edit_available()
-            || self.document.auto_crop_edit.is_some()
+            || self.document.auto_crop_edit().is_some()
             || self.document.removal_pending.is_some()
         {
             return;

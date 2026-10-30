@@ -108,13 +108,7 @@ pub(super) enum ToolAction {
 
 impl Editor {
     pub(super) fn begin_crop(&mut self) {
-        self.finish_dust_cleanup();
-        if self.busy
-            || self.active_pick().is_some()
-            || self.document.visit.crop_edit.is_some()
-            || self.document.auto_crop_edit.is_some()
-            || self.document.visit.mask_edit.is_some()
-        {
+        if !self.prepare_tool() {
             return;
         }
         let Some(area) = self
@@ -128,7 +122,7 @@ impl Editor {
             return;
         };
         self.finish_adjustment_layer_interaction();
-        self.document.visit.crop_edit = Some(CropEdit {
+        self.document.set_crop_edit(Some(CropEdit {
             draft: self.document.visit.crop.unwrap_or(Crop::from_region(area)),
             viewport: self.document.visit.canvas.viewport,
             ratio: None,
@@ -138,7 +132,7 @@ impl Editor {
             auto_problem: None,
             auto_crop_task: None,
             reveal_controls: true,
-        });
+        }));
         self.document.visit.canvas.viewport.fit();
         self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
@@ -148,9 +142,7 @@ impl Editor {
     pub(super) fn initialize_crop_frame(&mut self, crop: Crop) {
         let edit = self
             .document
-            .visit
-            .crop_edit
-            .as_mut()
+            .crop_edit_mut()
             .expect("crop initialization retains its tool");
         edit.draft = crop;
         edit.ratio = None;
@@ -161,7 +153,7 @@ impl Editor {
     }
 
     pub(super) fn finish_crop(&mut self, apply: bool) {
-        let Some(edit) = self.document.visit.crop_edit.take() else {
+        let Some(edit) = self.document.take_crop_edit() else {
             return;
         };
         if apply {
@@ -194,24 +186,15 @@ impl Editor {
         use icons::Icon;
         use presentation::{ToolButton, ToolShelf};
 
-        let cropping = self.document.visit.crop_edit.is_some();
-        let dusting = self.document.visit.dust.cleanup;
-        let auto_cropping = self.document.auto_crop_edit.is_some();
-        let tool_active = cropping
-            || dusting
-            || auto_cropping
-            || self.document.flat_edit.is_some()
-            || self.document.visit.mask_edit.is_some();
+        let cropping = self.document.crop_edit().is_some();
+        let dusting = self.document.dust().is_some();
+        let auto_cropping = self.document.auto_crop_edit().is_some();
+        let tool_active = self.tool_interacting();
         let ready = !self.busy && self.document.visit.canvas.ready.is_some();
         let commands_enabled = ready && !tool_active && self.active_pick().is_none();
-        let crop_enabled =
-            cropping || auto_cropping || ready && self.active_pick().is_none() && !tool_active;
-        let dust_enabled = dusting
-            || ready
-                && self.document.input.ready()
-                && !self.document.source
-                && self.active_pick().is_none()
-                && !tool_active;
+        let tool_ready = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
+        let crop_enabled = cropping || auto_cropping || tool_ready;
+        let dust_enabled = dusting || tool_ready && self.document.input.ready();
         let repairs_changed = self
             .document
             .visit
@@ -320,16 +303,16 @@ impl Editor {
                 self.document.visit.photo_orientation.flips.vertical ^= true
             }
             ToolAction::Crop => {
-                if self.document.auto_crop_edit.is_some() {
+                if self.document.auto_crop_edit().is_some() {
                     self.finish_auto_crop(false);
-                } else if self.document.visit.crop_edit.is_some() {
-                    self.finish_crop(false);
+                } else if self.document.crop_edit().is_some() {
+                    self.cancel_active_tool();
                 } else {
                     self.begin_crop();
                 }
             }
             ToolAction::Dust => {
-                if self.document.visit.dust.cleanup {
+                if self.document.dust().is_some() {
                     self.finish_dust_cleanup();
                 } else {
                     self.begin_dust_cleanup();
@@ -347,7 +330,7 @@ impl Editor {
     }
 
     pub(super) fn crop_controls(&mut self, ui: &mut egui::Ui) {
-        if let Some(edit) = &mut self.document.visit.crop_edit {
+        if let Some(edit) = self.document.crop_edit_mut() {
             if std::mem::take(&mut edit.reveal_controls) {
                 ui.scroll_to_cursor(Some(egui::Align::Min));
             }
@@ -375,7 +358,9 @@ impl Editor {
 
     pub(super) fn crop_tool_controls(&mut self, ui: &mut egui::Ui, reset: bool) {
         use icons::Icon;
-        let edit = self.document.visit.crop_edit.as_mut().unwrap();
+        let Some(tool::Tool::Crop(edit)) = &mut self.document.tool else {
+            panic!("crop controls require the active Crop tool");
+        };
         let area = self
             .document
             .visit
@@ -542,7 +527,7 @@ impl Editor {
         response: &egui::Response,
         mut layout: CanvasLayout,
     ) -> CanvasLayout {
-        let Some(edit) = &mut self.document.visit.crop_edit else {
+        let Some(tool::Tool::Crop(edit)) = &mut self.document.tool else {
             return layout;
         };
         if !ui.is_enabled() {
@@ -746,7 +731,7 @@ impl Editor {
         if !ui.is_enabled() || !response.enabled() {
             return;
         }
-        let Some(edit) = &self.document.visit.crop_edit else {
+        let Some(edit) = &self.document.crop_edit() else {
             return;
         };
         let position = match edit.drag {
@@ -782,11 +767,7 @@ impl Editor {
                 layout.image.max,
                 layout.image.left_bottom(),
             ],
-            self.document
-                .visit
-                .crop_edit
-                .as_ref()
-                .is_some_and(|e| e.guides),
+            self.document.crop_edit().is_some_and(|e| e.guides),
             160,
         );
     }

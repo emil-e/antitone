@@ -38,11 +38,11 @@ fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
         });
         reply.send(Ok(Some(metadata))).unwrap();
         app.run_until(LIMIT, |editor| {
-            editor.document.auto_crop_operation.is_none()
+            editor.document.auto_crop_operation().is_none()
         });
         app.read(|editor| {
             assert!(
-                editor.document.auto_crop_edit.is_none(),
+                editor.document.auto_crop_edit().is_none(),
                 "stale peer dimensions reached a consumer"
             );
             assert_eq!(
@@ -134,11 +134,11 @@ fn save_as_rebased_relative_locators_do_not_retire_a_completed_shared_result() {
             );
         });
         reply.send(Ok(Some(metadata.clone()))).unwrap();
-        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit.is_some());
+        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_some());
         app.read(|editor| {
             assert_eq!(*editor.document.spatial.ready(), metadata);
             assert!(
-                editor.document.auto_crop_edit.is_some(),
+                editor.document.auto_crop_edit().is_some(),
                 "{}",
                 editor.status
             );

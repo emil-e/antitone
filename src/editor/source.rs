@@ -41,7 +41,7 @@ impl Editor {
     }
 
     pub(super) fn canvas_source_context(&self) -> Option<Context> {
-        if let Some(flat) = &self.document.flat_edit {
+        if let Some(flat) = &self.document.flat_edit() {
             let ready = flat.view.ready.as_ref()?;
             Some(Context {
                 source: ready.developed.clone(),

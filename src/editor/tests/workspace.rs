@@ -65,7 +65,7 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
                     before
                 );
                 assert!(editor.active_pick().is_none());
-                assert!(editor.document.visit.crop_edit.is_none());
+                assert!(editor.document.crop_edit().is_none());
                 assert!(editor.document_pending.is_none());
             }
         }
@@ -450,7 +450,7 @@ fn crop_inspector_keeps_the_shared_tool_shelf_without_owning_transaction_control
     add_ready_fixture(&mut editor);
     editor.tab = 1;
     editor.begin_crop();
-    let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
+    let draft = editor.document.crop_edit().unwrap().draft;
     for (width, height) in [(315., 800.), (270., 600.)] {
         let context = egui::Context::default();
         let labels = controls_frame_sized(&mut editor, &context, width, height, vec![]);
@@ -465,10 +465,7 @@ fn crop_inspector_keeps_the_shared_tool_shelf_without_owning_transaction_control
             assert!(labels.iter().any(|(s, _)| s == action));
         }
         assert!(!labels.iter().any(|(s, _)| s == "Apply" || s == "Cancel"));
-        assert_eq!(
-            editor.document.visit.crop_edit.as_ref().unwrap().draft,
-            draft
-        );
+        assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     }
 }
 
@@ -520,13 +517,10 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
     editor.document.target = OutputTarget::Srgb;
     add_ready_fixture(&mut editor);
     editor.begin_crop();
-    let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
+    let draft = editor.document.crop_edit().unwrap().draft;
     click_section_reset(&mut editor, &context, "Target");
     assert_eq!(editor.document.target, OutputTarget::Srgb);
-    assert_eq!(
-        editor.document.visit.crop_edit.as_ref().unwrap().draft,
-        draft
-    );
+    assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     editor.finish_crop(false);
     editor.tab = 1;
     let context = egui::Context::default();

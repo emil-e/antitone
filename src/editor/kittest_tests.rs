@@ -615,7 +615,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 FailureKind::FlatSupport | FailureKind::FlatCorrection => {
                     harness.enter(|editor, cx| editor.begin_flat_edit(fixture.clone(), None, cx));
                     wait_for(&mut harness, |editor| !editor.busy);
-                    harness.read(|editor| assert!(editor.document.flat_edit.is_some()));
+                    harness.read(|editor| assert!(editor.document.flat_edit().is_some()));
                     let area = harness
                         .read(|editor| editor.document.visit.canvas.ready.as_ref().unwrap().area);
                     harness.update(|editor| {
@@ -735,13 +735,13 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 harness.read(|editor| assert!(!editor.allow_close));
             }
             if kind == FailureKind::FlatSupport {
-                harness.read(|editor| assert!(editor.document.flat_edit.is_some()));
+                harness.read(|editor| assert!(editor.document.flat_edit().is_some()));
                 harness.get_by_label("Cancel").click();
                 harness.run();
             }
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
             harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
-            harness.read(|editor| assert!(editor.document.flat_edit.is_none()));
+            harness.read(|editor| assert!(editor.document.flat_edit().is_none()));
             harness.read(|editor| assert_eq!(editor.document.path.as_ref(), Some(&project_path)));
             harness.read(|editor| assert!(editor.document.dirty()));
             assert_eq!(std::fs::read(&project_path).unwrap(), saved_bytes);

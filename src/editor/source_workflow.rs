@@ -77,17 +77,13 @@ impl Editor {
         }
         let started = std::time::Instant::now();
         let selecting_photo =
-            persistent && self.active_pick().is_none() && self.document.flat_edit.is_none();
+            persistent && self.active_pick().is_none() && self.document.flat_edit().is_none();
         self.document.visit.support = Default::default();
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.selection_timing = None;
-        if self.document.analysis_pending.take().is_some() {
-            self.cancel_analysis();
-        }
         self.document.thumbnails.cancel();
         self.document.visit.adjustment_layers = AdjustmentLayerEditor::default();
-        self.document.visit.mask_edit = None;
         self.id = self.request_id();
         self.replace_photo_scope(self.id);
         self.document.visit.current_source = self.document.find_source(&path);
@@ -120,7 +116,6 @@ impl Editor {
             .current_source
             .and_then(|id| self.document.state.project.source(id).ok())
             .and_then(|source| source.crop);
-        self.document.visit.crop_edit = None;
         self.document.visit.canvas.last_layout = None;
         self.invalidate_original();
         self.document.visit.canvas.viewport.fit();
@@ -134,8 +129,7 @@ impl Editor {
             selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
         self.document.source = self
             .document
-            .auto_crop_edit
-            .as_ref()
+            .auto_crop_edit()
             .map_or(!self.document.input.ready(), |d| d.source_view);
         self.busy = true;
         self.status = "Developing full-resolution RAW…".into();
@@ -162,7 +156,7 @@ impl Editor {
         self.document.visit.source.task = Some(task);
         if selecting_photo
             && self.active_pick().is_none()
-            && self.document.flat_edit.is_none()
+            && self.document.flat_edit().is_none()
             && let Some(source) = self.document.visit.current_source
         {
             let composition = self

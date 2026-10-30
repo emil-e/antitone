@@ -158,7 +158,7 @@ pub(super) fn complete_analysis_preparation(
 ) -> Editor {
     complete_analysis_operation(editor, timeout, |e, cx| {
         start(e, cx);
-        assert!(e.document.spatial_preparing.is_some() || e.document.analysis_preparing.is_some());
+        assert!(e.document.spatial_preparing.is_some() || e.analysis_preparing());
     })
 }
 
@@ -175,8 +175,8 @@ pub(super) fn complete_analysis_operation(
         });
         app.run_until(timeout, |editor| {
             editor.document.spatial_preparing.is_none()
-                && editor.document.analysis_preparing.is_none()
-                && editor.document.analysis_pending.is_none()
+                && !editor.analysis_preparing()
+                && !editor.analysis_fitting()
                 && !editor.document.visit.source.pending()
                 && !editor.busy
         });
@@ -891,7 +891,7 @@ pub(super) fn paused_reference_fixture(
     reference: Ready,
     region: Option<Rect>,
 ) {
-    editor.document.flat_edit = Some(FlatEdit {
+    editor.document.set_flat_edit(Some(FlatEdit {
         view: super::canvas_view::CanvasView {
             ready: Some(reference),
             ..Default::default()
@@ -900,7 +900,7 @@ pub(super) fn paused_reference_fixture(
         task: None,
         selection: None,
         activity: None,
-    });
+    }));
 }
 
 pub(super) fn add_ready_fixture(editor: &mut Editor) {
@@ -1079,7 +1079,7 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
         editor.document.visit.photo_orientation,
     );
     editor.begin_crop();
-    let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
+    let draft = editor.document.crop_edit().unwrap().draft;
     for width in [270., 315.] {
         let context = egui::Context::default();
         for tab in [0, 1] {
@@ -1158,10 +1158,7 @@ fn crop_inspector_settings_remain_photo_only_without_transaction_buttons() {
             );
         }
     }
-    assert_eq!(
-        editor.document.visit.crop_edit.as_ref().unwrap().draft,
-        draft
-    );
+    assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     assert_eq!(
         (
             editor.document.roll,
@@ -1217,22 +1214,9 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             .original
             .signature
             .clone();
-        let draft = editor
-            .document
-            .visit
-            .crop_edit
-            .as_ref()
-            .map(|edit| edit.draft);
+        let draft = editor.document.crop_edit().map(|edit| edit.draft);
         let image = if editing {
-            editor
-                .document
-                .visit
-                .crop_edit
-                .as_ref()
-                .unwrap()
-                .layout
-                .unwrap()
-                .image
+            editor.document.crop_edit().unwrap().layout.unwrap().image
         } else {
             editor.document.visit.canvas.last_layout.unwrap().0.image
         };
@@ -1281,25 +1265,9 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
                 editor.document.visit.canvas.grade.original.signature,
                 signature
             );
-            assert_eq!(
-                editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .map(|edit| edit.draft),
-                draft
-            );
+            assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
             let next_image = if editing {
-                editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .unwrap()
-                    .layout
-                    .unwrap()
-                    .image
+                editor.document.crop_edit().unwrap().layout.unwrap().image
             } else {
                 editor.document.visit.canvas.last_layout.unwrap().0.image
             };
@@ -1324,14 +1292,7 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
     for _ in 0..3 {
         app_frame(&mut editor, &context, vec![]);
     }
-    let layout = editor
-        .document
-        .visit
-        .crop_edit
-        .as_ref()
-        .unwrap()
-        .layout
-        .unwrap();
+    let layout = editor.document.crop_edit().unwrap().layout.unwrap();
     assert!(
         layout
             .canvas
@@ -1361,14 +1322,7 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
             std::time::Instant::now() - Duration::from_secs(1);
         app_frame(&mut editor, &context, vec![]);
     }
-    let explicit = editor
-        .document
-        .visit
-        .crop_edit
-        .as_ref()
-        .unwrap()
-        .layout
-        .unwrap();
+    let explicit = editor.document.crop_edit().unwrap().layout.unwrap();
     assert!(!explicit.image.intersects(explicit.canvas));
     assert_eq!(explicit.scale * context.pixels_per_point(), 1.);
     assert!(
@@ -1404,14 +1358,7 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
             ],
         );
     }
-    let fitted = editor
-        .document
-        .visit
-        .crop_edit
-        .as_ref()
-        .unwrap()
-        .layout
-        .unwrap();
+    let fitted = editor.document.crop_edit().unwrap().layout.unwrap();
     assert!(
         (fitted.scale * context.pixels_per_point() - zoom).abs() < 1e-6,
         "crop Fit changed: {layout:?} -> {fitted:?}; zoom={zoom}; widths={:?} heights={:?}",
@@ -1476,14 +1423,14 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
                 ],
             );
         }
-        assert!(editor.document.visit.crop_edit.is_some());
+        assert!(editor.document.crop_edit().is_some());
         let draft = Crop::from_region(Rect {
             x: 100,
             y: 70,
             width: 301,
             height: 203,
         });
-        editor.document.visit.crop_edit.as_mut().unwrap().draft = draft;
+        editor.document.crop_edit_mut().unwrap().draft = draft;
         app_frame(
             &mut editor,
             &context,
@@ -1499,7 +1446,7 @@ fn crop_button_and_enter_escape_keys_apply_or_restore_the_starting_view() {
                 modifiers: egui::Modifiers::NONE,
             }],
         );
-        assert!(editor.document.visit.crop_edit.is_none());
+        assert!(editor.document.crop_edit().is_none());
         if apply {
             assert_eq!(editor.document.visit.crop, Some(draft));
             assert!(editor.document.visit.canvas.viewport.zoom.is_none());
@@ -1630,7 +1577,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
         width: 400,
         height: 220,
     });
-    editor.document.visit.crop_edit.as_mut().unwrap().draft = draft;
+    editor.document.crop_edit_mut().unwrap().draft = draft;
     editor.sync_document();
     assert_eq!(editor.document.state.project, project);
     assert!(!editor.document.dirty());
@@ -1643,7 +1590,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     assert_eq!(editor.document.state.project, project);
     assert!(!editor.document.dirty());
     editor.begin_crop();
-    editor.document.visit.crop_edit.as_mut().unwrap().draft = draft;
+    editor.document.crop_edit_mut().unwrap().draft = draft;
     editor.finish_crop(true);
     editor.sync_document();
     assert_eq!(editor.document.visit.crop, Some(draft));
@@ -1667,7 +1614,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
         grade
     );
     editor.begin_crop();
-    editor.document.visit.crop_edit.as_mut().unwrap().draft =
+    editor.document.crop_edit_mut().unwrap().draft =
         Crop::from_region(editor.document.visit.canvas.ready.as_ref().unwrap().area);
     editor.finish_crop(true);
     assert!(editor.document.visit.crop.is_none());
@@ -1693,13 +1640,12 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     );
     editor.begin_crop();
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-    editor.document.visit.crop_edit.as_mut().unwrap().draft =
-        crop.straightened(area, -0.19).unwrap();
+    editor.document.crop_edit_mut().unwrap().draft = crop.straightened(area, -0.19).unwrap();
     editor.finish_crop(false);
     assert_eq!(editor.document.visit.crop, Some(crop));
     editor.begin_crop();
     let draft = crop.straightened(area, -0.19).unwrap();
-    editor.document.visit.crop_edit.as_mut().unwrap().draft = draft;
+    editor.document.crop_edit_mut().unwrap().draft = draft;
     editor.finish_crop(true);
     assert_eq!(editor.document.visit.crop, Some(draft));
     editor.sync_document();

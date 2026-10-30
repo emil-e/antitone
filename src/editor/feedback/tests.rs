@@ -87,7 +87,7 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
                     && editor.document_pending.is_none()
                     && editor.document_failure.is_none()
             );
-            assert!(editor.document.flat_edit.is_none());
+            assert!(editor.document.flat_edit().is_none());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.document.visit.current_source, source);
             assert_eq!(editor.document.source, view.1);
@@ -124,7 +124,7 @@ fn unavailable_reference_preparation_restores_working_context_and_preserves_fail
         FailureKind::FlatReference
     );
     assert!(!editor.busy && editor.document_pending.is_none() && editor.document_failure.is_none());
-    assert!(editor.document.flat_edit.is_none() && editor.active_pick().is_none());
+    assert!(editor.document.flat_edit().is_none() && editor.active_pick().is_none());
     assert_eq!(editor.document.visit.view, visit);
     assert_eq!(
         editor.document.visit.canvas.ready.as_ref().unwrap().path,
@@ -241,8 +241,7 @@ fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
     assert_eq!(editor.document.state.project, before);
     assert!(!editor.busy && editor.document_pending.is_none());
     assert!(
-        editor.document.flat_edit.as_ref().unwrap().task.is_none()
-            && editor.document_pending.is_none()
+        editor.document.flat_edit().unwrap().task.is_none() && editor.document_pending.is_none()
     );
     editor.resolve_failure(FailureKind::Export);
     assert!(editor.failure.is_some());

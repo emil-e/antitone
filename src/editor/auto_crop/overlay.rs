@@ -60,21 +60,19 @@ fn cursor(q: [egui::Pos2; 4], handle: [i8; 2]) -> egui::CursorIcon {
 impl Editor {
     pub(in crate::editor) fn auto_crop_context(&self) -> bool {
         self.fullscreen.is_none()
-            && self.document.visit.crop_edit.is_none()
+            && self.document.crop_edit().is_none()
             && self.active_pick().is_none()
-            && self.document.flat_edit.is_none()
+            && self.document.flat_edit().is_none()
             && self
                 .document
-                .auto_crop_edit
-                .as_ref()
+                .auto_crop_edit()
                 .is_some_and(|d| d.belongs_to(self))
     }
 
     pub(super) fn auto_crop_margin_entry(&self) -> Option<&Entry> {
         let id = self.document.visit.current_source?;
         self.document
-            .auto_crop_edit
-            .as_ref()?
+            .auto_crop_edit()?
             .entries
             .iter()
             .find(|e| e.source == id)
@@ -85,8 +83,7 @@ impl Editor {
         self.auto_crop_context()
             && self
                 .document
-                .auto_crop_edit
-                .as_ref()
+                .auto_crop_edit()
                 .is_some_and(|d| d.show_outline)
             && !ui.input(|i| i.key_down(egui::Key::H))
     }
@@ -122,13 +119,13 @@ impl Editor {
             || !self.auto_crop_editable()
             || ui.input(|i| i.key_down(egui::Key::Space))
         {
-            if let Some(d) = &mut self.document.auto_crop_edit {
+            if let Some(d) = self.document.auto_crop_edit_mut() {
                 d.drag = None;
             }
             return (false, None);
         }
         let Some(q) = self.auto_crop_outline(layout) else {
-            if let Some(d) = &mut self.document.auto_crop_edit {
+            if let Some(d) = self.document.auto_crop_edit_mut() {
                 d.drag = None;
             }
             return (false, None);
@@ -137,7 +134,7 @@ impl Editor {
             .input(|i| i.pointer.press_origin())
             .and_then(|p| hit(q, p).map(|h| (p, h)));
         if response.drag_started_by(egui::PointerButton::Primary)
-            && let Some(d) = &mut self.document.auto_crop_edit
+            && let Some(d) = self.document.auto_crop_edit_mut()
         {
             d.drag = None;
         }
@@ -158,12 +155,11 @@ impl Editor {
                 ),
                 percent: self.auto_crop_margin,
             };
-            self.document.auto_crop_edit.as_mut().unwrap().drag = Some(drag);
+            self.document.auto_crop_edit_mut().unwrap().drag = Some(drag);
         }
         let drag = self
             .document
-            .auto_crop_edit
-            .as_ref()
+            .auto_crop_edit()
             .and_then(|d| d.drag)
             .filter(|d| {
                 self.document.visit.current_source == Some(d.source)
@@ -192,7 +188,7 @@ impl Editor {
             response.hover_pos().and_then(|p| hit(q, p))
         };
         if response.drag_stopped_by(egui::PointerButton::Primary)
-            && let Some(d) = &mut self.document.auto_crop_edit
+            && let Some(d) = self.document.auto_crop_edit_mut()
         {
             d.drag = None;
         }

@@ -550,7 +550,7 @@ fn row_drag_escape_and_outside_release_preserve_order_and_canvas_state() {
                     before
                 );
                 assert!(!editor.document.visit.adjustment_layers.dragging());
-                assert!(editor.document.visit.mask_edit.is_none());
+                assert!(editor.document.mask_edit().is_none());
             });
         }
     });
@@ -799,7 +799,7 @@ fn collapsed_layers_hide_all_mask_artwork_and_do_not_intercept_navigation() {
             super::masks::hold_drag(&mut harness, point, point + egui::vec2(18., 12.));
             super::masks::pointer(&mut harness, point + egui::vec2(18., 12.), false);
             harness.read(|editor| {
-                assert!(editor.document.visit.mask_edit.is_none());
+                assert!(editor.document.mask_edit().is_none());
                 assert_eq!(editor.document.state.project, before);
             });
             click(&mut harness, "Layers");
@@ -928,13 +928,13 @@ fn collapsed_layers_keep_active_gradient_creation_visible_until_release() {
             let end = start + egui::vec2(30., 24.);
             super::masks::hold_drag(&mut harness, start, end);
             harness.read(|editor| {
-                assert!(editor.document.visit.mask_edit.is_some());
+                assert!(editor.document.mask_edit().is_some());
                 assert!(mask_artwork(editor) > 0);
             });
             super::masks::pointer(&mut harness, end, false);
             harness.try_run_realtime().unwrap();
             harness.read(|editor| {
-                assert!(editor.document.visit.mask_edit.is_none());
+                assert!(editor.document.mask_edit().is_none());
                 assert_eq!(layers(editor).layers.len(), before + 1);
                 assert_eq!(mask_artwork(editor), 0);
             });

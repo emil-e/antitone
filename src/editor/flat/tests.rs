@@ -80,11 +80,11 @@ fn reference_rejection_and_cancel_preserve_document_and_working_context() {
     let roll = editor.document.roll;
     with_application(editor, |app| {
         app.enter(|e, cx| e.begin_flat_edit("light.ARW".into(), None, cx));
-        assert!(app.read(|e| e.busy && e.document.flat_edit.as_ref().unwrap().task.is_some()));
+        assert!(app.read(|e| e.busy && e.document.flat_edit().unwrap().task.is_some()));
         app.run_until(Duration::from_secs(5), |e| !e.busy);
         app.read(|e| {
             assert!(
-                !e.document.source && e.active_pick().is_none() && e.document.flat_edit.is_none()
+                !e.document.source && e.active_pick().is_none() && e.document.flat_edit().is_none()
             );
             assert_eq!(e.document.state.project, original);
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
@@ -144,7 +144,7 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
         });
         app.run_until(Duration::from_secs(10), |e| !e.busy);
         app.read(|e| {
-            assert!(e.document.flat_edit.is_none() && e.active_pick().is_none());
+            assert!(e.document.flat_edit().is_none() && e.active_pick().is_none());
             assert_eq!(e.document.state.project, original);
             assert!(Arc::ptr_eq(
                 &pixels,
@@ -286,7 +286,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
             );
             assert_eq!(e.document.roll_orientation, original.orientation);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
-            assert!(!e.document.source && e.document.flat_edit.is_none());
+            assert!(!e.document.source && e.document.flat_edit().is_none());
             let (shown, shown_ppp) = e.document.visit.canvas.last_layout.unwrap();
             let (saved, saved_ppp) = working_layout.unwrap();
             assert_eq!(
@@ -309,7 +309,8 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
             let request = e.id;
             e.begin_flat_edit("another-light.ARW".into(), None, cx);
             assert_eq!(e.id, request);
-            assert!(e.document.visit.crop_edit.is_some() && e.document.flat_edit.is_none());
+            assert!(e.document.crop_edit().is_none() && e.document.flat_edit().is_some());
+            e.finish_flat_edit();
         });
         app.pump();
     });
@@ -463,12 +464,12 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 );
             });
             app.enter(|e, cx| e.begin_flat_edit(directory.path().join("missing.dng"), None, cx));
-            assert!(app.read(|e| e.busy && e.document.flat_edit.as_ref().unwrap().task.is_some()));
+            assert!(app.read(|e| e.busy && e.document.flat_edit().unwrap().task.is_some()));
             app.run_until(Duration::from_secs(60), |e| !e.busy);
             app.read(|e| {
                 assert!(e.status.contains("open"), "{}", e.status);
                 assert!(
-                    e.document.flat_edit.is_none()
+                    e.document.flat_edit().is_none()
                         && e.active_pick().is_none()
                         && e.document_pending.is_none()
                 );

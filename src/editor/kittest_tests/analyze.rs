@@ -12,16 +12,16 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     harness.step();
     harness.step();
     wait_for(harness, |editor| {
-        editor.document.analysis_review.is_some() || !editor.busy
+        editor.document.analysis_review().is_some() || !editor.busy
     });
     harness.read(|editor| {
         assert!(
-            editor.document.analysis_review.is_some(),
+            editor.document.analysis_review().is_some(),
             "{}",
             editor.status
         )
     });
-    harness.read(|editor| assert!(editor.document.analysis_pending.is_none()));
+    harness.read(|editor| assert!(!editor.analysis_fitting()));
     harness.read(|editor| assert!(!editor.busy));
     harness.read(|editor| {
         let source =
@@ -47,14 +47,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
         );
         assert!(matches!(editor.scope_request(), Err("Positive grade only")));
     });
-    if harness.read(|editor| {
-        editor
-            .document
-            .analysis_review
-            .as_ref()
-            .unwrap()
-            .replaces_photos
-    }) {
+    if harness.read(|editor| editor.document.analysis_review().unwrap().replaces_photos) {
         let warning = harness.get_by_label("Tool warning");
         let description = warning.accesskit_node().description().unwrap();
         assert!(description.contains("Photo layers"));
@@ -92,12 +85,7 @@ fn select_area(h: &mut Harness<'_, Editor>, picture: bool) {
     }
     h.step();
     h.step();
-    h.read(|editor| {
-        assert_eq!(
-            editor.document.analysis_review.as_ref().unwrap().picture,
-            picture
-        )
-    });
+    h.read(|editor| assert_eq!(editor.document.analysis_review().unwrap().picture, picture));
 }
 
 fn confirm(harness: &mut Harness<'_, Editor>) {
@@ -109,13 +97,13 @@ fn confirm(harness: &mut Harness<'_, Editor>) {
     button.click();
     drop(buttons);
     harness.step();
-    harness.read(|editor| assert!(editor.document.analysis_review.is_some()));
-    harness.read(|editor| assert!(editor.document.analysis_pending.is_some()));
+    harness.read(|editor| assert!(editor.document.analysis_review().is_some()));
+    harness.read(|editor| assert!(editor.analysis_fitting()));
     harness.read(|editor| assert!(editor.busy));
 }
 
 fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
-    harness.read(|editor| assert!(editor.document.analysis_review.is_some()));
+    harness.read(|editor| assert!(editor.document.analysis_review().is_some()));
     select_area(harness, true);
     harness.get_by_label("Fit").click();
     harness.step();
@@ -263,7 +251,6 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
             .unwrap();
     });
     harness.step();
-    let selected = harness.read(|editor| editor.document.visit.current_source);
     let before = harness.read(|editor| editor.document.state.project.clone());
     let correction = harness.read(|editor| editor.document.correction.clone());
     show_confirmation(harness);
@@ -271,8 +258,8 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     harness.read(|editor| assert_eq!(editor.document.state.project, before));
     harness.get_by_label("Cancel").click();
     harness.step();
-    harness.read(|editor| assert!(editor.document.analysis_review.is_none()));
-    harness.read(|editor| assert!(editor.document.analysis_pending.is_none()));
+    harness.read(|editor| assert!(editor.document.analysis_review().is_none()));
+    harness.read(|editor| assert!(!editor.analysis_fitting()));
     harness.read(|editor| assert!(editor.status.contains("areas and grade unchanged")));
     harness.read(|editor| assert_eq!(editor.document.state.project, before));
 
@@ -288,25 +275,20 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
     harness.get_by_label("Cancel analysis").click();
     harness.step();
     harness.read(|editor| {
-        assert_ne!(
+        assert!(
             editor
                 .document
-                .analysis_generation
-                .load(std::sync::atomic::Ordering::Relaxed),
-            editor
-                .document
-                .analysis_pending
-                .as_ref()
+                .analysis_operation()
                 .unwrap()
-                .request
-                .revision,
+                .cancelled
+                .is_cancelled(),
             "Cancel must retire the captured fit before physical admission is released"
         );
         assert_eq!(editor.document.state.project, before);
     });
     drop(admission);
     wait_for(harness, |editor| !editor.busy);
-    harness.read(|editor| assert!(editor.document.analysis_pending.is_none()));
+    harness.read(|editor| assert!(!editor.analysis_fitting()));
     harness.read(|editor| assert_eq!(editor.status, "Analysis cancelled"));
     harness.read(|editor| assert_eq!(editor.document.state.project, before));
 
@@ -327,10 +309,11 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
         });
         draw_picture(harness, picture);
     }
+    let selected = harness.read(|editor| editor.document.visit.current_source);
     confirm(harness);
     harness.read(|editor| assert_eq!(editor.document.state.project, before));
     wait_for(harness, |editor| !editor.busy);
-    harness.read(|editor| assert!(editor.document.analysis_pending.is_none()));
+    harness.read(|editor| assert!(!editor.analysis_fitting()));
     harness.read(|editor| assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status));
     harness.read(|editor| {
         assert_eq!(
@@ -475,16 +458,7 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
         });
         wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
         show_confirmation(&mut h);
-        h.read(|editor| {
-            assert!(
-                !editor
-                    .document
-                    .analysis_review
-                    .as_ref()
-                    .unwrap()
-                    .replaces_photos
-            )
-        });
+        h.read(|editor| assert!(!editor.document.analysis_review().unwrap().replaces_photos));
         let before = h.read(|editor| editor.document.state.project.clone());
         let ids = before.order.clone();
         assert!(h.query_by_label("Tool warning").is_none());
@@ -496,8 +470,7 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
         h.update(|editor| {
             editor
                 .document
-                .analysis_review
-                .as_mut()
+                .analysis_review_mut()
                 .unwrap()
                 .approved
                 .entries[0]
@@ -541,8 +514,7 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
         h.update(|editor| {
             editor
                 .document
-                .analysis_review
-                .as_mut()
+                .analysis_review_mut()
                 .unwrap()
                 .approved
                 .entries[0]
@@ -593,10 +565,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                 select_area(&mut harness, picture);
                 harness.run();
                 harness.read(|editor| {
-                    assert_eq!(
-                        editor.document.analysis_review.as_ref().unwrap().picture,
-                        picture
-                    )
+                    assert_eq!(editor.document.analysis_review().unwrap().picture, picture)
                 });
                 harness.read(|editor| assert!(editor.document.source));
                 harness.read(|editor| assert!(!editor.scopes.visible));
@@ -777,7 +746,12 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         harness.get_by_label("Cancel").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
-        harness.read(|editor| assert_eq!(editor.document.visit.current_source, first));
+        harness.read(|editor| {
+            assert_eq!(
+                editor.document.visit.current_source,
+                Some(editor.document.project.order[1])
+            )
+        });
         harness.read(|editor| assert_eq!(editor.scopes.visible, scopes_visible));
         harness.read(|editor| assert_eq!(editor.preferences.scopes_visible, scopes_visible));
         harness.read(|editor| assert_eq!(editor.document.state.project, before));

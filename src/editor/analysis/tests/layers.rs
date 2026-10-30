@@ -155,15 +155,9 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
                 source.adjustment_layers = Some(layers);
                 editor.sync_document();
                 let before = editor.document.state.project.clone();
-                review_tests::start_area_preparation(editor, cx);
-                review_tests::prepared(editor);
+                review_tests::prepared(editor, cx);
                 assert!(
-                    editor
-                        .document
-                        .analysis_review
-                        .as_ref()
-                        .unwrap()
-                        .replaces_photos,
+                    editor.document.analysis_review().unwrap().replaces_photos,
                     "record {index}"
                 );
                 let ctx = egui::Context::default();
@@ -172,7 +166,7 @@ fn any_local_record_adds_an_explicit_reset_warning_to_the_area_review() {
                 assert!(labels.iter().any(|(label, _)| label == "Tool warning"));
                 editor.end_analysis_review(cx);
                 assert_eq!(editor.document.state.project, before);
-                assert!(editor.document.analysis_pending.is_none());
+                assert!(!editor.analysis_fitting());
             });
         });
     }
@@ -199,16 +193,8 @@ fn retired_local_records_and_empty_allocator_history_do_not_trigger_reset_warnin
             editor.document.state.project.sources[0].adjustment_layers = Some(empty);
             editor.sync_document();
             let before = editor.document.state.project.clone();
-            review_tests::start_area_preparation(editor, cx);
-            review_tests::prepared(editor);
-            assert!(
-                !editor
-                    .document
-                    .analysis_review
-                    .as_ref()
-                    .unwrap()
-                    .replaces_photos
-            );
+            review_tests::prepared(editor, cx);
+            assert!(!editor.document.analysis_review().unwrap().replaces_photos);
             editor.end_analysis_review(cx);
             assert_eq!(editor.document.state.project, before);
         });
@@ -229,7 +215,7 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
         editor.refresh_adjustment_layer_selection();
         let settings_before = editor.document.visit.adjustment_layer_settings;
         let before = editor.document.state.project.clone();
-        let id = pending(&mut editor);
+        let request = capture_request(&editor);
         let mut candidate = proposed_document(
             &editor.document,
             proposal(&editor.document),
@@ -237,9 +223,6 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
         )
         .unwrap();
         candidate.validate().unwrap();
-        if mode == 1 {
-            editor.cancel_analysis();
-        }
         if mode == 2 {
             candidate.project.set_dmax(candidate.project.dmin());
         }
@@ -252,7 +235,12 @@ fn local_removal_is_installed_only_with_a_successful_current_analysis_candidate(
                 support: rect([12, 12, 800, 600]),
             })))
         };
-        editor.analysis_result(id, result, &crate::application::UiContext::render_only());
+        editor.accept_analysis(
+            &request,
+            result,
+            mode == 1,
+            &crate::application::UiContext::render_only(),
+        );
         if mode == 3 {
             let source = editor
                 .document

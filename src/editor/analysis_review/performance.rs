@@ -323,7 +323,6 @@ fn profile_complete_roll_area_preparation() {
             }
             let before = document.project.clone();
             let request = analysis::Request {
-                loaded: 1,
                 revision: 1,
                 selected: document.project.order[0],
                 document,
@@ -403,7 +402,7 @@ fn profile_complete_roll_area_preparation() {
             let approved = prepared
                 .map_err(|e| e.to_string())?
                 .ok_or("unexpected preparation cancellation")?;
-            verify_file(&request, &approved).map_err(|e| e.to_string())?;
+            verify_file(&request.document, &approved).map_err(|e| e.to_string())?;
             assert_eq!(
                 request.document.project, before,
                 "preparation changed accepted state"

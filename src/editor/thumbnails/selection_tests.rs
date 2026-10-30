@@ -263,15 +263,15 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                     "busy" => editor.busy = true,
                     "crop" => editor.begin_crop(),
                     "pick" => editor.document.visit.picking.display = Some(Pick::Gamma.display()),
-                    "flat" => {
-                        editor.document.flat_edit = Some(crate::editor::flat::FlatEdit {
+                    "flat" => editor
+                        .document
+                        .set_flat_edit(Some(crate::editor::flat::FlatEdit {
                             view: Default::default(),
                             region: None,
                             task: None,
                             selection: None,
                             activity: None,
-                        })
-                    }
+                        })),
                     _ => unreachable!(),
                 }
                 let output = frame(editor, &context, key(Key::Space), cx);
@@ -302,7 +302,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 assert_eq!(editor.document.state.project, before);
                 editor.busy = false;
                 editor.finish_crop(false);
-                editor.document.flat_edit = None;
+                editor.document.set_flat_edit(None);
                 editor.document.visit.picking.display = None;
                 frame(editor, &context, vec![], cx);
             }
@@ -522,9 +522,7 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
                 assert_ne!(editor.status, "obsolete failure");
                 editor.begin_pick(Pick::Dmin, cx);
                 editor.begin_crop();
-                assert!(
-                    editor.active_pick().is_none() && editor.document.visit.crop_edit.is_none()
-                );
+                assert!(editor.active_pick().is_none() && editor.document.crop_edit().is_none());
             });
         });
     }

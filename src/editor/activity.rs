@@ -157,7 +157,7 @@ pub(super) struct TaskView {
     pub title: String,
     pub measured: Option<(f32, String)>,
     pub cancel: Option<TaskCancel>,
-    modal: bool,
+    pub(super) modal: bool,
 }
 
 impl TaskView {
@@ -234,13 +234,16 @@ impl TaskActivity {
         }
     }
 
+    pub fn is_current(&self, request: TaskRequest) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.task.request() == request)
+    }
+
     /// Retire matching presentation; report whether it was still the foreground activity.
     /// Controllers retain execution ownership and decide what completion may change.
     pub fn finish(&mut self, request: TaskRequest) -> bool {
-        let current = self
-            .active
-            .as_ref()
-            .is_some_and(|active| active.task.request() == request);
+        let current = self.is_current(request);
         if current && let Some(active) = self.active.take() {
             log::info!(
                 request:?,
@@ -337,17 +340,7 @@ impl Editor {
             return;
         }
         if let TaskRequest::Analyze(id) = request
-            && self
-                .document
-                .analysis_pending
-                .as_ref()
-                .map(|pending| pending.id)
-                .or(self
-                    .document
-                    .analysis_preparing
-                    .as_ref()
-                    .map(|pending| pending.id))
-                == Some(id)
+            && self.analysis_work_id() == Some(id)
         {
             self.cancel_analysis();
         }

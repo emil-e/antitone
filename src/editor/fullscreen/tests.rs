@@ -172,40 +172,19 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
         frame(&mut editor, &context, Some(false), vec![]);
         let viewport = editor.document.visit.canvas.viewport;
         let project = editor.document.state.project.clone();
-        let draft = editor
-            .document
-            .visit
-            .crop_edit
-            .as_ref()
-            .map(|edit| edit.draft);
+        let draft = editor.document.crop_edit().map(|edit| edit.draft);
         let pick = editor.active_pick();
         frame(&mut editor, &context, Some(false), key(egui::Key::F));
         frame(&mut editor, &context, Some(true), vec![]);
         frame(&mut editor, &context, Some(true), key(egui::Key::Enter));
-        assert_eq!(
-            editor
-                .document
-                .visit
-                .crop_edit
-                .as_ref()
-                .map(|edit| edit.draft),
-            draft
-        );
+        assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
         assert_eq!(editor.active_pick(), pick);
         frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
         editor.fullscreen_changed(false);
         frame(&mut editor, &context, Some(false), vec![]);
         assert!(editor.fullscreen.is_none());
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
-        assert_eq!(
-            editor
-                .document
-                .visit
-                .crop_edit
-                .as_ref()
-                .map(|edit| edit.draft),
-            draft
-        );
+        assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
         assert_eq!(editor.active_pick(), pick);
         assert_eq!(editor.document.state.project, project);
     }

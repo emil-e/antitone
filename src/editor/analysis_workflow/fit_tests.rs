@@ -8,14 +8,14 @@ use std::sync::mpsc;
 
 fn review(app: &mut TestApplication<'_, Editor>) {
     start(app);
-    app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
-    app.read(|e| assert!(e.document.analysis_review.is_some(), "{}", e.status));
+    app.run_until(LIMIT, |e| !e.analysis_preparing());
+    app.read(|e| assert!(e.document.analysis_review().is_some(), "{}", e.status));
 }
 
 fn confirm(app: &TestApplication<'_, Editor>) {
     app.enter(|e, access| {
         e.confirm_analysis_review(access);
-        assert!(e.document.analysis_pending.is_some(), "{}", e.status);
+        assert!(e.analysis_fitting(), "{}", e.status);
     });
 }
 
@@ -43,7 +43,7 @@ fn gated() -> (
 }
 
 #[test]
-fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and_grade_together() {
+fn reviewed_fit_keeps_the_browsed_photo_and_undoes_support_and_grade_together() {
     let scheduler = source_loading::SourceLoader::new();
     let mut editor = fixture(scheduler.clone());
     let first = editor.document.visit.current_source.unwrap();
@@ -55,8 +55,8 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
     );
     editor.tab = 2;
     editor.scopes.visible = true;
+    editor.preferences.scopes_visible = true;
     editor.document.visit.canvas.viewport.zoom = Some(0.5);
-    let viewport = editor.document.visit.canvas.viewport;
     let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         review(app);
@@ -69,14 +69,13 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
             assert_eq!(e.document.state.project, before);
         });
         confirm(app);
-        app.run_until(LIMIT, |e| e.document.analysis_pending.is_none() && !e.busy);
+        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.busy);
         app.read(|e| {
             assert!(e.status.starts_with("Analyzed 2"), "{}", e.status);
-            assert_eq!(e.document.visit.current_source, Some(first));
+            assert_eq!(e.document.visit.current_source, Some(other));
             assert!(e.document.visit.canvas.ready.is_some());
-            assert!(e.document.analysis_review.is_none());
-            assert_eq!(e.document.visit.canvas.viewport, viewport);
-            assert_eq!(e.tab, 2);
+            assert!(e.document.analysis_review().is_none());
+            assert_eq!(e.tab, 0);
             assert!(e.scopes.visible);
             assert!(
                 e.document.roll_selection.contains(first)
@@ -96,79 +95,50 @@ fn reviewed_fit_returns_across_photo_visits_without_paint_and_undoes_support_and
 }
 
 #[test]
-fn review_return_restores_the_selected_source_owned_layer_when_it_still_exists() {
+fn cancelling_review_keeps_the_browsed_photo_and_its_layer_selection() {
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings},
         editor::adjustment_layers::Target,
     };
-    for removed in [false, true] {
-        let scheduler = source_loading::SourceLoader::new();
-        let mut editor = fixture(scheduler.clone());
-        let original = editor.document.visit.current_source.unwrap();
-        let other = editor.document.project.order[1];
-        let layers = editor
-            .document
-            .project
-            .source_mut(original)
-            .unwrap()
-            .adjustment_layers
-            .as_mut()
-            .unwrap();
-        let selected = layers.layers[0].id;
-        layers
-            .add(
-                "Other".into(),
-                AdjustmentLayer::global(AdjustmentLayerSettings::default()),
-            )
-            .unwrap();
-        editor.select_adjustment_layer(Target::Layer(selected));
-        with_application(editor, |app| {
-            review(app);
-            app.enter(|editor, cx| {
-                editor.browse_analysis_review(crate::project::SourceId(u64::MAX), cx);
-                assert_eq!(editor.document.visit.current_source, Some(original));
-                assert!(!editor.document.visit.source.pending());
-                editor.browse_analysis_review(other, cx);
-            });
-            app.run_until(LIMIT, |editor| !editor.busy);
-            app.update(|editor| {
-                assert_eq!(editor.document.visit.current_source, Some(other));
-                if removed {
-                    editor
-                        .document
-                        .project
-                        .source_mut(original)
-                        .unwrap()
-                        .adjustment_layers
-                        .as_mut()
-                        .unwrap()
-                        .layers
-                        .clear();
-                }
-            });
-            app.enter(|editor, cx| editor.finish_pick(cx));
-            app.run_until(LIMIT, |editor| !editor.busy);
-            app.read(|editor| {
-                assert!(editor.document.analysis_review.is_none());
-                assert!(editor.active_pick().is_none());
-                assert_eq!(editor.document.visit.current_source, Some(original));
-                assert!(
-                    editor.document.visit.canvas.ready.is_some(),
-                    "{}",
-                    editor.status
-                );
-                assert_eq!(
-                    editor.adjustment_layer_target(),
-                    if removed {
-                        Target::None
-                    } else {
-                        Target::Layer(selected)
-                    }
-                );
-            });
+    let scheduler = source_loading::SourceLoader::new();
+    let mut editor = fixture(scheduler.clone());
+    let first = editor.document.visit.current_source.unwrap();
+    let other = editor.document.project.order[1];
+    let old_layer = editor
+        .document
+        .project
+        .source_mut(first)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .add(
+            "Other".into(),
+            AdjustmentLayer::global(AdjustmentLayerSettings::default()),
+        )
+        .unwrap();
+    editor.select_adjustment_layer(Target::Layer(old_layer));
+    with_application(editor, |app| {
+        review(app);
+        app.enter(|editor, cx| editor.browse_analysis_review(other, cx));
+        app.run_until(LIMIT, |editor| !editor.busy);
+        let selected = app.read(|editor| editor.adjustment_layer_target());
+        app.enter(|editor, cx| {
+            editor.tab = 1;
+            editor.document.visit.canvas.viewport.zoom = Some(0.75);
+            editor.finish_pick(cx);
         });
-        scheduler.close_and_wait().unwrap();
-    }
+        app.read(|editor| {
+            assert_eq!(editor.document.visit.current_source, Some(other));
+            assert_eq!(editor.document.selected, 1);
+            assert_eq!(editor.adjustment_layer_target(), selected);
+            assert_ne!(selected, Target::Layer(old_layer));
+            assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(0.75));
+            assert_eq!(editor.tab, 1);
+            assert!(editor.document.analysis_review().is_none() && editor.active_pick().is_none());
+        });
+    });
+    scheduler.close_and_wait().unwrap();
 }
 
 #[test]
@@ -188,7 +158,7 @@ fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibra
     with_application(editor, |app| {
         review(app);
         confirm(app);
-        app.run_until(LIMIT, |e| e.document.analysis_pending.is_none() && !e.busy);
+        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.busy);
         app.read(|e| {
             assert!(e.status.starts_with("Analyzed 2"), "{}", e.status);
             let calibration = e
@@ -226,10 +196,10 @@ fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cp
         confirm(app);
         await_native(app, &starts);
         app.update(Editor::cancel_analysis);
-        app.run_until(LIMIT, |e| e.document.analysis_pending.is_none() && !e.busy);
+        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.busy);
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(e.document.analysis_review.is_none());
+            assert!(e.document.analysis_review().is_none());
             assert!(e.tasks.view().is_none());
             assert!(e.history_label(Direction::Undo).is_none());
         });
@@ -261,20 +231,14 @@ fn fitting_document_and_application_retirement_cannot_publish_late_results() {
             enabled.store(true, Ordering::Relaxed);
             confirm(app);
             await_native(app, &starts);
-            let cancelled = app.read(|e| {
-                e.document
-                    .analysis_pending
-                    .as_ref()
-                    .unwrap()
-                    .cancelled
-                    .clone()
-            });
+            let cancelled =
+                app.read(|e| e.document.analysis_operation().unwrap().cancelled.clone());
             if close_application {
                 app.close_execution();
             } else {
                 app.update(|e| e.document = Document::default().into());
                 app.pump();
-                app.read(|e| assert!(e.document.analysis_review.is_none()));
+                app.read(|e| assert!(e.document.analysis_review().is_none()));
             }
             assert!(cancelled.is_cancelled());
             assert_eq!(scheduler.waiter_count(), 0);
@@ -282,32 +246,6 @@ fn fitting_document_and_application_retirement_cannot_publish_late_results() {
         });
         scheduler.close_and_wait().unwrap();
     }
-}
-
-#[test]
-fn live_edits_during_fit_discard_the_entire_candidate_without_installing_reviewed_areas() {
-    let (scheduler, enabled, starts, release) = gated();
-    let editor = fixture(scheduler.clone());
-    with_application(editor, |app| {
-        review(app);
-        enabled.store(true, Ordering::Relaxed);
-        confirm(app);
-        await_native(app, &starts);
-        app.update(|e| {
-            e.set_gamma(0.8);
-            e.sync_document();
-        });
-        let edited = app.read(|e| e.document.state.project.clone());
-        release.send(()).unwrap();
-        app.run_until(LIMIT, |e| e.document.analysis_pending.is_none() && !e.busy);
-        app.read(|e| {
-            assert_eq!(e.document.state.project, edited);
-            assert!(e.document.state.project.analysis_regions.is_empty());
-            assert!(e.document.analysis_review.is_none());
-            assert!(e.status.contains("discarded"), "{}", e.status);
-        });
-    });
-    scheduler.close_and_wait().unwrap();
 }
 
 #[test]
@@ -324,7 +262,7 @@ fn new_document_supersedes_a_queued_fit_without_consuming_its_areas_or_history()
         });
         app.pump();
         app.read(|e| {
-            assert!(e.document.analysis_pending.is_none() && e.document.analysis_review.is_none());
+            assert!(!e.analysis_fitting() && e.document.analysis_review().is_none());
             assert!(e.document_pending.is_some());
         });
         drop(admission);

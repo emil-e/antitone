@@ -178,26 +178,15 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 editor.document.spatial_preparing.is_none() && !editor.busy
             });
             drop(admission);
-            let source = harness.read(|editor| editor.document.visit.current_source.unwrap());
-            let pending = harness.read(|editor| {
-                super::super::analysis_workflow::Pending::new(
-                    9000,
-                    super::super::analysis::Request {
-                        loaded: editor.id,
-                        revision: editor
-                            .document
-                            .analysis_generation
-                            .load(std::sync::atomic::Ordering::Relaxed),
-                        document: editor.document.capture(),
-                        selected: source,
-                        local_support: false,
-                        film: None,
-                        picture: None,
-                        areas: None,
-                    },
-                )
+            // Presentation fixture; worker acknowledgement is exercised through the
+            // real feature continuation in analysis_workflow::acknowledgement_tests.
+            harness.update(|editor| {
+                editor.document.set_analysis_operation(Some(
+                    super::super::analysis_workflow::Operation::new(
+                        super::super::analysis_workflow::Phase::Preparing(9000),
+                    ),
+                ));
             });
-            harness.update(|editor| editor.document.analysis_preparing = Some(pending));
             harness.update(|editor| {
                 editor.tasks.begin(Task::AnalysisAreas(9000));
                 editor.tasks.elapse(Duration::from_secs(1));
@@ -213,15 +202,14 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             });
             harness.update(|editor| editor.busy = true);
             render_case(&mut harness, &format!("analysis-sampling-{layout}"));
-            let previous_stage = harness.read(|editor| editor.tab);
             harness
                 .get_by_role_and_label(egui::accesskit::Role::Tab, "Photo")
                 .click();
             harness.step();
             harness.read(|editor| {
                 assert_eq!(
-                    editor.tab, previous_stage,
-                    "modal preparation intercepts background stage changes"
+                    editor.tab, 1,
+                    "running tool work keeps stage navigation available for replacement"
                 )
             });
             render_case(&mut harness, &format!("analysis-modal-background-{layout}"));
@@ -232,7 +220,8 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     .is_disabled()
             );
             harness.update(|editor| {
-                editor.document.analysis_pending = editor.document.analysis_preparing.take();
+                editor.document.analysis_operation_mut().unwrap().phase =
+                    super::super::analysis_workflow::Phase::Fitting(9000);
                 editor.tasks.begin(Task::Analyze(9000));
                 editor.tasks.elapse(Duration::from_secs(1));
                 editor.tasks.report(
@@ -248,7 +237,20 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             harness.step();
             render_case(&mut harness, &format!("analysis-cancelling-{layout}"));
             assert!(harness.query_by_label("Cancel analysis").is_none());
-            harness.enter(|editor, cx| editor.analysis_result(9000, Ok(None), cx));
+            harness.update(|editor| {
+                assert!(
+                    editor
+                        .document
+                        .analysis_operation()
+                        .unwrap()
+                        .cancelled
+                        .is_cancelled()
+                );
+                editor.document.set_analysis_operation(None);
+                editor.tasks.finish(TaskRequest::Analyze(9000));
+                editor.busy = false;
+                editor.status = "Analysis cancelled".into();
+            });
             render_case(&mut harness, &format!("analysis-cancelled-{layout}"));
             harness.read(|editor| assert!(editor.tasks.view().is_none()));
             harness.read(|editor| assert_eq!(editor.status, "Analysis cancelled"));

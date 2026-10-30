@@ -8,14 +8,7 @@ fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell
     let (layout, pipeline, target) = harness.read(|editor| {
         let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
         (
-            editor
-                .document
-                .visit
-                .crop_edit
-                .as_ref()
-                .unwrap()
-                .layout
-                .unwrap(),
+            editor.document.crop_edit().unwrap().layout.unwrap(),
             editor
                 .adjustment_layer_snapshot(
                     editor
@@ -153,7 +146,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
         h.enter(|e, cx| e.schedule_dust(e.dust_signature().unwrap(), cx));
         h.step();
         h.read(|e| {
-            assert!(!e.document.source && e.document.flat_edit.is_none());
+            assert!(!e.document.source && e.document.flat_edit().is_none());
             assert!(e.dust_signature().is_some());
             assert_eq!(
                 e.dust_repairs(e.document.visit.current_source.unwrap())
@@ -188,7 +181,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
             (0.19, egui::vec2(800., 600.)),
         ] {
             h.update(|e| {
-                let draft = &mut e.document.visit.crop_edit.as_mut().unwrap().draft;
+                let draft = &mut e.document.crop_edit_mut().unwrap().draft;
                 draft.size = [190, 120];
                 draft.angle = angle;
             });
@@ -196,13 +189,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
             h.event(egui::Event::PointerGone);
             h.step();
             wait_for(&mut h, |e| {
-                e.document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .unwrap()
-                    .layout
-                    .is_some()
+                e.document.crop_edit().unwrap().layout.is_some()
                     && !e.document.visit.working_view.updating
             });
             sampled_patch(&mut h, &capture, true);
@@ -219,9 +206,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
         let (position, pipeline, target) = h.read(|e| {
             let layout = e
                 .document
-                .visit
-                .crop_edit
-                .as_ref()
+                .crop_edit()
                 .and_then(|edit| edit.layout)
                 .unwrap_or_else(|| e.active_canvas().last_layout.unwrap().0);
             let position = layout.screen_point(egui::pos2(160., 96.));
@@ -347,9 +332,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
                 assert!(
                     (editor
                         .document
-                        .visit
-                        .crop_edit
-                        .as_ref()
+                        .crop_edit()
                         .unwrap()
                         .draft
                         .angle
@@ -362,16 +345,8 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
             });
             assert_crop_patch_pixels(&mut harness, &capture);
 
-            let before = harness.read(|editor| {
-                editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .unwrap()
-                    .layout
-                    .unwrap()
-            });
+            let before =
+                harness.read(|editor| editor.document.crop_edit().unwrap().layout.unwrap());
             drag(
                 &mut harness,
                 before.image.min,
@@ -379,7 +354,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
             );
             harness.read(|editor| {
                 assert_ne!(
-                    editor.document.visit.crop_edit.as_ref().unwrap().draft,
+                    editor.document.crop_edit().unwrap().draft,
                     before.composition.crop()
                 )
             });
@@ -388,14 +363,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
             // Explicit zoom/pan is viewport fixture setup; the rendered callback must clip,
             // not squeeze the whole texture into the visible portion of its rectangle.
             harness.update(|editor| {
-                let layout = editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .unwrap()
-                    .layout
-                    .unwrap();
+                let layout = editor.document.crop_edit().unwrap().layout.unwrap();
                 let density = 1.;
                 editor.document.visit.canvas.viewport.zoom_at(
                     layout,
@@ -406,14 +374,7 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
             });
             harness.step();
             harness.update(|editor| {
-                let layout = editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .unwrap()
-                    .layout
-                    .unwrap();
+                let layout = editor.document.crop_edit().unwrap().layout.unwrap();
                 editor
                     .document
                     .visit

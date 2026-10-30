@@ -40,6 +40,7 @@ mod icons;
 mod menu;
 mod preferences;
 mod presentation;
+mod tool;
 use crate::project::{Source, SourceId};
 use document::Document;
 mod files;
@@ -819,26 +820,27 @@ impl Editor {
         self.candidate_operation = document_workflow::State::default();
         self.finish_flat_edit();
         self.retire_look();
-        if self.document.auto_crop_edit.is_some() {
+        if self.document.auto_crop_edit().is_some() {
             self.finish_auto_crop(false);
         }
         self.finish_dust_cleanup();
         self.reset_repairs_pending = replacement;
-        if self.document.analysis_preparing.take().is_some() {
-            self.cancel_analysis();
+        if self
+            .document
+            .analysis_operation()
+            .is_some_and(|op| op.phase != analysis_workflow::Phase::Regions)
+        {
+            self.close_analysis();
         }
-        if let Some(review) = self.document.analysis_review.take() {
-            self.tab = review.return_tab;
-            self.scopes.visible = review.return_scopes_visible;
+        if let Some(review) = self.document.take_analysis_review() {
+            drop(review);
+            self.scopes.visible = self.preferences.scopes_visible;
             self.document.visit.picking = Default::default();
         }
         self.document.visit.support = Default::default();
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.preview_rendered = None;
         self.document.visit.canvas.selection_timing = None;
-        if self.document.analysis_pending.take().is_some() {
-            self.cancel_analysis();
-        }
         self.document.thumbnails.cancel();
         let id = self.request_id();
         self.source_epoch
@@ -878,7 +880,7 @@ impl Editor {
         use controls::{ColorControl, Parameter};
         use presentation::SectionHeader;
 
-        let reviewing = self.document.analysis_review.is_some();
+        let reviewing = self.document.analysis_review().is_some();
         let initial_input = self.document.input;
         let previous_orientation = (
             self.document.roll_orientation,
@@ -907,23 +909,16 @@ impl Editor {
         if self.tab == 0 {
             analyze = self.roll_tool_shelf(ui, cx);
         } else if self.tab == 1 {
-            ui.add_enabled_ui(!reviewing, |ui| self.photo_tool_shelf(ui, cx));
+            self.photo_tool_shelf(ui, cx);
         }
 
         let editable = !self.busy
-            && !reviewing
-            && self.document.auto_crop_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.flat_edit.is_none()
+            && matches!(
+                self.document.tool,
+                None | Some(tool::Tool::Pick(_)) | Some(tool::Tool::Dust(_))
+            )
             && self.document.input.ready();
-        let can_pick = !self.busy
-            && !reviewing
-            && self.document.auto_crop_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.flat_edit.is_none()
-            && self.document.visit.canvas.ready.is_some();
+        let can_pick = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
         let mut start_pick = None;
 
         egui::ScrollArea::vertical()
@@ -975,7 +970,7 @@ impl Editor {
                                 );
                         });
                         if capabilities.flat_field {
-                            ui.add_enabled_ui(!reviewing, |ui| self.flat_controls(ui, cx));
+                            self.flat_controls(ui, cx);
                         }
                         if let InputSettings::Negative { dmin, dmax, .. } = input {
                             let calibration_summary = match (dmin.is_some(), dmax.is_some()) {
@@ -1019,7 +1014,7 @@ impl Editor {
                                 },
                             );
                         }
-                        ui.add_enabled_ui(editable, |ui| {
+                        ui.scope(|ui| {
                             if let InputSettings::Negative {
                                 response,
                                 gamma,
@@ -1043,7 +1038,7 @@ impl Editor {
                                             }
                                         ),
                                         changed: inversion_changed,
-                                        reset: Some(inversion_changed),
+                                        reset: Some(inversion_changed && editable),
                                         tool: Some(controls::balance_pick_tool(
                                             can_pick,
                                             "Pick neutral for gamma balance",
@@ -1051,12 +1046,14 @@ impl Editor {
                                         default_open: Some(true),
                                     },
                                     |ui| {
-                                        controls::parameter(ui, Parameter::Gamma, gamma);
-                                        controls::balance_body(
-                                            ui,
-                                            ColorControl::GammaBalance,
-                                            balance,
-                                        );
+                                        ui.add_enabled_ui(editable, |ui| {
+                                            controls::parameter(ui, Parameter::Gamma, gamma);
+                                            controls::balance_body(
+                                                ui,
+                                                ColorControl::GammaBalance,
+                                                balance,
+                                            );
+                                        });
                                     },
                                 );
                                 if reset.tool {
@@ -1080,18 +1077,25 @@ impl Editor {
                                         summary: &response_summary,
                                         changed: *response != crate::processing::Response::film(),
                                         reset: Some(
-                                            *response != crate::processing::Response::film(),
+                                            *response != crate::processing::Response::film()
+                                                && editable,
                                         ),
                                         tool: None,
                                         default_open: Some(false),
                                     },
                                     |ui| {
-                                        controls::parameter(ui, Parameter::Toe, &mut response.toe);
-                                        controls::parameter(
-                                            ui,
-                                            Parameter::Shoulder,
-                                            &mut response.shoulder,
-                                        );
+                                        ui.add_enabled_ui(editable, |ui| {
+                                            controls::parameter(
+                                                ui,
+                                                Parameter::Toe,
+                                                &mut response.toe,
+                                            );
+                                            controls::parameter(
+                                                ui,
+                                                Parameter::Shoulder,
+                                                &mut response.shoulder,
+                                            );
+                                        });
                                     },
                                 );
                                 if reset.reset
@@ -1104,6 +1108,7 @@ impl Editor {
                                 ui,
                                 "roll-white-balance",
                                 &mut self.document.roll.wb,
+                                editable,
                                 can_pick,
                             ) {
                                 start_pick = Some(Pick::RollWb);
@@ -1115,16 +1120,18 @@ impl Editor {
                                 SectionHeader {
                                     summary: &format!("{:+.2} EV", self.document.roll.exposure),
                                     changed: self.document.roll.exposure != 0.,
-                                    reset: Some(self.document.roll.exposure != 0.),
+                                    reset: Some(self.document.roll.exposure != 0. && editable),
                                     tool: None,
                                     default_open: Some(false),
                                 },
                                 |ui| {
-                                    controls::parameter(
-                                        ui,
-                                        Parameter::Exposure,
-                                        &mut self.document.roll.exposure,
-                                    );
+                                    ui.add_enabled_ui(editable, |ui| {
+                                        controls::parameter(
+                                            ui,
+                                            Parameter::Exposure,
+                                            &mut self.document.roll.exposure,
+                                        );
+                                    });
                                 },
                             );
                             if action.reset && !controls::defer_reset(ui, controls::Reset::Exposure)
@@ -1152,19 +1159,19 @@ impl Editor {
                     if self.document.input.capabilities().film_emulation {
                         let allowed = !self.busy
                             && !reviewing
-                            && self.document.visit.crop_edit.is_none()
-                            && self.document.auto_crop_edit.is_none()
-                            && self.document.flat_edit.is_none()
-                            && self.document.visit.mask_edit.is_none();
+                            && self.document.crop_edit().is_none()
+                            && self.document.auto_crop_edit().is_none()
+                            && self.document.flat_edit().is_none()
+                            && self.document.mask_edit().is_none();
                         ui.add_enabled_ui(allowed, |ui| self.film_emulation_controls(ui));
                     }
                     self.look_controls(ui, cx);
                     ui.add_enabled_ui(
                         !reviewing
-                            && self.document.visit.crop_edit.is_none()
-                            && self.document.auto_crop_edit.is_none()
-                            && self.document.flat_edit.is_none()
-                            && self.document.visit.mask_edit.is_none(),
+                            && self.document.crop_edit().is_none()
+                            && self.document.auto_crop_edit().is_none()
+                            && self.document.flat_edit().is_none()
+                            && self.document.mask_edit().is_none(),
                         |ui| {
                             let changed = self.document.target != OutputTarget::DisplayP3;
                             let (_, action) = presentation::section(
@@ -1348,7 +1355,7 @@ impl Editor {
         self.disable_blocked_workspace(ui);
         self.workspace_chrome(ui, cx, &mut actions);
         let (scope_slot, analyze) = self.edit_frame_controls(ui, cx, previous_settings);
-        if self.document.analysis_review.is_some() && self.document.analysis_pending.is_none() {
+        if self.document.analysis_review().is_some() && !self.analysis_fitting() {
             self.stash_review_region();
         }
 

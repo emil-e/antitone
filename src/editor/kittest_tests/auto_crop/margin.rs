@@ -138,7 +138,7 @@ fn live_slider_and_precise_numeric_drafts_preserve_the_background_and_zero_resto
             click_action(&mut h, "Auto-crop roll");
             h.read(|editor| {
                 assert!(
-                    editor.document.auto_crop_edit.is_none(),
+                    editor.document.auto_crop_edit().is_none(),
                     "clicking the active shelf tool cancels its draft"
                 )
             });

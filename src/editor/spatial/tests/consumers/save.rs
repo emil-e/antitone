@@ -31,8 +31,8 @@ fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_
             app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
             app.read(|editor| {
                 assert!(editor.document_pending.is_some());
-                assert!(editor.document.auto_crop_edit.is_none());
-                assert!(editor.document.analysis_preparing.is_none());
+                assert!(editor.document.auto_crop_edit().is_none());
+                assert!(!editor.analysis_preparing());
                 assert_eq!(*editor.document.spatial.ready(), metadata);
             });
             drop(write);
@@ -40,9 +40,9 @@ fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_
                 editor.document_pending.is_none()
                     && !editor.busy
                     && if analyze {
-                        editor.document.analysis_review.is_some()
+                        editor.document.analysis_review().is_some()
                     } else {
-                        editor.document.auto_crop_edit.is_some()
+                        editor.document.auto_crop_edit().is_some()
                     }
             });
             app.read(|editor| {
@@ -90,8 +90,8 @@ fn failed_overlapping_save_keeps_the_consumer_until_failure_acknowledgement() {
         app.run_until(LIMIT, |editor| editor.document_pending.is_none());
         app.read(|editor| {
             assert!(editor.failure.is_some());
-            assert!(editor.document.auto_crop_operation.is_some());
-            assert!(editor.document.auto_crop_edit.is_none());
+            assert!(editor.document.auto_crop_operation().is_some());
+            assert!(editor.document.auto_crop_edit().is_none());
         });
         let context = egui::Context::default();
         crate::editor::tests::app_frame(app, &context, vec![]);
@@ -106,7 +106,7 @@ fn failed_overlapping_save_keeps_the_consumer_until_failure_acknowledgement() {
                 modifiers: egui::Modifiers::NONE,
             }],
         );
-        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit.is_some());
+        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_some());
         app.read(|editor| {
             assert!(editor.failure.is_none());
             assert_eq!(editor.document.state.project, accepted);

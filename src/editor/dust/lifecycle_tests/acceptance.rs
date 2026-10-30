@@ -117,7 +117,7 @@ fn queue(
     cx: &UiContext<'_, Editor>,
 ) -> super::super::search::PendingStroke {
     e.begin_dust_mask(None);
-    e.document.visit.dust.mask_draft.as_mut().unwrap().pixels = (origin[1]..origin[1] + 3)
+    e.document.dust_mask_draft_mut().unwrap().pixels = (origin[1]..origin[1] + 3)
         .flat_map(|y| (origin[0]..origin[0] + 3).map(move |x| [x, y]))
         .collect();
     e.commit_dust_mask(cx);
@@ -227,10 +227,7 @@ fn failed_heal_keeps_the_completed_search_donor_draggable() {
 fn change_support(e: &mut Editor, cx: &UiContext<'_, Editor>) {
     e.begin_dust_mask(Some(RepairId(1)));
     e.document
-        .visit
-        .dust
-        .mask_draft
-        .as_mut()
+        .dust_mask_draft_mut()
         .unwrap()
         .pixels
         .insert([53, 50]);
@@ -268,7 +265,7 @@ fn starting_another_edit_cannot_discard_a_released_pending_mask() {
         let source = app.enter(|e, cx| {
             change_support(e, cx);
             e.begin_dust_mask(Some(RepairId(1)));
-            assert!(e.document.visit.dust.mask_draft.is_none());
+            assert!(e.document.dust_mask_draft().is_none());
             e.cancel_dust_mask();
             assert!(e.dust_search_pending());
             e.document.visit.current_source.unwrap()
@@ -368,10 +365,7 @@ fn stopped_execution_leaves_no_pending_stroke_or_accepted_edit() {
         app.enter(|e, cx| {
             e.begin_dust_mask(None);
             e.document
-                .visit
-                .dust
-                .mask_draft
-                .as_mut()
+                .dust_mask_draft_mut()
                 .unwrap()
                 .pixels
                 .insert([80, 80]);
@@ -433,8 +427,7 @@ fn impossible_stroke_is_rejected_whole_without_changing_existing_repairs() {
             e.receive_dust(evaluation.request, Ok(Some(response(&evaluation, active))));
             let before = e.history_snapshot();
             e.begin_dust_mask(None);
-            e.document.visit.dust.mask_draft.as_mut().unwrap().pixels = (active.y
-                ..active.y + active.height)
+            e.document.dust_mask_draft_mut().unwrap().pixels = (active.y..active.y + active.height)
                 .flat_map(|y| (active.x..active.x + active.width).map(move |x| [x, y]))
                 .collect();
             e.commit_dust_mask(cx);
@@ -517,7 +510,7 @@ fn ending_dust_discards_unfinished_strokes_without_changing_accepted_repairs() {
             e.finish_dust_cleanup();
             assert!(!e.dust_search_pending());
             assert!(e.pending_dust_strokes().is_empty());
-            assert!(!e.document.visit.dust.cleanup);
+            assert!(!e.document.dust().is_some());
         });
         app.run_until(Duration::from_secs(5), |_| call.cancelled.is_cancelled());
         call.complete(Ok(SearchOutcome::Candidate([30, 0])));

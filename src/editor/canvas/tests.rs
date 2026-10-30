@@ -152,14 +152,14 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
             });
             reply.send(Ok(Some(Default::default()))).unwrap();
             app.run_until(Duration::from_secs(20), |editor| {
-                editor.document.auto_crop_edit.is_some()
+                editor.document.auto_crop_edit().is_some()
             });
             app.update(|editor| {
                 assert!(editor.auto_crop_valid());
                 editor.finish_auto_crop(true);
             });
             app.run_until(Duration::from_secs(20), |editor| {
-                editor.document.auto_crop_edit.is_none()
+                editor.document.auto_crop_edit().is_none()
             });
             app.read(|editor| assert!(editor.document.visit.crop.is_some()));
             provisional_then_physical(app);

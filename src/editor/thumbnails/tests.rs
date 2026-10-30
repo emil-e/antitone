@@ -1412,7 +1412,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
         let old = take_submission(app, &requests);
         app.enter(|e, cx| {
             e.begin_crop();
-            assert!(e.document.visit.crop_edit.is_some());
+            assert!(e.document.crop_edit().is_some());
             e.document.visit.canvas.grade.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             filmstrip_frame(e, &context, e.document.thumbnails.budgets, cx);

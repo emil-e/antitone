@@ -85,7 +85,7 @@ pub(super) fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
         .get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
         .click();
     harness.step();
-    harness.read(|editor| assert!(editor.document.visit.crop_edit.is_some()));
+    harness.read(|editor| assert!(editor.document.crop_edit().is_some()));
     harness.step();
     harness
         .get_by_role_and_label(egui::accesskit::Role::SpinButton, "Angle")
@@ -105,22 +105,13 @@ pub(super) fn crop_draft(harness: &mut Harness<'_, Editor>) -> Crop {
         modifiers: egui::Modifiers::NONE,
     });
     harness.step();
-    let layout = harness.read(|editor| {
-        editor
-            .document
-            .visit
-            .crop_edit
-            .as_ref()
-            .unwrap()
-            .layout
-            .unwrap()
-    });
+    let layout = harness.read(|editor| editor.document.crop_edit().unwrap().layout.unwrap());
     drag(
         harness,
         layout.image.left_top(),
         layout.image.left_top() + egui::vec2(30., 20.),
     );
-    let draft = harness.read(|editor| editor.document.visit.crop_edit.as_ref().unwrap().draft);
+    let draft = harness.read(|editor| editor.document.crop_edit().unwrap().draft);
     assert!((draft.angle.abs().to_degrees() - 2.3).abs() < 1e-6);
     harness.read(|editor| {
         assert_ne!(
@@ -294,12 +285,12 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
             capture_tool(&mut harness, &format!("crop-{layout}-offscreen"), size);
             harness.get_by_label("Cancel").click();
             harness.step();
-            harness.read(|editor| assert!(editor.document.visit.crop_edit.is_none()));
+            harness.read(|editor| assert!(editor.document.crop_edit().is_none()));
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
             let draft = crop_draft(&mut harness);
             harness.get_by_label("Apply").click();
             harness.step();
-            harness.read(|editor| assert!(editor.document.visit.crop_edit.is_none()));
+            harness.read(|editor| assert!(editor.document.crop_edit().is_none()));
             harness.read(|editor| assert_eq!(editor.document.visit.crop, Some(draft)));
             let mut expected = before;
             harness.read(|editor| {
@@ -520,7 +511,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
             harness.get_by_label("Fit").click();
             harness.step();
             harness.read(|editor| assert_eq!(editor.active_pick(), Some(flat::DISPLAY)));
-            harness.read(|editor| assert!(editor.document.flat_edit.is_some()));
+            harness.read(|editor| assert!(editor.document.flat_edit().is_some()));
             wait_for(&mut harness, |e| {
                 assert!(
                     e.active_canvas().grade.original.refinement_error.is_none(),
@@ -543,7 +534,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         }
         harness.get_by_label("Cancel").click();
         harness.step();
-        harness.read(|editor| assert!(editor.document.flat_edit.is_none()));
+        harness.read(|editor| assert!(editor.document.flat_edit().is_none()));
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
@@ -553,7 +544,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         harness.read(|editor| assert!(editor.busy));
         wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
         harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
-        harness.read(|editor| assert!(editor.document.flat_edit.is_none()));
+        harness.read(|editor| assert!(editor.document.flat_edit().is_none()));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.read(|editor| assert_eq!(editor.document.state.project.order, before.order));
         harness.read(|editor| assert_eq!(editor.document.state.project.dmin(), before.dmin()));
