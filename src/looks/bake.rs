@@ -1,8 +1,96 @@
-//! Pinned fixed-reference transforms for native built-in baking, not display rendering.
-use super::aces;
-use crate::{Error, gpu::SubmissionGate};
-use std::{borrow::Cow, sync::mpsc, time::Duration};
+//! Built-in Look asset generation using the pinned fixed-reference transforms.
+use crate::{
+    Error,
+    gpu::{SubmissionGate, aces},
+};
+use std::{
+    borrow::Cow,
+    sync::{Arc, OnceLock, mpsc},
+    time::Duration,
+};
 use wgpu::util::DeviceExt;
+
+pub struct Baker {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    submissions: SubmissionGate,
+    reference: OnceLock<Result<Arc<ReferenceTransforms>, Error>>,
+}
+
+impl Baker {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue, submissions: SubmissionGate) -> Self {
+        Self {
+            device,
+            queue,
+            submissions,
+            reference: OnceLock::new(),
+        }
+    }
+
+    pub fn device_limits(&self) -> wgpu::Limits {
+        self.device.limits()
+    }
+
+    /// Native worker-only generation. No compiler, Python or OCIO runtime is involved.
+    pub fn bake(
+        &self,
+        builtin: crate::looks::builtin::Builtin,
+        size: u32,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::looks::LookAsset, Error> {
+        use crate::looks::{LookAsset, Lut3D, builtin};
+        let device = &self.device;
+        let queue = &self.queue;
+        let submissions = &self.submissions;
+        let reference = self
+            .reference
+            .get_or_init(|| {
+                pollster::block_on(ReferenceTransforms::new(device, queue)).map(Arc::new)
+            })
+            .clone()?;
+        let model = builtin::Model::new(builtin)?;
+        let mapped = model.mapped_nodes(size, cancel)?;
+        let scene = reference.apply(device, queue, submissions, true, &mapped)?;
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(crate::looks::failure("look preparation cancelled"));
+        }
+        let roundtrip = reference.apply(device, queue, submissions, false, &scene)?;
+        let mut nodes = Vec::with_capacity(scene.len());
+        for ((actual, expected), linear) in roundtrip.iter().zip(&mapped).zip(&scene) {
+            if (0..3).any(|c| {
+                !actual[c].is_finite()
+                    || (actual[c] - expected[c]).abs() > 2e-4
+                    || !linear[c].is_finite()
+                    || !(0. ..=1024.).contains(&linear[c])
+            }) {
+                return Err(crate::looks::failure(
+                    "generated LUT failed reference/range admission",
+                ));
+            }
+            nodes.push(std::array::from_fn(|c| {
+                crate::photographic::encode(f64::from(linear[c])) as f32
+            }));
+        }
+        let lut = Arc::new(Lut3D::new(
+            size,
+            [builtin::DOMAIN_MIN as f32; 3],
+            [builtin::domain_max() as f32; 3],
+            nodes,
+        )?);
+        let gray = lut.apply(glam::DVec3::splat(0.18))?;
+        if (gray - glam::DVec3::splat(0.18)).abs().max_element() > 2e-5 {
+            return Err(crate::looks::failure(
+                "generated LUT failed the gray anchor bound",
+            ));
+        }
+        LookAsset::new(builtin.name().into(), builtin.origin(), lut)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.reference.get().is_some()
+    }
+}
 
 pub(crate) struct ReferenceTransforms {
     inverse: wgpu::ComputePipeline,

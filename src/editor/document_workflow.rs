@@ -192,7 +192,7 @@ impl Editor {
                 if let Some(ready) = &prepared.ready {
                     self.document.cache_ready(ready);
                 }
-                self.remember_current_look();
+                self.remember_imported_look();
                 self.document.visit.adjustment_layers = layer_selection;
                 self.document.set_mask_edit(None);
                 if new_project {

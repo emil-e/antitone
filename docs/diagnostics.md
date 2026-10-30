@@ -252,7 +252,7 @@ Original-sample processing shares the editor's f32 inversion for integer and con
 
 ## Equivalent ACES execution
 
-The [execution comparison](../src/gpu_aces_execution_tests.rs) uses an independent fragment shell with the original constant array as the oracle for production's read-only-buffer layout, keeping pinned ACES functions, decimal constants and tables unchanged; the reference does not use the [production adapter](../src/renderer/aces.rs):
+The [execution comparison](../src/gpu_aces_execution_tests.rs) uses an independent fragment shell with the original constant array as the oracle for production's read-only-buffer layout, keeping pinned ACES functions, decimal constants and tables unchanged; the reference does not use the [production adapter](../src/gpu/aces.rs):
 
 ```sh
 cargo test --locked --offline --features editor --lib \

@@ -114,8 +114,8 @@ pub fn generation_fingerprint() -> String {
     let mut hash = blake3::Hasher::new();
     for bytes in [
         include_bytes!("builtin.rs").as_slice(),
-        include_bytes!("../renderer/look_reference.rs").as_slice(),
-        include_bytes!("../renderer.rs").as_slice(),
+        include_bytes!("bake.rs").as_slice(),
+        include_bytes!("../gpu/aces.rs").as_slice(),
         include_bytes!("../../assets/ocio/looks-reference/forward.glsl").as_slice(),
         include_bytes!("../../assets/ocio/looks-reference/inverse.glsl").as_slice(),
         include_bytes!("../../assets/ocio/looks-reference/reach.f32").as_slice(),

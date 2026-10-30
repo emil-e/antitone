@@ -207,7 +207,7 @@ fn native_history_restores_accepted_creative_looks_and_shares_the_numeric_lut() 
             .unwrap(),
         );
         let original = h.read(|editor| editor.document.state.project.clone());
-        h.enter(|editor, cx| editor.begin_look(look_ui::Source::Loaded(chosen.clone()), cx));
+        h.enter(|editor, cx| editor.select_look(look::Source::Loaded(chosen.clone()), cx));
         wait_for(&mut h, |e| !e.busy);
         h.read(|editor| assert!(editor.failure.is_none(), "{}", editor.status));
         let accepted = h.read(|editor| editor.document.state.project.clone());

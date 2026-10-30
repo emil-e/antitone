@@ -44,7 +44,7 @@ Where each area's implementation lives — navigation, not specification. Follow
 | GPU | [processing](../src/gpu.rs), [renderer](../src/renderer.rs) | Interactive processing and reusable rendering resources |
 | Rendering/output | [rendering](../src/rendering.rs), [export](../src/export.rs), [native transform](../native/rendering_transform.h) | ACES, file encoding and output safety |
 | Film Emulation | [model/settings](../src/film_emulation.rs), [stage executor](../src/gpu/pixel_pipeline.rs) | Source-scale image MTF and RGB grain before look/output |
-| Creative looks | [asset/import](../src/looks.rs), [native generation](../src/looks/builtin.rs), [GPU execution](../src/gpu/look.rs), [selection](../src/editor/look_ui.rs) | Project-wide embedded immutable LUTs before selected-output ACES |
+| Creative looks | [asset/import](../src/looks.rs), [models](../src/looks/builtin.rs), [baking](../src/looks/bake.rs), [GPU execution](../src/gpu/look.rs), [selection](../src/editor/look.rs) | Project-wide embedded immutable LUTs before selected-output ACES |
 | Geometry | [geometry](../src/geometry.rs), [coverage](../src/coverage.rs), [crop](../src/crop.rs), [auto-crop](../src/auto_crop.rs) | Coordinate mappings, source-cell coverage, measured-frame proposals |
 | Viewer | [working owner](../src/editor/working_view.rs), [GPU view](../src/gpu/view.rs), [viewer](../src/viewer.rs), [original-view owner](../src/editor/original_view.rs), [refinement](../src/refinement.rs), [viewport](../src/viewport.rs) | Physical-view grading/inspection, original comparison, refinement |
 | Scopes | [measurement](../src/scopes.rs), [GPU reduction](../src/gpu_scopes.rs) | Approximate visible-image output statistics |

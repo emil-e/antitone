@@ -6,6 +6,9 @@ use std::sync::Arc;
 #[cfg(feature = "project")]
 pub mod builtin;
 
+#[cfg(all(feature = "project", feature = "gpu"))]
+pub mod bake;
+
 #[cfg(feature = "project")]
 pub mod cache;
 

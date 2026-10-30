@@ -639,8 +639,8 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                     harness.enter(|editor, cx| editor.apply_flat_edit(cx));
                 }
                 FailureKind::Look => harness.enter(|editor, cx| {
-                    editor.begin_look(
-                        look_ui::Source::Imported(directory.path().join("missing-look.cube")),
+                    editor.select_look(
+                        look::Source::Imported(directory.path().join("missing-look.cube")),
                         cx,
                     )
                 }),

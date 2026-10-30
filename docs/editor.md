@@ -50,7 +50,7 @@ Rendering owns one project-wide look. Its dropdown offers None, the built-in pap
 
 Built-in names come from the versioned catalog; imported and unknown historic names remain as saved, and [project storage](projects.md#embed-the-accepted-look-not-a-catalog-reference) preserves their accepted appearance. Successful imports also appear under **Loaded LUTs** for the rest of the editor session, including across project changes; repeated identical payloads share one entry.
 
-Preparation and reselection use a document-owned workflow: resolution, import and device preflight run off-thread, and a failure is acknowledged without changing the accepted look. [Architecture](architecture.md) owns that lifecycle.
+One [document-owned action](../src/editor/look.rs) awaits resolution and device preflight, then installs the asset and records its edit. Cancel retires the action immediately; running work uses [cancel-on-drop](architecture.md#cooperative-cancellation) for physical cleanup. Failed or cancelled preparation leaves the accepted look unchanged; only accepted imports enter Loaded LUTs.
 
 ## Undo and redo
 

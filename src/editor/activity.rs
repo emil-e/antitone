@@ -334,8 +334,13 @@ impl Editor {
             return;
         }
         if let TaskRequest::Look(id) = request {
-            if self.document.look.as_ref().is_some_and(|p| p.id == id) {
-                self.cancel_look();
+            if self
+                .document
+                .look
+                .as_ref()
+                .is_some_and(|p| p.activity == id)
+            {
+                self.cancel_look_selection();
             }
             return;
         }

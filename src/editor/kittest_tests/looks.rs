@@ -241,6 +241,55 @@ fn look_browsing_exposes_import_and_attribution_without_accepting_a_change() {
 }
 
 #[test]
+fn cancel_preparation_retires_feedback_and_keeps_the_dropdown_usable_before_cleanup() {
+    fixture_editor(|mut harness, _| {
+        choose(&mut harness, Builtin::Kodak2383.name());
+        paint_until(&mut harness, positive_ready);
+        let accepted = harness.read(|editor| {
+            editor
+                .document
+                .project
+                .output
+                .look
+                .as_ref()
+                .unwrap()
+                .lut()
+                .id()
+        });
+        let paused = crate::background::testing::pause();
+        harness.enter(|editor, cx| {
+            editor.select_look(look::Source::Builtin(Builtin::PortraEndura), cx)
+        });
+        harness.step();
+        harness.read(|editor| assert!(editor.busy && editor.document.look.is_some()));
+        harness.get_by_label("Cancel look preparation").click();
+        harness.step();
+        harness.read(|editor| {
+            assert!(!editor.busy);
+            assert!(editor.document.look.is_none());
+            assert!(editor.tasks.view().is_none());
+            assert_eq!(
+                editor
+                    .document
+                    .project
+                    .output
+                    .look
+                    .as_ref()
+                    .unwrap()
+                    .lut()
+                    .id(),
+                accepted
+            );
+        });
+        choose(&mut harness, "None");
+        harness.read(|editor| assert!(editor.document.project.output.look.is_none()));
+        drop(paused);
+        paint_until(&mut harness, positive_ready);
+        harness.read(|editor| assert!(editor.document.project.output.look.is_none()));
+    });
+}
+
+#[test]
 fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_without_regrading() {
     fixture_editor(|mut harness, _| {
         let before = harness.read(|editor| editor.document.state.project.clone());
@@ -295,7 +344,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                 assert!(harness.query_by_label("Independent creative interpretation derived from published KODAK VISION Color Print Film 2383 / 3383 data.\nNot affiliated with or endorsed by the manufacturer.").is_some());
                 harness.read(|editor| assert_eq!(editor.document.state.project, project));
             }
-            harness.read(|editor| assert!(editor.look_render_failure().is_none()));
+            harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
             harness.read(|editor| assert_eq!(editor.document.roll, before.roll));
             harness.read(|editor| {
                 assert_eq!(
@@ -435,7 +484,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                     .as_ref()
                     .is_some_and(|view| view.processing.look_id().is_none() && !view.in_flight())
         });
-        harness.read(|editor| assert!(editor.look_render_failure().is_none()));
+        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
                 editor
@@ -618,7 +667,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
             ));
         }
         std::fs::write(&file, cube).unwrap();
-        harness.enter(|editor, cx| editor.begin_look(look_ui::Source::Imported(file), cx));
+        harness.enter(|editor, cx| editor.select_look(look::Source::Imported(file), cx));
         paint_until(&mut harness, ready);
         harness.read(|editor| {
             assert!(Arc::ptr_eq(
@@ -727,9 +776,9 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             }
             std::fs::write(&file, cube).unwrap();
             harness
-                .enter(|editor, cx| editor.begin_look(look_ui::Source::Imported(file.clone()), cx));
+                .enter(|editor, cx| editor.select_look(look::Source::Imported(file.clone()), cx));
             paint_until(&mut harness, |editor| {
-                positive_ready(editor) && editor.loaded_looks.len() == index + 1
+                positive_ready(editor) && editor.look.loaded.len() == index + 1
             });
             std::fs::remove_file(file).unwrap();
             assets.push(
@@ -809,7 +858,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
                     ))
                 });
             }
-            harness.read(|editor| assert_eq!(editor.loaded_looks.len(), 2));
+            harness.read(|editor| assert_eq!(editor.look.loaded.len(), 2));
             harness.read(|editor| {
                 assert_eq!(
                     (
@@ -837,9 +886,9 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
                     && editor.document.visit.canvas.ready.is_some()
             });
             reopened.read(|editor| assert!(editor.failure.is_none()));
-            reopened.read(|editor| assert_eq!(editor.loaded_looks.len(), 1));
+            reopened.read(|editor| assert_eq!(editor.look.loaded.len(), 1));
             reopened
-                .read(|editor| assert_eq!(editor.loaded_looks[0].lut().id(), assets[0].lut().id()));
+                .read(|editor| assert_eq!(editor.look.loaded[0].lut().id(), assets[0].lut().id()));
             reopened.read(|editor| assert!(!editor.document.dirty()));
             open_project(&mut harness, path);
             wait_for(&mut harness, |editor| {
@@ -848,7 +897,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
                     && editor.document.visit.canvas.ready.is_some()
             });
             harness.read(|editor| assert!(editor.failure.is_none()));
-            harness.read(|editor| assert_eq!(editor.loaded_looks.len(), 2));
+            harness.read(|editor| assert_eq!(editor.look.loaded.len(), 2));
             harness.read(|editor| assert!(!editor.document.dirty()));
         });
     });
@@ -883,7 +932,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                     }
                     std::fs::write(&file, cube).unwrap();
                     harness.enter(|editor, cx| {
-                        editor.begin_look(look_ui::Source::Imported(file.clone()), cx)
+                        editor.select_look(look::Source::Imported(file.clone()), cx)
                     });
                     paint_until(&mut harness, |editor| {
                         positive_ready(editor)
@@ -994,7 +1043,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
             cube.push_str("0.4 0.4 0.4\n");
         }
         std::fs::write(&path, cube).unwrap();
-        harness.enter(|editor, cx| editor.begin_look(look_ui::Source::Imported(path.clone()), cx));
+        harness.enter(|editor, cx| editor.select_look(look::Source::Imported(path.clone()), cx));
         wait_for(&mut harness, |editor| !editor.busy);
         std::fs::remove_file(path).unwrap();
         let accepted = harness.read(|editor| {
@@ -1009,7 +1058,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
                 .id()
         });
         paint_until(&mut harness, positive_ready);
-        harness.read(|editor| assert!(editor.look_render_failure().is_none()));
+        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
                 (
@@ -1067,7 +1116,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
                     .settled
                     .is_some()
         });
-        harness.read(|editor| assert!(editor.look_render_failure().is_none()));
+        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
                 editor
@@ -1087,7 +1136,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         paint_until(&mut harness, |editor| {
             editor.active_pick().is_none() && positive_ready(editor)
         });
-        harness.read(|editor| assert!(editor.look_render_failure().is_none()));
+        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
             assert_eq!(
                 (
@@ -1113,7 +1162,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         });
         choose(&mut harness, "None");
         paint_until(&mut harness, positive_ready);
-        harness.read(|editor| assert!(editor.look_render_failure().is_none()));
+        harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| assert!(editor.document.state.project.output.look.is_none()));
     });
 }

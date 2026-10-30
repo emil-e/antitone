@@ -53,8 +53,7 @@ mod fullscreen;
 use fullscreen::FullscreenView;
 mod thumbnails;
 use thumbnails::Thumbnails;
-mod look_ui;
-mod look_workflow;
+mod look;
 mod processing;
 use processing::Grades;
 mod adjustment_layers;
@@ -239,8 +238,7 @@ pub struct Editor {
     // Running physical work outlives logical cancellation.
     id: u64,
     busy: bool,
-    look_services: Option<look_workflow::Services>,
-    loaded_looks: Vec<Arc<crate::looks::LookAsset>>,
+    look: look::Session,
     status: String,
     tasks: TaskActivity,
     failure: Option<Failure>,
@@ -293,8 +291,7 @@ impl Editor {
         editor.document.input = editor.document.state.project.input;
         editor.submissions = submissions.clone();
         editor.initialize_viewer(&device, &queue);
-        editor.look_services = Some(look_workflow::Services::new(
-            renderers.clone(),
+        editor.look.services = Some(look::Services::new(
             device.clone(),
             queue.clone(),
             submissions.clone(),
@@ -367,8 +364,7 @@ impl Editor {
             menus: menu::Menus::default(),
             id: 0,
             busy: false,
-            look_services: None,
-            loaded_looks: Vec::new(),
+            look: Default::default(),
             status: "Add scans to begin".into(),
             tasks: TaskActivity::default(),
             failure: None,
@@ -819,7 +815,7 @@ impl Editor {
         self.document.write = save::State::default();
         self.candidate_operation = document_workflow::State::default();
         self.finish_flat_edit();
-        self.retire_look();
+        self.retire_look_selection();
         if self.document.auto_crop_edit().is_some() {
             self.finish_auto_crop(false);
         }

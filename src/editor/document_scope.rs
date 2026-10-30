@@ -48,7 +48,7 @@ pub(super) struct DocumentScope {
     pub embedded_preview: Option<super::thumbnails::EmbeddedWork>,
     pub thumbnail_work: super::thumbnails::ThumbnailWork,
     pub write: super::save::State,
-    pub look: Option<super::look_ui::Pending>,
+    pub look: Option<super::look::Operation>,
     pub dust: super::dust::State,
     #[cfg(test)]
     pub analysis_preparation_work:

@@ -1,55 +1,27 @@
 use super::*;
-use crate::looks::{
-    LookAsset, LookOrigin,
-    builtin::{Builtin, DEFAULT_GRID},
-    cache::Cache,
-};
-use std::{
-    collections::HashSet,
-    fs::File,
-    io::Read,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use crate::looks::{LookAsset, LookOrigin, builtin::Builtin};
+use std::collections::HashSet;
 
-#[derive(Clone)]
-pub(super) enum Source {
-    Builtin(Builtin),
-    Imported(PathBuf),
-    Loaded(Arc<LookAsset>),
-}
-
-pub(super) struct Pending {
-    pub id: u64,
-    pub cancel: Arc<AtomicBool>,
-    pub task: Option<async_executor::Task<()>>,
-}
-
-impl Drop for Pending {
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-}
-
-fn source_note(builtin: Builtin) -> String {
+fn builtin_attribution(builtin: Builtin) -> String {
     let source = builtin.source_product();
     format!(
         "Independent creative interpretation derived from published {source} data.\nNot affiliated with or endorsed by the manufacturer."
     )
 }
-fn asset_builtin(asset: &LookAsset) -> Option<Builtin> {
+fn builtin_for_asset(asset: &LookAsset) -> Option<Builtin> {
     let LookOrigin::Builtin { id, .. } = asset.origin() else {
         return None;
     };
     Builtin::ALL.into_iter().find(|builtin| builtin.id() == id)
 }
-fn asset_name(asset: &LookAsset) -> &str {
-    match asset_builtin(asset) {
+fn asset_label(asset: &LookAsset) -> &str {
+    match builtin_for_asset(asset) {
         Some(builtin) => builtin.name(),
         None => asset.name(),
     }
 }
 
-fn loaded_names(assets: &[Arc<LookAsset>]) -> Vec<String> {
+fn loaded_lut_labels(assets: &[Arc<LookAsset>]) -> Vec<String> {
     let mut used: HashSet<String> = Builtin::ALL
         .into_iter()
         .map(|builtin| builtin.name().to_owned())
@@ -69,105 +41,8 @@ fn loaded_names(assets: &[Arc<LookAsset>]) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn resolve(
-    source: Source,
-    cancel: &AtomicBool,
-    renderers: &crate::renderer::RendererCache,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    submissions: &crate::gpu::SubmissionGate,
-    cache: Option<&Cache>,
-) -> Result<Option<Arc<LookAsset>>, Error> {
-    if cancel.load(Ordering::Relaxed) {
-        return Ok(None);
-    }
-    let asset = match source {
-        Source::Loaded(asset) => asset.as_ref().clone(),
-        Source::Builtin(builtin) => {
-            let cached = cache.and_then(|cache| match cache.load(builtin, DEFAULT_GRID) {
-                Ok(asset) => asset,
-                Err(e) => {
-                    log::warn!(error = e.to_string().as_str(); "look_cache_ignored");
-                    None
-                }
-            });
-            match cached {
-                Some(asset) => asset,
-                None => {
-                    let renderer = renderers.get(device, queue)?;
-                    let asset = match renderer.bake_builtin(
-                        device,
-                        queue,
-                        submissions,
-                        builtin,
-                        DEFAULT_GRID,
-                        cancel,
-                    ) {
-                        Ok(asset) => asset,
-                        Err(_) if cancel.load(Ordering::Relaxed) => return Ok(None),
-                        Err(e) => return Err(e),
-                    };
-                    if let Some(cache) = cache
-                        && let Err(e) = cache.store(builtin, &asset)
-                    {
-                        log::warn!(error = e.to_string().as_str(); "look_cache_write_failed");
-                    }
-                    asset
-                }
-            }
-        }
-        Source::Imported(path) => {
-            let file = File::open(&path).map_err(crate::looks::failure)?;
-            let mut bytes = Vec::new();
-            file.take(crate::looks::MAX_IMPORT_BYTES as u64 + 1)
-                .read_to_end(&mut bytes)
-                .map_err(crate::looks::failure)?;
-            if bytes.len() > crate::looks::MAX_IMPORT_BYTES {
-                return Err(crate::looks::failure("LUT file exceeds the import budget"));
-            }
-            if cancel.load(Ordering::Relaxed) {
-                return Ok(None);
-            }
-            let text = std::str::from_utf8(&bytes).map_err(crate::looks::failure)?;
-            let name = path
-                .file_stem()
-                .and_then(|n| n.to_str())
-                .unwrap_or("Imported look");
-            LookAsset::import_cube(text, name)?
-        }
-    };
-    if cancel.load(Ordering::Relaxed) {
-        Ok(None)
-    } else {
-        crate::gpu::look::Lut::require_limits(&device.limits(), asset.lut())?;
-        Ok(Some(Arc::new(asset)))
-    }
-}
-
 impl Editor {
-    pub(super) fn remember_current_look(&mut self) {
-        let Some(asset) = self
-            .document
-            .project
-            .output
-            .look
-            .as_ref()
-            .filter(|asset| matches!(asset.origin(), LookOrigin::Imported))
-        else {
-            return;
-        };
-        if let Some(existing) = self
-            .loaded_looks
-            .iter_mut()
-            .find(|entry| entry.lut().id() == asset.lut().id())
-        {
-            *existing = asset.clone();
-        } else {
-            self.loaded_looks.push(asset.clone());
-        }
-    }
-
-    pub(super) fn look_render_failure(&self) -> Option<Error> {
+    pub(in crate::editor) fn look_rendering_error(&self) -> Option<Error> {
         if self.document.source
             || self.active_pick().is_some()
             || self.document.flat_edit().is_some()
@@ -193,68 +68,14 @@ impl Editor {
             .look_failure(id)
     }
 
-    pub(super) fn cancel_look(&mut self) {
-        if let Some(pending) = &self.document.look {
-            pending.cancel.store(true, Ordering::Relaxed);
-            self.tasks.cancelling(TaskRequest::Look(pending.id));
-        }
-    }
-
-    pub(super) fn retire_look(&mut self) {
-        if let Some(pending) = self.document.look.take()
-            && self.tasks.finish(TaskRequest::Look(pending.id))
-        {
-            self.busy = false;
-        }
-    }
-
-    pub(super) fn clear_look(&mut self) {
-        self.retire_look();
-        if self.document.state.project.output.look.is_some() {
-            let before = self.history_snapshot();
-            self.document.state.project.output.look = None;
-            self.invalidate_original();
-            self.record_edit(before, "Creative look", None);
-        }
-        self.resolve_failure(FailureKind::Look);
-        self.resolve_failure(FailureKind::LookRendering);
-    }
-
-    pub(super) fn receive_look(&mut self, id: u64, result: Result<Option<Arc<LookAsset>>, String>) {
-        if self.document.look.as_ref().is_none_or(|p| p.id != id) {
-            return;
-        }
-        let pending = self.document.look.take().unwrap();
-        if self.tasks.finish(TaskRequest::Look(id)) {
-            self.busy = false;
-        }
-        if pending.cancel.load(Ordering::Relaxed) {
-            self.status = "Look preparation cancelled".into();
-            return;
-        }
-        match result {
-            Ok(Some(asset)) => {
-                let before = self.history_snapshot();
-                self.document.state.project.output.look = Some(asset);
-                self.remember_current_look();
-                self.invalidate_original();
-                self.record_edit(before, "Creative look", None);
-                self.resolve_failure(FailureKind::Look);
-                self.resolve_failure(FailureKind::LookRendering);
-            }
-            Ok(None) => self.status = "Look preparation cancelled".into(),
-            Err(message) => self.report_failure(FailureKind::Look, message),
-        }
-    }
-
-    pub(super) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+    pub(in crate::editor) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         let allowed = (!self.busy || self.document.look.is_some())
             && self.document.crop_edit().is_none()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()
             && self.document.mask_edit().is_none();
-        let loaded_names = loaded_names(&self.loaded_looks);
+        let loaded_labels = loaded_lut_labels(&self.look.loaded);
         let name = self
             .document
             .state
@@ -267,13 +88,14 @@ impl Editor {
                 |asset| {
                     if matches!(asset.origin(), LookOrigin::Imported)
                         && let Some(index) = self
-                            .loaded_looks
+                            .look
+                            .loaded
                             .iter()
                             .position(|entry| entry.lut().id() == asset.lut().id())
                     {
-                        loaded_names[index].clone()
+                        loaded_labels[index].clone()
                     } else {
-                        asset_name(asset).to_owned()
+                        asset_label(asset).to_owned()
                     }
                 },
             );
@@ -283,7 +105,7 @@ impl Editor {
             .output
             .look
             .as_deref()
-            .and_then(asset_builtin);
+            .and_then(builtin_for_asset);
         let changed = self.document.state.project.output.look.is_some();
         let mut choice = None;
         let mut clear = false;
@@ -321,17 +143,17 @@ impl Editor {
                                     .is_some_and(|asset| asset.origin() == &builtin.origin());
                                 if ui
                                     .selectable_label(selected, builtin.name())
-                                    .on_hover_text(source_note(builtin))
+                                    .on_hover_text(builtin_attribution(builtin))
                                     .clicked()
                                     && !selected
                                 {
                                     choice = Some(Source::Builtin(builtin));
                                 }
                             }
-                            if !self.loaded_looks.is_empty() {
+                            if !self.look.loaded.is_empty() {
                                 ui.separator();
                                 ui.small("Loaded LUTs");
-                                for (asset, name) in self.loaded_looks.iter().zip(&loaded_names) {
+                                for (asset, name) in self.look.loaded.iter().zip(&loaded_labels) {
                                     let selected = self
                                         .document
                                         .state
@@ -365,7 +187,9 @@ impl Editor {
                         },
                     );
                     if let Some(builtin) = source {
-                        response.response.on_hover_text(source_note(builtin));
+                        response
+                            .response
+                            .on_hover_text(builtin_attribution(builtin));
                     }
                 },
             );
@@ -385,7 +209,7 @@ impl Editor {
             choice = Some(Source::Imported(path));
         }
         if let Some(source) = choice {
-            self.begin_look(source, cx);
+            self.select_look(source, cx);
         }
     }
 }
