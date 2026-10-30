@@ -72,11 +72,11 @@ fn documented_states_render() {
         harness.step();
         harness.step();
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            e.document.analysis_review.is_some() || !e.busy
+            e.document.analysis_review().is_some() || !e.busy
         });
         harness.read(|editor| {
             assert!(
-                editor.document.analysis_review.is_some(),
+                editor.document.analysis_review().is_some(),
                 "{}",
                 editor.status
             )
@@ -96,7 +96,7 @@ fn documented_states_render() {
         drop(buttons);
         harness.step();
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document.analysis_review.is_none()
+            !e.busy && e.document.analysis_review().is_none()
         });
         harness.read(|editor| assert!(editor.dmin().is_some(), "{}", editor.status));
 

@@ -184,12 +184,7 @@ fn fullscreen_shortcuts_respect_numeric_popup_and_tool_ownership() {
         assert!(harness.query_by_label("Apply").is_none());
         assert!(harness.query_by_label("Cancel").is_none());
         key(&mut harness, egui::Key::Enter);
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.crop_edit.as_ref().unwrap().draft,
-                draft
-            )
-        });
+        harness.read(|editor| assert_eq!(editor.document.crop_edit().unwrap().draft, draft));
         harness.get_by_label("Viewer help").click();
         harness.step();
         key(&mut harness, egui::Key::F);
@@ -201,12 +196,7 @@ fn fullscreen_shortcuts_respect_numeric_popup_and_tool_ownership() {
         harness.update(|editor| editor.fullscreen_changed(false));
         harness.run();
         harness.read(|editor| assert!(editor.fullscreen.is_none()));
-        harness.read(|editor| {
-            assert_eq!(
-                editor.document.visit.crop_edit.as_ref().unwrap().draft,
-                draft
-            )
-        });
+        harness.read(|editor| assert_eq!(editor.document.crop_edit().unwrap().draft, draft));
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
     });
 }

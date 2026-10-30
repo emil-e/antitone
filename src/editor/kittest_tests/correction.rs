@@ -172,7 +172,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
         harness.step();
         wait_settled(&mut harness);
         harness.read(|e| {
-            assert!(e.document.flat_edit.is_none());
+            assert!(e.document.flat_edit().is_none());
             normal_unchanged(e);
         });
     });

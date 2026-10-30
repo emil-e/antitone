@@ -24,19 +24,18 @@ pub(super) struct CanvasView {
 impl super::Editor {
     pub(super) fn active_canvas(&self) -> &CanvasView {
         self.document
-            .flat_edit
-            .as_ref()
+            .flat_edit()
             .map_or(&self.document.visit.canvas, |flat| &flat.view)
     }
 
     pub(super) fn active_canvas_mut(&mut self) -> &mut CanvasView {
-        self.document
-            .flat_edit
-            .as_mut()
-            .map_or(&mut self.document.visit.canvas, |flat| &mut flat.view)
+        match &mut self.document.tool {
+            Some(super::tool::Tool::Flat(flat)) => &mut flat.view,
+            _ => &mut self.document.visit.canvas,
+        }
     }
 
     pub(super) fn canvas_inspection(&self) -> bool {
-        self.document.flat_edit.is_some() || self.document.source
+        self.document.flat_edit().is_some() || self.document.source
     }
 }

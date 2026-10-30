@@ -170,8 +170,8 @@ impl Editor {
     pub(super) fn look_render_failure(&self) -> Option<Error> {
         if self.document.source
             || self.active_pick().is_some()
-            || self.document.flat_edit.is_some()
-            || self.document.analysis_review.is_some()
+            || self.document.flat_edit().is_some()
+            || self.document.analysis_review().is_some()
         {
             return None;
         }
@@ -249,11 +249,11 @@ impl Editor {
 
     pub(super) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         let allowed = (!self.busy || self.document.look.is_some())
-            && self.document.visit.crop_edit.is_none()
-            && self.document.auto_crop_edit.is_none()
-            && self.document.flat_edit.is_none()
-            && self.document.analysis_review.is_none()
-            && self.document.visit.mask_edit.is_none();
+            && self.document.crop_edit().is_none()
+            && self.document.auto_crop_edit().is_none()
+            && self.document.flat_edit().is_none()
+            && self.document.analysis_review().is_none()
+            && self.document.mask_edit().is_none();
         let loaded_names = loaded_names(&self.loaded_looks);
         let name = self
             .document

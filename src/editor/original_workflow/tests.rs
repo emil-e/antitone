@@ -88,7 +88,7 @@ fn working_reconstruction_can_complete_while_the_reference_view_is_active() {
             e.document.visit.canvas.grade.original.settled.is_some()
         });
         app.read(|e| {
-            assert!(e.document.flat_edit.is_some());
+            assert!(e.document.flat_edit().is_some());
             assert!(e.active_canvas().grade.original.settled.is_none());
             assert!(e.active_canvas().grade.original.refining.is_none());
             assert!(e.document.visit.canvas.grade.original.refining.is_none());
@@ -117,7 +117,7 @@ fn ending_reference_view_retires_only_its_reconstruction_not_the_working_views()
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.canvas.grade.original.settled.is_some()
         });
-        app.read(|e| assert!(e.document.flat_edit.is_none()));
+        app.read(|e| assert!(e.document.flat_edit().is_none()));
     });
     scheduler.close_and_wait().unwrap();
 }

@@ -30,11 +30,11 @@ impl Editor {
 
     pub(super) fn fullscreen_available(&self) -> bool {
         !self.fullscreen_blocked()
-            && self.document.analysis_review.is_none()
+            && self.document.analysis_review().is_none()
             && (self.fullscreen.is_some()
                 || self.selected_view().is_some()
                     && !(self.busy
-                        && (self.active_pick().is_some() || self.document.flat_edit.is_some())))
+                        && (self.active_pick().is_some() || self.document.flat_edit().is_some())))
     }
 
     pub(super) fn toggle_fullscreen(&mut self, context: &egui::Context) {
@@ -49,7 +49,7 @@ impl Editor {
             let native_before = context.input(|input| input.viewport().fullscreen == Some(true));
             self.fullscreen = Some(FullscreenView {
                 id: self.id,
-                reference: self.document.flat_edit.is_some(),
+                reference: self.document.flat_edit().is_some(),
                 viewport: self.active_canvas().viewport,
                 layout: self.active_canvas().last_layout,
                 source: self.document.source,
@@ -63,9 +63,7 @@ impl Editor {
             if self.active_canvas().viewport.zoom.is_some()
                 && let Some((layout, density)) = self
                     .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
+                    .crop_edit()
                     .and_then(|edit| {
                         edit.layout
                             .map(|layout| (layout, context.pixels_per_point()))
@@ -103,7 +101,7 @@ impl Editor {
             return;
         };
         let context_changed =
-            view.id != self.id || view.reference != self.document.flat_edit.is_some();
+            view.id != self.id || view.reference != self.document.flat_edit().is_some();
         let native_exit = !view.exiting && view.native_before && native == Some(false);
         let returned = view.exiting && view.restored;
         if context_changed || native_exit || returned {

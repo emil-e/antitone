@@ -61,9 +61,7 @@ impl Editor {
             None
         } else {
             self.document
-                .visit
-                .crop_edit
-                .as_ref()
+                .crop_edit()
                 .map(|edit| edit.draft)
                 .or(self.document.visit.crop)
         };
@@ -149,7 +147,7 @@ impl Editor {
         fullscreen: bool,
         cx: &UiContext<'_, Self>,
     ) -> (CanvasLayout, bool) {
-        let cropping = !fullscreen && self.document.visit.crop_edit.is_some();
+        let cropping = !fullscreen && self.document.crop_edit().is_some();
         let pixels_per_point = ui.ctx().pixels_per_point();
         if canvas_input && self.tab == 1 && !fullscreen {
             self.adjust_dust_brush_from_scroll(ui, geometry);
@@ -177,8 +175,7 @@ impl Editor {
         if cropping && canvas_input {
             self.crop_rotation_cursor(ui, response, geometry);
         }
-        if !fullscreen && (self.document.visit.mask_edit.is_some() || self.mask_handles_available())
-        {
+        if !fullscreen && (self.document.mask_edit().is_some() || self.mask_handles_available()) {
             self.mask_interaction(ui, response, geometry, panning, canvas_input);
         }
         if !cropping {
@@ -215,12 +212,12 @@ impl Editor {
             }
         };
         if self.active_pick().is_some()
-            || self.document.flat_edit.is_some()
-            || self.document.analysis_review.is_some()
+            || self.document.flat_edit().is_some()
+            || self.document.analysis_review().is_some()
         {
             parameters = parameters.with_look(None);
         }
-        if !self.document.source && self.document.flat_edit.is_none() {
+        if !self.document.source && self.document.flat_edit().is_none() {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust(signature, cx);
             }
@@ -256,7 +253,7 @@ impl Editor {
         let normal = !cropping
             && active_pick.is_none()
             && self.document_pending.is_none()
-            && self.document.flat_edit.is_none();
+            && self.document.flat_edit().is_none();
         let working = normal && self.document.visit.working_view.enabled();
         let view = if working {
             Some(ViewRequest {
@@ -291,8 +288,10 @@ impl Editor {
         {
             Some(OriginalPurpose::Reference)
         } else {
-            (!cropping && !pending && (active_pick.is_some() || self.document.flat_edit.is_some()))
-                .then_some(OriginalPurpose::Tool)
+            (!cropping
+                && !pending
+                && (active_pick.is_some() || self.document.flat_edit().is_some()))
+            .then_some(OriginalPurpose::Tool)
         };
         self.observe_original(
             purpose,
@@ -414,14 +413,14 @@ impl Editor {
         let device = self.document.visit.working_view.device()?;
         let queue = self.document.visit.working_view.queue()?;
         let kernels = self.document.visit.working_view.kernels.get()?.clone();
-        let cropping = self.document.visit.crop_edit.is_some();
+        let cropping = self.document.crop_edit().is_some();
         let frame = preview_frame(geometry.composition, proxy.size(), cropping).ok()?;
         let composition = frame.composition;
         let field = self
             .document
             .correction
             .as_ref()
-            .filter(|_| self.document.flat_edit.is_none())
+            .filter(|_| self.document.flat_edit().is_none())
             .map(|correction| correction.settings.map.clone());
         let inspection = parameters.pipeline().is_none();
         let settings = match self.document.input.calibration().filter(|_| !inspection) {
@@ -540,16 +539,16 @@ impl Editor {
     fn canvas_pick(&mut self, ui: &egui::Ui, response: &egui::Response, geometry: CanvasLayout) {
         if response.clicked_by(egui::PointerButton::Primary)
             && let Some(point) = response.interact_pointer_pos()
-            && (geometry.image.contains(point) || self.document.analysis_review.is_some())
+            && (geometry.image.contains(point) || self.document.analysis_review().is_some())
         {
-            if self.document.analysis_review.is_some() {
+            if self.document.analysis_review().is_some() {
                 self.select_review_area(geometry, point);
             } else {
                 self.set_pick_region(Some(geometry.pick_patch(point, 32)));
             }
         }
         if response.drag_started_by(egui::PointerButton::Primary) {
-            if self.document.analysis_review.is_some()
+            if self.document.analysis_review().is_some()
                 && let Some(point) = ui.input(|i| i.pointer.press_origin())
             {
                 self.select_review_area(geometry, point);
@@ -558,7 +557,7 @@ impl Editor {
             self.active_canvas_mut().pick_drag = ui
                 .input(|input| input.pointer.press_origin())
                 .filter(|point| {
-                    geometry.image.contains(*point) || self.document.analysis_review.is_some()
+                    geometry.image.contains(*point) || self.document.analysis_review().is_some()
                 })
                 .map(|point| PickDrag::begin(geometry, point, self.pick_region()));
         }
@@ -575,7 +574,7 @@ impl Editor {
     fn paint_canvas_selection(&self, ui: &mut egui::Ui, geometry: CanvasLayout, fullscreen: bool) {
         let canvas = geometry.canvas;
         self.paint_mask(ui, geometry);
-        if self.document.analysis_review.is_some() {
+        if self.document.analysis_review().is_some() {
             self.paint_review_areas(ui, geometry, canvas);
         } else if !fullscreen && let Some(region) = self.pick_region() {
             ui.painter().with_clip_rect(canvas).rect_stroke(
@@ -607,7 +606,7 @@ impl Editor {
         fullscreen: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        let identity = if self.document.flat_edit.is_some() {
+        let identity = if self.document.flat_edit().is_some() {
             "flat-reference"
         } else {
             "working-photo"
@@ -661,7 +660,7 @@ impl Editor {
         } else {
             self.canvas_composition(area, active_pick)
         };
-        let cropping = !fullscreen && self.document.visit.crop_edit.is_some();
+        let cropping = !fullscreen && self.document.crop_edit().is_some();
         let geometry =
             self.canvas_layout(canvas, composition, pixels_per_point, zoom_action, cropping);
         let (geometry, panning) =

@@ -17,10 +17,10 @@ impl Pick {
 
 impl Editor {
     pub(super) fn finish_pick(&mut self, cx: &UiContext<'_, Self>) {
-        if self.document.analysis_review.is_some() {
+        if self.document.analysis_review().is_some() {
             self.status = "Analysis review cancelled; areas and grade unchanged".into();
             self.end_analysis_review(cx);
-        } else if self.document.flat_edit.is_some() {
+        } else if self.document.flat_edit().is_some() {
             self.finish_flat_edit();
         } else {
             self.cancel_picker();
@@ -28,27 +28,26 @@ impl Editor {
     }
 
     pub(super) fn prepare_pick(&mut self, cx: &UiContext<'_, Self>) -> bool {
-        self.finish_dust_cleanup();
-        if self.active_pick().is_some() {
-            self.finish_pick(cx);
-        }
-        if self.busy
-            || self.document.visit.crop_edit.is_some()
-            || self.document.auto_crop_edit.is_some()
-            || self.document.visit.mask_edit.is_some()
-        {
+        let _ = cx;
+        if !self.prepare_tool() {
             return false;
         }
+        self.document.tool = Some(tool::Tool::Pick(Vec::new()));
         true
     }
 
     pub(super) fn begin_pick(&mut self, kind: Pick, cx: &UiContext<'_, Self>) {
+        if kind == Pick::Analysis && self.document.analysis_review().is_some() {
+            self.show_picker(kind.display());
+            self.refresh_review_region();
+            return;
+        }
         if !self.prepare_pick(cx) {
             return;
         }
         if kind == Pick::Analysis {
             self.show_picker(kind.display());
-            if self.document.analysis_review.is_some() {
+            if self.document.analysis_review().is_some() {
                 self.refresh_review_region();
             } else {
                 self.request_analysis_support(cx);
@@ -65,11 +64,7 @@ impl Editor {
         };
         match result {
             Ok(task) => {
-                self.document
-                    .visit
-                    .pick_actions
-                    .retain(|task| !task.is_finished());
-                self.document.visit.pick_actions.push(task);
+                self.document.pick_actions_mut().push(task);
             }
             Err(error) => {
                 if self.active_pick().is_some() {
@@ -84,9 +79,9 @@ impl Editor {
         if self.submit_picker() {
             return;
         }
-        if self.document.analysis_review.is_some() {
+        if self.document.analysis_review().is_some() {
             self.confirm_analysis_review(cx);
-        } else if self.document.flat_edit.is_some() {
+        } else if self.document.flat_edit().is_some() {
             self.apply_flat_edit(cx);
         } else if self.active_pick() == Some(analysis::AREA_DISPLAY) {
             self.apply_analysis_area(cx);

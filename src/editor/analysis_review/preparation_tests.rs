@@ -26,7 +26,6 @@ pub(in crate::editor) fn request() -> (analysis::Request, tempfile::TempDir, wgp
     let selected = document.project.order[0];
     (
         analysis::Request {
-            loaded: 1,
             revision: 1,
             document,
             selected,

@@ -22,7 +22,7 @@ Crop, picker and reference-area edits have temporary interaction state. Apply pr
 
 Tools deliberately use different views to reach what they measure: Dmin/Dmax expose uncropped oriented source so film margins are reachable; a bare-light reference exposes untransformed source; gamma/WB picks retain the working photograph's composition while their fitting uses declared measurement inputs. Choose the photo before opening a calibration or neutral picker; ordinary picking stays on that photo. Calibration and WB capture their source and numerical inputs when opened; the consuming feature awaits selection and measurement before validating and recording its edit. [Architecture](architecture.md) explains the execution and ownership model.
 
-Fixed tool shelves sit below the stage tabs. Roll contains shared orientation, Analyze and Auto-crop; Photo contains turn/flip, Crop and Dust, with a persistent Layers inspector section. Active controls appear above ordinary inspector sections; clicking an active Crop/Auto-crop cancels its draft, and opening Crop/Auto-crop/Dust cancels gradient interaction without changing layer selection or accepted grades. Tools arbitrate canvas ownership rather than running competing gestures. [Analyze's roll review](roll-analysis.md#1-choose-what-to-sample) is its own review transaction over per-photo sampling drafts; browsing and exception edits never change accepted support or grading.
+Fixed tool shelves sit below the stage tabs. Roll contains shared orientation, Analyze and Auto-crop; Photo contains turn/flip, Crop and Dust, with a persistent Layers inspector section. Active controls appear above ordinary inspector sections; clicking an active Crop/Auto-crop cancels its draft, and opening Crop/Auto-crop/Dust cancels gradient interaction without changing layer selection or accepted grades. One [active-tool owner](../src/editor/tool.rs) holds the unfinished interaction. Selecting another tool replaces it, discarding its draft and retiring its continuation before the next tool captures inputs. Tool switching remains available during preparation and fitting; required image readiness and non-tool document operations still constrain admission. [Analyze's roll review](roll-analysis.md#1-choose-what-to-sample) is its own review transaction over per-photo sampling drafts; browsing and exception edits never change accepted support or grading.
 
 ### Auto-crop is an explicit accepted edit
 
@@ -76,11 +76,11 @@ Working feedback answers two questions: **what is happening, and what can I stil
 
 | Work | Presentation and retained use |
 | --- | --- |
-| RAW import, project Open/New/Save, correction/context switches, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
+| RAW import, project Open/New/Save, input/context switches, undo/redo | A centred working modal after a brief delay; the transaction already blocks the workspace |
 | Export | A delayed working modal with finished-photo counts and Cancel; workspace, inspection and application panels stay blocked until completion or cancellation acknowledgement |
 | Selected RAW preparation | A spinner on the empty canvas; cached pending previews stay visible but never become the processing source |
-| Reference preparation, picker measurement | Local tool/viewer feedback; no extra global dialog |
-| Shared region preparation and running Analyze | A delayed working modal with counted work, then indeterminate validation and genuine Cancel; the intervening sampling-area review remains interactive |
+| Reference preparation/estimation, picker measurement | Local tool/viewer feedback; tool switching remains available |
+| Shared region preparation and running Analyze | Counted or indeterminate working feedback with Cancel; stage/tool controls remain reachable so another tool can replace the action |
 | Thumbnails, camera previews, scopes | Existing in-place image/card/scope feedback |
 
 Save/Save As remain available through application commands during shared region preparation; they capture ready results without waiting for preparation. A deferred consumer resumes after the write, or after acknowledgement of a failed write.
@@ -234,6 +234,6 @@ Colour expresses interaction state, not feature ownership. Presentation installs
 
 ## Working on this area
 
-Start with [editor orchestration](../src/editor.rs), then the feature owner: [viewer](../src/editor/viewer_ui.rs), [picking](../src/editor/picking.rs), [crop](../src/editor/crop_editor.rs), [auto-crop](../src/editor/auto_crop.rs), [analysis](../src/editor/analysis.rs), [correction](../src/editor/flat.rs), [thumbnails](../src/editor/thumbnails.rs), [pending previews](../src/editor/selected_preview.rs) or [camera placeholders](../src/editor/thumbnails/embedded.rs).
+Start with [editor orchestration](../src/editor.rs), [tool ownership and replacement](../src/editor/tool.rs), then the feature owner: [viewer](../src/editor/viewer_ui.rs), [picking](../src/editor/picking.rs), [crop](../src/editor/crop_editor.rs), [auto-crop](../src/editor/auto_crop.rs), [analysis](../src/editor/analysis.rs), [correction](../src/editor/flat.rs), [thumbnails](../src/editor/thumbnails.rs), [pending previews](../src/editor/selected_preview.rs) or [camera placeholders](../src/editor/thumbnails/embedded.rs).
 
 Use both component and composed-event checks from [development](development.md#shared-editor-ui-checks).

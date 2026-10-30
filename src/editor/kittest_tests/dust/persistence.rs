@@ -107,7 +107,7 @@ fn leaving_the_photo_discards_pending_artwork_and_returning_can_apply_a_fresh_st
             assert_ne!(editor.document.visit.current_source, Some(source));
             assert!(!editor.dust_search_pending());
             assert!(editor.pending_dust_strokes().is_empty());
-            assert!(!editor.document.visit.dust.cleanup);
+            assert!(!editor.document.dust().is_some());
         });
         drop(admission);
         wait_for(&mut h, |editor| {

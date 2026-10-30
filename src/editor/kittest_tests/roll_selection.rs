@@ -399,7 +399,7 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
         harness.step();
         harness.key_press(egui::Key::Delete);
         harness.step();
-        harness.read(|editor| assert!(editor.document.visit.crop_edit.is_some()));
+        harness.read(|editor| assert!(editor.document.crop_edit().is_some()));
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::A,

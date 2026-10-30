@@ -154,7 +154,7 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
                 frame(e, &ctx, vec![egui::Event::PointerMoved(point)], cx);
                 assert!(ctx.input(|i| i.pointer.primary_down()));
                 assert!(
-                    e.document.visit.dust.mask_draft.is_some(),
+                    e.document.dust_mask_draft().is_some(),
                     "lost held stroke at source x={x}: {}",
                     e.status
                 );
@@ -163,10 +163,7 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
             }
             assert!(
                 e.document
-                    .visit
-                    .dust
-                    .mask_draft
-                    .as_ref()
+                    .dust_mask_draft()
                     .unwrap()
                     .pixels
                     .contains(&[750, 200]),
@@ -185,7 +182,7 @@ fn held_dust_stroke_keeps_painting_past_512_source_pixels_until_primary_release(
                 }],
                 cx,
             );
-            assert!(e.document.visit.dust.mask_draft.is_none());
+            assert!(e.document.dust_mask_draft().is_none());
             assert!(e.dust_repairs(source).is_none());
             assert!(e.dust_search_pending());
             (source, project)
@@ -295,17 +292,14 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
                         );
                         assert!(ctx.input(|i| i.pointer.primary_down()));
                         if e.document
-                            .visit
-                            .dust
-                            .mask_draft
-                            .as_ref()
+                            .dust_mask_draft()
                             .is_some_and(|draft| draft.rejected)
                         {
                             break 'stroke;
                         }
                     }
                 }
-                assert!(e.document.visit.dust.mask_draft.as_ref().unwrap().rejected);
+                assert!(e.document.dust_mask_draft().unwrap().rejected);
                 let labels = frame(e, &ctx, vec![egui::Event::ModifiersChanged(modifiers)], cx);
                 assert!(ctx.input(|i| i.pointer.primary_down()));
                 assert!(
@@ -325,7 +319,7 @@ fn over_budget_held_strokes_are_visible_and_discarded_without_partial_new_or_exi
                     }],
                     cx,
                 );
-                assert!(e.document.visit.dust.mask_draft.is_none());
+                assert!(e.document.dust_mask_draft().is_none());
                 assert_eq!(
                     e.dust_repairs(source)
                         .map(|r| r.repairs().to_vec())
@@ -725,7 +719,7 @@ fn disconnected_supports_share_the_stored_translation_before_evaluation_and_afte
     let hit = e.dust_donor_hit(geometry, point).unwrap();
     assert!(hit.support.contains([78, 50]));
     e.begin_dust_donor_drag(geometry, point);
-    assert_eq!(e.document.visit.dust.donor_draft.unwrap().offset, [64, 0]);
+    assert_eq!(e.document.dust_donor_draft().unwrap().offset, [64, 0]);
     e.drag_dust_donor(geometry, screen_source_point(geometry, [145., 52.]));
     e.end_dust_donor_drag();
     assert_eq!(e.dust_repairs(source).unwrap().repairs()[0].offset, [66, 1]);

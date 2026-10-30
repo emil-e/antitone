@@ -949,7 +949,7 @@ impl Editor {
                 source.crop
             }
         });
-        if self.document.analysis_review.is_some() {
+        if self.document.analysis_review().is_some() {
             Composition::new(
                 source.development.active_area.into(),
                 RollOrientation::default(),
@@ -972,7 +972,7 @@ impl Editor {
         &self,
         id: SourceId,
     ) -> Result<Option<Arc<crate::image_recipe::ImageRecipe>>, String> {
-        if self.document.analysis_review.is_some() || !self.document.state.project.input.ready() {
+        if self.document.analysis_review().is_some() || !self.document.state.project.input.ready() {
             Ok(None)
         } else {
             self.document
@@ -983,7 +983,7 @@ impl Editor {
     }
 
     fn thumbnail_parameters(&self, source: &Source) -> Result<ProcessingInput, Error> {
-        if self.document.analysis_review.is_some() {
+        if self.document.analysis_review().is_some() {
             return self
                 .source_parameters_for(source, self.source_exposure)
                 .map(Into::into);
@@ -1001,9 +1001,9 @@ impl Editor {
     fn thumbnail_work_allowed(&self) -> bool {
         !self.busy
             && self.document.thumbnails.budgets.pressure != memory::Pressure::Critical
-            && (self.active_pick().is_none() || self.document.analysis_review.is_some())
-            && self.document.visit.crop_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
+            && (self.active_pick().is_none() || self.document.analysis_review().is_some())
+            && self.document.crop_edit().is_none()
+            && self.document.mask_edit().is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
@@ -1042,7 +1042,7 @@ impl Editor {
     ) {
         if self.document.visit.canvas.ready.is_none()
             && self.document.visit.pending_preview.is_none()
-            && self.document.flat_edit.is_none()
+            && self.document.flat_edit().is_none()
         {
             self.document.thumbnails.release_selected();
         }
@@ -1067,12 +1067,11 @@ impl Editor {
             && self.document.visit.canvas.selection_timing.is_some()
             && self.document_pending.is_none()
             && self.active_pick().is_none();
-        let reviewing =
-            self.document.analysis_review.is_some() && self.document.analysis_pending.is_none();
+        let reviewing = self.document.analysis_review().is_some() && !self.analysis_fitting();
         let selection_enabled = (!self.busy || selected_loading || reviewing)
-            && self.document.flat_edit.is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
+            && self.document.flat_edit().is_none()
+            && self.document.crop_edit().is_none()
+            && self.document.mask_edit().is_none()
             && (self.active_pick().is_none() || reviewing)
             && self.document.removal_pending.is_none();
         let height = self
@@ -1238,11 +1237,8 @@ impl Editor {
                                 }
                             }
                             if let Some(areas) = self.review_areas(id) {
-                                let picture = self
-                                    .document
-                                    .analysis_review
-                                    .as_ref()
-                                    .is_some_and(|r| r.picture);
+                                let picture =
+                                    self.document.analysis_review().is_some_and(|r| r.picture);
                                 if let Some(q) = if picture {
                                     areas.picture
                                 } else {
@@ -1382,7 +1378,7 @@ impl Editor {
                         if ui
                             .add_enabled(
                                 self.roll_edit_available()
-                                    && self.document.auto_crop_edit.is_none()
+                                    && self.document.auto_crop_edit().is_none()
                                     && selected,
                                 egui::Button::new("Remove selected photos…"),
                             )
@@ -1436,7 +1432,7 @@ impl Editor {
             cx,
         );
         if let Some((index, modifiers)) = select {
-            if self.document.analysis_review.is_some() {
+            if self.document.analysis_review().is_some() {
                 self.browse_analysis_review(self.document.state.project.order[index], cx);
             } else {
                 self.select_roll_photo(index, modifiers, cx);

@@ -178,7 +178,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
             "{}",
             e.status
         );
-        if e.document.flat_edit.is_none() && e.document.visit.working_view.revision().is_some() {
+        if e.document.flat_edit().is_none() && e.document.visit.working_view.revision().is_some() {
             let expected = if e.document.source {
                 e.source_parameters(e.source_exposure)
                     .map(ProcessingInput::from)

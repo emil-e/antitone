@@ -244,13 +244,13 @@ impl Editor {
             && self.document.look.is_none()
             && self.document_pending.is_none()
             && self.active_pick().is_none()
-            && self.document.flat_edit.is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.auto_crop_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
-            && self.document.analysis_review.is_none()
-            && self.document.analysis_preparing.is_none()
-            && self.document.analysis_pending.is_none()
+            && self.document.flat_edit().is_none()
+            && self.document.crop_edit().is_none()
+            && self.document.auto_crop_edit().is_none()
+            && self.document.mask_edit().is_none()
+            && self.document.analysis_review().is_none()
+            && !self.analysis_preparing()
+            && !self.analysis_fitting()
             && !self.export_modal()
             && self.transition.is_none()
             && self.after_save.is_none()
@@ -316,9 +316,14 @@ impl Editor {
                 self.document.history.complete(direction);
                 self.document.visit.working_view.clear();
                 self.document.source = !self.document.input.ready();
-                self.document.visit.dust.cleanup = cleanup.is_some()
+                if cleanup.is_some()
                     && !self.document.source
-                    && self.document.visit.canvas.ready.is_some();
+                    && self.document.visit.canvas.ready.is_some()
+                {
+                    self.document.begin_dust();
+                } else {
+                    self.document.clear_dust();
+                }
                 if let Some(show_masks) = cleanup {
                     self.document.visit.dust.show_masks = show_masks;
                 }
@@ -334,7 +339,7 @@ impl Editor {
             ..
         }) = pending
         {
-            self.document.visit.dust.cleanup = true;
+            self.document.begin_dust();
             self.document.visit.dust.show_masks = show_masks;
         }
     }

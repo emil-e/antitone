@@ -226,7 +226,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                     &UiContext::render_only(),
                 );
                 assert!(editor.active_pick().is_none());
-                assert!(editor.document.visit.crop_edit.is_none());
+                assert!(editor.document.crop_edit().is_none());
                 assert!(editor.document.export_operation.pending.is_none());
                 assert!(
                     editor

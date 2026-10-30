@@ -87,9 +87,9 @@ impl Editor {
         !self.dust_search_pending()
             && !self.application_modal()
             && self.active_pick().is_none()
-            && self.document.auto_crop_edit.is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
+            && self.document.auto_crop_edit().is_none()
+            && self.document.crop_edit().is_none()
+            && self.document.mask_edit().is_none()
     }
 
     fn application_modal(&self) -> bool {
@@ -161,12 +161,7 @@ impl Editor {
         }
         if self.document.visit.canvas.ready.is_some()
             && !self.busy
-            && !self
-                .document
-                .visit
-                .mask_edit
-                .as_ref()
-                .is_some_and(MaskEdit::dragging)
+            && !self.document.mask_edit().is_some_and(MaskEdit::dragging)
         {
             state.enabled.extend([Fit, ActualSize, ZoomIn, ZoomOut]);
         }
@@ -175,7 +170,7 @@ impl Editor {
         }
         if self.fullscreen.is_none()
             && self.active_pick().is_none()
-            && self.document.analysis_review.is_none()
+            && self.document.analysis_review().is_none()
         {
             state.enabled.insert(Scopes);
         }

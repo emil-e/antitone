@@ -61,9 +61,9 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         let regions = app.read(|editor| {
             assert!(!editor.busy, "{}", editor.status);
-            assert!(editor.document.analysis_preparing.is_none());
-            assert!(editor.document.analysis_pending.is_none());
-            assert!(editor.document.analysis_review.is_none());
+            assert!(!editor.analysis_preparing());
+            assert!(!editor.analysis_fitting());
+            assert!(editor.document.analysis_review().is_none());
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.document.dirty(), dirty);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
@@ -77,7 +77,7 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
                 2
             );
             assert!(
-                editor.document.auto_crop_edit.is_some(),
+                editor.document.auto_crop_edit().is_some(),
                 "{}",
                 editor.status
             );
@@ -98,7 +98,7 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
             assert_eq!(*editor.document.spatial.ready(), *regions);
             assert_eq!(editor.document.state.project, accepted);
             assert!(
-                editor.document.auto_crop_edit.is_some(),
+                editor.document.auto_crop_edit().is_some(),
                 "{}",
                 editor.status
             );
@@ -113,12 +113,11 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
             editor.request_analysis(cx);
         });
         app.run_until(LIMIT, |editor| {
-            editor.document.spatial_preparing.is_none()
-                && editor.document.analysis_preparing.is_none()
+            editor.document.spatial_preparing.is_none() && !editor.analysis_preparing()
         });
         app.read(|editor| {
             assert!(
-                editor.document.analysis_review.is_some(),
+                editor.document.analysis_review().is_some(),
                 "{}",
                 editor.status
             );
@@ -139,12 +138,11 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_analysis(cx));
         app.run_until(LIMIT, |editor| {
-            editor.document.spatial_preparing.is_none()
-                && editor.document.analysis_preparing.is_none()
+            editor.document.spatial_preparing.is_none() && !editor.analysis_preparing()
         });
         let regions = app.read(|editor| {
             assert!(
-                editor.document.analysis_review.is_some(),
+                editor.document.analysis_review().is_some(),
                 "{}",
                 editor.status
             );
@@ -165,7 +163,7 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
         });
         app.enter(|editor, cx| editor.finish_pick(cx));
         app.run_until(LIMIT, |editor| !editor.busy);
-        assert!(app.read(|editor| editor.document.analysis_review.is_none()));
+        assert!(app.read(|editor| editor.document.analysis_review().is_none()));
         let acquired = starts.load(Ordering::SeqCst);
         app.enter(|editor, cx| {
             editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
@@ -175,7 +173,7 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
             assert_eq!(*editor.document.spatial.ready(), *regions);
             assert_eq!(editor.document.state.project, accepted);
             assert!(
-                editor.document.auto_crop_edit.is_some(),
+                editor.document.auto_crop_edit().is_some(),
                 "{}",
                 editor.status
             );
@@ -199,8 +197,8 @@ fn queued_shared_preparation_cancels_without_native_work_or_accepted_changes() {
         app.pump();
         app.read(|editor| {
             assert!(editor.document.spatial_preparing.is_none());
-            assert!(editor.document.analysis_preparing.is_none());
-            assert!(editor.document.analysis_review.is_none());
+            assert!(!editor.analysis_preparing());
+            assert!(editor.document.analysis_review().is_none());
             assert!(!editor.busy);
             assert_eq!(editor.document.state.project, accepted);
             assert!(editor.tasks.view().is_none());
@@ -306,8 +304,8 @@ fn an_arbitrary_awaiter_can_use_regions_or_depart_without_retiring_document_prep
                     assert!(received.borrow().is_none());
                 }
                 assert_eq!(editor.document.state.project, accepted);
-                assert!(editor.document.auto_crop_edit.is_none());
-                assert!(editor.document.analysis_review.is_none());
+                assert!(editor.document.auto_crop_edit().is_none());
+                assert!(editor.document.analysis_review().is_none());
             });
             drop(caller);
         });
@@ -347,7 +345,7 @@ fn retiring_a_photo_visit_does_not_retire_document_region_preparation() {
                     .sum::<usize>(),
                 2
             );
-            assert!(editor.document.analysis_review.is_none());
+            assert!(editor.document.analysis_review().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -392,7 +390,7 @@ fn document_retirement_cancels_publication_without_blocking_unrelated_cpu_work()
         drop(probe);
         app.read(|editor| {
             assert!(editor.document.spatial.ready().groups.is_empty());
-            assert!(editor.document.auto_crop_edit.is_none());
+            assert!(editor.document.auto_crop_edit().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -420,9 +418,62 @@ fn application_retirement_cancels_shared_continuation_before_native_cleanup_retu
         assert!(cancelled.is_cancelled());
         app.read(|editor| {
             assert!(editor.document.spatial.ready().groups.is_empty());
-            assert!(editor.document.auto_crop_edit.is_none());
+            assert!(editor.document.auto_crop_edit().is_none());
         });
         release.send(()).unwrap();
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn replacing_analyze_with_batch_crop_joins_the_existing_document_region_producer() {
+    let (scheduler, _) = observed();
+    let mut editor = fixture(scheduler.clone());
+    let metadata = consumers::declared(&editor);
+    let reply = programmed(&mut editor);
+    let before = editor.document.project.clone();
+    let before_history = editor.history_label(history::Direction::Undo);
+    with_application(editor, |app| {
+        let preparation = app.enter(|editor, cx| {
+            editor.request_analysis(cx);
+            editor.document.spatial_preparing.as_ref().unwrap().id
+        });
+        app.pump();
+        app.enter(|editor, cx| {
+            editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
+            assert!(editor.document.analysis_operation().is_none());
+            assert!(editor.document.auto_crop_operation().is_some());
+            assert_eq!(
+                editor.document.spatial_preparing.as_ref().unwrap().id,
+                preparation
+            );
+        });
+        reply.send(Ok(Some(metadata))).unwrap();
+        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_some());
+        app.read(|editor| {
+            assert!(
+                editor
+                    .document
+                    .project
+                    .order
+                    .iter()
+                    .all(|photo| editor.auto_crop_preview(*photo).is_some())
+            );
+            assert!(
+                editor
+                    .document
+                    .auto_crop_operation()
+                    .unwrap()
+                    .apply
+                    .is_some()
+            );
+            assert!(editor.document.analysis_review().is_none());
+            assert_eq!(editor.document.project, before);
+            assert_eq!(
+                editor.history_label(history::Direction::Undo),
+                before_history
+            );
+        });
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -447,8 +498,7 @@ fn retiring_a_photo_discards_its_crop_consumer_but_keeps_shared_regions_for_the_
             editor.document.visit.canvas.ready = Some(ready);
             editor.busy = false;
             editor.begin_crop();
-            editor.busy = true;
-            let draft = &mut editor.document.visit.crop_edit.as_mut().unwrap().draft;
+            let draft = &mut editor.document.crop_edit_mut().unwrap().draft;
             draft.size = [17, 19];
             *draft
         });
@@ -457,7 +507,7 @@ fn retiring_a_photo_discards_its_crop_consumer_but_keeps_shared_regions_for_the_
         app.update(|editor| {
             assert!(!editor.document.spatial.ready().groups.is_empty());
             assert_eq!(
-                editor.document.visit.crop_edit.as_ref().unwrap().draft,
+                editor.document.crop_edit().unwrap().draft,
                 replacement_draft
             );
         });
@@ -467,16 +517,14 @@ fn retiring_a_photo_discards_its_crop_consumer_but_keeps_shared_regions_for_the_
         app.run_until(LIMIT, |editor| {
             editor
                 .document
-                .visit
-                .crop_edit
-                .as_ref()
+                .crop_edit()
                 .unwrap()
                 .auto_crop_task
                 .is_none()
         });
         app.read(|editor| {
             assert_ne!(
-                editor.document.visit.crop_edit.as_ref().unwrap().draft,
+                editor.document.crop_edit().unwrap().draft,
                 replacement_draft,
                 "the retained regions must provide a usable proposal"
             );
@@ -497,7 +545,7 @@ fn failed_or_rejected_photo_region_preparation_can_retry_in_the_same_crop_visit(
                 editor.begin_crop();
                 editor.propose_photo_crop(editor.document.visit.current_source.unwrap(), cx);
             });
-            let before = app.read(|editor| editor.document.visit.crop_edit.as_ref().unwrap().draft);
+            let before = app.read(|editor| editor.document.crop_edit().unwrap().draft);
             if rejected_publication {
                 app.update(|editor| editor.document.spatial.cancel());
                 first.send(Ok(Some(metadata.clone()))).unwrap();
@@ -510,18 +558,13 @@ fn failed_or_rejected_photo_region_preparation_can_retry_in_the_same_crop_visit(
                 editor.document.spatial_preparing.is_none()
                     && editor
                         .document
-                        .visit
-                        .crop_edit
-                        .as_ref()
+                        .crop_edit()
                         .unwrap()
                         .auto_crop_task
                         .is_none()
             });
             let retry = app.enter(|editor, cx| {
-                assert_eq!(
-                    editor.document.visit.crop_edit.as_ref().unwrap().draft,
-                    before
-                );
+                assert_eq!(editor.document.crop_edit().unwrap().draft, before);
                 let retry = programmed(editor);
                 editor.propose_photo_crop(editor.document.visit.current_source.unwrap(), cx);
                 assert!(
@@ -534,19 +577,12 @@ fn failed_or_rejected_photo_region_preparation_can_retry_in_the_same_crop_visit(
             app.run_until(LIMIT, |editor| {
                 editor
                     .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
+                    .crop_edit()
                     .unwrap()
                     .auto_crop_task
                     .is_none()
             });
-            app.read(|editor| {
-                assert_ne!(
-                    editor.document.visit.crop_edit.as_ref().unwrap().draft,
-                    before
-                )
-            });
+            app.read(|editor| assert_ne!(editor.document.crop_edit().unwrap().draft, before));
         });
         scheduler.close_and_wait().unwrap();
     }

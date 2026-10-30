@@ -46,14 +46,12 @@ fn film_edge_exclusion_survives_authored_review_and_failure_preserves_the_accept
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_analysis(cx));
         app.run_until(LIMIT, |editor| {
-            editor.document.spatial_preparing.is_none()
-                && editor.document.analysis_preparing.is_none()
+            editor.document.spatial_preparing.is_none() && !editor.analysis_preparing()
         });
         app.read(|editor| {
             let review = editor
                 .document
-                .analysis_review
-                .as_ref()
+                .analysis_review()
                 .expect("interactive sampling review");
             assert_eq!(
                 review.approved.entries, accepted.analysis_regions,
@@ -67,7 +65,7 @@ fn film_edge_exclusion_survives_authored_review_and_failure_preserves_the_accept
                 editor.status.contains("only 40 of 40 picture samples are eligible; need 512"),
                 "{}", editor.status
             );
-            assert!(editor.document.analysis_review.is_none());
+            assert!(editor.document.analysis_review().is_none());
             assert_eq!(
                 editor.document.state.project, accepted,
                 "insufficient interior must not accept areas, skip a photograph or install a partial grade"
@@ -134,7 +132,7 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.enter(|editor, _| editor.finish_auto_crop(true));
-        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit.is_none());
+        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_none());
         let accepted = app.read(|editor| {
             let crop = editor
                 .document
@@ -153,8 +151,7 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
         });
         app.enter(|editor, cx| editor.request_analysis(cx));
         app.run_until(LIMIT, |editor| {
-            editor.document.spatial_preparing.is_none()
-                && editor.document.analysis_preparing.is_none()
+            editor.document.spatial_preparing.is_none() && !editor.analysis_preparing()
         });
         app.enter(|editor, cx| editor.confirm_analysis_review(cx));
         app.run_until(LIMIT, |editor| !editor.busy);
@@ -227,14 +224,12 @@ fn analyze_uses_an_independent_shared_picture_inset_and_preserves_authored_sampl
     with_application(editor, |app| {
         app.enter(|editor, cx| editor.request_analysis(cx));
         app.run_until(LIMIT, |editor| {
-            editor.document.spatial_preparing.is_none()
-                && editor.document.analysis_preparing.is_none()
+            editor.document.spatial_preparing.is_none() && !editor.analysis_preparing()
         });
         app.read(|editor| {
             let review = editor
                 .document
-                .analysis_review
-                .as_ref()
+                .analysis_review()
                 .expect("shared-prepared sampling review");
             // The declared source bounds are120..392 /128..384. Two evidence pixels
             // map to1.9375source pixels here, rounded conservatively to two per side.

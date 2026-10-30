@@ -83,7 +83,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         let source = h.read(|editor| editor.document.visit.current_source.unwrap());
         let project = h.read(|editor| editor.document.state.project.clone());
         h.read(|editor| assert!(editor.document.dirty()));
-        h.read(|editor| assert!(editor.document.visit.dust.cleanup));
+        h.read(|editor| assert!(editor.document.dust().is_some()));
         h.read(|editor| assert!(editor.active_pick().is_none()));
         assert!(
             h.get_by_label("Reset dust repairs")
@@ -365,7 +365,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         ready(&mut h, 0);
         h.get_by_label("Done").click();
         h.step();
-        h.read(|editor| assert!(!editor.document.visit.dust.cleanup));
+        h.read(|editor| assert!(!editor.document.dust().is_some()));
         h.read(|editor| assert!(!editor.document.visit.dust.show_masks));
     });
 }
@@ -392,7 +392,7 @@ fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
         assert!(h.get_by_label("View source").accesskit_node().is_disabled());
         h.get_by_label("View source").click();
         h.step();
-        h.read(|editor| assert!(!editor.document.source && editor.document.visit.dust.cleanup));
+        h.read(|editor| assert!(!editor.document.source && editor.document.dust().is_some()));
         key(&mut h, egui::Key::F);
         h.read(|editor| assert!(editor.fullscreen.is_some()));
         let brush = h.read(|editor| editor.document.visit.dust.brush_size);
@@ -403,7 +403,7 @@ fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
         h.update(|editor| editor.fullscreen_changed(false));
         h.step();
         h.read(|editor| assert!(editor.fullscreen.is_none()));
-        h.read(|editor| assert!(editor.document.visit.dust.cleanup));
+        h.read(|editor| assert!(editor.document.dust().is_some()));
         h.read(|editor| assert_eq!(editor.document.state.project, project));
         h.get_by_label("Done").click();
         h.step();
@@ -469,7 +469,7 @@ fn navigating_back_to_a_repaired_photo_keeps_inactive_dust_artwork_hidden() {
         });
         ready(&mut h, 1);
         h.read(|editor| {
-            assert!(!editor.document.visit.dust.cleanup);
+            assert!(!editor.document.dust().is_some());
             assert_eq!(editor.dust_repairs(source).unwrap().repairs().len(), 1);
         });
         assert!(

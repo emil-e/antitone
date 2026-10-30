@@ -17,7 +17,7 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) {
         if self.busy
-            || self.document.visit.crop_edit.is_none()
+            || self.document.crop_edit().is_none()
             || self.document.visit.canvas.ready.is_none()
             || self.document.visit.current_source != Some(photo)
         {
@@ -31,9 +31,7 @@ impl Editor {
             cx.update(|editor| {
                 editor
                     .document
-                    .visit
-                    .crop_edit
-                    .as_mut()
+                    .crop_edit_mut()
                     .expect("live Crop action")
                     .auto_crop_task = None;
                 if prepared.is_some() {
@@ -41,12 +39,7 @@ impl Editor {
                 }
             });
         });
-        self.document
-            .visit
-            .crop_edit
-            .as_mut()
-            .unwrap()
-            .auto_crop_task = task;
+        self.document.crop_edit_mut().unwrap().auto_crop_task = task;
     }
 
     pub(in crate::editor) fn review_crop_proposals(
@@ -55,32 +48,32 @@ impl Editor {
         scope: &'static str,
         cx: &UiContext<'_, Self>,
     ) {
-        if photos.is_empty()
-            || !self.auto_crop_entry_available()
-            || self.document.auto_crop_operation.is_some()
-        {
+        if photos.is_empty() || !self.auto_crop_entry_available() {
+            return;
+        }
+        if !self.prepare_tool() {
             return;
         }
         let Some(regions) = self.prepare_regions(cx) else {
             return;
         };
-        self.document.auto_crop_operation = Some(Operation::default());
+        self.document
+            .set_auto_crop_operation(Some(Operation::default()));
         let task = cx.spawn(move |cx| async move {
             if regions.await.is_none() {
-                cx.update(|editor| editor.document.auto_crop_operation = None);
+                cx.update(|editor| editor.document.set_auto_crop_operation(None));
                 return;
             }
             cx.update(|editor| editor.begin_auto_crop_review(photos, scope));
             loop {
                 let (apply, decision) = oneshot::channel();
                 let reviewing = cx.update(|editor| {
-                    if editor.document.auto_crop_edit.is_none() {
+                    if editor.document.auto_crop_edit().is_none() {
                         return false;
                     }
                     editor
                         .document
-                        .auto_crop_operation
-                        .as_mut()
+                        .auto_crop_operation_mut()
                         .expect("live Auto-crop action")
                         .apply = Some(apply);
                     true
@@ -103,12 +96,12 @@ impl Editor {
                     break;
                 }
             }
-            cx.update(|editor| editor.document.auto_crop_operation = None);
+            cx.update(|editor| editor.document.set_auto_crop_operation(None));
         });
         if let Some(task) = task {
-            self.document.auto_crop_operation.as_mut().unwrap().task = Some(task);
+            self.document.auto_crop_operation_mut().unwrap().task = Some(task);
         } else {
-            self.document.auto_crop_operation = None;
+            self.document.set_auto_crop_operation(None);
         }
     }
 }

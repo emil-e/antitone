@@ -116,16 +116,33 @@ impl Editor {
     #[cfg(test)]
     pub(in crate::editor) fn pending_dust_strokes(&self) -> Vec<PendingStroke> {
         self.document
-            .visit
-            .dust
-            .searches
-            .pending()
+            .dust()
+            .into_iter()
+            .flat_map(|cleanup| cleanup.searches.pending())
             .map(|pending| (*pending.stroke).clone())
             .collect()
     }
 
     pub(in crate::editor) fn dust_search_pending(&self) -> bool {
-        !self.document.visit.dust.searches.is_empty()
+        self.document
+            .dust()
+            .is_some_and(|cleanup| !cleanup.searches.is_empty())
+    }
+
+    pub(super) fn dust_target_pending(&self, source: SourceId, repair: RepairId) -> bool {
+        self.document
+            .dust()
+            .is_some_and(|cleanup| cleanup.searches.has_target(source, repair))
+    }
+
+    pub(super) fn dust_pending_supports(
+        &self,
+        source: SourceId,
+    ) -> impl Iterator<Item = &SupportMask> {
+        self.document
+            .dust()
+            .into_iter()
+            .flat_map(move |cleanup| cleanup.searches.supports(source))
     }
 
     pub(super) fn find_dust_donor(
@@ -155,14 +172,28 @@ impl Editor {
         if previous.is_none() {
             self.document.dust.selected.remove(&source);
         }
-        self.document.visit.dust.searches.prune();
-        self.document.visit.dust.searches.manual_selection(source);
+        self.document
+            .dust_mut()
+            .expect("active Dust cleanup")
+            .searches
+            .prune();
+        self.document
+            .dust_mut()
+            .expect("active Dust cleanup")
+            .searches
+            .manual_selection(source);
         let model = stroke.clone();
         match cx.spawn(move |cx| apply_stroke(input, stroke, active, cx)) {
-            Some(task) => self.document.visit.dust.searches.tasks.push(Pending {
-                stroke: model,
-                task,
-            }),
+            Some(task) => self
+                .document
+                .dust_mut()
+                .expect("active Dust cleanup")
+                .searches
+                .tasks
+                .push(Pending {
+                    stroke: model,
+                    task,
+                }),
             None => self.status = "Dust stroke not accepted: Application stopped".into(),
         }
     }
@@ -187,7 +218,7 @@ impl Editor {
             ),
         }
         .map_err(|error| error.to_string())?;
-        if stroke.select.get() && self.document.visit.dust.mask_draft.is_none() {
+        if stroke.select.get() && self.document.dust_mask_draft().is_none() {
             self.document.dust.selected.insert(source, repair);
         }
         self.dust_repair_changed(source, repair);

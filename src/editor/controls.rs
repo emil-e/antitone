@@ -489,62 +489,65 @@ pub(super) fn photographic_colour(
     ui: &mut Ui,
     photo: &mut crate::adjustment_layers::AdjustmentLayerSettings,
     can_pick: bool,
+    editable: bool,
 ) -> bool {
-    let pick = white_balance(ui, "photo-white-balance", &mut photo.wb, can_pick);
-    let defaults = crate::adjustment_layers::AdjustmentLayerSettings::default();
-    let changed = photo.contrast != defaults.contrast
-        || photo.pivot != defaults.pivot
-        || photo.contrast_colour_mix != defaults.contrast_colour_mix;
-    let (_, action) = section(
-        ui,
-        "photo-contrast",
-        "Contrast",
-        SectionHeader {
-            summary: &format!(
-                "{:.2} · Pivot {:.3} · Preserve {:.2}",
-                photo.contrast, photo.pivot, photo.contrast_colour_mix
-            ),
-            changed,
-            reset: Some(changed),
-            tool: None,
-            default_open: Some(true),
-        },
-        |ui| {
-            parameter(ui, Parameter::Contrast, &mut photo.contrast);
-            parameter(ui, Parameter::Pivot, &mut photo.pivot);
-            parameter(ui, Parameter::ColourMix, &mut photo.contrast_colour_mix);
-        },
-    );
-    if action.reset && !defer_reset(ui, Reset::Contrast) {
-        photo.contrast = defaults.contrast;
-        photo.pivot = defaults.pivot;
-        photo.contrast_colour_mix = defaults.contrast_colour_mix;
-    }
-    let changed = photo.saturation != defaults.saturation
-        || photo.saturation_density != defaults.saturation_density;
-    let (_, action) = section(
-        ui,
-        "photo-saturation",
-        "Saturation",
-        SectionHeader {
-            summary: &format!(
-                "{:.2} · Density {:.2}",
-                photo.saturation, photo.saturation_density
-            ),
-            changed,
-            reset: Some(changed),
-            tool: None,
-            default_open: Some(true),
-        },
-        |ui| {
-            parameter(ui, Parameter::Saturation, &mut photo.saturation);
-            parameter(ui, Parameter::Density, &mut photo.saturation_density);
-        },
-    );
-    if action.reset && !defer_reset(ui, Reset::Saturation) {
-        photo.saturation = defaults.saturation;
-        photo.saturation_density = defaults.saturation_density;
-    }
+    let pick = white_balance(ui, "photo-white-balance", &mut photo.wb, editable, can_pick);
+    ui.add_enabled_ui(editable, |ui| {
+        let defaults = crate::adjustment_layers::AdjustmentLayerSettings::default();
+        let changed = photo.contrast != defaults.contrast
+            || photo.pivot != defaults.pivot
+            || photo.contrast_colour_mix != defaults.contrast_colour_mix;
+        let (_, action) = section(
+            ui,
+            "photo-contrast",
+            "Contrast",
+            SectionHeader {
+                summary: &format!(
+                    "{:.2} · Pivot {:.3} · Preserve {:.2}",
+                    photo.contrast, photo.pivot, photo.contrast_colour_mix
+                ),
+                changed,
+                reset: Some(changed),
+                tool: None,
+                default_open: Some(true),
+            },
+            |ui| {
+                parameter(ui, Parameter::Contrast, &mut photo.contrast);
+                parameter(ui, Parameter::Pivot, &mut photo.pivot);
+                parameter(ui, Parameter::ColourMix, &mut photo.contrast_colour_mix);
+            },
+        );
+        if action.reset && !defer_reset(ui, Reset::Contrast) {
+            photo.contrast = defaults.contrast;
+            photo.pivot = defaults.pivot;
+            photo.contrast_colour_mix = defaults.contrast_colour_mix;
+        }
+        let changed = photo.saturation != defaults.saturation
+            || photo.saturation_density != defaults.saturation_density;
+        let (_, action) = section(
+            ui,
+            "photo-saturation",
+            "Saturation",
+            SectionHeader {
+                summary: &format!(
+                    "{:.2} · Density {:.2}",
+                    photo.saturation, photo.saturation_density
+                ),
+                changed,
+                reset: Some(changed),
+                tool: None,
+                default_open: Some(true),
+            },
+            |ui| {
+                parameter(ui, Parameter::Saturation, &mut photo.saturation);
+                parameter(ui, Parameter::Density, &mut photo.saturation_density);
+            },
+        );
+        if action.reset && !defer_reset(ui, Reset::Saturation) {
+            photo.saturation = defaults.saturation;
+            photo.saturation_density = defaults.saturation_density;
+        }
+    });
     pick
 }
 
@@ -674,7 +677,13 @@ fn wheel_size(available: f32) -> f32 {
     (available * 0.22).clamp(60., 76.)
 }
 
-pub fn white_balance(ui: &mut Ui, id: &str, value: &mut Balance, can_pick: bool) -> bool {
+pub fn white_balance(
+    ui: &mut Ui,
+    id: &str,
+    value: &mut Balance,
+    editable: bool,
+    can_pick: bool,
+) -> bool {
     let changed = *value != Balance::default();
     let (_, action) = section(
         ui,
@@ -683,14 +692,18 @@ pub fn white_balance(ui: &mut Ui, id: &str, value: &mut Balance, can_pick: bool)
         SectionHeader {
             summary: &format!("Warmth {:+.2} · Tint {:+.2}", value.warmth, value.tint),
             changed,
-            reset: Some(changed),
+            reset: Some(changed && editable),
             tool: Some(balance_pick_tool(
                 can_pick,
                 "Pick neutral for white balance",
             )),
             default_open: Some(true),
         },
-        |ui| balance_body(ui, ColorControl::WhiteBalance, value),
+        |ui| {
+            ui.add_enabled_ui(editable, |ui| {
+                balance_body(ui, ColorControl::WhiteBalance, value)
+            });
+        },
     );
 
     if action.reset && !defer_reset(ui, Reset::Balance(ColorControl::WhiteBalance)) {

@@ -155,15 +155,7 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
         editor.begin_crop();
         warm(&mut editor, &context, size);
         assert_eq!(
-            editor
-                .document
-                .visit
-                .crop_edit
-                .as_ref()
-                .unwrap()
-                .layout
-                .unwrap()
-                .canvas,
+            editor.document.crop_edit().unwrap().layout.unwrap().canvas,
             canvas
         );
         editor.finish_crop(false);
@@ -209,9 +201,7 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                         warm(editor, &context, size);
                         let canvas = editor
                             .document
-                            .visit
-                            .crop_edit
-                            .as_ref()
+                            .crop_edit()
                             .and_then(|edit| edit.layout)
                             .or(editor
                                 .document
@@ -367,12 +357,7 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
         editor.document.visit.canvas.viewport.zoom = Some(2.);
         warm(&mut editor, &context, size);
         let viewport = editor.document.visit.canvas.viewport;
-        let draft = editor
-            .document
-            .visit
-            .crop_edit
-            .as_ref()
-            .map(|edit| edit.draft);
+        let draft = editor.document.crop_edit().map(|edit| edit.draft);
         let region = editor.pick_region();
         let text = labels(&mut editor, &context, size, vec![]);
         let title = text
@@ -402,15 +387,7 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
         );
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert_eq!(editor.pick_region(), region);
-        assert_eq!(
-            editor
-                .document
-                .visit
-                .crop_edit
-                .as_ref()
-                .map(|edit| edit.draft),
-            draft
-        );
+        assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
         let help = text
             .iter()
             .find(|(s, _)| s == "Viewer help")
@@ -421,9 +398,7 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
         assert!(egui::Popup::is_any_open(&context));
         let canvas = editor
             .document
-            .visit
-            .crop_edit
-            .as_ref()
+            .crop_edit()
             .and_then(|edit| edit.layout)
             .or(editor
                 .document
@@ -451,9 +426,9 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
         assert_eq!(editor.pick_region(), region);
         frame(&mut editor, &context, size, key(egui::Key::Escape));
         assert!(!egui::Popup::is_any_open(&context));
-        assert!(editor.document.visit.crop_edit.is_some() || editor.active_pick().is_some());
+        assert!(editor.document.crop_edit().is_some() || editor.active_pick().is_some());
         frame(&mut editor, &context, size, key(egui::Key::Escape));
-        assert!(editor.document.visit.crop_edit.is_none() && editor.active_pick().is_none());
+        assert!(editor.document.crop_edit().is_none() && editor.active_pick().is_none());
     }
 }
 
@@ -466,14 +441,7 @@ fn viewer_requests_a_native_rotation_cursor_and_restores_it_on_popup_and_crop_ex
     let context = egui::Context::default();
     let size = egui::vec2(800., 600.);
     warm(&mut editor, &context, size);
-    let layout = editor
-        .document
-        .visit
-        .crop_edit
-        .as_ref()
-        .unwrap()
-        .layout
-        .unwrap();
+    let layout = editor.document.crop_edit().unwrap().layout.unwrap();
     let point = layout.image.right_center() + egui::vec2(18., 0.);
     assert!(layout.canvas.contains(point));
     let output = frame(
@@ -495,21 +463,18 @@ fn viewer_requests_a_native_rotation_cursor_and_restores_it_on_popup_and_crop_ex
         output.platform_output.cursor_icon,
         egui::CursorIcon::Crosshair
     );
-    let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
+    let draft = editor.document.crop_edit().unwrap().draft;
     egui::Popup::open_id(&context, egui::Id::new("rotation-cursor-popup"));
     let blocked = frame(&mut editor, &context, size, vec![]);
     assert!(blocked.platform_output.cursor_image.is_none());
     assert_ne!(blocked.platform_output.cursor_icon, egui::CursorIcon::None);
-    assert_eq!(
-        editor.document.visit.crop_edit.as_ref().unwrap().draft,
-        draft
-    );
+    assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     egui::Popup::close_all(&context);
     editor.finish_crop(false);
     let exited = frame(&mut editor, &context, size, vec![]);
     assert!(exited.platform_output.cursor_image.is_none());
     assert_ne!(exited.platform_output.cursor_icon, egui::CursorIcon::None);
-    assert!(editor.document.visit.crop_edit.is_none());
+    assert!(editor.document.crop_edit().is_none());
 }
 
 #[test]
@@ -520,15 +485,8 @@ fn bottom_crop_handles_are_unobstructed_without_reframing_or_docking() {
         let context = egui::Context::default();
         editor.begin_crop();
         warm(&mut editor, &context, size);
-        let layout = editor
-            .document
-            .visit
-            .crop_edit
-            .as_ref()
-            .unwrap()
-            .layout
-            .unwrap();
-        let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
+        let layout = editor.document.crop_edit().unwrap().layout.unwrap();
+        let draft = editor.document.crop_edit().unwrap().draft;
         let viewport = editor.document.visit.canvas.viewport;
         let text = labels(&mut editor, &context, size, vec![]);
         for name in ["Apply", "Cancel"] {
@@ -551,10 +509,7 @@ fn bottom_crop_handles_are_unobstructed_without_reframing_or_docking() {
             size,
             pointer(handle - egui::vec2(0., 20.), false),
         );
-        assert_ne!(
-            editor.document.visit.crop_edit.as_ref().unwrap().draft,
-            draft
-        );
+        assert_ne!(editor.document.crop_edit().unwrap().draft, draft);
         editor.finish_crop(false);
     }
 }
@@ -618,31 +573,15 @@ fn numeric_enter_and_escape_are_handled_before_picker_or_crop_shortcuts() {
         frame(&mut editor, &context, size, key(egui::Key::Enter));
         frame(&mut editor, &context, size, vec![]);
         assert!(!editor.busy);
-        assert!(editor.document.visit.crop_edit.is_some() || editor.active_pick().is_some());
+        assert!(editor.document.crop_edit().is_some() || editor.active_pick().is_some());
         if cropping {
-            assert!(
-                editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .unwrap()
-                    .draft
-                    .angle
-                    .abs()
-                    > 0.1
-            );
+            assert!(editor.document.crop_edit().unwrap().draft.angle.abs() > 0.1);
         } else {
             assert_eq!(editor.source_exposure, 12.);
         }
         let accepted = (
             editor.pick_region(),
-            editor
-                .document
-                .visit
-                .crop_edit
-                .as_ref()
-                .map(|edit| edit.draft),
+            editor.document.crop_edit().map(|edit| edit.draft),
             editor.source_exposure,
         );
         let text = labels(&mut editor, &context, size, vec![]);
@@ -664,12 +603,7 @@ fn numeric_enter_and_escape_are_handled_before_picker_or_crop_shortcuts() {
         assert_eq!(
             (
                 editor.pick_region(),
-                editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .map(|edit| edit.draft),
+                editor.document.crop_edit().map(|edit| edit.draft),
                 editor.source_exposure
             ),
             accepted,
@@ -680,17 +614,12 @@ fn numeric_enter_and_escape_are_handled_before_picker_or_crop_shortcuts() {
         assert_eq!(
             (
                 editor.pick_region(),
-                editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .map(|edit| edit.draft),
+                editor.document.crop_edit().map(|edit| edit.draft),
                 editor.source_exposure
             ),
             accepted
         );
-        assert!(editor.document.visit.crop_edit.is_some() || editor.active_pick().is_some());
+        assert!(editor.document.crop_edit().is_some() || editor.active_pick().is_some());
     }
 }
 
@@ -722,12 +651,12 @@ fn crop_numeric_cancellation_survives_hiding_and_reopening_composition() {
     editor.scopes.visible = false;
     editor.begin_crop();
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-    editor.document.visit.crop_edit.as_mut().unwrap().draft = Crop::from_region(area)
+    editor.document.crop_edit_mut().unwrap().draft = Crop::from_region(area)
         .straightened(area, 0.123456789)
         .unwrap();
     let context = egui::Context::default();
     warm(&mut editor, &context, size);
-    let draft = editor.document.visit.crop_edit.as_ref().unwrap().draft;
+    let draft = editor.document.crop_edit().unwrap().draft;
     let viewport = editor.document.visit.canvas.viewport;
     let project = editor.document.state.project.clone();
     let text = labels(&mut editor, &context, size, vec![]);
@@ -771,10 +700,7 @@ fn crop_numeric_cancellation_survives_hiding_and_reopening_composition() {
     );
     warm(&mut editor, &context, size);
     assert_eq!(editor.tab, 1);
-    assert_eq!(
-        editor.document.visit.crop_edit.as_ref().unwrap().draft,
-        draft
-    );
+    assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
     assert_eq!(editor.document.state.project, project);
     let text = labels(&mut editor, &context, size, vec![]);
@@ -807,7 +733,7 @@ fn crop_numeric_cancellation_survives_hiding_and_reopening_composition() {
         vec![egui::Event::Text("8.125".into())],
     );
     frame(&mut editor, &context, size, key(egui::Key::Enter));
-    let edited = editor.document.visit.crop_edit.as_ref().unwrap().draft;
+    let edited = editor.document.crop_edit().unwrap().draft;
     let edited_viewport = editor.document.visit.canvas.viewport;
     assert_eq!(
         -edited.angle
@@ -832,10 +758,7 @@ fn crop_numeric_cancellation_survives_hiding_and_reopening_composition() {
             .center(),
     );
     warm(&mut editor, &context, size);
-    assert_eq!(
-        editor.document.visit.crop_edit.as_ref().unwrap().draft,
-        edited
-    );
+    assert_eq!(editor.document.crop_edit().unwrap().draft, edited);
     assert_eq!(editor.document.visit.canvas.viewport, edited_viewport);
     assert_eq!(editor.document.state.project, project);
 }
@@ -875,12 +798,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                         height: 32,
                     })));
                 }
-                let draft = editor
-                    .document
-                    .visit
-                    .crop_edit
-                    .as_ref()
-                    .map(|edit| edit.draft);
+                let draft = editor.document.crop_edit().map(|edit| edit.draft);
                 let region = editor.pick_region();
                 let mut view = None;
                 for tab in 0..3 {
@@ -908,9 +826,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                     let text = ui_labels(output.clone());
                     let current_canvas = editor
                         .document
-                        .visit
-                        .crop_edit
-                        .as_ref()
+                        .crop_edit()
                         .and_then(|edit| edit.layout)
                         .or(editor
                             .document
@@ -959,15 +875,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                         assert!((angle.right() - guides.right()).abs() < 0.5);
                         assert!(aspect.bottom() < angle.top() && angle.bottom() < guides.top());
                     }
-                    assert_eq!(
-                        editor
-                            .document
-                            .visit
-                            .crop_edit
-                            .as_ref()
-                            .map(|edit| edit.draft),
-                        draft
-                    );
+                    assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
                     assert_eq!(editor.pick_region(), region);
                     assert_eq!(
                         editor.document.visit.canvas.viewport,
@@ -983,9 +891,7 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
                     size,
                     text.iter().find(|(s, _)| s == "Cancel").unwrap().1.center(),
                 );
-                assert!(
-                    editor.document.visit.crop_edit.is_none() && editor.active_pick().is_none()
-                );
+                assert!(editor.document.crop_edit().is_none() && editor.active_pick().is_none());
                 assert_eq!(editor.document.source, source);
                 assert_eq!(editor.document.state.project, project);
                 assert_eq!(editor.preferences.sections.get(section), Some(&false));
@@ -1219,12 +1125,7 @@ fn geometry_busy_guards_and_crop_apply_use_the_original_transactions() {
                 height: 32,
             })));
         }
-        let draft = editor
-            .document
-            .visit
-            .crop_edit
-            .as_ref()
-            .map(|edit| edit.draft);
+        let draft = editor.document.crop_edit().map(|edit| edit.draft);
         editor.busy = true;
         let output = frame(&mut editor, &context, size, vec![]);
         for name in ["Cancel", "Apply"] {
@@ -1243,15 +1144,7 @@ fn geometry_busy_guards_and_crop_apply_use_the_original_transactions() {
             );
         }
         frame(&mut editor, &context, size, key(egui::Key::Escape));
-        assert_eq!(
-            editor
-                .document
-                .visit
-                .crop_edit
-                .as_ref()
-                .map(|edit| edit.draft),
-            draft
-        );
+        assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
         // Flat Apply is exercised with a live workflow, not a render-only fixture.
         if cropping {
             editor.busy = false;
@@ -1262,7 +1155,7 @@ fn geometry_busy_guards_and_crop_apply_use_the_original_transactions() {
                 size,
                 text.iter().find(|(s, _)| s == "Apply").unwrap().1.center(),
             );
-            assert!(editor.document.visit.crop_edit.is_none());
+            assert!(editor.document.crop_edit().is_none());
             assert!(editor.document.visit.canvas.viewport.zoom.is_none());
         }
     }
@@ -1358,7 +1251,7 @@ fn uncalibrated_view_remains_source_only_with_the_positive_toggle_disabled() {
 }
 
 #[test]
-fn photo_tool_shelf_keeps_only_the_active_crop_button_available_during_a_crop() {
+fn photo_tool_shelf_keeps_replacement_tools_available_during_a_crop() {
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     editor.tab = 1;
@@ -1373,7 +1266,6 @@ fn photo_tool_shelf_keeps_only_the_active_crop_button_available_during_a_crop() 
         "Turn right",
         "Flip horizontal",
         "Flip vertical",
-        "Dust repair",
     ] {
         assert!(
             nodes
@@ -1390,6 +1282,14 @@ fn photo_tool_shelf_keeps_only_the_active_crop_button_available_during_a_crop() 
         .unwrap()
         .1;
     assert!(!crop.is_disabled());
+    assert!(
+        !nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Dust repair"))
+            .unwrap()
+            .1
+            .is_disabled()
+    );
     assert_eq!(crop.is_selected(), Some(true));
 }
 

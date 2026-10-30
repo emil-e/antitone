@@ -35,7 +35,7 @@ pub(super) fn setup<'scope>(
             }
         };
         cx.update(|editor| {
-            let edit = editor.document.flat_edit.as_mut().expect("live Flat setup");
+            let edit = editor.document.flat_edit_mut().expect("live Flat setup");
             edit.region = edit
                 .region
                 .or(reference.region.map(super::Coverage::rectangle));

@@ -83,7 +83,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
             (e.history_snapshot(), e.document.visit.view)
         });
         begin(app, "bare-light.dng");
-        assert!(app.read(|e| e.document.flat_edit.as_ref().unwrap().task.is_some()));
+        assert!(app.read(|e| e.document.flat_edit().unwrap().task.is_some()));
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
@@ -95,7 +95,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
         wait(app);
         app.read(|e| {
             assert!(e.document.correction.is_some(), "{}", e.status);
-            assert!(e.document.flat_edit.is_none() && e.document_pending.is_none());
+            assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
             assert_eq!(e.document.state.project.order, before.order);
             assert_eq!(e.document.visit.canvas.viewport.zoom, Some(1.375));
             assert_eq!(
@@ -168,7 +168,7 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
             app.read(|e| {
                 assert_eq!(e.document.state.project, before);
                 assert!(!e.busy && e.document_pending.is_none());
-                assert!(e.document.flat_edit.is_none());
+                assert!(e.document.flat_edit().is_none());
             });
             app.enter(|e, cx| {
                 e.start_document(crate::editor::Preparation::New, cx);
@@ -221,7 +221,7 @@ fn failed_document_change_ends_reference_setup_without_displacing_the_working_vi
             );
         });
         let operation = app.read(|e| {
-            assert!(e.document.flat_edit.is_none());
+            assert!(e.document.flat_edit().is_none());
             assert!(e.document.visit.canvas.ready.is_some());
             e.document_pending.unwrap()
         });
@@ -231,7 +231,7 @@ fn failed_document_change_ends_reference_setup_without_displacing_the_working_vi
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(e.document.flat_edit.is_none() && e.document.correction.is_none());
+            assert!(e.document.flat_edit().is_none() && e.document.correction.is_none());
             assert!(Arc::ptr_eq(
                 &pixels,
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed
@@ -307,7 +307,7 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
             e.source_epoch.store(visit, Ordering::Relaxed);
             e.replace_photo_scope(visit);
             assert!(e.document.visit.canvas.ready.is_none());
-            assert!(e.document.flat_edit.as_ref().unwrap().view.ready.is_some());
+            assert!(e.document.flat_edit().unwrap().view.ready.is_some());
         });
         apply(app);
         assert!(app.read(|e| e.document_pending.is_some()));
@@ -361,7 +361,7 @@ fn ending_setup_after_apply_finishes_its_commit_activity_after_a_visit_change() 
         });
         app.pump();
         app.read(|e| {
-            assert!(e.document.flat_edit.is_none() && e.document_pending.is_none());
+            assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
             assert!(!e.busy && e.tasks.view().is_none());
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
@@ -411,7 +411,7 @@ fn reference_failure_after_a_visit_change_finishes_its_own_preparation_activity(
         });
         wait(app);
         app.read(|e| {
-            assert!(e.document.flat_edit.is_none() && e.tasks.view().is_none());
+            assert!(e.document.flat_edit().is_none() && e.tasks.view().is_none());
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
@@ -448,7 +448,7 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(e.document.flat_edit.is_none() && e.document.correction.is_none());
+            assert!(e.document.flat_edit().is_none() && e.document.correction.is_none());
             assert_eq!(
                 e.failure.as_ref().unwrap().kind,
                 FailureKind::FlatCorrection
@@ -478,11 +478,11 @@ fn missing_reference_services_finish_activity_and_preserve_accepted_state() {
     with_application(e, |app| {
         let before = app.update(|e| e.history_snapshot());
         begin(app, "bare-light.dng");
-        assert!(app.read(|e| e.busy && e.document.flat_edit.as_ref().unwrap().task.is_some()));
+        assert!(app.read(|e| e.busy && e.document.flat_edit().unwrap().task.is_some()));
         wait(app);
         app.read(|e| {
             assert!(!e.busy && e.tasks.view().is_none());
-            assert!(e.document.flat_edit.is_none());
+            assert!(e.document.flat_edit().is_none());
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
             assert!(Arc::ptr_eq(
@@ -517,13 +517,13 @@ fn ending_setup_while_waiting_for_support_leaves_the_working_view_and_allows_a_n
         begin(app, "bare-light.dng");
         wait(app);
         app.update(|e| {
-            let edit = e.document.flat_edit.as_mut().unwrap();
+            let edit = e.document.flat_edit_mut().unwrap();
             assert!(!edit.task.as_ref().unwrap().is_finished());
             e.finish_flat_edit();
         });
         app.pump();
         app.read(|e| {
-            assert!(e.document.flat_edit.is_none() && !e.busy && e.tasks.view().is_none());
+            assert!(e.document.flat_edit().is_none() && !e.busy && e.tasks.view().is_none());
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert_eq!(e.document.source, source);
@@ -557,8 +557,7 @@ fn retired_setup_cleanup_does_not_end_a_new_reference_interaction() {
         app.read(|e| {
             let edit = e
                 .document
-                .flat_edit
-                .as_ref()
+                .flat_edit()
                 .expect("replacement setup remains active");
             assert!(edit.view.ready.is_some());
             assert!(!edit.task.as_ref().unwrap().is_finished());
@@ -651,7 +650,7 @@ fn setup_uses_its_captured_source_capability_after_waiting_for_the_user() {
         wait(app);
         app.read(|e| {
             assert!(e.document.correction.is_some(), "{}", e.status);
-            assert!(e.document.flat_edit.is_none());
+            assert!(e.document.flat_edit().is_none());
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
                 Some("Correction")
@@ -783,7 +782,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             }
             app.read(|e| {
                 assert!(e.busy && e.document_pending.is_some());
-                assert!(e.document.flat_edit.as_ref().unwrap().task.is_some());
+                assert!(e.document.flat_edit().unwrap().task.is_some());
                 assert_eq!(e.document.state.project, before);
             });
             let busy = frame(app, &context, vec![])
@@ -801,13 +800,13 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 );
             }
             frame(app, &context, key(egui::Key::Escape));
-            assert!(app.read(|e| e.document.flat_edit.is_some() && e.busy));
+            assert!(app.read(|e| e.document.flat_edit().is_some() && e.busy));
             // The first executor turn after Apply completes all service stages
             // and the return transaction without invoking UI or a starter list.
             wait(app);
             app.read(|e| {
                 assert!(e.document.correction.is_some(), "{}", e.status);
-                assert!(e.document.flat_edit.is_none() && e.document_pending.is_none());
+                assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
                 assert_eq!(e.document.visit.current_source, selected);
                 assert_eq!(e.document.visit.canvas.viewport, viewport);
                 assert_eq!(e.document.source, source);
@@ -837,7 +836,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 click(app, &context, "Cancel");
             }
             app.read(|e| {
-                assert!(e.document.flat_edit.is_none() && !e.busy);
+                assert!(e.document.flat_edit().is_none() && !e.busy);
                 assert_eq!(e.document.state.project, accepted);
                 assert_eq!(e.document.visit.current_source, selected);
                 assert_eq!(e.document.visit.canvas.viewport, viewport);
@@ -863,11 +862,13 @@ fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
             } else {
                 begin(app, "bare-light.dng");
             }
-            assert!(app.read(|e| e.document.flat_edit.as_ref().unwrap().task.is_some()));
+            assert!(app.read(|e| e.document.flat_edit().unwrap().task.is_some()));
             app.update(Editor::finish_flat_edit);
             app.pump();
             app.read(|e| {
-                assert!(e.document.flat_edit.is_none() && !e.busy && e.document_pending.is_none());
+                assert!(
+                    e.document.flat_edit().is_none() && !e.busy && e.document_pending.is_none()
+                );
                 assert_eq!(e.document.state.project, before);
             });
             if accept {
@@ -881,7 +882,9 @@ fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
                 begin(app, "bare-light.dng");
             }
             app.read(|e| {
-                assert!(e.document.flat_edit.is_none() && !e.busy && e.document_pending.is_none());
+                assert!(
+                    e.document.flat_edit().is_none() && !e.busy && e.document_pending.is_none()
+                );
                 assert_eq!(e.document.state.project, before);
                 assert_eq!(
                     e.failure.as_ref().unwrap().kind,

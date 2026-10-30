@@ -77,7 +77,7 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
             hold_drag(&mut harness, center, center + egui::vec2(0.01, 0.02));
             harness.read(|editor| {
                 assert!(
-                    editor.document.visit.mask_edit.as_ref().unwrap().valid(),
+                    editor.document.mask_edit().unwrap().valid(),
                     "no arbitrary small-radius floor"
                 )
             });
@@ -92,13 +92,8 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
                 .composition
                 .frame_to_source(layout.frame_point(pressed));
             drag(&mut harness, pressed, pressed + egui::vec2(70., 45.));
-            harness.read(|editor| {
-                assert!(
-                    editor.document.visit.mask_edit.is_none(),
-                    "{}",
-                    editor.status
-                )
-            });
+            harness
+                .read(|editor| assert!(editor.document.mask_edit().is_none(), "{}", editor.status));
             let layers = harness.read(adjustment_layers::layers);
             let record = layers.layers.last().unwrap();
             let AdjustmentLayerCoverage::Radial {
@@ -128,7 +123,7 @@ fn radial_release_accepts_defaults_and_hard_edges_while_escape_discards_tiny_ges
                 unreachable!()
             };
             assert_eq!(feather, 0.);
-            harness.read(|editor| assert!(editor.document.visit.mask_edit.is_none()));
+            harness.read(|editor| assert!(editor.document.mask_edit().is_none()));
             harness.read(|editor| {
                 editor
                     .validate_document_candidate(&editor.document)
@@ -195,13 +190,8 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                 assert!(
                     editor.mask_preview_source().is_some(),
                     "gesture={} error={:?} status={}",
-                    editor.document.visit.mask_edit.is_some(),
-                    editor
-                        .document
-                        .visit
-                        .mask_edit
-                        .as_ref()
-                        .and_then(MaskEdit::error),
+                    editor.document.mask_edit().is_some(),
+                    editor.document.mask_edit().and_then(MaskEdit::error),
                     editor.status
                 )
             });
@@ -216,7 +206,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             let axis = harness.read(|editor| screen(editor, point(original, DVec2::X)));
             let along = (axis - center_screen).normalized();
             drag(&mut harness, axis, axis + along * 12.);
-            harness.read(|editor| assert!(editor.document.visit.mask_edit.is_none()));
+            harness.read(|editor| assert!(editor.document.mask_edit().is_none()));
             let resized = harness.read(accepted_mask);
             let AdjustmentLayerCoverage::Radial {
                 center: original_center,
@@ -295,7 +285,7 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
             workflow::enter_numeric(&mut harness, "Feather", "0.375");
             harness.read(|editor| {
                 assert!(
-                    editor.document.visit.mask_edit.is_none(),
+                    editor.document.mask_edit().is_none(),
                     "numeric Enter is not a geometry-session action"
                 )
             });

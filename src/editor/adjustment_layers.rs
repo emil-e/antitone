@@ -205,11 +205,11 @@ impl Editor {
         !self.busy
             && self.document.input.ready()
             && self.active_pick().is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.auto_crop_edit.is_none()
-            && self.document.flat_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
-            && self.document.analysis_review.is_none()
+            && self.document.crop_edit().is_none()
+            && self.document.auto_crop_edit().is_none()
+            && self.document.flat_edit().is_none()
+            && self.document.mask_edit().is_none()
+            && self.document.analysis_review().is_none()
             && !self.document.visit.adjustment_layers.confirming()
     }
 
@@ -452,13 +452,13 @@ impl Editor {
 
     pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
         self.tab == 1
-            && !self.document.visit.dust.cleanup
+            && !self.document.dust().is_some()
             && self.active_pick().is_none()
-            && self.document.visit.crop_edit.is_none()
-            && self.document.auto_crop_edit.is_none()
-            && self.document.flat_edit.is_none()
-            && self.document.visit.mask_edit.is_none()
-            && self.document.analysis_review.is_none()
+            && self.document.crop_edit().is_none()
+            && self.document.auto_crop_edit().is_none()
+            && self.document.flat_edit().is_none()
+            && self.document.mask_edit().is_none()
+            && self.document.analysis_review().is_none()
             && self.document.visit.adjustment_layers.owns_delete
             && matches!(self.adjustment_layer_target(), Target::Layer(_))
     }
@@ -472,7 +472,7 @@ impl Editor {
     }
 
     pub(super) fn adjustment_layer_overlays_visible(&self) -> bool {
-        self.document.visit.mask_edit.is_some()
+        self.document.mask_edit().is_some()
             || (!self.document.visit.adjustment_layers.panel_collapsed
                 && !self.document.visit.adjustment_layers.adjusting_values)
     }
@@ -503,7 +503,7 @@ impl Editor {
         });
         let before = (photo, adjustment);
         let available = self.adjustment_layer_actions_available()
-            && !self.document.visit.dust.cleanup
+            && !self.document.dust().is_some()
             && ui.is_enabled();
         let mut action = None;
         let mut rename_finish = None;
@@ -576,7 +576,7 @@ impl Editor {
                                     "Add linear gradient",
                                 ),
                             ] {
-                                if icons::button(ui, icon, available && !self.document.source, name, help)
+                                if icons::button(ui, icon, self.tool_start_available() && self.document.input.ready(), name, help)
                                     .clicked()
                                 {
                                     creation = Some(radial);
@@ -754,13 +754,7 @@ impl Editor {
                 }
             });
         }
-        if let Some(error) = self
-            .document
-            .visit
-            .mask_edit
-            .as_ref()
-            .and_then(MaskEdit::error)
-        {
+        if let Some(error) = self.document.mask_edit().and_then(MaskEdit::error) {
             ui.weak(format!(
                 "Mask not accepted: {error}. Draw again or Escape to cancel."
             ));
@@ -780,16 +774,16 @@ impl Editor {
                             ui.scroll_to_cursor(Some(egui::Align::Min));
                         }
                         controls::photographic_exposure(ui, &mut photo);
-                        controls::photographic_colour(
-                            ui,
-                            &mut photo,
-                            can_pick
-                                && selected.is_some_and(|record| {
-                                    record.adjustment.enabled && record.adjustment.strength > 0.
-                                }),
-                        )
-                    })
-                    .inner
+                    });
+                    controls::photographic_colour(
+                        ui,
+                        &mut photo,
+                        can_pick
+                            && selected.is_some_and(|record| {
+                                record.adjustment.enabled && record.adjustment.strength > 0.
+                            }),
+                        editable,
+                    )
                 },
             )
             .inner;

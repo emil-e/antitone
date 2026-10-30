@@ -22,10 +22,10 @@ fn retiring_a_visit_discards_its_manual_crop_without_accepting_or_recording_it()
         .history_label(crate::editor::history::Direction::Undo)
         .map(str::to_owned);
     editor.begin_crop();
-    editor.document.visit.crop_edit.as_mut().unwrap().draft.size = [256, 256];
+    editor.document.crop_edit_mut().unwrap().draft.size = [256, 256];
     let next = editor.request_id();
     editor.replace_photo_scope(next);
-    assert!(editor.document.visit.crop_edit.is_none());
+    assert!(editor.document.crop_edit().is_none());
     editor.finish_crop(true);
     assert_eq!(editor.document.state.project, accepted);
     assert_eq!(
@@ -58,14 +58,14 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
             } else {
                 editor.begin_linear_mask(None);
             }
-            assert!(editor.document.visit.mask_edit.is_some());
+            assert!(editor.document.mask_edit().is_some());
             let accepted = editor.document.state.project.clone();
             let before = editor
                 .history_label(crate::editor::history::Direction::Undo)
                 .map(str::to_owned);
             let next = editor.request_id();
             editor.replace_photo_scope(next);
-            assert!(editor.document.visit.mask_edit.is_none());
+            assert!(editor.document.mask_edit().is_none());
             assert!(!editor.adjustment_layer_owns_delete());
             assert!(!editor.document.visit.adjustment_layers.show_coverage);
             assert_eq!(

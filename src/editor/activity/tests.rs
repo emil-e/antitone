@@ -262,17 +262,15 @@ fn export_activity_preserves_identity_and_closes_before_failure_feedback() {
 }
 
 #[test]
-fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_reply() {
+fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_acknowledgement() {
     for tab in 0..3 {
-        let editor = fixture();
-        crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
+        crate::application::test_support::with_application(fixture(), |app| {
+            let reply = app.enter(|editor, cx| {
                 add_ready_fixture(editor);
+                let reply = super::super::analysis_workflow::testing::fitting(editor);
                 editor.begin_analysis(cx);
                 editor.tasks.elapse(Duration::from_secs(1));
-                let pending = editor.document.analysis_pending.as_ref().unwrap();
-                let id = pending.id;
-                let request = pending.request.clone();
+                let id = editor.analysis_work_id().unwrap();
                 editor.tab = tab;
                 let context = egui::Context::default();
                 app_frame(editor, &context, vec![]);
@@ -286,21 +284,29 @@ fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_r
                 for pressed in [true, false] {
                     app_frame(editor, &context, pointer(cancel, pressed));
                 }
-                assert!(editor.busy && editor.document.analysis_pending.is_some());
-                assert_ne!(
+                assert!(editor.busy && editor.analysis_fitting());
+                assert!(
                     editor
                         .document
-                        .analysis_generation
-                        .load(std::sync::atomic::Ordering::Relaxed),
-                    request.revision
+                        .analysis_operation()
+                        .unwrap()
+                        .cancelled
+                        .is_cancelled()
                 );
                 editor.analysis_progress(id, 1, 2);
                 let view = editor.tasks.view().unwrap();
                 assert_eq!(view.title, "Cancelling analysis…");
                 assert!(view.cancel.is_none() && view.measured.is_none());
                 app_frame(editor, &context, key(egui::Key::Escape));
-                assert!(editor.document.analysis_pending.is_some());
-                editor.analysis_result(id, Ok(None), cx);
+                assert!(editor.analysis_fitting());
+                reply
+            });
+            app.pump();
+            reply.result.send(Ok(None)).ok().unwrap();
+            app.run_until(Duration::from_secs(10), |editor| {
+                editor.document.analysis_operation().is_none()
+            });
+            app.read(|editor| {
                 assert!(!editor.busy && editor.tasks.view().is_none());
                 assert_eq!(editor.status, "Analysis cancelled");
             });
@@ -309,42 +315,41 @@ fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_r
 }
 
 #[test]
-fn superseded_analysis_updates_and_cancel_actions_cannot_touch_the_new_task() {
-    let editor = fixture();
-    crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| {
+fn retired_analysis_progress_and_cancel_actions_cannot_touch_the_new_task() {
+    crate::application::test_support::with_application(fixture(), |app| {
+        let (mut reply, id, cancelled, action) = app.enter(|editor, cx| {
             add_ready_fixture(editor);
+            let reply = super::super::analysis_workflow::testing::fitting(editor);
             editor.begin_analysis(cx);
-            let pending = editor.document.analysis_pending.as_ref().unwrap();
-            let id = pending.id;
-            let request = pending.request.clone();
-            let action = editor.tasks.view().unwrap().cancel.unwrap();
-            editor.load("next.ARW".into(), cx);
-            assert!(editor.document.analysis_pending.is_none());
-            assert_ne!(
-                editor
-                    .document
-                    .analysis_generation
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                request.revision
-            );
-            let revision = editor
+            let id = editor.analysis_work_id().unwrap();
+            let cancelled = editor
                 .document
-                .analysis_generation
-                .load(std::sync::atomic::Ordering::Relaxed);
-            editor.cancel_task(action.request);
-            assert_eq!(
-                editor
-                    .document
-                    .analysis_generation
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                revision
-            );
-            editor.analysis_progress(id, 1, 2);
-            editor.analysis_result(id, Ok(None), cx);
-            assert_eq!(editor.tasks.view().unwrap().title, "Loading photo…");
-            assert!(editor.busy);
+                .analysis_operation()
+                .unwrap()
+                .cancelled
+                .clone();
+            let action = editor.tasks.view().unwrap().cancel.unwrap();
+            (reply, id, cancelled, action)
         });
+        super::super::analysis_workflow::testing::request(app, &mut reply);
+        let (_regions, receive) = futures_channel::oneshot::channel();
+        app.enter(|editor, cx| {
+            editor.document.spatial_reply = Some(receive);
+            editor.review_crop_proposals(editor.document.project.order.clone(), "roll", cx);
+            assert!(!editor.analysis_fitting());
+            assert!(cancelled.is_cancelled());
+            let current =
+                TaskRequest::Regions(editor.document.spatial_preparing.as_ref().unwrap().id);
+            let progress = editor.tasks.view().unwrap().measured;
+            editor.cancel_task(action.request);
+            editor.analysis_progress(id, 1, 2);
+            assert!(editor.tasks.is_current(current));
+            assert_eq!(editor.tasks.view().unwrap().measured, progress);
+            assert!(editor.busy && editor.document.auto_crop_operation().is_some());
+        });
+        app.pump();
+        assert!(reply.result.send(Ok(None)).is_err());
+        app.read(|editor| assert!(!editor.status.contains("Analysis cancelled")));
     });
 }
 
@@ -557,7 +562,7 @@ fn activity_keeps_viewer_geometry_stable_and_never_covers_an_acknowledged_failur
                 editor.document.visit.canvas.last_layout.unwrap().0.canvas,
                 canvas
             );
-            editor.document.analysis_pending = None;
+            editor.document.set_analysis_operation(None);
             editor.tasks.begin(Task::Save(editor.id));
             editor.tasks.elapse(Duration::from_secs(1));
             editor.report_failure(FailureKind::Save, "previous failure".into());

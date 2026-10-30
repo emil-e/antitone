@@ -95,10 +95,10 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
             );
             editor.finish_auto_crop(true);
         });
-        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit.is_none());
+        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_none());
         app.read(|editor| {
             assert!(
-                editor.document.auto_crop_edit.is_none(),
+                editor.document.auto_crop_edit().is_none(),
                 "{}",
                 editor.status
             );
@@ -198,12 +198,11 @@ fn changed_supporting_geometry_prevents_any_selected_crop_from_being_applied() {
         app.run_until(LIMIT, |editor| {
             editor
                 .document
-                .auto_crop_operation
-                .as_ref()
+                .auto_crop_operation()
                 .is_some_and(|op| op.apply.is_some())
         });
         app.read(|editor| {
-            assert!(editor.document.auto_crop_edit.is_some());
+            assert!(editor.document.auto_crop_edit().is_some());
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
         });
@@ -374,11 +373,11 @@ fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_prepara
         app.run_until(LIMIT, |editor| {
             editor.document_pending.is_none()
                 && editor.document.spatial_preparing.is_none()
-                && editor.document.auto_crop_edit.is_some()
+                && editor.document.auto_crop_edit().is_some()
         });
         app.read(|editor| {
             assert!(
-                editor.document.auto_crop_edit.is_some(),
+                editor.document.auto_crop_edit().is_some(),
                 "Save must not discard the original consumer continuation: {}",
                 editor.status
             );

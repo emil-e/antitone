@@ -2,22 +2,8 @@ use super::*;
 mod private;
 use crate::{project::SourceAnalysis, scan_regions::Areas};
 
-// Controller cases supply area replies, not native sources. Enter the sampling stage
-// explicitly; authored spatial workflows cover acquisition and the public Analyze command.
-pub(super) fn start_area_preparation(editor: &mut Editor, cx: &UiContext<'_, Editor>) {
-    if let Some(request) = editor.analysis_request() {
-        editor.prepare_analysis_review(request, cx);
-    }
-}
-
-fn reply(editor: &mut Editor) -> (u64, analysis_review::Approved) {
-    let pending = editor
-        .document
-        .analysis_preparing
-        .as_ref()
-        .expect("area preparation request");
-    let id = pending.id;
-    let request = &pending.request;
+// Review-only cases install prepared areas; operation cases exercise the preceding workers.
+fn approved(request: &Request) -> analysis_review::Approved {
     let entries = request
         .document
         .project
@@ -55,18 +41,15 @@ fn reply(editor: &mut Editor) -> (u64, analysis_review::Approved) {
         .iter()
         .map(|&id| thumbnails::FileKey::new(&request.document.source_path(id).unwrap()))
         .collect();
-    (id, analysis_review::Approved { entries, files })
+    analysis_review::Approved { entries, files }
 }
 
-pub(super) fn prepared(editor: &mut Editor) {
-    let (id, approved) = reply(editor);
-    editor.analysis_areas_result(
-        id,
-        Ok(Some(approved)),
-        &crate::application::UiContext::render_only(),
-    );
+pub(super) fn prepared(editor: &mut Editor, cx: &UiContext<'_, Editor>) {
+    let request = editor.analysis_request().expect("eligible review");
+    let approved = approved(&request);
+    editor.prepared_analysis_review(request, approved, cx);
     assert!(
-        editor.document.analysis_review.is_some(),
+        editor.document.analysis_review().is_some(),
         "{}",
         editor.status
     );
@@ -77,8 +60,7 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            start_area_preparation(editor, cx);
-            prepared(editor);
+            prepared(editor, cx);
             let active = editor.document.visit.canvas.ready.as_ref().unwrap().area;
             let opening = Coverage::rectangle(active);
             let picture = Coverage::rectangle(Rect {
@@ -89,8 +71,7 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
             });
             let areas = &mut editor
                 .document
-                .analysis_review
-                .as_mut()
+                .analysis_review_mut()
                 .unwrap()
                 .approved
                 .entries[0]
@@ -114,7 +95,7 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
                 Some(true)
             );
             editor.select_review_area(geometry, point(picture, 0));
-            assert!(editor.document.analysis_review.as_ref().unwrap().picture);
+            assert!(editor.document.analysis_review().unwrap().picture);
             let drag = PickDrag::begin(geometry, point(picture, 0), editor.pick_region());
             editor.set_pick_region(Some(
                 drag.update(geometry, point(picture, 0) + egui::vec2(5., 5.)),
@@ -126,13 +107,12 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
             assert!(edited.picture_edited);
             assert_eq!(edited.opening, Some(opening.corners().map(|p| p.0)));
             editor.select_review_area(geometry, point(opening, 0));
-            assert!(!editor.document.analysis_review.as_ref().unwrap().picture);
+            assert!(!editor.document.analysis_review().unwrap().picture);
             assert_eq!(editor.pick_region(), Some(opening));
             assert_eq!(editor.document.state.project, before);
             let areas = &mut editor
                 .document
-                .analysis_review
-                .as_mut()
+                .analysis_review_mut()
                 .unwrap()
                 .approved
                 .entries[0]
@@ -144,10 +124,10 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
                 "coincident handles retain the selected area"
             );
             editor.select_review_area(geometry, geometry.image.center());
-            assert!(editor.document.analysis_review.as_ref().unwrap().picture);
+            assert!(editor.document.analysis_review().unwrap().picture);
             editor.select_review_area(geometry, point(opening, 0) + egui::vec2(8., 8.));
             assert!(
-                !editor.document.analysis_review.as_ref().unwrap().picture,
+                !editor.document.analysis_review().unwrap().picture,
                 "labels disambiguate coincident frames"
             );
         });
@@ -160,10 +140,10 @@ fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit
     let ctx = egui::Context::default();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
-            start_area_preparation(e, cx);
-            let (id, mut approved) = reply(e);
+            let request = e.analysis_request().unwrap();
+            let mut approved = approved(&request);
             approved.entries[0].areas = Areas::default();
-            e.analysis_areas_result(id, Ok(Some(approved)), cx);
+            e.prepared_analysis_review(request, approved, cx);
             e.set_pick_region(Some(Coverage::rectangle(
                 e.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
@@ -189,7 +169,7 @@ fn drawing_missing_opening_does_not_invent_picture_support_and_last_picture_edit
             )
         });
         click_label(app, &ctx, "Analyze roll");
-        assert!(app.read(|e| e.document.analysis_pending.is_some()));
+        assert!(app.read(|e| e.analysis_fitting()));
     });
 }
 
@@ -202,10 +182,9 @@ fn opening_exception_updates_automatic_picture_coverage_but_not_authored_picture
             other.id = SourceId(0);
             other.path = "other.ARW".into();
             editor.document.state.project.add_source(other).unwrap();
-            start_area_preparation(editor, cx);
-            prepared(editor);
+            prepared(editor, cx);
             let active = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-            let review = editor.document.analysis_review.as_mut().unwrap();
+            let review = editor.document.analysis_review_mut().unwrap();
             let a = &mut review.approved.entries[0].areas;
             a.picture_observed = [false; 4];
             a.picture_geometry = Some(crate::scan_regions::PictureGeometry {
@@ -219,7 +198,7 @@ fn opening_exception_updates_automatic_picture_coverage_but_not_authored_picture
             let before = editor.document.state.project.clone();
             editor.set_pick_region(Some(Coverage::rectangle(rect([90, 70, 600, 400]))));
             editor.stash_review_region();
-            let review = editor.document.analysis_review.as_mut().unwrap();
+            let review = editor.document.analysis_review_mut().unwrap();
             assert_ne!(review.approved.entries[0].areas.picture, original);
             assert_eq!(review.approved.entries[1], peer);
             let authored = Coverage::rectangle(rect([100, 100, 500, 300]));
@@ -227,13 +206,7 @@ fn opening_exception_updates_automatic_picture_coverage_but_not_authored_picture
             editor.set_pick_region(Some(Coverage::rectangle(rect([120, 90, 500, 300]))));
             editor.stash_review_region();
             assert_eq!(
-                editor
-                    .document
-                    .analysis_review
-                    .as_ref()
-                    .unwrap()
-                    .approved
-                    .entries[0]
+                editor.document.analysis_review().unwrap().approved.entries[0]
                     .areas
                     .picture,
                 Some(authored.corners().map(|p| p.0))
@@ -300,31 +273,15 @@ fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialo
                 editor.document.state.project.add_source(other).unwrap();
                 editor.sync_document();
                 let before = editor.document.state.project.clone();
-                start_area_preparation(editor, cx);
+                prepared(editor, cx);
                 assert!(
-                    editor.busy
-                        && editor.document.analysis_preparing.is_some()
-                        && editor.document.analysis_pending.is_none()
-                );
-                prepared(editor);
-                assert!(
-                    editor
-                        .document
-                        .analysis_review
-                        .as_ref()
-                        .unwrap()
-                        .replaces_photos,
+                    editor.document.analysis_review().unwrap().replaces_photos,
                     "field {field}"
                 );
-                start_area_preparation(editor, cx);
-                assert!(editor.document.analysis_preparing.is_none());
                 editor.finish_pick(cx);
                 assert_eq!(editor.document.state.project, before);
-                assert!(
-                    editor.document.analysis_pending.is_none()
-                        && editor.document.analysis_review.is_none()
-                );
-                assert!(editor.document.analysis_preparing.is_none());
+                assert!(!editor.analysis_fitting() && editor.document.analysis_review().is_none());
+                assert!(!editor.analysis_preparing());
             });
         });
     }
@@ -344,8 +301,7 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
                 .exposure = 1.7;
             let other = editor.document.state.project.add_source(other).unwrap();
             editor.select_roll_photo(1, egui::Modifiers::COMMAND, cx);
-            start_area_preparation(editor, cx);
-            prepared(editor);
+            prepared(editor, cx);
             let before = editor.document.state.project.clone();
             let proxy = editor
                 .document
@@ -371,19 +327,17 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
             });
             editor.busy = false;
             editor.confirm_analysis_review(cx);
-            assert!(editor.document.analysis_pending.is_some());
+            assert!(editor.analysis_fitting());
             (before, first, other)
         });
-        app.run_until(Duration::from_secs(5), |e| {
-            e.document.analysis_pending.is_none()
-        });
+        app.run_until(Duration::from_secs(5), |e| !e.analysis_fitting());
         app.read(|editor| {
             assert!(
-                editor.document.analysis_pending.is_none()
-                    && editor.document.analysis_review.is_none()
+                !editor.analysis_fitting()
+                    && editor.document.analysis_review().is_none()
                     && editor.active_pick().is_none()
             );
-            assert_eq!(editor.document.visit.current_source, first);
+            assert_eq!(editor.document.visit.current_source, Some(other));
             assert!(
                 editor.document.roll_selection.contains(first.unwrap())
                     && editor.document.roll_selection.contains(other)
@@ -414,20 +368,20 @@ fn default_photos_still_require_area_review_but_retired_grades_do_not_trigger_re
                 .retain(|id| *id != retired);
             editor.document.roll.exposure = 1.;
             editor.document.roll.wb.tint = 0.2;
-            start_area_preparation(editor, cx);
-            prepared(editor);
-            assert!(
-                !editor
-                    .document
-                    .analysis_review
-                    .as_ref()
-                    .unwrap()
-                    .replaces_photos
-            );
-            assert!(editor.document.analysis_pending.is_none());
+            prepared(editor, cx);
+            assert!(!editor.document.analysis_review().unwrap().replaces_photos);
+            assert!(!editor.analysis_fitting());
             editor.confirm_analysis_review(cx);
-            let request = &editor.document.analysis_pending.as_ref().unwrap().request;
-            assert_eq!(request.areas.as_ref().unwrap().entries.len(), 1);
+            assert_eq!(
+                editor
+                    .document
+                    .analysis_review()
+                    .unwrap()
+                    .approved
+                    .entries
+                    .len(),
+                1
+            );
             assert_eq!(
                 editor
                     .document
@@ -447,95 +401,42 @@ fn default_photos_still_require_area_review_but_retired_grades_do_not_trigger_re
     });
 }
 
-fn change(editor: &mut Editor, kind: usize) {
-    match kind {
-        0 => editor.id += 1,
-        1 => editor.document.visit.current_source = None,
-        2 => editor.document.path = Some("other.antitone.json".into()),
-        3 => editor.document.state.project.order.clear(),
-        4 => editor.document.visit.adjustment_layer_settings.pivot = 0.4,
-        5 => editor.set_gamma(0.8),
-        6 => {
-            editor
-                .document
-                .analysis_generation
-                .fetch_add(1, Ordering::Relaxed);
-        }
-        7 => editor.document.state.project.analysis_area = Some([52, 42, 720, 540]),
-        _ => editor.document.visit.picking.display = Some(Pick::Wb.display()),
-    }
-    editor.sync_document();
-}
-
 #[test]
-fn stale_preparation_cannot_open_review_or_change_accepted_state() {
-    for changed in 0..9 {
-        let editor = ready_state();
-        crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
-                start_area_preparation(editor, cx);
-                let (id, approved) = reply(editor);
-                change(editor, changed);
-                let before = editor.document.state.project.clone();
-                editor.analysis_areas_result(id, Ok(Some(approved)), cx);
-                assert!(
-                    editor.document.analysis_review.is_none()
-                        && editor.document.analysis_pending.is_none(),
-                    "change {changed}"
-                );
-                assert_eq!(editor.document.state.project, before);
-            });
-        });
-    }
-}
-
-#[test]
-fn stale_review_cannot_authorize_analyze() {
-    for changed in 0..9 {
-        let editor = ready_state();
-        crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
-                start_area_preparation(editor, cx);
-                prepared(editor);
-                change(editor, changed);
-                let before = editor.document.state.project.clone();
-                editor.confirm_analysis_review(cx);
-                assert!(
-                    editor.document.analysis_pending.is_none(),
-                    "change {changed}"
-                );
-                assert_eq!(editor.document.state.project, before);
-                assert!(editor.document.analysis_pending.is_none());
-            });
-        });
-    }
-}
-
-#[test]
-fn preparation_cancellation_and_late_or_failed_replies_preserve_grade_and_areas() {
+fn preparation_cancellation_and_failed_work_preserve_grade_and_areas() {
     for fail in [false, true] {
-        let editor = ready_state();
-        crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
-                editor.sync_document();
+        crate::application::test_support::with_application(ready_state(), |app| {
+            let before = app.enter(|editor, cx| {
+                let request = editor.analysis_request().unwrap();
+                let approved = approved(&request);
+                let reply = analysis_workflow::testing::preparation(editor);
                 let before = editor.document.state.project.clone();
-                start_area_preparation(editor, cx);
-                let (id, approved) = reply(editor);
-                editor.analysis_areas_result(id + 1, Ok(Some(approved.clone())), cx);
-                assert!(editor.document.analysis_preparing.is_some());
-                if fail {
-                    editor.analysis_areas_result(id, Err("bad capture".into()), cx);
-                } else {
+                editor.prepare_analysis_review(request, cx);
+                if !fail {
                     editor.cancel_analysis();
                     assert!(editor.busy);
-                    editor.analysis_areas_result(id, Ok(Some(approved)), cx);
                 }
-                assert!(
-                    editor.document.analysis_review.is_none()
-                        && editor.document.analysis_preparing.is_none()
-                );
+                reply
+                    .result
+                    .send(if fail {
+                        Err("bad capture".into())
+                    } else {
+                        Ok(Some(approved))
+                    })
+                    .ok()
+                    .unwrap();
+                before
+            });
+            app.run_until(Duration::from_secs(10), |editor| {
+                editor.document.analysis_operation().is_none()
+            });
+            app.read(|editor| {
+                assert!(editor.document.analysis_review().is_none() && !editor.busy);
                 assert_eq!(editor.document.state.project, before);
-                assert!(!editor.busy);
+                assert!(
+                    editor
+                        .history_label(super::super::super::history::Direction::Undo)
+                        .is_none()
+                );
             });
         });
     }
@@ -543,23 +444,15 @@ fn preparation_cancellation_and_late_or_failed_replies_preserve_grade_and_areas(
 
 #[test]
 fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() {
-    let editor = ready_state();
-    crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| {
+    crate::application::test_support::with_application(ready_state(), |app| {
+        let (before, mut reply) = app.enter(|editor, cx| {
             let mut other = editor.document.state.project.sources[0].clone();
             other.id = SourceId(0);
             other.path = "other.ARW".into();
             let other = editor.document.state.project.add_source(other).unwrap();
-            start_area_preparation(editor, cx);
-            prepared(editor);
+            prepared(editor, cx);
             let before = editor.document.state.project.clone();
-            let original = editor
-                .document
-                .analysis_review
-                .as_ref()
-                .unwrap()
-                .approved
-                .entries[1]
+            let original = editor.document.analysis_review().unwrap().approved.entries[1]
                 .areas
                 .clone();
             editor.set_pick_region(Some(Coverage::rectangle(rect([40, 30, 700, 500]))));
@@ -571,55 +464,50 @@ fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() 
                     .opening_edited
             );
             assert_eq!(editor.review_areas(other).unwrap(), &original);
+            let reply = analysis_workflow::testing::fitting(editor);
             editor.confirm_analysis_review(cx);
-            let pending = editor.document.analysis_pending.as_ref().unwrap();
-            let id = pending.id;
-            assert!(
-                pending.request.areas.as_ref().unwrap().entries[0]
-                    .areas
-                    .opening_edited
-            );
             assert_eq!(editor.document.state.project, before);
-            editor.analysis_result(id, Err("rejected by unchanged numerical gates".into()), cx);
+            (before, reply)
+        });
+        let request = analysis_workflow::testing::request(app, &mut reply);
+        assert!(
+            request.areas.as_ref().unwrap().entries[0]
+                .areas
+                .opening_edited
+        );
+        reply
+            .result
+            .send(Err("rejected by unchanged numerical gates".into()))
+            .ok()
+            .unwrap();
+        app.run_until(Duration::from_secs(10), |editor| {
+            editor.document.analysis_operation().is_none()
+        });
+        app.read(|editor| {
             assert_eq!(editor.document.state.project, before);
-            assert!(editor.document.analysis_review.is_none() && editor.active_pick().is_none());
+            assert!(editor.document.analysis_review().is_none() && editor.active_pick().is_none());
         });
     });
 }
 
 #[test]
-fn missing_or_retargeted_review_inputs_cannot_start_analyze() {
+fn missing_reviewed_picture_cannot_start_fitting() {
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            start_area_preparation(editor, cx);
-            prepared(editor);
+            prepared(editor, cx);
             editor
                 .document
-                .analysis_review
-                .as_mut()
+                .analysis_review_mut()
                 .unwrap()
                 .approved
                 .entries[0]
                 .areas
                 .picture = None;
             editor.confirm_analysis_review(cx);
-            assert!(editor.document.analysis_pending.is_none());
+            assert!(!editor.analysis_fitting());
             assert!(editor.status.contains("missing"));
             editor.finish_pick(cx);
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("source.ARW");
-            std::fs::write(&path, b"first snapshot").unwrap();
-            editor.document.state.project.sources[0].path = path.clone();
-            editor.document.capture_source_files().unwrap();
-            start_area_preparation(editor, cx);
-            prepared(editor);
-            editor.document.state.project.sources[0].path = dir.path().join("different-source.ARW");
-            let accepted = editor.document.state.project.clone();
-            editor.confirm_analysis_review(cx);
-            assert!(editor.document.analysis_pending.is_none());
-            assert!(editor.document.analysis_review.is_none());
-            assert_eq!(editor.document.state.project, accepted);
         });
     });
 }
@@ -628,14 +516,12 @@ fn missing_or_retargeted_review_inputs_cannot_start_analyze() {
 fn roll_review_controls_restore_scope_visibility_and_context() {
     for scopes_visible in [false, true] {
         for exit in 0..5 {
-            let editor = ready_state();
-            crate::application::test_support::with_application(editor, |app| {
-                app.enter(|editor, cx| {
+            crate::application::test_support::with_application(ready_state(), |app| {
+                let reply = app.enter(|editor, cx| {
                     editor.tab = 1;
                     editor.scopes.visible = scopes_visible;
                     editor.preferences.scopes_visible = scopes_visible;
-                    start_area_preparation(editor, cx);
-                    prepared(editor);
+                    prepared(editor, cx);
                     assert_eq!(editor.tab, 0);
                     assert!(!editor.scopes.visible);
                     let ctx = egui::Context::default();
@@ -643,28 +529,36 @@ fn roll_review_controls_restore_scope_visibility_and_context() {
                     assert_eq!(editor.preferences.scopes_visible, scopes_visible);
                     if exit == 0 {
                         editor.finish_pick(cx);
+                        None
                     } else {
+                        let reply = analysis_workflow::testing::fitting(editor);
                         editor.confirm_analysis_review(cx);
-                        let id = editor.document.analysis_pending.as_ref().unwrap().id;
-                        match exit {
-                            1 => editor.analysis_result(id, Err("numerical rejection".into()), cx),
-                            2 => editor.analysis_result(id, Ok(None), cx),
-                            3 => {
-                                let candidate = outcome(editor);
-                                editor.analysis_result(id, Ok(Some(Box::new(candidate))), cx);
-                                assert!(editor.status.starts_with("Analyzed"), "{}", editor.status);
-                            }
-                            _ => {
-                                editor
-                                    .document
-                                    .analysis_generation
-                                    .fetch_add(1, Ordering::Relaxed);
-                                editor.analysis_result(id, Ok(None), cx);
-                            }
+                        if exit == 4 {
+                            editor.cancel_analysis();
                         }
+                        Some(reply)
                     }
-                    assert!(editor.document.analysis_review.is_none());
-                    assert_eq!(editor.tab, 1);
+                });
+                if let Some(mut reply) = reply {
+                    let request = analysis_workflow::testing::request(app, &mut reply);
+                    let result = match exit {
+                        1 => Err("numerical rejection".into()),
+                        3 => Ok(Some(Box::new(outcome(&request)))),
+                        _ => Ok(None),
+                    };
+                    reply.result.send(result).ok().unwrap();
+                    app.run_until(Duration::from_secs(10), |editor| {
+                        editor.document.analysis_operation().is_none()
+                    });
+                    if exit == 3 {
+                        app.read(|editor| {
+                            assert!(editor.status.starts_with("Analyzed"), "{}", editor.status)
+                        });
+                    }
+                }
+                app.read(|editor| {
+                    assert!(editor.document.analysis_review().is_none());
+                    assert_eq!(editor.tab, 0);
                     assert_eq!(editor.scopes.visible, scopes_visible);
                     assert_eq!(editor.preferences.scopes_visible, scopes_visible);
                 });
@@ -678,12 +572,10 @@ fn valid_sampling_exceptions_have_no_inspect_badge_or_extra_photo_warning() {
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            start_area_preparation(editor, cx);
-            prepared(editor);
+            prepared(editor, cx);
             let areas = &mut editor
                 .document
-                .analysis_review
-                .as_mut()
+                .analysis_review_mut()
                 .unwrap()
                 .approved
                 .entries[0]
@@ -711,8 +603,7 @@ fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action(
         editor.document.visit.adjustment_layer_settings.pivot = 0.3;
         let ctx = egui::Context::default();
         crate::application::test_support::with_application(editor, |app| {
-            app.enter(start_area_preparation);
-            app.update(prepared);
+            app.enter(prepared);
             let before = app.read(|e| e.document.state.project.clone());
             let labels = super::super::super::tests::app_frame(app, &ctx, vec![]);
             assert!(labels.iter().any(|(s, _)| s == "Tool warning"));
@@ -731,13 +622,13 @@ fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action(
                     .iter()
                     .any(|(s, _)| s == "Picture statistics" || s == "Roll analysis")
             );
-            assert!(app.read(|e| e.document.analysis_pending.is_none()));
+            assert!(app.read(|e| !e.analysis_fitting()));
             click_label(app, &ctx, if accept { "Analyze roll" } else { "Cancel" });
             app.read(|e| {
                 assert_eq!(e.document.state.project, before);
-                assert_eq!(e.document.analysis_pending.is_some(), accept);
+                assert_eq!(e.analysis_fitting(), accept);
                 if !accept {
-                    assert!(e.document.analysis_review.is_none());
+                    assert!(e.document.analysis_review().is_none());
                 }
             });
         });
@@ -745,7 +636,7 @@ fn composed_review_shows_reset_consequence_and_has_one_analyze_or_cancel_action(
 }
 
 #[test]
-fn review_browsing_and_cancel_restore_working_photo_without_changing_multi_selection() {
+fn review_browsing_and_cancel_keep_the_displayed_photo_without_changing_multi_selection() {
     let editor = ready_state();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
@@ -759,8 +650,7 @@ fn review_browsing_and_cancel_restore_working_photo_without_changing_multi_selec
                 editor.document.roll_selection.contains(first)
                     && editor.document.roll_selection.contains(other)
             );
-            start_area_preparation(editor, cx);
-            prepared(editor);
+            prepared(editor, cx);
             editor.browse_analysis_review(other, cx);
             let pending = editor.id;
             assert_eq!(editor.document.visit.current_source, Some(other));
@@ -769,14 +659,14 @@ fn review_browsing_and_cancel_restore_working_photo_without_changing_multi_selec
                     && editor.document.roll_selection.contains(other)
             );
             editor.finish_pick(cx);
-            assert_eq!(editor.document.visit.current_source, Some(first));
-            assert_eq!(editor.document.selected, 0);
+            assert_eq!(editor.document.visit.current_source, Some(other));
+            assert_eq!(editor.document.selected, 1);
             assert!(
                 editor.document.roll_selection.contains(first)
                     && editor.document.roll_selection.contains(other)
             );
-            assert_ne!(editor.id, pending);
-            assert!(editor.document.analysis_review.is_none() && editor.pick_region().is_none());
+            assert_eq!(editor.id, pending);
+            assert!(editor.document.analysis_review().is_none() && editor.pick_region().is_none());
         });
     });
 }

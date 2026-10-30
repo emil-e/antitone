@@ -106,7 +106,7 @@ fn native_history_actions_route_to_text_first_and_then_restore_the_accepted_phot
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
         h.update(|editor| editor.begin_crop());
         native_action(&mut h, Action::Undo);
-        h.read(|editor| assert!(editor.document.visit.crop_edit.is_some()));
+        h.read(|editor| assert!(editor.document.crop_edit().is_some()));
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
     });
 }
@@ -282,7 +282,7 @@ fn history_idle_navigation_and_cancelled_input_do_not_clone_repair_bearing_proje
 
         h.get_by_label("Crop & straighten").click();
         h.step();
-        h.read(|editor| assert!(editor.document.visit.crop_edit.is_some()));
+        h.read(|editor| assert!(editor.document.crop_edit().is_some()));
         h.update(|editor| editor.history_snapshot_clones = 0);
         for _ in 0..3 {
             h.step();
@@ -537,9 +537,9 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
         h.get_by_label("Crop & straighten").click();
         h.step();
-        h.read(|editor| assert!(editor.document.visit.crop_edit.is_some()));
+        h.read(|editor| assert!(editor.document.crop_edit().is_some()));
         shortcut(&mut h, false);
-        h.read(|editor| assert!(editor.document.visit.crop_edit.is_some()));
+        h.read(|editor| assert!(editor.document.crop_edit().is_some()));
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
         h.get_by_label("Cancel").click();
         h.step();

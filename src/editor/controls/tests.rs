@@ -1484,7 +1484,7 @@ fn composed_gamma_roll_and_photo_wheels_keep_precision_gestures_scoped() {
             },
             |ui| {
                 balance_body(ui, ColorControl::GammaBalance, &mut balances[0]);
-                white_balance(ui, "roll-white-balance", &mut balances[1], false);
+                white_balance(ui, "roll-white-balance", &mut balances[1], true, false);
                 balance_body(ui, ColorControl::WhiteBalance, &mut balances[2]);
             },
         );

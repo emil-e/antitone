@@ -10,9 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) const LIMIT: Duration = Duration::from_secs(20);
+pub(in crate::editor) const LIMIT: Duration = Duration::from_secs(20);
 
-pub(super) fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
+pub(in crate::editor) fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
     let mut editor = crate::editor::tests::fixture();
     let (device, queue) = pollster::block_on(async {
         let instance = crate::gpu::instance();
@@ -62,7 +62,7 @@ pub(super) fn start(app: &TestApplication<'_, Editor>) {
         // Analyze entry and both consumer orders are covered by spatial workflow tests.
         let request = e.analysis_request().expect("eligible analysis request");
         e.prepare_analysis_review(request, access);
-        assert!(e.document.analysis_preparing.is_some());
+        assert!(e.analysis_preparing());
     });
 }
 
@@ -94,11 +94,7 @@ pub(super) fn await_native(app: &mut TestApplication<'_, Editor>, starts: &mpsc:
         assert!(
             Instant::now() < deadline,
             "native preparation did not start: {}",
-            app.read(|e| format!(
-                "{}; preparing={}",
-                e.status,
-                e.document.analysis_preparing.is_some()
-            ))
+            app.read(|e| format!("{}; preparing={}", e.status, e.analysis_preparing()))
         );
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -111,13 +107,9 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
     let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         start(app);
-        app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
+        app.run_until(LIMIT, |e| !e.analysis_preparing());
         app.read(|e| {
-            let review = e
-                .document
-                .analysis_review
-                .as_ref()
-                .expect("prepared review");
+            let review = e.document.analysis_review().expect("prepared review");
             assert_eq!(review.approved.entries.len(), 2);
             assert!(review.approved.entries.iter().all(|e| e.areas.ready()));
             assert_eq!(e.document.state.project, before);
@@ -144,9 +136,9 @@ fn queued_user_cancel_acknowledges_without_starting_native_work() {
         app.pump();
         app.update(Editor::cancel_analysis);
         drop(admission);
-        app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
+        app.run_until(LIMIT, |e| !e.analysis_preparing());
         app.read(|e| {
-            assert!(!e.busy && e.document.analysis_review.is_none());
+            assert!(!e.busy && e.document.analysis_review().is_none());
             assert_eq!(e.document.state.project, before);
             assert!(e.tasks.view().is_none());
         });
@@ -164,9 +156,9 @@ fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work()
         start(app);
         await_native(app, &starts);
         app.update(Editor::cancel_analysis);
-        app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
+        app.run_until(LIMIT, |e| !e.analysis_preparing());
         app.read(|e| {
-            assert!(!e.busy && e.document.analysis_review.is_none());
+            assert!(!e.busy && e.document.analysis_review().is_none());
             assert_eq!(e.document.state.project, before);
         });
         assert_eq!(scheduler.waiter_count(), 0);
@@ -195,14 +187,8 @@ fn document_drop_and_application_close_retire_preparation_before_native_completi
         with_application(editor, |app| {
             start(app);
             await_native(app, &starts);
-            let cancelled = app.read(|e| {
-                e.document
-                    .analysis_preparing
-                    .as_ref()
-                    .unwrap()
-                    .cancelled
-                    .clone()
-            });
+            let cancelled =
+                app.read(|e| e.document.analysis_operation().unwrap().cancelled.clone());
             if close_application {
                 app.close_execution();
             } else {
@@ -211,7 +197,7 @@ fn document_drop_and_application_close_retire_preparation_before_native_completi
             }
             assert!(cancelled.is_cancelled());
             assert_eq!(scheduler.waiter_count(), 0);
-            app.read(|e| assert!(e.document.analysis_review.is_none()));
+            app.read(|e| assert!(e.document.analysis_review().is_none()));
             release.send(()).unwrap();
         });
         scheduler.close_and_wait().unwrap();
@@ -232,42 +218,16 @@ fn document_transition_retires_areas_and_waits_for_native_work_before_promotion(
         app.pump();
         app.read(|e| {
             assert!(e.document_pending.is_some());
-            assert!(e.document.analysis_preparing.is_none());
+            assert!(!e.analysis_preparing());
             assert_eq!(e.document.state.project, before);
         });
         release.send(()).unwrap();
         app.run_until(LIMIT, |e| e.document_pending.is_none());
         app.read(|e| {
             assert!(e.document.state.project.order.is_empty());
-            assert!(e.document.analysis_review.is_none());
-            assert!(e.document.analysis_preparing.is_none());
+            assert!(e.document.analysis_review().is_none());
+            assert!(!e.analysis_preparing());
             assert!(!e.busy);
-        });
-    });
-    scheduler.close_and_wait().unwrap();
-}
-
-#[test]
-fn live_edits_while_native_preparation_runs_discard_the_draft() {
-    // Gate the source not already held by the selected visit. A stale preparation
-    // still completes its captured service operation before the controller rejects it.
-    let (scheduler, starts, release) = paused();
-    let editor = fixture(scheduler.clone());
-    with_application(editor, |app| {
-        start(app);
-        await_native(app, &starts);
-        app.update(|e| {
-            e.set_gamma(0.8);
-            e.sync_document();
-        });
-        let edited = app.read(|e| e.document.state.project.clone());
-        release.send(()).unwrap();
-        app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
-        app.read(|e| {
-            assert_eq!(e.document.state.project, edited);
-            assert!(e.document.analysis_review.is_none());
-            assert!(!e.busy);
-            assert!(e.status.contains("discarded"), "{}", e.status);
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -281,11 +241,11 @@ fn unavailable_services_finish_the_activity_without_opening_review() {
     editor.source_services = None;
     with_application(editor, |app| {
         start(app);
-        assert!(app.read(|e| e.document.analysis_preparing.is_some() && e.busy));
-        app.run_until(LIMIT, |e| e.document.analysis_preparing.is_none());
+        assert!(app.read(|e| e.analysis_preparing() && e.busy));
+        app.run_until(LIMIT, |e| !e.analysis_preparing());
         app.read(|e| {
-            assert!(e.document.analysis_preparing.is_none());
-            assert!(e.document.analysis_review.is_none());
+            assert!(!e.analysis_preparing());
+            assert!(e.document.analysis_review().is_none());
             assert_eq!(e.document.state.project, before);
             assert!(!e.busy);
             assert!(e.tasks.view().is_none());
