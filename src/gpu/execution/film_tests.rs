@@ -1,5 +1,5 @@
 use super::*;
-use crate::film_emulation::{FilmEmulationPreset, FilmEmulationSettings};
+use crate::film_emulation::{FilmEmulationSettings, FilmPreset};
 
 fn processed(
     device: &wgpu::Device,
@@ -104,7 +104,8 @@ fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf
     let settings = FilmEmulationSettings {
         amount: 0.,
         size: 0.030,
-        ..FilmEmulationPreset::Medium.settings()
+        image_sigma: 0.030,
+        ..FilmPreset::ThirtyFiveMm.settings()
     };
     // Declared Size0.030% at extent6000 gives sigma1.8, independently of the GPU stencil.
     let sigma = 1.8_f64;
@@ -162,8 +163,11 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
     .unwrap();
     // Resolve sigma2 in a large logical crop while evaluating only bounded output units.
     let settings = FilmEmulationSettings {
+        enabled: true,
         size: 0.050,
-        ..FilmEmulationPreset::Coarse.settings()
+        image_sigma: 0.050,
+        amount: 0.065,
+        ..Default::default()
     };
     let reference = processed(
         &device,

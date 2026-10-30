@@ -306,11 +306,65 @@ pub fn reconstruct(input: Arc<ImageNode>, grid: Domain) -> Result<Arc<ImageNode>
     {
         return Err(Error::InvalidParameter("invalid reconstruction domain"));
     }
-    let base: [f32; 2] = std::array::from_fn(|i| {
-        ((grid.grid.origin[i] - input.domain.grid.origin[i]) / input.domain.grid.pitch[i]) as f32
+    let base = std::array::from_fn(|i| {
+        (grid.grid.origin[i] - input.domain.grid.origin[i]) / input.domain.grid.pitch[i]
     });
-    let scale: [f32; 2] =
-        std::array::from_fn(|i| (grid.grid.pitch[i] / input.domain.grid.pitch[i]) as f32);
+    let scale = std::array::from_fn(|i| grid.grid.pitch[i] / input.domain.grid.pitch[i]);
+    reconstruct_cells(input, grid, base, scale)
+}
+
+/// Cell-area reconstruction between aligned grids. Purpose assembly supplies local-grid
+/// coordinates, so turns, flips and source origins do not perturb an integral padding offset.
+#[cfg(feature = "editor")]
+pub(crate) fn reconstruct_cells(
+    input: Arc<ImageNode>,
+    grid: Domain,
+    exact_base: [f64; 2],
+    exact_scale: [f64; 2],
+) -> Result<Arc<ImageNode>, Error> {
+    grid.bounds.validate()?;
+    if grid.meaning != input.domain.meaning
+        || grid.grid.coverage != input.domain.grid.coverage
+        || exact_base.iter().any(|v| !v.is_finite())
+        || exact_scale.iter().any(|v| !v.is_finite() || *v <= 0.)
+    {
+        return Err(Error::InvalidParameter("invalid cell-area mapping"));
+    }
+    let expected_origin = input.domain.grid.point(exact_base);
+    let expected_axes: [[f64; 2]; 2] =
+        std::array::from_fn(|axis| input.domain.grid.axes[axis].map(|v| v * exact_scale[axis]));
+    let consistent = |a: f64, b: f64, magnitude: f64| {
+        a.is_finite()
+            && b.is_finite()
+            && (a - b).abs()
+                <= 8. * f64::from(f32::EPSILON) * magnitude.max(a.abs()).max(b.abs()).max(1.)
+    };
+    // Origins can cancel to zero when removing padding. Bound f32 packing error by
+    // the translated operands, not by that small result.
+    let origin_magnitude: [f64; 2] = std::array::from_fn(|i| {
+        input.domain.grid.origin[i].abs()
+            + (0..2)
+                .map(|axis| (exact_base[axis] * input.domain.grid.axes[axis][i]).abs())
+                .sum::<f64>()
+    });
+    if (0..2).any(|i| !consistent(expected_origin[i], grid.grid.origin[i], origin_magnitude[i]))
+        || (0..2).any(|axis| {
+            (0..2).any(|i| !consistent(expected_axes[axis][i], grid.grid.axes[axis][i], 0.))
+        })
+        || (0..2).any(|i| {
+            !consistent(
+                input.domain.grid.pitch[i] * exact_scale[i],
+                grid.grid.pitch[i],
+                0.,
+            )
+        })
+    {
+        return Err(Error::InvalidParameter(
+            "cell mapping differs from declared grids",
+        ));
+    }
+    let base = exact_base.map(|v| v as f32);
+    let scale = exact_scale.map(|v| v as f32);
     // Demand covers both the f64 mapping and its actual f32 shader representation. One-cell
     // roundoff support is sufficient only while multiplication/addition uncertainty is below it.
     for i in 0..2 {
@@ -334,22 +388,24 @@ pub fn reconstruct(input: Arc<ImageNode>, grid: Domain) -> Result<Arc<ImageNode>
         Some(input.clone()),
         Reconstruction {
             input: input.domain,
-            output: grid,
             base,
             scale,
+            exact_base,
+            exact_scale,
         },
     ))
 }
 
-#[cfg(all(test, feature = "editor"))]
+#[cfg(feature = "editor")]
 struct Reconstruction {
     input: Domain,
-    output: Domain,
     base: [f32; 2],
     scale: [f32; 2],
+    exact_base: [f64; 2],
+    exact_scale: [f64; 2],
 }
 
-#[cfg(all(test, feature = "editor"))]
+#[cfg(feature = "editor")]
 impl Operation for Reconstruction {
     fn sample_consumer(&self) -> Option<&dyn SampleConsumer> {
         Some(self)
@@ -364,14 +420,8 @@ impl Operation for Reconstruction {
         let mut low = [0; 2];
         let mut high = [0; 2];
         for i in 0..2 {
-            let exact_low = (self.output.grid.origin[i]
-                + f64::from(first[i]) * self.output.grid.pitch[i]
-                - self.input.grid.origin[i])
-                / self.input.grid.pitch[i];
-            let exact_high = (self.output.grid.origin[i]
-                + f64::from(end[i]) * self.output.grid.pitch[i]
-                - self.input.grid.origin[i])
-                / self.input.grid.pitch[i];
+            let exact_low = self.exact_base[i] + f64::from(first[i]) * self.exact_scale[i];
+            let exact_high = self.exact_base[i] + f64::from(end[i]) * self.exact_scale[i];
             let shader_low =
                 f64::from(self.base[i]) + f64::from(first[i]) * f64::from(self.scale[i]);
             let shader_high =
@@ -402,7 +452,7 @@ impl Operation for Reconstruction {
     }
 }
 
-#[cfg(all(test, feature = "editor"))]
+#[cfg(feature = "editor")]
 impl SampleConsumer for Reconstruction {
     fn emit(
         &self,

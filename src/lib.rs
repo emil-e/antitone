@@ -40,6 +40,7 @@ pub mod gpu;
 #[cfg(all(feature = "gpu", feature = "export", feature = "raw"))]
 pub mod gpu_export;
 pub mod grain;
+pub mod halation;
 pub mod image_mtf;
 #[cfg(feature = "project")]
 pub mod image_recipe;

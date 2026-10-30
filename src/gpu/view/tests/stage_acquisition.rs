@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
-    film_emulation::{FilmEmulationPreset, FilmEmulationSettings},
+    film_emulation::{FilmEmulationSettings, FilmPreset},
     gpu::repairs::{Patch, Snapshot},
     processing::InputPipeline,
 };
@@ -59,7 +59,7 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
             [16, 16],
         )
         .unwrap();
-        let settings = FilmEmulationPreset::Medium.settings();
+        let settings = FilmPreset::ThirtyFiveMm.settings();
         let input = input(&device, &scan, settings);
         let spec = ViewSourceSpec::new(
             17,
@@ -147,6 +147,7 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
             let film = FilmEmulationSettings {
                 enabled: true,
                 size: 0.060,
+                image_sigma: 0.060,
                 amount: 0.,
                 colour: 0.5,
             };
@@ -304,6 +305,7 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
             let film = FilmEmulationSettings {
                 enabled: true,
                 size: 0.100,
+                image_sigma: 0.100,
                 amount: 0.,
                 colour: 0.5,
             };

@@ -16,21 +16,6 @@ pub(super) fn write(
     destination: (&Path, Overwrite),
     check: impl FnMut() -> Result<(), Error>,
 ) -> Result<execution::Stats, Error> {
-    let stages = crate::pixel_pipeline::PixelPipeline::film(
-        request.film_emulation,
-        request.composition.crop().size,
-        request.film_seed,
-    )?;
-    write_composition(renderer, device, gpu, (request, stages), destination, check)
-}
-pub(super) fn write_composition(
-    renderer: &GpuRenderer,
-    device: &wgpu::Device,
-    gpu: (&wgpu::Queue, &SubmissionGate),
-    (request, stages): (Request<'_>, crate::pixel_pipeline::PixelPipeline),
-    destination: (&Path, Overwrite),
-    check: impl FnMut() -> Result<(), Error>,
-) -> Result<execution::Stats, Error> {
     let composition = request.composition;
     let format = request.format;
     let (output, encoding) = match format {
@@ -40,6 +25,7 @@ pub(super) fn write_composition(
         ),
         Format::Exr(_) => (OutputReference::SceneReferred, SampleEncoding::LinearFloat),
     };
+
     execution::execute(
         renderer,
         device,
@@ -52,7 +38,7 @@ pub(super) fn write_composition(
             grade: request.grade,
             repairs: request.repairs,
             composition,
-            stages,
+            stages: request.pipeline,
             output,
             look: request.look,
             encoding,

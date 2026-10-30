@@ -71,11 +71,9 @@ pub(crate) fn write(
         composition: job.recipe.composition,
         format: job.format,
         look: job.recipe.look.clone(),
-        film_emulation: job.recipe.film_emulation,
-        film_seed: job.recipe.neutral.source.0,
+        pipeline: stages,
     };
-    super::area::write_composition(renderer, device, gpu, (request, stages), destination, check)
-        .map(|_| ())
+    super::area::write(renderer, device, gpu, request, destination, check).map(|_| ())
 }
 
 #[cfg(all(test, target_os = "macos"))]

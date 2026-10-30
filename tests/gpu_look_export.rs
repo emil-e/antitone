@@ -155,8 +155,7 @@ fn compare_tiff(repaired: bool) {
                 &device,
                 (&queue, &gate),
                 Request {
-                    film_emulation: Default::default(),
-                    film_seed: 17,
+                    pipeline: Default::default(),
                     scan: &scan,
                     field: None,
                     input: InputSettings::negative(calibration),
@@ -241,8 +240,7 @@ fn compare_exr(repaired: bool) {
                 &device,
                 (&queue, &gate),
                 Request {
-                    film_emulation: Default::default(),
-                    film_seed: 17,
+                    pipeline: Default::default(),
                     scan: &scan,
                     field: None,
                     input: InputSettings::negative(calibration),
@@ -332,8 +330,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         &device,
         (&queue, &gate),
         Request {
-            film_emulation: Default::default(),
-            film_seed: 17,
+            pipeline: Default::default(),
             scan: &scan,
             field: None,
             input: InputSettings::negative(calibration),
@@ -354,8 +351,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
         &device,
         (&queue, &gate),
         Request {
-            film_emulation: Default::default(),
-            film_seed: 17,
+            pipeline: Default::default(),
             scan: &scan,
             field: None,
             input: InputSettings::negative(calibration),
@@ -400,8 +396,7 @@ fn narrow_lut_renders_crop_and_full_image_and_invalid_settings_preserve_destinat
             &device,
             (&queue, &gate),
             Request {
-                film_emulation: Default::default(),
-                film_seed: 17,
+                pipeline: Default::default(),
                 scan: &scan,
                 field: None,
                 input: InputSettings::negative(calibration),

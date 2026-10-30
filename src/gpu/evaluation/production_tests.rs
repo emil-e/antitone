@@ -138,6 +138,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
             enabled: true,
             size: 0.1,
+            image_sigma: 0.1,
             amount: 0.12,
             colour: 0.7,
         });

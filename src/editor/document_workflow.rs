@@ -253,6 +253,7 @@ impl Editor {
                 self.document.set_crop_edit(None);
                 self.document.visit.canvas.last_layout = None;
                 self.document.film_emulation = self.document.state.project.output.film_emulation;
+                self.document.halation = self.document.state.project.output.halation;
                 self.document.target = match self.document.state.project.output.tiff {
                     crate::project::TiffTarget::Srgb => OutputTarget::Srgb,
                     crate::project::TiffTarget::DisplayP3 => OutputTarget::DisplayP3,

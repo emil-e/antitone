@@ -24,6 +24,7 @@ pub(crate) struct Request {
     pub(crate) inspection: bool,
     pub(crate) field: Option<Arc<crate::flat_field::FlatField>>,
     pub(crate) plan: Arc<Plan>,
+    presentation: FrameRaster,
 }
 
 impl PartialEq for Request {
@@ -60,7 +61,7 @@ impl Request {
     }
 
     pub(crate) fn frame(&self) -> FrameRaster {
-        self.plan.output()
+        self.presentation
     }
 
     pub(crate) fn with_identity(
@@ -95,13 +96,16 @@ impl Request {
     }
 
     pub(crate) fn same_acquisition(&self, other: &Self) -> bool {
-        self.same_source(other) && self.plan.same_acquisition_layout(&other.plan)
+        self.same_source(other)
+            && self.presentation == other.presentation
+            && self.plan.same_acquisition_layout(&other.plan)
     }
 
     /// A source at its retained frame can run current stages only with sufficient neighbours.
     pub(crate) fn compatible_processing(&self, wanted: &Self) -> bool {
         self.same_source(wanted)
             && self.plan.sampling() == wanted.plan.sampling()
+            && self.view_grid_sufficient(wanted.plan.pipeline())
             && self
                 .plan
                 .for_pipeline(wanted.plan.pipeline())
@@ -112,6 +116,7 @@ impl Request {
     pub(crate) fn satisfies(&self, wanted: &Self) -> bool {
         self.same_source(wanted)
             && self.repairs == wanted.repairs
+            && self.presentation == wanted.presentation
             && self.plan.can_supply(&wanted.plan)
     }
 
@@ -122,30 +127,61 @@ impl Request {
             ));
         }
         Self::require_frame(frame)?;
-        self.plan = Arc::new(self.plan.for_output(frame)?);
-        Ok(self)
+        self.presentation = frame;
+        let pipeline = self.plan.pipeline().clone();
+        let sampling = self.plan.sampling();
+        self.replan(pipeline, sampling)
     }
 
-    pub(crate) fn with_pipeline(mut self, pipeline: PixelPipeline) -> Result<Self, Error> {
+    pub(crate) fn with_pipeline(self, pipeline: PixelPipeline) -> Result<Self, Error> {
         if self.inspection && !pipeline.is_empty() {
             return Err(Error::Gpu(
                 "source inspection bypasses post-grade stages".into(),
             ));
         }
-        self.plan = Arc::new(self.plan.for_pipeline(&pipeline)?);
+        let sampling = self.plan.sampling();
+        self.replan(pipeline, sampling)
+    }
+
+    pub(crate) fn with_sampling(self, sampling: Sampling) -> Result<Self, Error> {
+        let pipeline = self.plan.pipeline().clone();
+        self.replan(pipeline, sampling)
+    }
+
+    fn replan(mut self, pipeline: PixelPipeline, sampling: Sampling) -> Result<Self, Error> {
+        let layout = crate::pixel_pipeline::sampling::ViewSampling::new(
+            self.presentation,
+            &pipeline,
+            sampling,
+        )?;
+        log::trace!(
+            "captured view sampling: ideal {:?}, working {:?}, limited {}",
+            layout.ideal,
+            layout.plan.output().output,
+            layout.limited()
+        );
+        self.presentation = layout.presentation;
+        self.plan = Arc::new(layout.plan);
         Ok(self)
     }
 
-    pub(crate) fn with_sampling(mut self, sampling: Sampling) -> Result<Self, Error> {
-        self.plan = Arc::new(Plan::new(AcquisitionRequest {
-            output: self.frame(),
-            stages: self.plan.pipeline(),
-            sampling,
-        })?);
-        Ok(self)
+    fn view_grid_sufficient(&self, pipeline: &PixelPipeline) -> bool {
+        crate::pixel_pipeline::sampling::ViewSampling::new(
+            self.presentation,
+            pipeline,
+            self.plan.sampling(),
+        )
+        .is_ok_and(|wanted| {
+            (0..2).all(|i| self.plan.output().output[i] >= wanted.plan.output().output[i])
+        })
     }
 
     pub(crate) fn processing_plan(&self, pipeline: &PixelPipeline) -> Result<Plan, Error> {
+        if !self.view_grid_sufficient(pipeline) {
+            return Err(Error::InvalidParameter(
+                "acquired view grid is too coarse for processing",
+            ));
+        }
         self.plan.for_pipeline(pipeline)?.using_input(&self.plan)
     }
 
@@ -226,6 +262,7 @@ impl Request {
             program: None,
             field,
             inspection,
+            presentation: frame,
             plan: Arc::new(Plan::new(AcquisitionRequest {
                 output: frame,
                 stages: &PixelPipeline::default(),

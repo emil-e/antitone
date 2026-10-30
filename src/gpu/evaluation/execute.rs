@@ -884,6 +884,11 @@ pub(crate) struct Recorded {
 }
 
 impl Recorded {
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn scratch_bytes(&self) -> u64 {
+        self.plan.peak_scratch_bytes
+    }
+
     #[cfg(test)]
     pub fn encode(
         &self,

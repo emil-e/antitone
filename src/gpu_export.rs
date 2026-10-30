@@ -17,9 +17,6 @@ use std::{path::Path, sync::Arc};
 
 #[cfg(all(test, target_os = "macos", feature = "editor"))]
 use crate::gpu::ProcessingInput;
-#[cfg(all(test, target_os = "macos"))]
-mod film_tests;
-
 mod area;
 #[cfg(feature = "project")]
 pub(crate) mod job;
@@ -31,12 +28,14 @@ use crate::gpu::{execution::OutputBlock, rgb16};
 mod common_exr_tests;
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) mod observation_clock;
+#[cfg(all(test, target_os = "macos", feature = "editor"))]
+mod pipeline_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod production_tests;
 #[cfg(all(test, target_os = "macos", feature = "editor"))]
 mod resource_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Format {
@@ -55,12 +54,11 @@ pub struct Request<'a> {
     pub composition: Composition,
     pub format: Format,
     pub look: Option<Arc<crate::looks::LookAsset>>,
-    pub film_emulation: crate::film_emulation::FilmEmulationSettings,
-    pub film_seed: u64,
+    pub pipeline: crate::pixel_pipeline::PixelPipeline,
 }
 
 /// One bounded dispatch/readback outstanding; no CPU photographic rendering fallback.
-/// Uses the renderer's original-processing kernel, initialized with the shared renderer.
+/// Renders original samples through the shared photographic composition.
 pub fn write(
     renderer: &GpuRenderer,
     device: &wgpu::Device,

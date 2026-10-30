@@ -37,6 +37,44 @@ fn scale_assembly_input(pixel: vec4f, position: vec2f) -> vec4f {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Square;
+
+impl EffectDefinition for Square {
+    fn support(&self, _: [f64; 2]) -> crate::processing_support::Support {
+        crate::processing_support::Support::NONE
+    }
+
+    fn compose(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+        let meaning = image.domain.meaning;
+        Ok(pointwise(
+            image,
+            meaning,
+            Function::new(
+                "fn square_assembly_input(pixel: vec4f, position: vec2f) -> vec4f { return vec4f(pixel.rgb * pixel.rgb, pixel.a); }",
+                "square_assembly_input",
+            ),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FootprintScale;
+
+impl EffectDefinition for FootprintScale {
+    fn support(&self, _: [f64; 2]) -> crate::processing_support::Support {
+        crate::processing_support::Support::NONE
+    }
+
+    fn integrates_footprint(&self) -> bool {
+        true
+    }
+
+    fn compose(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+        Scale(DVec3::splat(image.domain.grid.pitch[0])).compose(image)
+    }
+}
+
 struct Pixels {
     domain: Domain,
     values: Vec<[f32; 4]>,
@@ -271,6 +309,91 @@ fn inserting_one_upstream_operation_changes_independent_prefixes_and_complete_co
                 close(filtered, actual);
             }
         }
+    }
+}
+
+#[test]
+fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_presentation() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let domain = Domain {
+        bounds: [0, 0, 4, 1].into(),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Neutral,
+    };
+    let values = [0.125, 0.5, 1., 4.];
+    let input = source(Arc::new(Pixels {
+        domain,
+        values: values.map(|v| [v, v, v, 0.]).to_vec(),
+    }));
+    let grading = Grading::new(
+        &device,
+        RollSettings {
+            exposure: 1.,
+            ..Default::default()
+        },
+        AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(AdjustmentLayerSettings {
+            exposure: -2.,
+            ..Default::default()
+        })])
+        .unwrap(),
+        domain.bounds,
+    )
+    .unwrap();
+    let effects = PixelPipeline {
+        stages: vec![PixelStage::new(FootprintScale)],
+    };
+    let upstream = DVec3::new(0.75, 1.25, 0.9);
+    let mut steps = definition(&effects);
+    let before_roll = steps
+        .iter()
+        .position(|step| step.boundary == Some(Boundary::Roll))
+        .unwrap();
+    steps.insert(
+        before_roll,
+        Step {
+            boundary: None,
+            component: Component::Effects(PixelPipeline {
+                stages: vec![PixelStage::new(Square), PixelStage::new(Scale(upstream))],
+            }),
+        },
+    );
+    let mut assembly = Assembly::filtered(grading);
+    let mut output = domain;
+    output.meaning = Meaning::Graded;
+    output.bounds = [0, 0, 2, 1].into();
+    output.grid = Grid::axis_aligned([0.; 2], [2., 1.]);
+    assembly.effect_output = Some(EffectOutput {
+        domain: output,
+        offset: [0; 2],
+        scale: [2., 1.],
+    });
+    let graded = assembly
+        .clone()
+        .build(input.clone(), Boundary::Neutral, Boundary::Graded, &steps)
+        .unwrap()
+        .at(Boundary::Graded);
+    assert!(
+        graded.domain.same_grid(domain),
+        "a prefix query must retain its declared native grid"
+    );
+    let prefix = read(renderer.evaluation(), &queue, graded);
+    for (value, original) in prefix.into_iter().zip(values) {
+        close(value, upstream * f64::from(original).powi(2) * 0.5);
+    }
+    let image = assembly
+        .build(input, Boundary::Neutral, Boundary::Processed, &steps)
+        .unwrap()
+        .at(Boundary::Processed);
+    assert!(image.domain.same_grid(output));
+    let actual = read(renderer.evaluation(), &queue, image);
+    for (pair, actual) in values.as_chunks::<2>().0.iter().zip(actual) {
+        // Squaring precedes averaging, so the result contains the mean of squares,
+        // not the square of the mean. Roll/layer gain is 2 × 1/4; the final
+        // footprint-aware effect sees pitch2, rather than native pitch1.
+        close(
+            actual,
+            upstream * (f64::from(pair[0]).powi(2) + f64::from(pair[1]).powi(2)) * 0.5,
+        );
     }
 }
 

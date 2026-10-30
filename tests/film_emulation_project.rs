@@ -1,6 +1,6 @@
 #![cfg(feature = "project")]
 use antitone::{
-    film_emulation::{CONTRACT, FilmEmulationPreset, FilmEmulationSettings},
+    film_emulation::{CONTRACT, FilmEmulationSettings, FilmPreset},
     project::{Project, Save},
 };
 
@@ -21,8 +21,10 @@ fn projects_without_film_settings_keep_the_clean_plate_and_custom_disabled_value
             enabled,
             amount: 0.083,
             size: 0.083,
+            image_sigma: 0.027,
             colour: 0.73,
         };
+        project.output.film_preset = FilmPreset::MediumFormat;
         // Digital-only visibility must not become a saved/processing-stage restriction.
         assert!(project.input.is_negative());
         project.validate().unwrap();
@@ -42,11 +44,24 @@ fn projects_without_film_settings_keep_the_clean_plate_and_custom_disabled_value
 #[test]
 fn unsupported_or_malformed_film_settings_reject_instead_of_silently_changing_appearance() {
     let mut project = Project::default();
-    project.output.film_emulation = FilmEmulationPreset::Medium.settings();
+    project.output.film_emulation = FilmPreset::ThirtyFiveMm.settings();
     let value = serde_json::to_value(&project).unwrap();
     assert_eq!(value["output"]["film_emulation"]["contract"], CONTRACT);
     for (key, bad_value) in [
         ("contract", serde_json::json!("future-grain-v999")),
+        (
+            "contract",
+            serde_json::json!("source-mtf-grain-gaussian-rgb-v1"),
+        ),
+        (
+            "contract",
+            serde_json::json!("frame-mtf-grain-gaussian-rgb-v2"),
+        ),
+        (
+            "contract",
+            serde_json::json!("frame-mtf-grain-gaussian-rgb-v3"),
+        ),
+        ("image_sigma", serde_json::json!(0.)),
         ("extra", serde_json::json!(1)),
         ("size", serde_json::json!(0.)),
         ("amount", serde_json::json!(0.21)),
@@ -57,7 +72,14 @@ fn unsupported_or_malformed_film_settings_reject_instead_of_silently_changing_ap
         bad["output"]["film_emulation"][key] = bad_value;
         assert!(serde_json::from_value::<Project>(bad).is_err(), "{key}");
     }
-    for missing in ["contract", "amount", "size", "colour", "enabled"] {
+    for missing in [
+        "contract",
+        "amount",
+        "size",
+        "image_sigma",
+        "colour",
+        "enabled",
+    ] {
         let mut bad = value.clone();
         bad["output"]["film_emulation"]
             .as_object_mut()

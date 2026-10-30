@@ -42,6 +42,8 @@ struct ControlState {
     photo: AdjustmentLayerSettings,
     target: OutputTarget,
     film_emulation: FilmEmulationSettings,
+    film_preset: FilmPreset,
+    halation: crate::halation::HalationSettings,
     source: Option<SourceId>,
     layer: adjustment_layers::Target,
 }
@@ -54,6 +56,8 @@ impl ControlState {
             photo: editor.document.visit.adjustment_layer_settings,
             target: editor.document.target,
             film_emulation: editor.document.film_emulation,
+            film_preset: editor.document.project.output.film_preset,
+            halation: editor.document.halation,
             source: editor.document.visit.current_source,
             layer: editor.adjustment_layer_target(),
         }
@@ -64,6 +68,8 @@ impl ControlState {
         project.roll = self.roll;
         project.processing_model = self.input.processing_model();
         project.output.film_emulation = self.film_emulation;
+        project.output.film_preset = self.film_preset;
+        project.output.halation = self.halation;
         project.output.tiff = match self.target {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
             OutputTarget::DisplayP3 => crate::project::TiffTarget::DisplayP3,

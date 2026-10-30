@@ -39,7 +39,8 @@ fn film_emulation_gpu_matches_the_scan_cohorts_spatial_and_rgb_direction() {
                 &kernels,
                 ProbeConfig {
                     side,
-                    scale: 1.8,
+                    // This envelope describes a1.8px field, not the profile's Size value.
+                    scale: 1.8 / crate::film_emulation::GRAIN_SCALE,
                     colour: 0.5,
                     ..Default::default()
                 },
@@ -170,6 +171,7 @@ fn film_emulation_gpu_rgb_covariance_matches_the_cpu_gain_compensation() {
             let settings = FilmEmulationSettings {
                 enabled: true,
                 size: config.scale * (100. / 6000.),
+                image_sigma: config.scale * (100. / 6000.),
                 colour: config.colour,
                 ..Default::default()
             };

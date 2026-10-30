@@ -7,6 +7,9 @@ pub struct GrainBasis {
     pub factor: [[f64; 3]; 3],
 }
 
+#[cfg(test)]
+mod tests;
+
 pub const GRAIN_BASIS: [GrainBasis; 2] = [
     GrainBasis {
         sigma: 0.24,
@@ -40,14 +43,11 @@ impl GrainParameters {
 }
 #[cfg(any(test, feature = "gpu"))]
 impl GrainParameters {
-    pub(crate) fn reference_power(self) -> f64 {
+    fn reference_power() -> f64 {
         GRAIN_BASIS
             .iter()
-            .map(|basis| {
-                let variance = (basis.sigma * self.grain_size).powi(2);
-                basis.factor[1].iter().map(|v| v * v).sum::<f64>() * variance
-                    / (variance + 1. / 12.)
-            })
+            // Normalize the continuous field, before any native/view pixel integration.
+            .map(|basis| basis.factor[1].iter().map(|v| v * v).sum::<f64>())
             .sum()
     }
 
@@ -61,7 +61,7 @@ impl GrainParameters {
 
     pub(crate) fn covariance(self, footprint: f64) -> [[f64; 3]; 3] {
         let footprint = footprint.max(1.);
-        let reference = self.reference_power();
+        let reference = Self::reference_power();
         let mut covariance = [[0.; 3]; 3];
         for basis in GRAIN_BASIS {
             let variance = (basis.sigma * self.grain_size).powi(2);

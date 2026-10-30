@@ -1,5 +1,8 @@
 //! Shared geometry/coverage contract for pixel stages; metadata is otherwise opaque.
-use crate::{Error, frame_raster::FrameRaster, geometry::SourceRegion};
+#[cfg(all(test, feature = "render", any(feature = "raw", feature = "ui")))]
+use crate::Error;
+use crate::{frame_raster::FrameRaster, geometry::SourceRegion};
+#[cfg(all(test, feature = "editor"))]
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -127,6 +130,7 @@ pub(crate) fn render_pipeline(
     })
 }
 
+#[cfg(all(test, feature = "render", any(feature = "raw", feature = "ui")))]
 pub(crate) fn buffer(
     device: &wgpu::Device,
     size: [u32; 2],
@@ -150,6 +154,7 @@ pub(crate) fn buffer(
     }))
 }
 
+#[cfg(all(test, feature = "editor"))]
 pub(crate) fn uniform<T: bytemuck::Pod>(
     device: &wgpu::Device,
     value: &T,
@@ -160,24 +165,4 @@ pub(crate) fn uniform<T: bytemuck::Pod>(
         contents: bytemuck::bytes_of(value),
         usage: wgpu::BufferUsages::UNIFORM,
     })
-}
-
-pub(crate) fn dispatch(
-    device: &wgpu::Device,
-    encoder: &mut wgpu::CommandEncoder,
-    pipeline: &wgpu::ComputePipeline,
-    entries: &[wgpu::BindGroupEntry<'_>],
-    count: u32,
-) {
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &pipeline.get_bind_group_layout(0),
-        entries,
-    });
-    let groups = count.div_ceil(64);
-    let x = groups.min(device.limits().max_compute_workgroups_per_dimension);
-    let mut pass = encoder.begin_compute_pass(&Default::default());
-    pass.set_pipeline(pipeline);
-    pass.set_bind_group(0, &group, &[]);
-    pass.dispatch_workgroups(x, groups.div_ceil(x), 1);
 }

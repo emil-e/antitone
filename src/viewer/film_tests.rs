@@ -4,7 +4,7 @@ use super::*;
 fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_representation() {
     use crate::{
         adjustment_layers::AdjustmentLayerSnapshot,
-        film_emulation::FilmEmulationPreset,
+        film_emulation::FilmPreset,
         frame_raster::FrameRaster,
         geometry::Composition,
         gpu::ProcessingInput,
@@ -40,7 +40,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         let clean = ProcessingInput::from(Arc::new(grade));
         let film = clean
             .clone()
-            .with_film_emulation(FilmEmulationPreset::Medium.settings())
+            .with_film_emulation(FilmPreset::ThirtyFiveMm.settings())
             .with_frame_size([1200; 2])
             .with_film_seed(17);
         image.require_processing(&clean).unwrap();
@@ -112,7 +112,6 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
 fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
-        film_emulation::FilmEmulationPreset,
         gpu::{GpuInputProgram, Grading, ProcessingInput},
         processing::{InputSettings, RollSettings},
     };
@@ -158,7 +157,13 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
             )
             .unwrap();
             let input = ProcessingInput::from(Arc::new(pipeline))
-                .with_film_emulation(FilmEmulationPreset::Coarse.settings())
+                .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
+                    enabled: true,
+                    size: 0.065,
+                    image_sigma: 0.065,
+                    amount: 0.065,
+                    ..Default::default()
+                })
                 .with_frame_size(frame_size)
                 .with_film_seed(17);
             let mut encoder = device.create_command_encoder(&Default::default());

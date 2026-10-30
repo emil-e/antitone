@@ -117,7 +117,10 @@ fn film_emulation_gpu_psd_and_autocorrelation_track_the_covariance_model() {
                     &queue,
                     &renderer,
                     &kernels,
-                    [2., 2. * footprint_per_scale],
+                    [
+                        2. / crate::film_emulation::GRAIN_SCALE,
+                        2. * footprint_per_scale,
+                    ],
                     true,
                     seed,
                 );
@@ -162,10 +165,95 @@ fn film_emulation_gpu_psd_and_autocorrelation_track_the_covariance_model() {
 }
 
 #[test]
-fn film_emulation_gpu_amount_is_native_source_pixel_rms() {
+fn film_emulation_gpu_grain_matches_at_fixed_frame_sampling_across_source_resolutions() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
-        for scale in [0.3, 1., 2., 3.5] {
+        let mut maximum_error = 0_f64;
+        let mut maximum_binary_error = 0_f64;
+        for output in [512, 1024] {
+            for size in [
+                crate::film_emulation::MIN_SIZE,
+                crate::film_emulation::DEFAULT_SIZE,
+                crate::film_emulation::MAX_SIZE,
+            ] {
+                for colour in [0., 0.5, 1.] {
+                    for seed in [17, 1234] {
+                        let mut reference: Option<Vec<[f32; 4]>> = None;
+                        for native in [2048, 3000, 4096, 8192] {
+                            // Same interior frame region, seed, scale fraction and sample centres.
+                            // Flat inputs isolate grain from the preview MTF approximation.
+                            let config = ProbeConfig {
+                                side: 64,
+                                frame_extent: native,
+                                origin: [f64::from(native) / 4.; 2],
+                                scale: size / 100. * f64::from(native),
+                                footprint: f64::from(native) / f64::from(output),
+                                colour,
+                                ..Default::default()
+                            };
+                            let view = configured_probe(&device, &renderer, &kernels, config, seed);
+                            view.ensure_submitted(
+                                &device,
+                                &queue,
+                                &SubmissionGate::default(),
+                                &egui::Context::default(),
+                            );
+                            let pixels =
+                                read(&device, &queue, &view.graded.as_ref().unwrap().pixels);
+                            assert_eq!(pixels.len(), config.side * config.side);
+                            assert!(pixels.iter().flatten().all(|p| p.is_finite()));
+                            if let Some(expected) = &reference {
+                                for (actual, expected) in pixels.iter().zip(expected) {
+                                    for c in 0..3 {
+                                        let error = (f64::from(actual[c]) / f64::from(expected[c])
+                                            - 1.)
+                                            .abs();
+                                        maximum_error = maximum_error.max(error);
+                                        if native.is_power_of_two() {
+                                            maximum_binary_error = maximum_binary_error.max(error);
+                                        }
+                                    }
+                                    assert_eq!(actual[3], expected[3]);
+                                }
+                            } else {
+                                let log: Vec<_> =
+                                    pixels.iter().map(|p| f64::from(p[1]).ln()).collect();
+                                let mean = log.iter().sum::<f64>() / log.len() as f64;
+                                let rms = (log.iter().map(|g| (g - mean).powi(2)).sum::<f64>()
+                                    / log.len() as f64)
+                                    .sqrt();
+                                assert!(
+                                    rms > 0.0001,
+                                    "a bypassed grain stage cannot establish invariance"
+                                );
+                                reference = Some(pixels);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Non-binary rescaling quantizes the f32 lattice phase differently. Its budget is
+        // 256 relative f32 epsilons; power-of-two rescaling should need no phase allowance.
+        eprintln!(
+            "grain frame invariance: maximum relative error={maximum_error}, binary={maximum_binary_error}"
+        );
+        assert!(maximum_error < 256. * f64::from(f32::EPSILON));
+        assert!(maximum_binary_error < 0.000005);
+    });
+}
+
+#[test]
+fn film_emulation_gpu_amount_is_preintegration_rms_with_sampling_loss() {
+    pollster::block_on(async {
+        let (device, queue, renderer, kernels) = context().await;
+        // Independent Gaussian-spectrum/aperture integrals, normalized at zero aperture.
+        for (scale, expected_rms) in [
+            (0.3, 0.022598097992742462),
+            (1., 0.04206214641741791),
+            (2., 0.04991842747183426),
+            (3.5, 0.05306786234056999),
+        ] {
             let mut variance = 0.;
             let mut mean_light = 0.;
             for seed in [17, 77, 1234] {
@@ -175,7 +263,9 @@ fn film_emulation_gpu_amount_is_native_source_pixel_rms() {
                     &kernels,
                     ProbeConfig {
                         side: 512,
-                        scale,
+                        frame_extent: 4096,
+                        // This frame admits the authored field scales within the Size bounds.
+                        scale: scale / crate::film_emulation::GRAIN_SCALE,
                         ..Default::default()
                     },
                     seed,
@@ -199,9 +289,11 @@ fn film_emulation_gpu_amount_is_native_source_pixel_rms() {
                     / 3.;
             }
             let rms = variance.sqrt();
-            eprintln!("native grain L={scale}: log RMS={rms}, mean multiplier={mean_light}");
+            eprintln!(
+                "native grain L={scale}: log RMS={rms}, expected={expected_rms}, mean multiplier={mean_light}"
+            );
             // Finite patches, three declared seeds, and at most 1% omitted power.
-            assert!((rms / 0.055 - 1.).abs() < 0.05);
+            assert!((rms / expected_rms - 1.).abs() < 0.05);
             assert!((mean_light - 1.).abs() < 0.003);
         }
     });

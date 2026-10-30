@@ -4,7 +4,7 @@ A working positive and a displayed photograph are not the same representation. T
 
 ```text
 signed/HDR AP1 photographic grade
-  → optional Film Emulation (image MTF → grain)
+  → optional emulation (image MTF → independent halation → grain)
   ├→ AP1-to-AP0 → scene-linear EXR
   └→ optional ACEScct/AP1 creative LUT → ACES output transform → linear sRGB or Display P3
        ├→ target encoding + ICC → TIFF
@@ -50,7 +50,7 @@ Processing selects **scene-referred** or **display-referred** output independent
 
 The current **TIFF** exporter selects display-referred output, target transfer and RGB16 quantization, with a matching ICC profile. **EXR** selects scene-referred output and serializes linear AP0/D60 with declared chromaticities, without display transfer or SDR clipping. Half and full precision are available; half overflow rejects rather than silently clipping.
 
-Both outputs use accepted composition and full-resolution source pixels, never a preview buffer or tool draft. One bounded GPU executor processes originals into FP32 linear pixels, reconstructs with source-cell area weights and reads back only destination pixels. Display rendering applies the captured creative LUT and pinned GPU ACES per original before reconstruction, regardless of eventual codec; scene-referred processing bypasses those stages. EXR's AP0 conversion remains at serialization. The engine acquires real source neighbours from the stages' [composed support](architecture.md#pixel-stages-and-spatial-support), plus reconstruction roundoff, so tile edges never become filter boundaries. Cold repair selection consumes that support around the captured composition; a cropped-out repair can still influence a filtered edge. An applicable evaluation failure fails export without replacing the destination — there is no implicit unrepaired fallback.
+Both outputs use accepted composition and full-resolution source pixels, never a preview buffer or tool draft. Shared recipe assembly supplies the captured effect pipeline; the file adapter selects original-sample planning and output representation without interpreting individual effects or applying view-quality sampling limits. One bounded GPU executor processes originals into FP32 linear pixels, reconstructs with source-cell area weights and reads back only destination pixels. Display rendering applies the captured creative LUT and pinned GPU ACES per original before reconstruction, regardless of eventual codec; scene-referred processing bypasses those stages. EXR's AP0 conversion remains at serialization. The engine acquires real source neighbours from the stages' [composed support](architecture.md#pixel-stages-and-spatial-support), plus reconstruction roundoff, so tile edges never become filter boundaries. Cold repair selection consumes that support around the captured composition; a cropped-out repair can still influence a filtered edge. An applicable evaluation failure fails export without replacing the destination — there is no implicit unrepaired fallback.
 
 RGB16 quantization uses a [codec-independent GPU stage](../src/gpu/rgb16.rs) after reconstruction, recording transfer and packing in the same GPU submission and validating the complete block's status on the CPU. RGB16 colour target, encoded sample representation and file codec are separate choices; sRGB and Display P3 currently share their transfer curve.
 

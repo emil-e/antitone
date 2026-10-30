@@ -13,6 +13,7 @@ mod adjustment_layer_resources;
 mod colour;
 mod crop_scale;
 mod film_emulation;
+mod halation;
 mod identity;
 mod inspection;
 mod neutral_cache;
@@ -23,6 +24,7 @@ mod publication;
 mod repairs;
 #[cfg(target_os = "macos")]
 mod resource_observation;
+mod sampling;
 mod source_scale;
 mod stage_acquisition;
 mod stage_pitch;

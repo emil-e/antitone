@@ -47,8 +47,7 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
     )
     .unwrap();
     let request = |composition, format| Request {
-        film_emulation: Default::default(),
-        film_seed: 17,
+        pipeline: Default::default(),
         scan: &scan,
         field: None,
         input: Calibration {

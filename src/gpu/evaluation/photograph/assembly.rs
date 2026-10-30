@@ -38,6 +38,50 @@ pub(super) struct Assembly {
     pub camera_function: Option<Function>,
     pub encoded: bool,
     pub repairs: crate::gpu::repairs::Snapshot,
+    #[cfg(feature = "editor")]
+    effect_output: Option<EffectOutput>,
+}
+
+/// Explicit view-grid transition inside the canonical post-grade effect component.
+#[cfg(feature = "editor")]
+#[derive(Clone, Copy)]
+struct EffectOutput {
+    domain: Domain,
+    offset: [u32; 2],
+    scale: [f64; 2],
+}
+
+#[cfg(feature = "editor")]
+impl EffectOutput {
+    fn compose(
+        self,
+        effects: &PixelPipeline,
+        input: Arc<ImageNode>,
+    ) -> Result<Arc<ImageNode>, Error> {
+        let split = effects.footprint_suffix();
+        let prefix = PixelPipeline {
+            stages: effects.stages[..split].to_vec(),
+        };
+        let suffix = PixelPipeline {
+            stages: effects.stages[split..].to_vec(),
+        };
+        if suffix
+            .stages
+            .iter()
+            .any(|stage| stage.support(self.domain.grid.pitch).0 != [0; 2])
+        {
+            return Err(Error::InvalidParameter(
+                "footprint-integrated effect requires neighbours",
+            ));
+        }
+        let image = prefix.compose(input)?;
+        let image = if image.domain.same_grid(self.domain) {
+            image
+        } else {
+            reconstruct_cells(image, self.domain, self.offset.map(f64::from), self.scale)?
+        };
+        suffix.compose(image)
+    }
 }
 
 struct Images(Vec<(Boundary, Arc<ImageNode>)>);
@@ -70,6 +114,8 @@ impl Assembly {
             camera_function: None,
             encoded: false,
             repairs: Default::default(),
+            #[cfg(feature = "editor")]
+            effect_output: None,
         }
     }
 
@@ -83,6 +129,7 @@ impl Assembly {
             camera_function: None,
             encoded: encoding.exposure != 0.,
             repairs: Default::default(),
+            effect_output: None,
         }
     }
 
@@ -96,6 +143,7 @@ impl Assembly {
             camera_function: None,
             encoded: false,
             repairs: Default::default(),
+            effect_output: None,
         }
     }
 
@@ -134,10 +182,18 @@ impl Assembly {
 
     #[cfg(feature = "editor")]
     pub fn filtered_image(
-        self,
+        mut self,
         source: Arc<ImageNode>,
         stages: &PixelPipeline,
+        output: Domain,
+        offset: [u32; 2],
+        scale: [f64; 2],
     ) -> Result<Arc<ImageNode>, Error> {
+        self.effect_output = Some(EffectOutput {
+            domain: output,
+            offset,
+            scale,
+        });
         Ok(self
             .build(
                 source,
@@ -300,7 +356,22 @@ impl Assembly {
                     }
                     None => image,
                 },
-                Component::Effects(effects) => effects.compose(image)?,
+                Component::Effects(effects) => {
+                    #[cfg(feature = "editor")]
+                    if let Some(output) = self
+                        .effect_output
+                        .filter(|_| step.boundary == Some(Boundary::Processed))
+                    {
+                        image = output.compose(effects, image)?;
+                    } else {
+                        image = effects.compose(image)?;
+                    }
+                    #[cfg(not(feature = "editor"))]
+                    {
+                        image = effects.compose(image)?;
+                    }
+                    image
+                }
             };
 
             if let Some(boundary) = step.boundary {

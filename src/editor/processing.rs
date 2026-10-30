@@ -237,6 +237,7 @@ impl Editor {
             .image_recipe_for_source(&candidate, &input, roll)?;
         recipe.neutral.reference = self.document.exposure_value(source);
         recipe.film_emulation = self.document.film_emulation;
+        recipe.halation = self.document.halation;
         recipe.neutral.correction = self
             .document
             .correction

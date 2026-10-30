@@ -68,6 +68,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
         .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
             enabled: true,
             size: 0.1,
+            image_sigma: 0.1,
             amount: 0.,
             colour: 0.5,
         })

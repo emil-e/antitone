@@ -18,6 +18,7 @@ mod exposure;
 mod film_emulation;
 mod fullscreen;
 mod guide_shots;
+mod halation;
 mod history;
 mod looks;
 mod masks;

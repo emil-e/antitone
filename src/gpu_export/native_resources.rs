@@ -55,6 +55,7 @@ fn native_output_resources() {
     let film = crate::film_emulation::FilmEmulationSettings {
         enabled: true,
         size: 0.1,
+        image_sigma: 0.1,
         amount: 0.055,
         colour: 0.7,
     };
@@ -138,8 +139,12 @@ fn native_output_resources() {
                     repairs: &[],
                     composition,
                     format,
-                    film_emulation: film,
-                    film_seed: (1 << 60) + 17,
+                    pipeline: crate::pixel_pipeline::PixelPipeline::film(
+                        film,
+                        composition.crop().size,
+                        (1 << 60) + 17,
+                    )
+                    .unwrap(),
                     look: None,
                 },
                 (&path, crate::export::Overwrite::Confirmed),

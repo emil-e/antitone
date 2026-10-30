@@ -25,6 +25,7 @@ fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) group
     var mean = vec3f(0.0);
     var mass = 0.0;
     var flags = 0u;
+    var invalid = 0.0;
     for(var y = first.y; y < end.y; y++) {
         for(var x = first.x; x < end.x; x++) {
             let p = vec2i(x, y);
@@ -40,8 +41,12 @@ fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) group
             let next = mass + weight;
             mean = mean * (1.0 - weight / next) + sample.rgb * (weight / next);
             mass = next;
-            flags = flags | u32(sample.w);
+            if sample.w < 0.0 {
+                invalid = min(invalid, sample.w);
+            } else {
+                flags = flags | u32(sample.w);
+            }
         }
     }
-    output[index] = vec4f(mean, f32(flags));
+    output[index] = vec4f(mean, select(f32(flags), invalid, invalid < 0.0));
 }

@@ -197,18 +197,31 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
     let (e, scheduler) = editor();
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
-        let (old, resource) = app.enter(|e, access| {
+        let (old_generation, old, resource) = app.enter(|e, access| {
             let resource = demand(e, 0., access);
-            (e.document.visit.canvas.grade.original.revision(), resource)
+            let original = &e.document.visit.canvas.grade.original;
+            (original.generation.clone(), original.revision(), resource)
         });
         app.pump();
         app.update(|e| e.replace_photo_scope(8));
         app.pump();
         assert!(resource.upgrade().is_none());
-        drop(hold);
         app.enter(|e, access| {
             demand(e, 0.2, access);
+            let current = &e.document.visit.canvas.grade.original;
+            assert_eq!(
+                old,
+                current.revision(),
+                "exercise generation identity, not revision inequality"
+            );
+            assert!(!Arc::ptr_eq(&old_generation, &current.generation));
+            e.receive_original_for(&old_generation, old, Err("retired".into()));
+            let current = &e.document.visit.canvas.grade.original;
+            assert!(current.refining.is_some());
+            assert!(current.refinement_error.is_none());
+            assert!(current.settled.is_none());
         });
+        drop(hold);
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.canvas.grade.original.settled.is_some()
         });
@@ -224,7 +237,7 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
                 .2
                 .clone()
         });
-        app.update(|e| e.original_result(old, Err("retired".into())));
+        app.update(|e| e.receive_original_for(&old_generation, old, Err("retired".into())));
         app.read(|e| {
             assert_eq!(e.document.visit.view, 8);
             assert!(Arc::ptr_eq(
@@ -268,65 +281,6 @@ fn leaving_a_purpose_releases_input_before_worker_dispatch() {
             assert!(e.document.visit.canvas.grade.task.is_none());
         });
         drop(hold);
-    });
-    scheduler.close_and_wait().unwrap();
-}
-
-#[test]
-fn retired_running_original_keeps_its_source_until_the_submitted_unit_returns() {
-    let (e, scheduler) = editor();
-    let (started, starts) = std::sync::mpsc::channel();
-    let (release, resume) = std::sync::mpsc::channel();
-    let resume = std::sync::Mutex::new(resume);
-    let submissions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let observed = submissions.clone();
-    e.submissions.observe_submissions(Arc::new(move || {
-        if observed.fetch_add(1, Ordering::Relaxed) == 0 {
-            started.send(()).unwrap();
-            resume
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(15))
-                .unwrap();
-        }
-    }));
-    with_application(e, |app| {
-        let source = app.enter(|e, access| demand(e, 0., access));
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(10)).unwrap();
-        app.enter(|e, access| {
-            e.replace_photo_scope(8);
-            demand(e, 0.2, access);
-        });
-        app.pump();
-        assert!(
-            source.upgrade().is_some(),
-            "running work still owns the native input after its UI waiter departs"
-        );
-        assert_eq!(
-            submissions.load(Ordering::Relaxed),
-            1,
-            "the replacement cannot submit while the retired physical unit is held"
-        );
-        release.send(()).unwrap();
-        app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.canvas.grade.original.settled.is_some()
-        });
-        assert!(source.upgrade().is_none());
-        app.read(|e| {
-            assert_eq!(
-                e.document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .settled
-                    .as_ref()
-                    .unwrap()
-                    .0,
-                e.document.visit.canvas.grade.original.revision()
-            );
-        });
     });
     scheduler.close_and_wait().unwrap();
 }

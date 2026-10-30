@@ -185,8 +185,11 @@ impl Photograph {
         grading: &Grading,
         neutral: Arc<ImageNode>,
         stages: &crate::pixel_pipeline::PixelPipeline,
+        output: Domain,
+        offset: [u32; 2],
+        scale: [f64; 2],
     ) -> Result<Arc<ImageNode>, Error> {
-        Assembly::filtered(grading.clone()).filtered_image(neutral, stages)
+        Assembly::filtered(grading.clone()).filtered_image(neutral, stages, output, offset, scale)
     }
 
     #[cfg(feature = "editor")]

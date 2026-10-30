@@ -147,6 +147,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
             enabled: true,
             size: 0.1,
+            image_sigma: 0.1,
             amount: 0.,
             colour: 0.5,
         });

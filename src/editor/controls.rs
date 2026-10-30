@@ -66,6 +66,8 @@ pub enum Parameter {
     FilmAmount,
     FilmSize,
     FilmColour,
+    HalationStrength,
+    HalationSize,
 }
 
 #[derive(Clone, Copy)]
@@ -119,6 +121,8 @@ impl Parameter {
             Self::FilmAmount => "Amount",
             Self::FilmSize => "Size",
             Self::FilmColour => "Colour",
+            Self::HalationStrength => "Strength",
+            Self::HalationSize => "Core size",
         }
     }
 
@@ -137,6 +141,8 @@ impl Parameter {
                 crate::film_emulation::MIN_AMOUNT..=crate::film_emulation::MAX_AMOUNT
             }
             Self::FilmSize => crate::film_emulation::MIN_SIZE..=crate::film_emulation::MAX_SIZE,
+            Self::HalationStrength => 0. ..=crate::halation::MAX_STRENGTH,
+            Self::HalationSize => crate::halation::MIN_SIZE..=crate::halation::MAX_SIZE,
             Self::FilmColour => {
                 crate::film_emulation::MIN_COLOUR..=crate::film_emulation::MAX_COLOUR
             }
@@ -145,10 +151,10 @@ impl Parameter {
     }
 
     fn slider_range(self) -> RangeInclusive<f64> {
-        if matches!(self, Self::Exposure) {
-            -3.0..=3.0
-        } else {
-            self.range()
+        match self {
+            Self::Exposure => -3.0..=3.0,
+            Self::HalationSize => crate::halation::MIN_SIZE..=0.21,
+            _ => self.range(),
         }
     }
 
@@ -164,6 +170,8 @@ impl Parameter {
             Self::FilmAmount => crate::film_emulation::DEFAULT_AMOUNT,
             Self::FilmSize => crate::film_emulation::DEFAULT_SIZE,
             Self::FilmColour => crate::film_emulation::DEFAULT_COLOUR,
+            Self::HalationStrength => crate::halation::DEFAULT_STRENGTH,
+            Self::HalationSize => crate::halation::DEFAULT_SIZE,
             _ => 0.,
         }
     }
@@ -173,7 +181,7 @@ impl Parameter {
             Self::Exposure => 0.05,
             Self::Shoulder => 0.0001,
             Self::Pivot => 0.001,
-            Self::FilmSize => 0.001,
+            Self::FilmSize | Self::HalationSize => 0.001,
             Self::FilmAmount => 0.001,
             _ => 0.01,
         }
@@ -240,9 +248,15 @@ fn parameter_help(kind: Parameter) -> &'static str {
         Parameter::CropMargin => {
             "Trim each edge by a percentage of the detected frame's shorter side."
         }
-        Parameter::FilmAmount => "Relative grain strength at original resolution; 0 removes grain.",
+        Parameter::FilmAmount => "Grain contrast before pixel averaging; 0 removes grain.",
+        Parameter::HalationStrength => {
+            "Redistribute positive light into a warm halo; 0 leaves the image unchanged."
+        }
+        Parameter::HalationSize => {
+            "Core width as a percentage of the cropped frame's shorter side."
+        }
         Parameter::FilmSize => {
-            "MTF and grain scale as a percentage of the cropped frame's shorter side."
+            "Scale grain and image softness together in fixed crop-relative units."
         }
         Parameter::FilmColour => {
             "0 is monochrome; 0.5 matches the reference colour grain; 1 increases chroma."
@@ -257,7 +271,7 @@ fn parameter_help(kind: Parameter) -> &'static str {
 fn parameter_unit(kind: Parameter) -> Option<&'static str> {
     match kind {
         Parameter::Exposure => Some("EV"),
-        Parameter::CropMargin | Parameter::FilmSize => Some("%"),
+        Parameter::CropMargin | Parameter::FilmSize | Parameter::HalationSize => Some("%"),
         _ => None,
     }
 }
@@ -324,10 +338,12 @@ fn track(ui: &mut Ui, kind: Parameter, value: &mut f64, width: f32, name: egui::
                     .smart_aim(false)
                     .step_by(step),
             )
-            .on_hover_text(if matches!(kind, Parameter::Exposure) {
-                "Slider: ±3 EV; type a value for up to ±16 EV. Shift-drag for finer steps."
-            } else {
-                "Shift-drag for finer steps."
+            .on_hover_text(match kind {
+                Parameter::Exposure => {
+                    "Slider: ±3 EV; type a value for up to ±16 EV. Shift-drag for finer steps."
+                }
+                Parameter::HalationSize => "Slider: 0.01–0.21%; type larger sizes up to 0.50%.",
+                _ => "Shift-drag for finer steps.",
             });
         let pointer_down = ui.is_enabled() && response.is_pointer_button_down_on();
         if fine.is_some() && !pointer_down && !response.drag_stopped() {
@@ -352,8 +368,10 @@ fn track(ui: &mut Ui, kind: Parameter, value: &mut f64, width: f32, name: egui::
                 // so their per-pixel travel differs at either end.
                 let span = range.end() - range.start();
                 let per_pixel = span / f64::from(width);
+                // Fine motion must retain typed values beyond the slider's normal travel.
+                let bounds = kind.range();
                 *value = (state.start + f64::from(state.travel) * per_pixel * 0.1)
-                    .clamp(*range.start(), *range.end());
+                    .clamp(*bounds.start(), *bounds.end());
             }
             _ => *value = shown,
         }
@@ -374,7 +392,7 @@ fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> 
     let decimals = match kind {
         Parameter::Shoulder => 4,
         Parameter::Pivot => 3,
-        Parameter::FilmAmount | Parameter::FilmSize => 3,
+        Parameter::FilmAmount | Parameter::FilmSize | Parameter::HalationSize => 3,
         _ => 2,
     };
     let numeric = ui
@@ -385,7 +403,9 @@ fn numeric_field(ui: &mut Ui, kind: Parameter, value: &mut f64, height: f32) -> 
                     .speed(match kind {
                         Parameter::Shoulder => 0.0001,
                         Parameter::Pivot => 0.001,
-                        Parameter::FilmAmount | Parameter::FilmSize => 0.001,
+                        Parameter::FilmAmount | Parameter::FilmSize | Parameter::HalationSize => {
+                            0.001
+                        }
                         _ => 0.01,
                     })
                     .range(kind.range())
