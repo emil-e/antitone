@@ -61,6 +61,14 @@ impl crate::pixel_pipeline::EffectDefinition for HalationParameters {
     }
 }
 
+#[cfg(all(
+    test,
+    target_os = "macos",
+    feature = "editor",
+    feature = "ocio-reference"
+))]
+mod export_tests;
+
 #[cfg(test)]
 pub(crate) mod reference;
 #[cfg(test)]

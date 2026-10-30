@@ -274,6 +274,15 @@ impl FilmEmulationSettings {
     }
 }
 
+#[cfg(all(
+    test,
+    target_os = "macos",
+    feature = "raw",
+    feature = "gpu",
+    feature = "export"
+))]
+mod export_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

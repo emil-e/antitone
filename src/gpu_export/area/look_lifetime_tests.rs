@@ -60,9 +60,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
         .unwrap(),
     );
     let request = |look| Request {
-        film_emulation: Default::default(),
-        halation: Default::default(),
-        film_seed: 17,
+        pipeline: Default::default(),
         scan: &scan,
         field: None,
         input: calibration.into(),

@@ -139,9 +139,12 @@ fn native_output_resources() {
                     repairs: &[],
                     composition,
                     format,
-                    film_emulation: film,
-                    halation: Default::default(),
-                    film_seed: (1 << 60) + 17,
+                    pipeline: crate::pixel_pipeline::PixelPipeline::film(
+                        film,
+                        composition.crop().size,
+                        (1 << 60) + 17,
+                    )
+                    .unwrap(),
                     look: None,
                 },
                 (&path, crate::export::Overwrite::Confirmed),

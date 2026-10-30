@@ -61,9 +61,7 @@ fn common_linear_engine_exr_matches_independent_scalar_with_shared_working_budge
                 &device,
                 (&queue, &gate),
                 Request {
-                    film_emulation: Default::default(),
-                    halation: Default::default(),
-                    film_seed: 17,
+                    pipeline: Default::default(),
                     scan: &scan,
                     field: None,
                     input: calibration.into(),

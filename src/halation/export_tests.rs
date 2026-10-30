@@ -1,14 +1,26 @@
-use super::film_tests::{exr_pixels, tiff_pixels};
-use super::*;
+use super::{HalationSettings, reference};
 use crate::{
-    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings},
-    geometry::SourcePoint,
-    halation::{HalationSettings, reference},
+    adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
+    },
+    export::{self, ExrPrecision, Overwrite},
+    geometry::{Composition, SourcePoint},
+    gpu::SubmissionGate,
+    gpu_export::{
+        Format, Request,
+        tests::{context, exr_pixels, tiff_pixels},
+        write,
+    },
+    processing::InputSettings,
+    rendering::OutputTarget,
+    scan::Scan,
 };
+use glam::DVec3;
+use std::path::Path;
 
 #[test]
 fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade() {
-    let (device, queue, renderer) = super::tests::context();
+    let (device, queue, renderer) = context();
     let scan = Scan::open(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng"),
         None,
@@ -132,9 +144,13 @@ fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade()
                 composition,
                 format,
                 look,
-                film_emulation: Default::default(),
-                halation: settings,
-                film_seed: 17,
+                pipeline: crate::pixel_pipeline::PixelPipeline::emulation(
+                    Default::default(),
+                    settings,
+                    composition.crop().size,
+                    17,
+                )
+                .unwrap(),
             },
             &path,
             Overwrite::Refuse,
