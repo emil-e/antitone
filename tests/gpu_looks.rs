@@ -6,8 +6,8 @@
 ))]
 use antitone::{
     gpu::SubmissionGate,
+    looks::bake::Baker,
     looks::builtin::{Builtin, DEFAULT_GRID, DOMAIN_MIN, Model, domain_max},
-    renderer::GpuRenderer,
 };
 use glam::DVec3;
 use std::sync::atomic::AtomicBool;
@@ -39,22 +39,13 @@ fn default_grid_generation_keeps_reference_gray_device_and_project_admission() {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let gate = SubmissionGate::default();
-        let renderer = GpuRenderer::new_with_submissions(&device, &queue, gate.clone())
-            .await
-            .unwrap();
+        let baker = Baker::new(device.clone(), queue.clone(), gate.clone());
         let directory = tempfile::tempdir().unwrap();
 
         for builtin in Builtin::ALL {
             let asset = std::sync::Arc::new(
-                renderer
-                    .bake_builtin(
-                        &device,
-                        &queue,
-                        &gate,
-                        builtin,
-                        DEFAULT_GRID,
-                        &AtomicBool::new(false),
-                    )
+                baker
+                    .bake(builtin, DEFAULT_GRID, &AtomicBool::new(false))
                     .unwrap(),
             );
             assert_eq!(asset.lut().size(), DEFAULT_GRID);
@@ -126,9 +117,7 @@ fn native_generation_matches_the_frozen_65_grid_material_reference() {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let gate = SubmissionGate::default();
-        let renderer = GpuRenderer::new_with_submissions(&device, &queue, gate.clone())
-            .await
-            .unwrap();
+        let baker = Baker::new(device.clone(), queue.clone(), gate.clone());
         let reference: serde_json::Value =
             serde_json::from_str(include_str!("fixtures/looks/native-65.json")).unwrap();
         assert_eq!(reference["schema"], 1);
@@ -137,9 +126,7 @@ fn native_generation_matches_the_frozen_65_grid_material_reference() {
         let input_at = |index| grid_input(index, 65);
         let mut ids = Vec::new();
         for builtin in Builtin::ALL {
-            let asset = renderer
-                .bake_builtin(&device, &queue, &gate, builtin, 65, &AtomicBool::new(false))
-                .unwrap();
+            let asset = baker.bake(builtin, 65, &AtomicBool::new(false)).unwrap();
             assert_eq!(asset.lut().size(), 65);
             assert_eq!(asset.lut().nodes().len(), 65usize.pow(3));
             assert!(
@@ -232,27 +219,13 @@ fn native_generation_matches_the_frozen_65_grid_material_reference() {
             ids.push(asset.lut().id());
         }
         assert!(
-            renderer
-                .bake_builtin(
-                    &device,
-                    &queue,
-                    &gate,
-                    Builtin::PortraEndura,
-                    65,
-                    &AtomicBool::new(true)
-                )
+            baker
+                .bake(Builtin::PortraEndura, 65, &AtomicBool::new(true))
                 .is_err()
         );
         assert!(
-            renderer
-                .bake_builtin(
-                    &device,
-                    &queue,
-                    &gate,
-                    Builtin::PortraEndura,
-                    17,
-                    &AtomicBool::new(false)
-                )
+            baker
+                .bake(Builtin::PortraEndura, 17, &AtomicBool::new(false))
                 .is_err()
         );
     });

@@ -112,8 +112,8 @@ cargo test --locked --features editor,ocio-reference --test dng_integration
 # Authored DNG plumbing; native libraries, no private photographs or desktop.
 cargo test --locked --features raw,export,project,ocio-reference --test raw_dng --test raw_flat_field --test raw_roll
 
-# Document-owned look selection, cancellation acknowledgement and physical bake/cache retirement.
-cargo test --locked --features editor --lib editor::look_workflow::
+# Document-owned look selection, cancellation and physical bake/cache retirement.
+cargo test --locked --features editor --lib editor::look::
 
 # Reference-session and lazy-support completion, retirement and correction transactions without painting.
 cargo test --locked --features editor --lib -- \
@@ -179,7 +179,7 @@ The opt-in [ImageIO export check](diagnostics.md#export) independently reopens T
 
 ## Cancellation checks
 
-Exercise the [shared cancellation pattern](architecture.md#cooperative-cancellation) before the first poll, with parked waiters, before worker dispatch and during running work. Observe actual wake/submission boundaries, retain cancelling feedback until acknowledgement, and verify physical resources survive owner retirement through cleanup. A stop after publication must preserve success; export can finish its current photo before stopping.
+Exercise the [shared cancellation pattern](architecture.md#cooperative-cancellation) before the first poll, with parked waiters, before worker dispatch and during running work. Observe actual wake/submission boundaries and verify physical resources survive owner retirement through cleanup. Where a workflow retains cancelling feedback, verify it lasts until acknowledgement. A stop after publication must preserve success; export can finish its current photo before stopping.
 
 ```sh
 cargo test --locked --features editor --lib -- \
@@ -230,12 +230,12 @@ cargo test --locked --features project --lib project::json
 cargo test --locked --release --features gpu,render,project --test gpu_look_sampling --test gpu_looks
 # Add the independent OCIO CPU all-node forward-reference oracle and original TIFF/EXR checks.
 cargo test --locked --release --features editor,ocio-reference --test gpu_looks --test gpu_look_export
-cargo test --locked --features editor --lib editor::look_ui::tests
+cargo test --locked --features editor --lib editor::look::
 cargo test --locked --features ui-tests --lib editor::kittest_tests::looks
 cargo test --locked --features ui-tests --lib viewer::look_tests
 ```
 
-Verify rendered pixels and scope contents against independent expectations, not only agreement between production signatures. Nonlinear interpolation fixtures must distinguish tetrahedral from trilinear sampling. Lifecycle checks preserve accepted selection through failure, cancellation and stale replies, and reopen embedded assets without their original files; host-idle completion matters because continuously painting the UI can conceal stranded map callbacks. `ANTITONE_UI_CAPTURE` optionally writes `look*-offscreen.png` captures.
+Verify rendered pixels and scope contents against independent expectations, not only agreement between production signatures. Nonlinear interpolation fixtures must distinguish tetrahedral from trilinear sampling. Lifecycle checks preserve accepted selection through failure, cancellation and supersession, and reopen embedded assets without their original files; host-idle completion matters because continuously painting the UI can conceal stranded map callbacks. `ANTITONE_UI_CAPTURE` optionally writes `look*-offscreen.png` captures.
 
 ## Shared GPU queue checks
 

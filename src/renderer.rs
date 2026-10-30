@@ -4,10 +4,7 @@ use crate::{Error, gpu::ProcessingKernel, rendering::OutputTarget};
 use std::{borrow::Cow, sync::Arc};
 use wgpu::util::DeviceExt;
 
-mod aces;
-
-#[cfg(feature = "project")]
-mod look_reference;
+use crate::gpu::aces;
 
 pub(crate) const VERTEX: &str = r#"
 struct Vertex {
@@ -179,8 +176,6 @@ pub struct GpuRenderer {
     look_cache: std::sync::Mutex<
         std::collections::HashMap<crate::looks::LookId, std::sync::Weak<crate::gpu::look::Lut>>,
     >,
-    #[cfg(feature = "project")]
-    look_reference: std::sync::OnceLock<Result<Arc<look_reference::ReferenceTransforms>, Error>>,
     #[cfg(feature = "ui")]
     pub(crate) average: Arc<AveragePipelines>,
 }
@@ -253,71 +248,12 @@ impl GpuRenderer {
             #[cfg(test)]
             look_uploads: std::sync::atomic::AtomicU64::new(0),
             look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
-            #[cfg(feature = "project")]
-            look_reference: std::sync::OnceLock::new(),
             #[cfg(feature = "ui")]
             average,
         });
         #[cfg(feature = "ui")]
         crate::gpu::evaluation::Recipe::prewarm_resident(device, &renderer)?;
         Ok(renderer)
-    }
-
-    /// Native worker-only generation. No compiler, Python or OCIO runtime is involved.
-    #[cfg(feature = "project")]
-    pub fn bake_builtin(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        submissions: &crate::gpu::SubmissionGate,
-        builtin: crate::looks::builtin::Builtin,
-        size: u32,
-        cancel: &std::sync::atomic::AtomicBool,
-    ) -> Result<crate::looks::LookAsset, Error> {
-        use crate::looks::{LookAsset, Lut3D, builtin};
-        let reference = self
-            .look_reference
-            .get_or_init(|| {
-                pollster::block_on(look_reference::ReferenceTransforms::new(device, queue))
-                    .map(Arc::new)
-            })
-            .clone()?;
-        let model = builtin::Model::new(builtin)?;
-        let mapped = model.mapped_nodes(size, cancel)?;
-        let scene = reference.apply(device, queue, submissions, true, &mapped)?;
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(crate::looks::failure("look preparation cancelled"));
-        }
-        let roundtrip = reference.apply(device, queue, submissions, false, &scene)?;
-        let mut nodes = Vec::with_capacity(scene.len());
-        for ((actual, expected), linear) in roundtrip.iter().zip(&mapped).zip(&scene) {
-            if (0..3).any(|c| {
-                !actual[c].is_finite()
-                    || (actual[c] - expected[c]).abs() > 2e-4
-                    || !linear[c].is_finite()
-                    || !(0. ..=1024.).contains(&linear[c])
-            }) {
-                return Err(crate::looks::failure(
-                    "generated LUT failed reference/range admission",
-                ));
-            }
-            nodes.push(std::array::from_fn(|c| {
-                crate::photographic::encode(f64::from(linear[c])) as f32
-            }));
-        }
-        let lut = Arc::new(Lut3D::new(
-            size,
-            [builtin::DOMAIN_MIN as f32; 3],
-            [builtin::domain_max() as f32; 3],
-            nodes,
-        )?);
-        let gray = lut.apply(glam::DVec3::splat(0.18))?;
-        if (gray - glam::DVec3::splat(0.18)).abs().max_element() > 2e-5 {
-            return Err(crate::looks::failure(
-                "generated LUT failed the gray anchor bound",
-            ));
-        }
-        LookAsset::new(builtin.name().into(), builtin.origin(), lut)
     }
 
     #[cfg(test)]

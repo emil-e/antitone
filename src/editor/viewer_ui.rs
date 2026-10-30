@@ -188,7 +188,7 @@ impl Editor {
         });
 
         let warning = self.viewer_warning();
-        let look_error = self.look_render_failure();
+        let look_error = self.look_rendering_error();
         let inspecting = navigating && calibrated && tool.is_none() && !dust_session && !masking;
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay

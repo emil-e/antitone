@@ -4,7 +4,7 @@ const HUE_ARRAY: &str = "aces_gamut_cusp_table_0_hues_array";
 const HUE_COUNT: usize = 363;
 
 /// Adapt resource declarations only; preserve the pinned OCIO function bodies and values.
-pub(super) fn adapt(pinned: &str) -> Result<(String, Vec<f32>), Error> {
+pub(crate) fn adapt(pinned: &str) -> Result<(String, Vec<f32>), Error> {
     let mut generated = pinned.to_owned();
     for (binding, name) in [(1, "aces_reach_m_table_0"), (2, "aces_gamut_cusp_table_0")] {
         let declaration =

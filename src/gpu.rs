@@ -1,6 +1,8 @@
 use bytemuck::Zeroable;
 use std::{num::NonZeroU64, sync::Arc};
 
+#[cfg(any(feature = "render", feature = "project"))]
+pub(crate) mod aces;
 #[cfg(feature = "render")]
 pub mod evaluation;
 #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]

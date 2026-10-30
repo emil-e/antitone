@@ -365,7 +365,7 @@ impl Editor {
         slot.settings.target = self.document.target;
         slot.painter
             .rect_filled(slot.plot, 3., egui::Color32::from_gray(6));
-        if let Some(error) = self.look_render_failure() {
+        if let Some(error) = self.look_rendering_error() {
             if let Some(gpu) = &self.scopes.gpu {
                 gpu.invalidate();
             }
