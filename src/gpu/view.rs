@@ -307,7 +307,7 @@ impl RenderedView {
                     + graded
                         .grading
                         .as_ref()
-                        .map_or(0, |grading| grading.byte_len())
+                        .map_or(0, |grading| grading.operation_bytes())
                     + graded.source.spec.repairs.byte_len()
                     + (self.spec.repairs.0.capacity() + graded.source.spec.repairs.0.len()) as u64
                         * std::mem::size_of::<Arc<super::repairs::Patch>>() as u64

@@ -542,8 +542,41 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 .iter()
                 .find(|result| result.id == repair.id)
                 .unwrap();
-            assert_eq!(cpu.evaluated.donors, gpu.donors);
-            assert_eq!(exact_values(&cpu.evaluated), exact_values(gpu));
+            assert_eq!(cpu.evaluated.donors.len(), gpu.donors.len());
+
+            for (reference, actual) in cpu.evaluated.donors.iter().zip(&gpu.donors) {
+                assert_eq!(actual.target, reference.target);
+                assert_eq!(actual.source, reference.source);
+                assert_eq!(
+                    actual.paired_context_pixels,
+                    reference.paired_context_pixels
+                );
+                assert!(
+                    (actual.context_mse - reference.context_mse).abs()
+                        < 2e-6 * reference.context_mse.abs().max(1.)
+                );
+                assert!(
+                    (actual.matching_score - reference.matching_score).abs()
+                        < 2e-6 * reference.matching_score.abs().max(1.)
+                );
+            }
+
+            let reference: Vec<_> = cpu.evaluated.pixels().collect();
+            let actual: Vec<_> = gpu.pixels().collect();
+            assert_eq!(actual.len(), reference.len());
+
+            // Independent f64 input and production f32 input need numerical agreement;
+            // reopening the same production recipe above and below remains bit-exact.
+            for ((point, actual), (reference_point, reference)) in actual.iter().zip(&reference) {
+                assert_eq!(point, reference_point);
+
+                for channel in 0..3 {
+                    assert!(
+                        (actual[channel] - reference[channel]).abs()
+                            < 2e-6 * reference[channel].abs().max(1.)
+                    );
+                }
+            }
         }
         let hold = crate::background::testing::pause();
         open_project(&mut h, directory.path().join("missing.antitone"));

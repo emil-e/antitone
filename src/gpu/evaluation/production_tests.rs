@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
     geometry::{Composition, FramePoint},
-    gpu::{GpuFlatField, GpuPipeline, ProcessingInput, repairs::Snapshot},
+    gpu::{GpuFlatField, ProcessingInput, repairs::Snapshot},
     processing::{Calibration, InputSettings, RollSettings},
     rendering::{OutputReference, OutputTarget},
 };
@@ -122,7 +122,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     let evaluated = Arc::new(crate::repair_source::evaluate(&neutral, &repair).unwrap());
     let snapshot = Snapshot::logical(vec![evaluated.clone()]).unwrap();
     let pipeline = Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             &device,
             settings,
             roll,
@@ -374,7 +374,7 @@ fn immutable_programs_are_reused_without_retaining_the_native_source() {
     let mut result = None;
     for exposure in [0., 0.5] {
         let input = ProcessingInput::from(Arc::new(
-            GpuPipeline::new(
+            ProcessingInput::new(
                 &device,
                 InputSettings::Digital,
                 RollSettings {

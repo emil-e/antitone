@@ -71,13 +71,16 @@ impl Recipe {
         reference: OutputReference,
     ) -> Result<Arc<ImageNode>, Error> {
         let (image, field, matrix) = source;
-        let photograph = Photograph::new(device, renderer, image, field, &self.input, matrix)?;
-        self.reference(
+        let photograph = Photograph::new_with_stages(
             device,
-            renderer,
-            self.stages.compose(photograph.graded)?,
-            reference,
-        )
+            &renderer.camera,
+            image,
+            field,
+            &self.input,
+            matrix,
+            &self.stages,
+        )?;
+        self.reference(device, renderer, photograph.processed, reference)
     }
 
     pub fn resident(
@@ -87,22 +90,25 @@ impl Recipe {
         source: &ProcessingSource,
         raster: crate::gpu::raster::Raster,
     ) -> Result<Arc<ImageNode>, Error> {
-        let photograph = Photograph::from_resident(device, renderer, source, &self.input, raster)?;
-        self.stages.compose(photograph.graded)
+        let photograph = Photograph::from_resident_with_stages(
+            device,
+            &renderer.camera,
+            source,
+            &self.input,
+            raster,
+            &self.stages,
+        )?;
+        Ok(photograph.processed)
     }
 
     #[cfg(feature = "editor")]
-    pub fn filtered(
-        &self,
-        device: &wgpu::Device,
-        neutral: Arc<ImageNode>,
-    ) -> Result<(Arc<ImageNode>, Grading), Error> {
+    pub fn filtered(&self, neutral: Arc<ImageNode>) -> Result<(Arc<ImageNode>, Grading), Error> {
         let grade = self
             .input
             .grade()
             .ok_or_else(|| Error::Gpu("positive view requires a processing pipeline".into()))?;
-        let grading = Grading::new(device, grade, neutral.domain.grid.coverage);
-        let image = self.stages.compose(grading.compose(neutral)?)?;
+        let grading = grade.for_grid(neutral.domain.grid.coverage);
+        let image = Photograph::filtered(&grading, neutral, &self.stages)?;
         Ok((image, grading))
     }
 

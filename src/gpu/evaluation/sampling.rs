@@ -108,6 +108,7 @@ fn sample_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups
     }
 }
 
+#[cfg(feature = "render")]
 pub fn display_code(target: crate::rendering::OutputTarget) -> Result<Arc<str>, Error> {
     use std::sync::OnceLock;
 

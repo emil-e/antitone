@@ -105,7 +105,7 @@ fn encode_neutral(
         field: source.flat_field.clone(),
         repairs: spec.repairs.clone(),
     }
-    .resident(device, renderer, source, raster)?;
+    .resident(device, &renderer.camera, source, raster)?;
     crate::gpu::pixel_pipeline::Prepared::from_composition(
         device,
         raster,
@@ -337,7 +337,7 @@ impl Acquired {
         }
         .originals(
             device,
-            &renderer,
+            &renderer.camera,
             crate::gpu::evaluation::camera_source(scan)?,
         )?;
         let mut executor = renderer.evaluation.executor();

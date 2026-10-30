@@ -1,27 +1,25 @@
 #![cfg(feature = "gpu")]
+use crate::gpu::camera_fixture::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::{AP1_TO_XYZ, BRADFORD, Balance},
     flat_field::FlatField,
     geometry::{SourcePoint, SourceRaster, SourceRegion},
-    gpu::{
-        GpuFlatField, GpuPipeline, ProcessingKernel, ProcessingParameters, ProcessingSource,
-        SourceGeometry,
-    },
+    gpu::{GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSource, SourceGeometry},
     processing::{Calibration, DEFAULT_GAMMA, InputSettings, Pipeline, Response, RollSettings},
 };
 use glam::{DMat3, DVec2, DVec3};
 use std::sync::Arc;
-#[path = "support/photographic_reference.rs"]
+#[path = "../../../tests/support/photographic_reference.rs"]
 mod reference;
 
-fn context() -> (wgpu::Device, wgpu::Queue, ProcessingKernel) {
+fn context() -> (wgpu::Device, wgpu::Queue, CameraFixture) {
     pollster::block_on(async {
         let instance = antitone::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = CameraFixture::new(&device).await.unwrap();
         (device, queue, kernel)
     })
 }
@@ -97,10 +95,10 @@ fn source(
 fn read(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    kernel: &ProcessingKernel,
+    kernel: &CameraFixture,
     source: &ProcessingSource,
     n: usize,
-    grade: &GpuPipeline,
+    grade: &ProcessingInput,
     legacy: Option<ProcessingParameters>,
 ) -> Vec<[f32; 4]> {
     let size = n as u64 * 16;
@@ -108,7 +106,9 @@ fn read(
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let read = device.create_buffer(&wgpu::BufferDescriptor {
@@ -353,7 +353,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
                 .collect(),
             )
             .unwrap();
-            let grade = GpuPipeline::new(
+            let grade = ProcessingInput::new(
                 &device,
                 calibration(),
                 RollSettings::default(),
@@ -423,7 +423,7 @@ fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
         ),
     ])
     .unwrap();
-    let grade = GpuPipeline::new(
+    let grade = ProcessingInput::new(
         &device,
         calibration(),
         roll,
@@ -520,7 +520,7 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
         )
         .unwrap();
         for matrix in [DMat3::IDENTITY, matrix()] {
-            let grade = GpuPipeline::new(&device, input, roll, snapshot.clone(), matrix, area)
+            let grade = ProcessingInput::new(&device, input, roll, snapshot.clone(), matrix, area)
                 .unwrap_or_else(|error| {
                     panic!(
                         "gamma={gamma} global={global:?} count={count} matrix={matrix:?}: {error}"
@@ -637,7 +637,7 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                 .collect(),
             )
             .unwrap();
-            let grade = GpuPipeline::new(&device, cal, roll, snapshot, matrix(), area).unwrap();
+            let grade = ProcessingInput::new(&device, cal, roll, snapshot, matrix(), area).unwrap();
             let actual = read(
                 &device,
                 &queue,
@@ -707,7 +707,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             global,
         )])
         .unwrap();
-    let prepared = GpuPipeline::new(
+    let prepared = ProcessingInput::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -771,7 +771,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             a,
         ])
         .unwrap();
-        let prepared = GpuPipeline::new(
+        let prepared = ProcessingInput::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -844,7 +844,7 @@ fn source_centres_at_nonzero_origins_preserve_fractional_mask_geometry() {
                 ),
             ])
             .unwrap();
-        let grade = GpuPipeline::new(
+        let grade = ProcessingInput::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -914,7 +914,7 @@ fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
         ),
     ])
     .unwrap();
-    let grade = GpuPipeline::new(
+    let grade = ProcessingInput::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -1003,7 +1003,7 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
             ])
             .unwrap();
             let prepared =
-                GpuPipeline::new(&device, input, roll, snapshot.clone(), camera_matrix, area)
+                ProcessingInput::new(&device, input, roll, snapshot.clone(), camera_matrix, area)
                     .unwrap();
             let actual = read(
                 &device,
@@ -1055,7 +1055,7 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
         .collect(),
     )
     .unwrap();
-    let grade = GpuPipeline::new(
+    let grade = ProcessingInput::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -1064,7 +1064,7 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
         area,
     )
     .unwrap();
-    let identity = GpuPipeline::new(
+    let identity = ProcessingInput::new(
         &device,
         calibration(),
         RollSettings::default(),
@@ -1119,7 +1119,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     );
     let stack = AdjustmentLayerSnapshot::new(vec![active; 16]).unwrap();
     assert!(
-        GpuPipeline::new(
+        ProcessingInput::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -1147,7 +1147,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     ])
     .unwrap();
     assert!(
-        GpuPipeline::new(
+        ProcessingInput::new(
             &device,
             calibration(),
             RollSettings::default(),
@@ -1158,7 +1158,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
         .is_err()
     );
     let grade =
-        GpuPipeline::new(
+        ProcessingInput::new(
             &device,
             calibration(),
             RollSettings::default(),

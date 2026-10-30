@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate scalar-reference/OCIO agreement and independent Core Image/ColorSync ICC conversion.
-# Requires pinned OCIO and macOS frameworks, not Metal; --camera additionally needs LibRaw/Cargo GPU types.
+# Requires pinned OCIO and macOS frameworks, not Metal.
 # Regenerates OCIO/profile fixtures and reference executables in .cache/probes; failures propagate.
 # Does not establish photographic or physical-display acceptance.
 set -eu

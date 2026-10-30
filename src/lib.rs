@@ -1,3 +1,6 @@
+#[cfg(test)]
+extern crate self as antitone;
+
 pub mod acquisition;
 pub mod adjustment_layers;
 #[cfg(feature = "ui")]

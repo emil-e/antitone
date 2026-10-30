@@ -3,6 +3,8 @@ use crate::{Error, cancellation::Cancellation, coverage::Coverage, scan::Scan};
 use futures_channel::oneshot;
 use std::rc::Rc;
 
+pub(in crate::editor) mod query;
+
 #[cfg(test)]
 mod operation_tests;
 #[cfg(test)]
@@ -28,6 +30,12 @@ pub(in crate::editor) fn capture_scan(editor: &Editor) -> Result<Scan, String> {
     )
     .map_err(|error| error.to_string())?;
     Ok(scan)
+}
+
+pub(in crate::editor) fn query_services(
+    services: Option<&crate::editor::source::Services>,
+) -> Result<&crate::editor::source::Services, Error> {
+    services.ok_or_else(|| Error::Gpu("image-query services unavailable".into()))
 }
 
 struct Retire<'scope> {

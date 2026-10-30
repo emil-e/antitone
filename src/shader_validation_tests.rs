@@ -29,7 +29,7 @@ fn validate(name: &str, source: &str, entry_points: &[&str]) {
 fn composed_photographic_kernel_validates() {
     validate(
         "photographic kernel",
-        &gpu::ProcessingKernel::module_shader(),
+        &gpu::CameraResources::module_shader(),
         &["main", "repair_original", "repair_copy", "repair_neutral"],
     );
 }

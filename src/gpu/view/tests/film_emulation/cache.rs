@@ -13,7 +13,7 @@ fn candidate(
         )])
         .unwrap();
     let grade = Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             device,
             InputSettings::Digital,
             RollSettings::default(),

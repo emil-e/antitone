@@ -58,7 +58,7 @@ impl<'a> Matcher<'a> {
         support: &SupportMask,
         near: &NearSupport,
         offset: [i32; 2],
-        base: &mut impl FnMut([u32; 2]) -> Result<Ap1, Error>,
+        base: &mut impl BaseImage,
         execution: &mut Execution<'_>,
     ) -> Result<Option<f64>, Error> {
         let mut color_error = 0.;

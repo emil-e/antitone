@@ -65,6 +65,104 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
 }
 
 #[test]
+fn a_repair_free_output_plan_does_not_require_an_unrepresentable_neutral_image() {
+    let (device, queue, renderer) = super::super::tests::context();
+    let file = crate::raw::fixture::bayer_dng();
+    let mut scan = Scan::open(file.path(), None).unwrap();
+    let area = scan.area;
+    scan.set_flat_field(Some(Arc::new(
+        crate::flat_field::FlatField::from_nodes(
+            [area.x, area.y, area.width, area.height],
+            [2, 2],
+            vec![DVec3::splat(0.065535); 4],
+        )
+        .unwrap(),
+    )))
+    .unwrap();
+    let (mut project, id) = fixture(&scan);
+    project.input = InputSettings::negative(crate::processing::Calibration {
+        dmin: DVec3::splat(0.7),
+        dmax: DVec3::splat(0.14),
+        input_floor: scan.source().input_floor(),
+    });
+    if let InputSettings::Negative { gamma, .. } = &mut project.input {
+        *gamma = 0.1;
+    }
+    project.roll.exposure = -16.;
+    let mut recipe = project.image_recipe(id).unwrap();
+    recipe.neutral.correction = scan.flat_field().cloned();
+    let input = recipe.neutral.processing_input().unwrap();
+    let matrix = scan.positive_matrix(&input).unwrap();
+    assert!(
+        ProcessingInput::new(
+            &device,
+            input,
+            RollSettings::default(),
+            recipe.grade.clone(),
+            matrix,
+            area
+        )
+        .is_err(),
+        "the fixture must require folded exposure for global GPU admission"
+    );
+    ProcessingInput::new(
+        &device,
+        input,
+        recipe.roll,
+        recipe.grade.clone(),
+        matrix,
+        area,
+    )
+    .unwrap();
+    let actual_local = crate::scan::ImageSource::new(&scan, input)
+        .unwrap()
+        .sample([area.x + 16, area.y + 16])
+        .unwrap();
+    assert!(
+        actual_local.as_vec3().is_finite(),
+        "the local repair value is representable even though the parameter-wide neutral bound is not"
+    );
+
+    let gate = SubmissionGate::default();
+    let mut local_source =
+        crate::gpu::repair_source::Source::new(&device, &renderer, (&queue, &gate), &scan, input)
+            .unwrap();
+    let local = crate::dust_repair::BaseImage::read(
+        &mut local_source,
+        crate::geometry::SourceRegion::from([area.x + 16, area.y + 16, 1, 1]),
+        None,
+        &|| false,
+    )
+    .unwrap()
+    .unwrap();
+    for channel in 0..3 {
+        assert!((f64::from(local[0][channel]) / actual_local[channel] - 1.).abs() < 2e-5);
+    }
+
+    let stages = recipe.pixel_pipeline().unwrap();
+    let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
+        output: FrameRaster::full(recipe.composition).unwrap(),
+        stages: &stages,
+        sampling: crate::acquisition::Sampling::Originals {
+            reconstruction: crate::acquisition::SourceSupport([0; 2]),
+        },
+    })
+    .unwrap();
+    let repairs = crate::gpu::repair_source::resolve_plan(
+        &device,
+        &renderer,
+        (&queue, &gate),
+        &scan,
+        &recipe,
+        &plan,
+        &mut Execution::default(),
+    )
+    .unwrap()
+    .unwrap();
+    assert!(repairs.is_empty());
+}
+
+#[test]
 fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_honours_stops() {
     let (device, queue, renderer) = super::super::tests::context();
     let gate = SubmissionGate::default();

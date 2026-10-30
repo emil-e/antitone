@@ -337,6 +337,7 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
         let mut editor = super::super::tests::fixture();
+        editor.initialize_viewer(&device, &queue);
         let renderers = Arc::new(crate::renderer::RendererCache::default());
         editor.document.thumbnails =
             (Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None))
@@ -368,10 +369,18 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 let source = editor.source_parameters(2.).unwrap();
                 let positive = editor
-                    .positive_parameters(editor.document.input, editor.document.roll)
+                    .positive_processing(
+                        editor.document.input,
+                        editor.document.roll,
+                        editor.document.visit.adjustment_layer_settings,
+                    )
                     .unwrap();
                 assert!(selected.prepare(&device, &mut encoder, source));
-                assert!(image.prepare(&device, &mut encoder, positive));
+                assert!(
+                    image
+                        .prepare_processing(&device, &mut encoder, &positive)
+                        .unwrap()
+                );
                 assert!(!selected.prepare(&device, &mut encoder, source));
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();

@@ -25,7 +25,7 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
         width: 32,
         height: 32,
     });
-    let expected = measurement::capture_scan(&editor)
+    let reference = measurement::capture_scan(&editor)
         .unwrap()
         .white_balance_coverage(
             region,
@@ -38,6 +38,17 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
             None,
         )
         .unwrap();
+    let expected = RollInput::capture(&editor)
+        .measure(
+            &mut measurement::capture_scan(&editor).unwrap(),
+            region,
+            editor.source_services.as_ref().unwrap(),
+            &|| false,
+        )
+        .unwrap();
+    // The independent f64 path checks the captured prefix; production evaluates f32 pixels.
+    assert!((expected.warmth - reference.warmth).abs() < 1e-6);
+    assert!((expected.tint - reference.tint).abs() < 1e-6);
     let input = editor.document.input;
     let photo = editor.document.visit.adjustment_layer_settings;
     assert_ne!(expected, editor.document.roll.wb);
@@ -141,9 +152,23 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
             Ok(())
         })
         .unwrap();
-    let actual = captured.measure(&mut captured_image, region).unwrap();
-    assert!((actual.warmth - expected.warmth).abs() < 1e-10);
-    assert!((actual.tint - expected.tint).abs() < 1e-10);
+    let actual = captured
+        .measure(
+            &mut captured_image,
+            region,
+            editor.source_services.as_ref().unwrap(),
+            &|| false,
+        )
+        .unwrap();
+    // Compare the shared f32 forward model with the independent f64 log-gain identity.
+    assert!(
+        (actual.warmth - expected.warmth).abs() < 2e-6,
+        "{actual:?} != {expected:?}"
+    );
+    assert!(
+        (actual.tint - expected.tint).abs() < 2e-6,
+        "{actual:?} != {expected:?}"
+    );
 }
 
 #[test]
@@ -232,6 +257,8 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
             .measure(
                 &mut measurement::capture_scan(&editor).unwrap(),
                 Coverage::rectangle(patch),
+                editor.source_services.as_ref().unwrap(),
+                &|| false,
             )
             .unwrap();
         let mut measured = selected;
@@ -257,7 +284,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
         }
         rgb /= f64::from(patch.width * patch.height);
         assert!(
-            (rgb - DVec3::splat(rgb.y)).abs().max_element() < 1e-8,
+            (rgb - DVec3::splat(rgb.y)).abs().max_element() / rgb.abs().max_element() < 2e-6,
             "{mask:?}, {balance:?}: {rgb:?}"
         );
     }
@@ -329,7 +356,12 @@ fn changing_layer_before_the_wb_caller_is_polled_withdraws_it_and_a_new_pick_can
         let expected = app.read(|editor| {
             LayerInput::capture(editor)
                 .unwrap()
-                .measure(&mut measurement::capture_scan(editor).unwrap(), region)
+                .measure(
+                    &mut measurement::capture_scan(editor).unwrap(),
+                    region,
+                    editor.source_services.as_ref().unwrap(),
+                    &|| false,
+                )
                 .unwrap()
         });
         assert_ne!(
@@ -408,7 +440,12 @@ fn wb_picking_keeps_its_selected_layer_until_its_awaiting_feature_applies_the_va
     });
     let balance = LayerInput::capture(&editor)
         .unwrap()
-        .measure(&mut measurement::capture_scan(&editor).unwrap(), region)
+        .measure(
+            &mut measurement::capture_scan(&editor).unwrap(),
+            region,
+            editor.source_services.as_ref().unwrap(),
+            &|| false,
+        )
         .unwrap();
     assert_ne!(balance, editor.document.visit.adjustment_layer_settings.wb);
     let gate = testing::Gate::install(&mut editor);
@@ -544,7 +581,12 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     zero_image.reference_exposure = None;
     let control = LayerInput::capture(&editor)
         .unwrap()
-        .measure(&mut zero_image, Coverage::rectangle(patch))
+        .measure(
+            &mut zero_image,
+            Coverage::rectangle(patch),
+            editor.source_services.as_ref().unwrap(),
+            &|| false,
+        )
         .unwrap();
     editor
         .document
@@ -555,7 +597,12 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         .unwrap()
         .reference = None;
     let balance = captured
-        .measure(&mut captured_image, Coverage::rectangle(patch))
+        .measure(
+            &mut captured_image,
+            Coverage::rectangle(patch),
+            editor.source_services.as_ref().unwrap(),
+            &|| false,
+        )
         .unwrap();
 
     let rendered = |balance| {
@@ -590,7 +637,7 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         "control must distinguish the lost baseline: {wrong:?}"
     );
     assert!(
-        chroma(correct) < 1e-7,
+        chroma(correct) < 2e-6,
         "captured pick must neutralize the displayed patch: {correct:?}"
     );
 }

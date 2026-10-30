@@ -29,10 +29,10 @@ Where each area's implementation lives — navigation, not specification. Follow
 
 | Area | Start here | Responsibility |
 | --- | --- | --- |
-| Processing | [processing](../src/processing.rs), [photographic](../src/photographic.rs), [colour](../src/color.rs) | Scalar reference, response and positive grading |
+| Processing | [processing](../src/processing.rs), [photographic](../src/photographic.rs), [colour](../src/color.rs) | Response parameters, grading controls and numerical admission |
 
 
-| Adjustment layers | [scalar processing](../src/adjustment_layers.rs), [GPU grades](../src/gpu/adjustment_layers.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers, whole-document admission |
+| Adjustment layers | [controls and masks](../src/adjustment_layers.rs), [GPU grading](../src/gpu/grading.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers, whole-document admission |
 
 | RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source acquisition](../src/source/mod.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and capture diagnostics |
 

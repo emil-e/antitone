@@ -11,6 +11,8 @@ use crate::{
 };
 use async_executor::Task;
 
+mod query;
+
 #[cfg(test)]
 mod tests;
 
@@ -36,14 +38,14 @@ impl RollInput {
         }
     }
 
-    pub fn measure(self, image: &mut Scan, region: Coverage) -> Result<Balance, Error> {
-        image.white_balance_coverage(
-            region,
-            &self.input,
-            self.roll,
-            AdjustmentLayerSnapshot::new(vec![])?,
-            None,
-        )
+    pub fn measure(
+        self,
+        image: &mut Scan,
+        region: Coverage,
+        services: &super::source::Services,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Balance, Error> {
+        query::roll(services, image, region, self, cancelled)
     }
 }
 
@@ -91,14 +93,14 @@ impl LayerInput {
         })
     }
 
-    pub fn measure(self, image: &mut Scan, region: Coverage) -> Result<Balance, Error> {
-        image.white_balance_coverage(
-            region,
-            &self.input,
-            self.roll,
-            self.upstream,
-            Some(self.layer),
-        )
+    pub fn measure(
+        self,
+        image: &mut Scan,
+        region: Coverage,
+        services: &super::source::Services,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Balance, Error> {
+        query::layer(services, image, region, self, cancelled)
     }
 }
 
@@ -107,11 +109,15 @@ pub(super) fn pick_roll<'scope>(
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
     let mut image = measurement::capture_scan(editor)?;
+    let services = editor.source_services.clone();
     let input = RollInput::capture(editor);
     cx.spawn(move |cx| async move {
         let Some(value) = measurement::pick(
             ROLL,
-            move |region, _| input.measure(&mut image, region),
+            move |region, cancelled| {
+                let services = measurement::query_services(services.as_ref())?;
+                input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+            },
             cx.clone(),
         )
         .await
@@ -132,6 +138,7 @@ pub(super) fn pick_layer<'scope>(
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
     let mut image = measurement::capture_scan(editor)?;
+    let services = editor.source_services.clone();
     let input = LayerInput::capture(editor)?;
     let target = (
         editor.document.visit.current_source,
@@ -150,7 +157,10 @@ pub(super) fn pick_layer<'scope>(
         }
         let Some(value) = measurement::pick(
             LAYER,
-            move |region, _| input.measure(&mut image, region),
+            move |region, cancelled| {
+                let services = measurement::query_services(services.as_ref())?;
+                input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+            },
             cx.clone(),
         )
         .await

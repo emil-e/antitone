@@ -36,8 +36,23 @@ pub struct GpuInputProgram {
 impl GpuInputProgram {
     pub fn new(input: impl Into<InputSettings>, matrix: DMat3) -> Result<Self, Error> {
         let input = input.into();
-        crate::processing::InputPipeline::new(input, matrix)?;
+        crate::processing::validate_camera_matrix(matrix)?;
+        if !matches!(input, InputSettings::Digital) {
+            input
+                .negative_input()
+                .ok_or(Error::InvalidCalibration {
+                    channel: 0,
+                    reason: "measure Dmin and Dmax",
+                })?
+                .parameters()?;
+        }
         Ok(Self { input, matrix })
+    }
+
+    #[cfg(feature = "raw")]
+    pub(crate) fn for_scan(scan: &crate::scan::Scan, input: InputSettings) -> Result<Self, Error> {
+        let input = scan.refined_input(&input)?;
+        Self::new(input, scan.positive_matrix(&input)?)
     }
 
     pub fn signature(&self) -> Result<InputSignature, Error> {

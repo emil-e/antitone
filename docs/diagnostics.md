@@ -231,9 +231,7 @@ Adjustment layers use complete-stack editor admission. These diagnostics isolate
 
 ```sh
 ANTITONE_ADJUSTMENT_LAYER_PERF_QUICK=1 cargo test --locked --offline --release \
-  --features editor --test adjustment_layer_performance -- --ignored --nocapture
-cargo test --locked --offline --release --features gpu --lib \
-  paired_kernel_variants -- --ignored --nocapture
+  --features editor --lib gpu::tests::adjustment_layer_performance -- --ignored --nocapture
 ANTITONE_RAW_SAMPLES=/absolute/samples cargo test --locked --offline --release \
   --features editor --lib real_raw_adjustment_layer_preview_tiles_and_refinement \
   -- --ignored --nocapture
@@ -248,7 +246,7 @@ cargo test --locked --offline --release --features editor --lib \
 
 The [diagnostic](../src/gpu/view/tests/adjustment_layer_resources.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay with correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source (headers must pass the existing 600-MiB diagnostic source bound); both variants use the existing pressure/free-memory/swap/growth stops, and timings without a coordinated window are indicative, not isolated interaction latency.
 
-Original-sample processing shares the editor's f32 inversion for integer and continuous inputs. [Continuous-source checks](../tests/gpu_continuous.rs), [film-response checks](../tests/gpu_film_response.rs) and [original export checks](../src/gpu_export/tests.rs) exercise the model and exact floor flags.
+Original-sample processing shares the editor's f32 inversion for integer and continuous inputs. [Continuous-source checks](../src/gpu/tests/gpu_continuous.rs), [film-response checks](../src/gpu/tests/gpu_film_response.rs) and [original export checks](../src/gpu_export/tests.rs) exercise the model and exact floor flags.
 
 ## Equivalent ACES execution
 
@@ -282,7 +280,7 @@ The authored acquisition/grade/regional [resource exercise](development.md#speci
 
 Run `cargo test --locked --offline --release --features editor --lib neutral_image_retention_resources -- --ignored --nocapture` alone to compare completed neutral-image retention against regeneration under the same controls. It retires caller-owned source wrappers between requests, verifies exact pixels, and reports lookup/reacquisition time, retained payload, actual GPU allocation and buffer creation. Clearing the cache must return optional ownership while independently held pixels remain valid; lookup timing excludes downstream grading and presentation.
 
-For a matched 1536² resident-camera comparison, run `cargo test --locked --offline --release --features editor --lib resident_camera_execution_resources -- --ignored --nocapture` alone. It alternates the existing camera-kernel-plus-effects sequence and common whole-composition recording, checks exact AP1 output and reports per-iteration host/completion time, encoded-boundary GPU allocation, evaluation-buffer constructors and retirement. First evaluations include exercised-driver-cache compilation/setup; they are not genuine cold-compilation measurements.
+For a matched 1536² resident-camera comparison, run `cargo test --locked --offline --release --features editor --lib resident_camera_execution_resources -- --ignored --nocapture` alone. It alternates separately materialized photographic/effect boundaries and whole-composition recording, checks exact AP1 output and reports per-iteration host/completion time, encoded-boundary GPU allocation, evaluation-buffer constructors and retirement. First evaluations include exercised-driver-cache compilation/setup; they are not genuine cold-compilation measurements.
 
 For scale, the tested Sony/M5 Pro native-width workload (8640-wide originals) measures acquisition around 0.65 s uncorrected / 3.9 s corrected per view-sized replacement, fixed-view Global edits around 2–11 ms depending on display size, and composition checkpoints peaking around 280–950 MiB native resources that retire to ~2 MiB after completion. Re-measure after relevant changes.
 
@@ -360,7 +358,7 @@ Per-component distortion/CA maps and independent shading checks run offline in t
 cargo test --locked --offline --no-default-features \
   --test sony_lens --test sony_geometry --test sony_vignetting
 cargo test --locked --offline --features raw,project --test raw_sony_lens
-cargo test --locked --offline --features gpu --test gpu_continuous
+cargo test --locked --offline --features gpu --lib gpu::tests::gpu_continuous
 # Add the normal OCIO reference setup for reopened Sony TIFF/AP0 EXR correspondence.
 cargo test --locked --offline --features raw,gpu,export,project,ocio-reference --test raw_sony_lens
 ```
@@ -373,12 +371,11 @@ For independent upstream OCIO → Metal:
 
 ```sh
 ./scripts/probe-ocio.sh
-./scripts/probe-ocio.sh --camera
 cargo test --locked --offline --release --features raw,gpu \
-  --test camera_raw -- --ignored --nocapture
+  --lib gpu::tests::camera_raw -- --ignored --nocapture
 ```
 
-The camera extension uses the committed patch DNG and explicit code-floor cases; upstream OCIO supplies the rendering reference, and missing/stale requested camera inputs fail.
+The OCIO probe exercises upstream-generated AP1 rendering inputs and LUTs. The separate authored RAW diagnostic exercises camera processing through canonical GPU evaluation.
 
 For corrected affine reconstruction against scalar coverage:
 
@@ -391,7 +388,7 @@ cargo test --locked --offline --release --features editor,ocio-reference --lib \
 
 ### Sony source storage precision
 
-The opt-in [storage study](../tests/lens_precision.rs) holds development and capture eligibility fixed while comparing retained f32 camera codes with whole-code rounding and an eight-fractional-bit diagnostic alternative (within the native range these correspond to RGB16 and Q16.8). Synthetic cases blend declared integer neighbours; supplied negatives use diagnostic calibration and borrowed Sony warps, because their adapted lens has no usable profile — those warps test resampling/rounding, not physical lens calibration. Storage errors use the f64 scalar pipeline followed by independent pinned OCIO rendering to sRGB; GPU timing arms are checked against their scalar inputs under the existing numerical gate.
+The opt-in [storage study](../src/gpu/tests/lens_precision.rs) holds development and capture eligibility fixed while comparing retained f32 camera codes with whole-code rounding and an eight-fractional-bit diagnostic alternative (within the native range these correspond to RGB16 and Q16.8). Synthetic cases blend declared integer neighbours; supplied negatives use diagnostic calibration and borrowed Sony warps, because their adapted lens has no usable profile — those warps test resampling/rounding, not physical lens calibration. Storage errors use the f64 scalar pipeline followed by independent pinned OCIO rendering to sRGB; GPU timing arms are checked against their scalar inputs under the existing numerical gate.
 
 On one M5 Pro / 48-GiB distortion/CA-only run, maximum differences expressed in encoded 8-bit-level equivalents were:
 
@@ -421,7 +418,6 @@ CPU rendering/ICC regenerates its OCIO references without preceding Metal checks
 
 ```sh
 ./scripts/probe-rendering.sh
-./scripts/probe-rendering.sh --camera
 cargo test --locked --offline --features ocio-reference --test rendering
 ./scripts/probe-gamut.sh
 cargo run --locked --offline --features ocio-reference --bin antitone-rendering-probe -- --gamut-check

@@ -55,7 +55,9 @@ pub(crate) fn write(
     })?;
     let repairs = timed!(
         SourcePrepare,
-        crate::repair_source::resolve_plan_with(&scan, job.recipe, &plan, execution)
+        crate::gpu::repair_source::resolve_plan(
+            device, renderer, gpu, &scan, job.recipe, &plan, execution
+        )
     )?
     .ok_or(Error::Cancelled)?;
     check()?;

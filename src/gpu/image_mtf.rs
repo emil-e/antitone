@@ -12,7 +12,6 @@ pub(crate) fn shader() -> String {
     .join("\n")
 }
 
-#[cfg(feature = "render")]
 pub(crate) fn sample_shader() -> String {
     [
         include_str!("../shaders/raster.wgsl"),

@@ -228,7 +228,7 @@ impl Editor {
             return Ok(None);
         };
         let identity = crate::gpu::execution::source::Identity::camera(ready.developed.identity());
-        let spec = if input.pipeline().is_none() {
+        let spec = if input.grade().is_none() {
             ViewSourceSpec::inspection(self.id, frame, matrix, field)?
         } else {
             let settings = match self.document.input.calibration() {

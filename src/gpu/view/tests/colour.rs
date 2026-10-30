@@ -62,7 +62,7 @@ fn render_with_basis(
 ) -> Arc<RenderedView> {
     let settings = input.into();
     let grade = Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             device,
             settings,
             roll,

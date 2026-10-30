@@ -1,10 +1,19 @@
 use super::*;
+use crate::gpu::camera_fixture::CameraFixture;
+
+mod adjustment_layer_performance;
+mod camera_raw;
+mod gpu_adjustment_layers;
+mod gpu_continuous;
+mod gpu_film_response;
+mod gpu_processing;
+mod lens_precision;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot};
 use crate::processing::Calibration;
 
 #[test]
 fn processing_assembles_shared_photographic_operators_once() {
-    let shader = ProcessingKernel::kernel_shader();
+    let shader = CameraResources::kernel_shader();
     assert!(!shader.contains("Triple"));
     assert!(!shader.contains("precise_"));
     // Originals, repairs and working views use the same photographic operators.
@@ -85,7 +94,7 @@ fn layer_output_bounds_do_not_propagate_scratch_peaks_into_following_layers() {
     ])
     .unwrap();
     assert!(
-        GpuPipeline::validate_limits(
+        ProcessingInput::validate_limits(
             &wgpu::Limits::default(),
             calibration,
             RollSettings::default(),
@@ -102,7 +111,7 @@ fn layer_output_bounds_do_not_propagate_scratch_peaks_into_following_layers() {
     };
     let snapshot = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(settings)]).unwrap();
     assert!(
-        GpuPipeline::validate_limits(
+        ProcessingInput::validate_limits(
             &wgpu::Limits::default(),
             calibration,
             RollSettings::default(),
@@ -221,11 +230,13 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
             DVec3::new(0., -0.22, 1.16),
         );
         let source = ProcessingSource::new(&device, &codes, matrix).unwrap();
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = CameraFixture::new(&device).await.unwrap();
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: 64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -313,7 +324,7 @@ fn native_and_continuous_transport_preserve_normalization_and_source_addressing(
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = CameraFixture::new(&device).await.unwrap();
         let codes: Vec<_> = (0..=65535u16).map(|v| [v, 65535 - v, v / 2, 0]).collect();
         let continuous: Vec<_> = codes.iter().map(|p| p.map(f32::from)).collect();
         let native = ProcessingSource::new(&device, &codes, DMat3::IDENTITY).unwrap();
@@ -325,7 +336,9 @@ fn native_and_continuous_transport_preserve_normalization_and_source_addressing(
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: codes.len() as u64 * 16,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {

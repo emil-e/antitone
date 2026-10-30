@@ -158,8 +158,8 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
         let first = positive(&editor);
         let unchanged = positive(&editor);
         assert!(std::ptr::eq(
-            first.pipeline().unwrap(),
-            unchanged.pipeline().unwrap()
+            first.grade().unwrap(),
+            unchanged.grade().unwrap()
         ));
         let layers = editor
             .document
@@ -176,10 +176,10 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
         editor.document.target = OutputTarget::Srgb;
         let renamed = positive(&editor);
         assert!(std::ptr::eq(
-            first.pipeline().unwrap(),
-            renamed.pipeline().unwrap()
+            first.grade().unwrap(),
+            renamed.grade().unwrap()
         ));
-        let old_snapshot = first.pipeline().unwrap().snapshot().clone();
+        let old_snapshot = first.grade().unwrap().snapshot().clone();
         editor
             .document
             .project
@@ -192,12 +192,12 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
             .reverse();
         let reordered = positive(&editor);
         assert_ne!(first.signature(), reordered.signature());
-        assert_eq!(first.pipeline().unwrap().snapshot(), &old_snapshot);
+        assert_eq!(first.grade().unwrap().snapshot(), &old_snapshot);
         editor.document.visit.adjustment_layer_settings.exposure = 1.;
         let graded = positive(&editor);
         assert_eq!(
             graded
-                .pipeline()
+                .grade()
                 .unwrap()
                 .snapshot()
                 .layers()
@@ -214,12 +214,12 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
         let roll_graded = positive(&editor);
         assert_ne!(graded.signature(), roll_graded.signature());
         assert!(!std::ptr::eq(
-            graded.pipeline().unwrap(),
-            roll_graded.pipeline().unwrap()
+            graded.grade().unwrap(),
+            roll_graded.grade().unwrap()
         ));
         assert_eq!(
-            graded.pipeline().unwrap().snapshot(),
-            roll_graded.pipeline().unwrap().snapshot()
+            graded.grade().unwrap().snapshot(),
+            roll_graded.grade().unwrap().snapshot()
         );
         let revision = editor
             .document
@@ -234,7 +234,7 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
             .source_revision();
         editor.document.grades.retain(&[]);
         assert!(editor.document.grades.entries.borrow().is_empty());
-        assert_eq!(first.pipeline().unwrap().snapshot(), &old_snapshot);
+        assert_eq!(first.grade().unwrap().snapshot(), &old_snapshot);
         assert_eq!(
             editor
                 .document
@@ -393,11 +393,11 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             .processing_calibration(editor.calibration().unwrap())
             .unwrap();
         let expected = ProcessingInput::from(Arc::new(
-            crate::gpu::GpuPipeline::new(
+            crate::gpu::ProcessingInput::new(
                 &device,
                 calibration,
                 editor.document.roll,
-                first.pipeline().unwrap().snapshot().clone(),
+                first.grade().unwrap().snapshot().clone(),
                 glam::DMat3::IDENTITY,
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )
@@ -419,8 +419,8 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             "layer controls must not leak into upstream Roll/input parameters"
         );
         assert!(std::ptr::eq(
-            corrected.pipeline().unwrap(),
-            positive(&editor).pipeline().unwrap()
+            corrected.grade().unwrap(),
+            positive(&editor).grade().unwrap()
         ));
         editor.document.correction = None;
         assert_eq!(positive(&editor).signature(), first.signature());
@@ -435,11 +435,11 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             .layers
             .clear();
         let empty = positive(&editor);
-        assert!(empty.pipeline().is_some());
-        assert_eq!(empty.pipeline().unwrap().snapshot().layers().len(), 0);
+        assert!(empty.grade().is_some());
+        assert_eq!(empty.grade().unwrap().snapshot().layers().len(), 0);
         assert!(!editor.document.grades.entries.borrow().is_empty());
         assert_eq!(
-            first.pipeline().unwrap().snapshot().layers().len(),
+            first.grade().unwrap().snapshot().layers().len(),
             2,
             "captured resources remain immutable after deletion"
         );
@@ -529,8 +529,8 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
             generation
         );
         assert!(std::ptr::eq(
-            accepted.pipeline().unwrap(),
-            positive(&editor).pipeline().unwrap()
+            accepted.grade().unwrap(),
+            positive(&editor).grade().unwrap()
         ));
         let proposed_cal = Calibration {
             dmin: editor.calibration().unwrap().dmin * 1.1,
@@ -664,13 +664,14 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
     });
 }
 
-fn tracked_grade(editor: &Editor, id: SourceId) -> (std::sync::Weak<GpuPipeline>, u64) {
+fn tracked_grade(editor: &Editor, id: SourceId) -> (std::sync::Weak<crate::gpu::Grading>, u64) {
     let entries = editor.document.grades.entries.borrow();
-    let grade = &entries.iter().find(|entry| entry.id == id).unwrap().grade;
-    (Arc::downgrade(grade), grade.byte_len())
+    let input = &entries.iter().find(|entry| entry.id == id).unwrap().grade;
+    let grading = input.grade_shared().unwrap();
+    (Arc::downgrade(grading), grading.byte_len())
 }
 
-fn live_grade_buffers(grades: &[(std::sync::Weak<GpuPipeline>, u64)]) -> (usize, u64) {
+fn live_grade_buffers(grades: &[(std::sync::Weak<crate::gpu::Grading>, u64)]) -> (usize, u64) {
     grades
         .iter()
         .filter(|(grade, _)| grade.strong_count() != 0)

@@ -1,9 +1,6 @@
 use super::*;
 use crate::processing::InputSettings;
-use crate::{
-    geometry::SourceRegion,
-    gpu::{GpuPipeline, ProcessingInput},
-};
+use crate::{geometry::SourceRegion, gpu::ProcessingInput};
 use std::cell::RefCell;
 
 pub(super) type NeutralSourceSignature = crate::gpu::InputSignature;
@@ -19,7 +16,7 @@ struct Key {
 struct Entry {
     id: SourceId,
     key: Key,
-    grade: Arc<GpuPipeline>,
+    grade: Arc<ProcessingInput>,
 }
 
 #[derive(Default)]
@@ -71,7 +68,7 @@ impl Grades {
             .device
             .as_ref()
             .ok_or_else(|| Error::Gpu("no editor GPU device".into()))?;
-        let grade = Arc::new(GpuPipeline::new(
+        let grade = Arc::new(ProcessingInput::new(
             device,
             key.input,
             key.roll,
@@ -115,7 +112,7 @@ pub(super) fn validate_source_with_matrix(
         return Ok(());
     }
     if let Some(device) = device {
-        GpuPipeline::validate(
+        ProcessingInput::validate(
             device,
             input,
             roll,
@@ -124,7 +121,7 @@ pub(super) fn validate_source_with_matrix(
             source.development.active_area.into(),
         )
     } else {
-        GpuPipeline::validate_limits(
+        ProcessingInput::validate_limits(
             &wgpu::Limits::default(),
             input,
             roll,
@@ -154,9 +151,7 @@ impl Editor {
                 .as_ref()
                 .map(|correction| correction.settings.map.clone()),
         )?;
-        crate::scan::ImageSource::new(&scan, *input)?
-            .gpu_program()?
-            .signature()
+        crate::gpu::GpuInputProgram::for_scan(&scan, *input)?.signature()
     }
 
     pub(super) fn validate_repaired_source(
@@ -179,7 +174,7 @@ impl Editor {
             Some(base) => input.with_calibration(self.processing_calibration(base)?),
             None => *input,
         };
-        crate::gpu::GpuPipeline::validate_repaired(
+        crate::gpu::ProcessingInput::validate_repaired(
             device,
             input,
             roll,
@@ -278,11 +273,7 @@ impl Editor {
                 self.document.state.project.source(id)?,
                 photo,
             ),
-            None => self.positive_parameters(input, roll).map(|parameters| {
-                ProcessingInput::from(parameters)
-                    .with_look(self.document.state.project.output.look.clone())
-                    .with_film_emulation(self.document.film_emulation)
-            }),
+            None => Err(Error::UnusableSample("no photographic source selected")),
         }
     }
 
@@ -332,7 +323,7 @@ pub(super) fn image_paint(
 ) -> Result<ImagePaint, Error> {
     if input
         .as_ref()
-        .is_some_and(|input| input.pipeline().is_some() || input.look().is_some())
+        .is_some_and(|input| input.grade().is_some() || input.look().is_some())
     {
         ImagePaint::with_processing(image, input, mapping)
             .map(|paint| paint.with_context(context.clone()))

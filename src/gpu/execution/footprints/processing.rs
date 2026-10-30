@@ -1,13 +1,13 @@
 //! Captured filtered-AP1 grade/inspection preparation and reusable stage resources.
 
 use super::*;
-use crate::gpu::{GpuGrade, ProcessingInput, ProcessingParameters, ProcessingSignature};
+use crate::gpu::{Grading, ProcessingInput, ProcessingParameters, ProcessingSignature};
 use glam::DMat3;
 use std::sync::Mutex;
 
 pub(crate) struct Processed {
     pub source: Arc<Acquired>,
-    pub grade: Option<Arc<GpuGrade>>,
+    pub grade: Option<Arc<Grading>>,
     pub grading: Option<crate::gpu::evaluation::Grading>,
     pub plan: crate::acquisition::Plan,
     pub stages: crate::gpu::pixel_pipeline::Prepared,
@@ -32,7 +32,7 @@ impl Processed {
                 parameters.post[2].truncate().as_dvec3(),
             );
             let expected = ProcessingParameters::source_with_matrix(matrix)?;
-            if input.pipeline().is_some()
+            if input.grade().is_some()
                 || !matrix.is_finite()
                 || matrix.determinant() == 0.
                 || bytemuck::bytes_of(&expected) != bytemuck::bytes_of(&parameters)
@@ -75,10 +75,10 @@ impl Processed {
                 processing,
             }));
         }
-        let pipeline = input
-            .pipeline()
-            .ok_or_else(|| Error::Gpu("positive view requires a processing pipeline".into()))?;
-        if source.spec.program.as_ref() != Some(pipeline.input_program()) {
+        let program = input.source_program().ok_or_else(|| {
+            Error::Gpu("positive view requires captured source interpretation".into())
+        })?;
+        if source.spec.program.as_ref() != Some(program) {
             return Err(Error::Gpu("physical-view source is stale".into()));
         }
         if input.repairs != source.spec.repairs {
@@ -86,8 +86,8 @@ impl Processed {
                 "physical-view repairs differ from reconstructed originals".into(),
             ));
         }
-        pipeline.grade.require_extent(source.spec.area)?;
-        pipeline.validate_repairs(device, input.repairs.bound())?;
+        input.grade().unwrap().require_extent(source.spec.area)?;
+        input.validate_repairs(device, input.repairs.bound())?;
         let recipe = crate::gpu::evaluation::Recipe::capture(input)?;
         let plan = source.spec.processing_plan(recipe.stages())?;
         if let Some(previous) = previous
@@ -104,8 +104,7 @@ impl Processed {
             grid: crate::gpu::evaluation::Grid::from_raster(raster),
             meaning: crate::gpu::evaluation::Meaning::Neutral,
         };
-        let (root, grading) =
-            recipe.filtered(device, crate::gpu::evaluation::borrowed_input(domain))?;
+        let (root, grading) = recipe.filtered(crate::gpu::evaluation::borrowed_input(domain))?;
         let stages = crate::gpu::pixel_pipeline::Prepared::from_composition(
             device,
             raster,
@@ -115,7 +114,7 @@ impl Processed {
         )?;
         Ok(Arc::new(Self {
             pixels: float_buffer(device, source.spec.frame().output)?,
-            grade: Some(pipeline.grade.clone()),
+            grade: input.grade_shared().cloned(),
             grading: Some(grading),
             plan,
             stages,

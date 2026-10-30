@@ -28,8 +28,7 @@ fn source_pixel(index: u32) -> vec2u {
     return field.area.xy + ((2u * xy + vec2u(1u)) * field.area.zw) / (2u * field.dimensions.xy);
 }
 
-fn field_gains(index: u32) -> vec3f {
-    let source = source_pixel(index);
+fn field_gains_at(source: vec2u) -> vec3f {
     if any(source < field.support.xy) || any(source >= field.support.xy + field.support.zw) {
         return vec3f(1.0);
     }
@@ -45,6 +44,18 @@ fn field_gains(index: u32) -> vec3f {
             fraction.x,
         );
     return mix(a, b, fraction.y);
+}
+
+fn field_gains(index: u32) -> vec3f {
+    return field_gains_at(source_pixel(index));
+}
+
+fn camera_light_at(codes: vec3f, source: vec2u) -> vec3f {
+    let normalized = codes / 65535.0;
+    if field.grid.z == 0u {
+        return normalized;
+    }
+    return normalized * field_gains_at(source);
 }
 
 fn continuous_source() -> bool {
@@ -65,9 +76,9 @@ fn source_codes(code: vec2u, index: u32) -> vec3f {
 }
 
 fn convert_source(code: vec2u, index: u32) -> vec3f {
-    let normalized = source_codes(code, index) / 65535.0;
+    let codes = source_codes(code, index);
     if field.grid.z == 0u {
-        return normalized;
+        return camera_light_at(codes, vec2u(0u));
     }
-    return normalized * field_gains(index);
+    return camera_light_at(codes, source_pixel(index));
 }

@@ -5,7 +5,7 @@ use crate::{
         AdjustmentLayerStack,
     },
     geometry::{SourcePoint, SourceRegion},
-    gpu::{GpuFlatField, GpuPipeline, ProcessingInput, ProcessingSource, SourceGeometry},
+    gpu::{GpuFlatField, ProcessingInput, ProcessingSource, SourceGeometry},
     processing::{Calibration, InputPipeline, InputSettings, RollPipeline, RollSettings},
 };
 use glam::DVec3;
@@ -179,7 +179,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                 }),
             ] {
                 let pipeline = Arc::new(
-                    GpuPipeline::new(&device, settings, roll, stack.clone(), matrix, region)
+                    ProcessingInput::new(&device, settings, roll, stack.clone(), matrix, region)
                         .unwrap(),
                 );
                 let scalar_input = InputPipeline::new(settings, matrix).unwrap();
@@ -189,8 +189,15 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                         crate::gpu::repairs::Snapshot::logical(vec![repaired.clone()]).unwrap();
                 }
                 let raster = crate::gpu::raster::Raster::region(region, size);
-                let photo =
-                    Photograph::from_resident(&device, &renderer, &source, &input, raster).unwrap();
+                let photo = Photograph::from_resident_with_stages(
+                    &device,
+                    &renderer.camera,
+                    &source,
+                    &input,
+                    raster,
+                    &Default::default(),
+                )
+                .unwrap();
                 let mut expected = vec![Vec::new(); 4];
                 let mut nearest_effect = 0_f64;
                 let mut correction_effect = 0_f64;
@@ -275,7 +282,6 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                         "proxy fixture must distinguish nearest original centres from continuous footprint centres"
                     );
                 }
-                let mut full = None;
                 let mut work = Vec::new();
                 for (root, expected) in [photo.unrepaired, photo.neutral, photo.roll, photo.graded]
                     .into_iter()
@@ -295,39 +301,12 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                             }
                         }
                         counts.push(count);
-                        full = Some(actual);
                     }
                     work.push(counts);
                 }
                 assert!(
                     work[3][1] < work[3][0],
                     "canonical camera composition does not materialize its logical grade boundaries"
-                );
-                let output =
-                    crate::gpu::raster::buffer(&device, size, "legacy camera reference").unwrap();
-                let mut encoder = device.create_command_encoder(&Default::default());
-                renderer
-                    .kernel
-                    .encode_grade(&device, &mut encoder, &source, &output, &pipeline)
-                    .unwrap();
-                if native {
-                    renderer
-                        .repairs
-                        .original(
-                            &device,
-                            &mut encoder,
-                            &renderer.kernel,
-                            &output,
-                            &input,
-                            geometry,
-                        )
-                        .unwrap();
-                }
-                queue.submit([encoder.finish()]);
-                assert_eq!(
-                    full.unwrap(),
-                    execute::read(&device, &queue, &output),
-                    "canonical implementation preserves the existing source-kernel f32 arithmetic"
                 );
             }
         }
@@ -363,7 +342,7 @@ fn resident_camera_execution_resources() {
             .set_geometry(SourceGeometry::new([region.x, region.y, side, side], [side; 2]).unwrap())
             .unwrap();
         let pipeline = Arc::new(
-            GpuPipeline::new(
+            ProcessingInput::new(
                 device,
                 InputSettings::Digital,
                 RollSettings {
@@ -431,8 +410,7 @@ fn resident_camera_execution_resources() {
                         renderer.evaluation.clone(),
                     )
                     .unwrap();
-                    renderer
-                        .kernel
+                    crate::gpu::camera_fixture::CameraFixture::with_context(renderer.camera.clone(), renderer.evaluation.clone())
                         .encode_grade(device, &mut encoder, &source, &output, &pipeline)
                         .unwrap();
                     prepared
@@ -462,7 +440,7 @@ fn resident_camera_execution_resources() {
             .map(|output| execute::read(device, queue, output));
         assert_eq!(
             captures[0], captures[1],
-            "resident refactoring preserves the previous kernel and effect arithmetic"
+            "whole-request evaluation agrees with separately materialized photographic/effect boundaries"
         );
         drop((captures, outputs, source, input, pipeline, renderer));
         device

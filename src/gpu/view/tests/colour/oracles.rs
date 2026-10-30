@@ -230,7 +230,7 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
                 crate::adjustment_layers::AdjustmentLayer::global(photo),
             ])
             .and_then(|snapshot| {
-                crate::gpu::GpuPipeline::new(
+                crate::gpu::ProcessingInput::new(
                     &device,
                     negative(0.65),
                     roll,

@@ -6,7 +6,7 @@ use crate::{
     color::wb_matrix,
     crop::Crop,
     geometry::{PhotoOrientation, RollOrientation, SourceRegion},
-    processing::{Calibration, Inversion, RollSettings, exposure_multiplier},
+    processing::{Calibration, RollSettings, exposure_multiplier},
 };
 use glam::DMat3;
 #[cfg(test)]
@@ -920,17 +920,18 @@ impl Project {
         }
         if let Some(negative) = self.input.negative_input() {
             if self.sources.is_empty() {
-                Inversion::new(negative)?;
+                negative.parameters()?;
             }
             for source in &self.sources {
                 let calibration = source.development.processing_calibration(
                     negative.calibration,
                     self.active_flat_field().map(|field| field.map.as_ref()),
                 )?;
-                Inversion::new(crate::processing::NegativeInput {
+                crate::processing::NegativeInput {
                     calibration,
                     ..negative
-                })?;
+                }
+                .parameters()?;
             }
         }
         if let Some(scan) = &self.scan {

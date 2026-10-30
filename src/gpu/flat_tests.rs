@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::camera_fixture::CameraFixture;
 #[cfg(target_os = "macos")]
 use crate::{
     adjustment_layers::AdjustmentLayerSettings,
@@ -168,7 +169,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
             compilation_options: Default::default(),
             cache: None,
         });
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = CameraFixture::new(&device).await.unwrap();
         for (area, size) in [
             ([12, 12, 8640, 5760], [257, 173]),
             ([4000, 2600, 64, 32], [64, 32]),
@@ -221,7 +222,9 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
             let output = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
                 size: codes.len() as u64 * 16,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             let readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -360,7 +363,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                         .unwrap(),
                     ),
                     Some(
-                        GpuPipeline::new(
+                        ProcessingInput::new(
                             &device,
                             input,
                             roll,

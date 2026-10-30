@@ -1,14 +1,14 @@
 #![cfg(all(feature = "raw", feature = "gpu", target_os = "macos"))]
+use crate::gpu::camera_fixture::CameraFixture;
+use crate::raw_test_support::train_raw;
 use antitone as api;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use api::{
     color::Balance,
-    gpu::{ProcessingKernel, ProcessingSource},
+    gpu::ProcessingSource,
     processing::{DEFAULT_GAMMA, InputSettings, Response, RollSettings},
 };
 use glam::Vec4;
-#[path = "support/train_raw.rs"]
-mod train_raw;
 
 #[test]
 #[ignore = "read-only local train RAW and diagnostic calibration; run explicitly in release"]
@@ -60,8 +60,8 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
         let source =
             ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1).unwrap();
         assert_eq!(source.byte_len(), codes.len() as u64 * 16);
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
-        let grade = antitone::gpu::GpuPipeline::new(
+        let kernel = CameraFixture::new(&device).await.unwrap();
+        let grade = antitone::gpu::ProcessingInput::new(
             &device,
             input,
             roll,
@@ -77,7 +77,9 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {

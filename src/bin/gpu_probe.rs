@@ -1,7 +1,6 @@
 //! Checks OCIO-generated GLSL/LUTs on Metal against CPU references; no window is needed.
 //! Requires fresh `.cache/probes` OCIO artifacts; writes adapted shaders there.
-//! `--camera` additionally gates the complete model-4 RGB16 GPU path and floor flags.
-//! Missing/stale requested camera artifacts fail; agreement is not photographic or monitor acceptance.
+//! OCIO agreement is not photographic or monitor acceptance.
 use std::borrow::Cow;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -16,16 +15,13 @@ const VERTEX: &str = r#"
 "#;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let arguments: Vec<_> = std::env::args().skip(1).collect();
-    let camera = match arguments.as_slice() {
-        [] => false,
-        [flag] if flag == "--camera" => true,
-        _ => return Err("Usage: antitone-gpu-probe [--camera]".into()),
-    };
-    pollster::block_on(run(camera))
+    if std::env::args().nth(1).is_some() {
+        return Err("Usage: antitone-gpu-probe".into());
+    }
+    pollster::block_on(run())
 }
 
-async fn run(camera: bool) -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let instance = antitone::gpu::instance();
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -44,23 +40,8 @@ async fn run(camera: bool) -> Result<(), Box<dyn std::error::Error>> {
     let inputs = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("ACES reference inputs"),
         contents: &input_bytes,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        usage: wgpu::BufferUsages::STORAGE,
     });
-    if camera {
-        let (working, reference) = camera_processing(&device, &queue).await?;
-        if !input_bytes.ends_with(&reference) {
-            return Err("Regenerate OCIO artifacts after creating the camera fixture".into());
-        }
-        let mut encoder = device.create_command_encoder(&Default::default());
-        encoder.copy_buffer_to_buffer(
-            &working,
-            0,
-            &inputs,
-            (input_bytes.len() - reference.len()) as u64,
-            reference.len() as u64,
-        );
-        queue.submit([encoder.finish()]);
-    }
     let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("probe fullscreen triangle"),
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(VERTEX)),
@@ -329,90 +310,4 @@ async fn run(camera: bool) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     Ok(())
-}
-
-async fn camera_processing(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<(wgpu::Buffer, Vec<u8>), Box<dyn std::error::Error>> {
-    use antitone::gpu::{ProcessingKernel, ProcessingParameters, ProcessingSource};
-    let scans = std::fs::read(".cache/probes/camera-source-model5.rgb16")?;
-    let matrix = std::fs::read(".cache/probes/camera-to-ap1-model5.f64")?;
-    let reference = std::fs::read(".cache/probes/camera-working-ap1-model5.f32")?;
-    let flags = std::fs::read(".cache/probes/camera-floor-flags-model5.u8")?;
-    let parameters = std::fs::read(".cache/probes/camera-processing-model5.bin")?;
-    if scans.is_empty()
-        || scans.len() % 8 != 0
-        || matrix.len() != 72
-        || reference.len() != scans.len() * 2
-        || flags.len() != scans.len() / 8
-        || parameters.len() != std::mem::size_of::<ProcessingParameters>()
-    {
-        return Err("invalid camera-processing fixture".into());
-    }
-    let parameters: ProcessingParameters = bytemuck::pod_read_unaligned(&parameters);
-    let matrix = glam::DMat3::from_cols_array(&std::array::from_fn(|c| {
-        f64::from_le_bytes(matrix[c * 8..c * 8 + 8].try_into().unwrap())
-    }));
-    let codes: Vec<[u16; 4]> = scans
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|p| {
-            std::array::from_fn(|c| u16::from_le_bytes(p[c * 2..c * 2 + 2].try_into().unwrap()))
-        })
-        .collect();
-    let input = ProcessingSource::new(device, &codes, matrix)?;
-    let output = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("real-image AP1 working RGB"),
-        size: reference.len() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("processing readback"),
-        size: output.size(),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let kernel = ProcessingKernel::new(device).await?;
-    let started = Instant::now();
-    let mut encoder = device.create_command_encoder(&Default::default());
-    kernel.encode(device, &mut encoder, &input, &output, parameters);
-    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
-    queue.submit([encoder.finish()]);
-    let (sender, receiver) = mpsc::channel();
-    readback.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-        sender.send(r).unwrap();
-    });
-    device.poll(wgpu::PollType::wait_indefinitely())?;
-    receiver.recv()??;
-    let mapped = readback.slice(..).get_mapped_range()?;
-    let mut max_error = 0.0f32;
-    for (index, expected) in reference.as_chunks::<4>().0.iter().enumerate() {
-        let actual = f32::from_le_bytes(mapped[index * 4..index * 4 + 4].try_into()?);
-        let expected = if index % 4 == 3 {
-            f32::from(flags[index / 4])
-        } else {
-            f32::from_le_bytes(*expected)
-        };
-        let error = (actual - expected).abs();
-        if !actual.is_finite() || !expected.is_finite() || error > 2e-5 + 2e-4 * expected.abs() {
-            return Err(format!(
-                "camera processing mismatch component={index} actual={actual} expected={expected}"
-            )
-            .into());
-        }
-        if index % 4 != 3 {
-            max_error = max_error.max(error);
-        }
-    }
-    println!(
-        "camera_processing_pixels={} CPU_f64_GPU_f32_max_abs_error={max_error:.8e} submit_readback_seconds={:.6}",
-        scans.len() / 8,
-        started.elapsed().as_secs_f64()
-    );
-    drop(mapped);
-    readback.unmap();
-    Ok((output, reference))
 }

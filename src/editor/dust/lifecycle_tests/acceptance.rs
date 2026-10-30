@@ -618,9 +618,23 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
         let wrong_source = evaluate(&reference_scan, &request).unwrap().evaluated;
         let uncorrected = Scan::with_reference(photo.source.clone(), photo.reference.clone());
         let wrong_correction = evaluate(&uncorrected, &request).unwrap().evaluated;
-        let values = |r: &EvaluatedRepair| r.pixels().collect::<Vec<_>>();
-        assert_ne!(values(&expected), values(&wrong_source));
-        assert_ne!(values(&expected), values(&wrong_correction));
+        let difference = |other: &EvaluatedRepair| {
+            expected
+                .pixels()
+                .zip(other.pixels())
+                .flat_map(|((_, a), (_, b))| {
+                    (0..3).map(move |channel| (a[channel] - b[channel]).abs())
+                })
+                .fold(0_f32, f32::max)
+        };
+        assert!(
+            difference(&wrong_source) > 2e-4,
+            "the fixture must distinguish the reference source"
+        );
+        assert!(
+            difference(&wrong_correction) > 2e-4,
+            "the fixture must distinguish omitted correction"
+        );
         (id, expected)
     });
     let hold = crate::background::testing::pause();
@@ -658,10 +672,16 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
             assert!(e.document.visit.dust.pending.is_none());
             for (id, expected) in repairs {
                 let cached = e.document.dust.cached.get(&(source, id)).unwrap();
-                assert_eq!(
-                    cached.evaluated.pixels().collect::<Vec<_>>(),
-                    expected.pixels().collect::<Vec<_>>()
-                );
+                let actual = cached.evaluated.pixels().collect::<Vec<_>>();
+                let reference = expected.pixels().collect::<Vec<_>>();
+                assert_eq!(actual.len(), reference.len());
+                for ((point, actual), (expected_point, reference)) in actual.iter().zip(&reference)
+                {
+                    assert_eq!(point, expected_point);
+                    for channel in 0..3 {
+                        assert!((actual[channel] - reference[channel]).abs() < 2e-6);
+                    }
+                }
             }
         });
     });

@@ -6,6 +6,7 @@
 ))]
 use crate as api;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::camera_fixture::CameraFixture;
 use crate::raw_test_support::train_raw;
 use api::{
     adjustment_layers::{
@@ -15,7 +16,7 @@ use api::{
     crop::Crop,
     frame_raster::FrameRaster,
     geometry::{Composition, FramePoint, SourcePoint, SourceRaster, SourceRegion},
-    gpu::{GpuPipeline, ProcessingInput, ProcessingKernel, ProcessingSource, SourceGeometry},
+    gpu::{ProcessingInput, ProcessingSource, SourceGeometry},
     processing::RollSettings,
     refinement::{ViewRequest, refine},
     rendering::{CpuRenderer, OutputTarget},
@@ -183,7 +184,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
             scan.camera_model
         );
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = CameraFixture::new(&device).await.unwrap();
         let renderer = api::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
@@ -247,7 +248,9 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
             let output = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("local RAW AP1"),
                 size: pixels.len() as u64 * 16,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             let mut global_output = Vec::new();
@@ -266,7 +269,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                 )
                 .unwrap();
                 let tick = Instant::now();
-                let grade = match GpuPipeline::new(
+                let grade = match ProcessingInput::new(
                     &device,
                     calibration,
                     roll,

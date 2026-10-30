@@ -25,7 +25,7 @@ use crate::gpu::SourceGeometry;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::{Composition, FramePoint},
-    gpu::{GpuPipeline, ProcessingInput, SubmissionGate},
+    gpu::{ProcessingInput, SubmissionGate},
     pixel_pipeline::{PixelPipeline, PixelStage, test_effects::NeighbourEffect},
     processing::InputSettings,
     rendering::{OutputReference, OutputTarget},
@@ -48,7 +48,7 @@ fn input(
     matrix: DMat3,
 ) -> ProcessingInput {
     ProcessingInput::from(Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             device,
             InputSettings::Digital,
             Default::default(),

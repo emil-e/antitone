@@ -184,11 +184,7 @@ fn colour_adjustment_layers(input: array<f32, 3>, source: vec2f) -> array<f32, 3
         if adjustment_layer_stages[stage].flags.x != 0u && !inside {
             continue;
         }
-        var coverage = adjustment_layer_coverage_point32(stage, source);
-        if adjustment_layer_stages[stage].flags.y != 0u {
-            coverage = 1.0 - coverage;
-        }
-        let weight = coverage * adjustment_layer_value(stage, 1u, 3u);
+        let weight = adjustment_layer_weight32(stage, source);
         if weight == 0.0 {
             continue;
         }

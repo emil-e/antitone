@@ -7,7 +7,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         film_emulation::FilmEmulationPreset,
         frame_raster::FrameRaster,
         geometry::Composition,
-        gpu::GpuPipeline,
+        gpu::ProcessingInput,
         gpu_scopes::{GpuScopes, ScopePaint},
         processing::InputSettings,
     };
@@ -28,7 +28,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         )
         .await
         .unwrap();
-        let grade = GpuPipeline::new(
+        let grade = ProcessingInput::new(
             &device,
             InputSettings::Digital,
             Default::default(),
@@ -113,7 +113,7 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
     use crate::{
         adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
         film_emulation::FilmEmulationPreset,
-        gpu::{GpuGrade, GpuInputProgram, GpuPipeline},
+        gpu::{GpuInputProgram, Grading, ProcessingInput},
         processing::{InputSettings, RollSettings},
     };
     pollster::block_on(async {
@@ -133,8 +133,8 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
                 ..Default::default()
             })])
             .unwrap();
-        let shared = Arc::new(GpuGrade::new(&device, roll, snapshot.clone(), small).unwrap());
-        let fresh = Arc::new(GpuGrade::new(&device, roll, snapshot, large).unwrap());
+        let shared = Arc::new(Grading::new(&device, roll, snapshot.clone(), small).unwrap());
+        let fresh = Arc::new(Grading::new(&device, roll, snapshot, large).unwrap());
         let mut image = GpuImage::new_continuous_shared(
             &renderer,
             &device,
@@ -150,7 +150,7 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
             .set_geometry(SourceGeometry::new([0, 0, 64, 64], [64, 64]).unwrap())
             .unwrap();
         let render = |grade, area, frame_size| {
-            let pipeline = GpuPipeline::compose(
+            let pipeline = ProcessingInput::compose(
                 &device,
                 GpuInputProgram::new(InputSettings::Digital, DMat3::IDENTITY).unwrap(),
                 grade,

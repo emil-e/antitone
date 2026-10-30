@@ -105,7 +105,7 @@ impl Product {
             + if positive {
                 std::mem::size_of::<crate::gpu::view::ViewSource>()
                     + std::mem::size_of::<crate::gpu::view::RenderedView>()
-                    + 2 * std::mem::size_of::<crate::gpu::GpuPipeline>()
+                    + 2 * std::mem::size_of::<crate::gpu::ProcessingInput>()
             } else {
                 0
             }
@@ -195,7 +195,7 @@ impl ImageKey {
                 )?;
             }
             bytes = bytes.checked_add(
-                2 * (crate::gpu::GpuPipeline::byte_len_for(&recipe.grade)
+                2 * (crate::gpu::ProcessingInput::byte_len_for(&recipe.grade)
                     + recipe.grade.retained_bytes() as u64),
             )?;
         }

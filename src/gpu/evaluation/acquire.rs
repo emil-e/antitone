@@ -267,7 +267,7 @@ pub fn repair_copy(
         });
         let view = fragment.resource(Storage::Uniform(bytes.into()));
         fragment.work.push(Work::Compute {
-            code: crate::gpu::ProcessingKernel::module_shader().into(),
+            code: crate::gpu::CameraResources::module_shader().into(),
             entry: "repair_copy",
             bindings: vec![
                 (1, Binding::Write(image.resource)),

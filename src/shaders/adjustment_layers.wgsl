@@ -69,3 +69,11 @@ fn adjustment_layer_coverage_point32(stage: u32, source: vec2f) -> f32 {
     }
     return adjustment_layer_smoothstep32((1.0 - radius) / feather);
 }
+
+fn adjustment_layer_weight32(stage: u32, source: vec2f) -> f32 {
+    var coverage = adjustment_layer_coverage_point32(stage, source);
+    if adjustment_layer_stages[stage].flags.y != 0u {
+        coverage = 1.0 - coverage;
+    }
+    return coverage * adjustment_layer_value(stage, 1u, 3u);
+}

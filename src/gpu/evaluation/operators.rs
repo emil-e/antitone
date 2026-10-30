@@ -1,9 +1,11 @@
 //! Concrete operation implementations. Geometry and GPU bodies stay out of the planner.
 
 use super::*;
+use crate::geometry::SourceRegion as Rect;
 #[cfg(all(test, feature = "editor"))]
-use crate::gpu::GpuGrade;
-use crate::{geometry::SourceRegion as Rect, rendering::OutputTarget};
+use crate::gpu::Grading;
+#[cfg(feature = "render")]
+use crate::rendering::OutputTarget;
 #[cfg(all(test, feature = "editor"))]
 use wgpu::util::DeviceExt;
 
@@ -125,10 +127,10 @@ pub fn interpret(
 #[cfg(all(test, feature = "editor"))]
 pub fn grade(
     input: Arc<ImageNode>,
-    device: &wgpu::Device,
-    grade: Arc<GpuGrade>,
+    _device: &wgpu::Device,
+    grade: Arc<Grading>,
 ) -> Result<Arc<ImageNode>, Error> {
-    super::grading::Grading::new(device, &grade, input.domain.grid.coverage).compose(input)
+    grade.for_grid(input.domain.grid.coverage).compose(input)
 }
 
 pub fn gaussian(input: Arc<ImageNode>, sigma: f64) -> Result<Arc<ImageNode>, Error> {
@@ -448,6 +450,7 @@ fn reconstruction_sample(p: vec2i) -> vec4f {{
     }
 }
 
+#[cfg(feature = "render")]
 pub fn display(
     input: Arc<ImageNode>,
     renderer: &crate::renderer::GpuRenderer,
@@ -456,6 +459,7 @@ pub fn display(
     display_with_destination(input, renderer, target, None)
 }
 
+#[cfg(feature = "render")]
 pub(crate) fn display_texture(
     input: Arc<ImageNode>,
     renderer: &crate::renderer::GpuRenderer,
@@ -474,6 +478,7 @@ pub(crate) fn display_texture(
     display_with_destination(input, renderer, target, Some(texture.clone()))
 }
 
+#[cfg(feature = "render")]
 fn display_with_destination(
     input: Arc<ImageNode>,
     renderer: &crate::renderer::GpuRenderer,
@@ -509,6 +514,7 @@ fn display_with_destination(
     ))
 }
 
+#[cfg(feature = "render")]
 struct Display {
     destination: Option<wgpu::Texture>,
     coverage: bool,
@@ -518,6 +524,7 @@ struct Display {
     shared: Vec<(u32, Shared)>,
 }
 
+#[cfg(feature = "render")]
 impl SampleProducer for Display {
     fn access(&self) -> Access {
         Access::Callable
@@ -576,6 +583,7 @@ fn sample_display(p: vec2i) -> vec4f {{
     }
 }
 
+#[cfg(feature = "render")]
 impl Operation for Display {
     fn sample_producer(&self) -> Option<&dyn SampleProducer> {
         self.destination.is_none().then_some(self)

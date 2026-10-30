@@ -54,7 +54,7 @@ fn targets(support: &SupportMask, size: u32, image: &[Ap1]) -> Vec<SearchTarget>
                 support,
                 group,
                 area(size),
-                &mut |[x, y]| Ok(image[(y * size + x) as usize]),
+                &mut |[x, y]: [u32; 2]| Ok(image[(y * size + x) as usize]),
                 &mut Execution::default(),
             )
             .unwrap()
@@ -84,7 +84,7 @@ fn coherent_wire_alignment_outranks_a_grain_match_to_plain_sky() {
                 &support,
                 &near,
                 offset,
-                &mut |[x, y]| Ok(image[(y * size + x) as usize]),
+                &mut |[x, y]: [u32; 2]| Ok(image[(y * size + x) as usize]),
                 &mut Execution::default(),
             )
             .unwrap()
@@ -201,7 +201,7 @@ fn matching_cannot_read_marked_values_through_the_smoothing_footprint() {
             &support,
             &near,
             offset,
-            &mut |[x, y]| Ok(image[(y * size + x) as usize]),
+            &mut |[x, y]: [u32; 2]| Ok(image[(y * size + x) as usize]),
             &mut Execution::default(),
         )
         .unwrap()
@@ -211,7 +211,7 @@ fn matching_cannot_read_marked_values_through_the_smoothing_footprint() {
             &support,
             &near,
             offset,
-            &mut |[x, y]| {
+            &mut |[x, y]: [u32; 2]| {
                 Ok(if support.contains([x, y]) {
                     [-7., 3., 100.]
                 } else {

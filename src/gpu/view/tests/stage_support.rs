@@ -33,7 +33,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
         .unwrap();
         let snapshot = AdjustmentLayerSnapshot::new(vec![]).unwrap();
         let grade = Arc::new(
-            GpuPipeline::new(
+            ProcessingInput::new(
                 &device,
                 InputSettings::Digital,
                 Default::default(),

@@ -56,10 +56,11 @@ impl FlatFieldSettings {
                 let calibration = self
                     .development
                     .processing_calibration(negative.calibration, Some(&self.map))?;
-                Inversion::new(crate::processing::NegativeInput {
+                crate::processing::NegativeInput {
                     calibration,
                     ..negative
-                })?;
+                }
+                .parameters()?;
             }
         }
         Ok(())

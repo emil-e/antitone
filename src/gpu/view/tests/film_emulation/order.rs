@@ -30,7 +30,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             colour: 0.5,
         };
         let input = ProcessingInput::from(Arc::new(
-            GpuPipeline::new(
+            ProcessingInput::new(
                 &device,
                 InputSettings::Digital,
                 Default::default(),

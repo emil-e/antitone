@@ -34,6 +34,8 @@ fn source_input(
 pub(super) struct Services {
     pub sources: Arc<dyn SourceProvider>,
     pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub renderers: Arc<crate::renderer::RendererCache>,
     pub exposures: Arc<crate::exposure_metadata::Store>,
 }
 
@@ -46,6 +48,8 @@ impl Services {
         Self {
             sources,
             device: source.device.clone(),
+            queue: source.queue.clone(),
+            renderers: source.renderers.clone(),
             exposures,
         }
     }

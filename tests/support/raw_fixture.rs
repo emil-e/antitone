@@ -8,14 +8,20 @@ pub fn bayer_dng() -> FixturePath {
 }
 
 pub fn bayer_dng_with_rgb(rgb: [u16; 3]) -> FixturePath {
+    bayer_dng_with_camera(
+        rgb,
+        [
+            3.2404542, -1.5371385, -0.4985314, -0.9692660, 1.8760108, 0.0415560, 0.0556434,
+            -0.2040259, 1.0572252,
+        ],
+    )
+}
+
+pub fn bayer_dng_with_camera(rgb: [u16; 3], xyz_to_camera: [f64; 9]) -> FixturePath {
     let short = |value: u16| value.to_le_bytes().to_vec();
     let long = |value: u32| value.to_le_bytes().to_vec();
     let rational = |value: u32| [value.to_le_bytes(), 1u32.to_le_bytes()].concat();
-    let matrix = [
-        3.2404542, -1.5371385, -0.4985314, -0.9692660, 1.8760108, 0.0415560, 0.0556434, -0.2040259,
-        1.0572252,
-    ];
-    let matrix: Vec<u8> = matrix
+    let matrix: Vec<u8> = xyz_to_camera
         .into_iter()
         .flat_map(|value| {
             [

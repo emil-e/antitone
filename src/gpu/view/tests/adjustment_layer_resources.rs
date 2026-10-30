@@ -171,7 +171,7 @@ fn exercise(
             let next = monitor.phase(case, || {
                 let snapshot = snapshot(&scan, local, edit)?;
                 let input: ProcessingInput = if local {
-                    Arc::new(GpuPipeline::new(
+                    Arc::new(ProcessingInput::new(
                         device,
                         cal,
                         RollSettings::default(),

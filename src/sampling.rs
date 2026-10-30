@@ -8,6 +8,9 @@ pub const FIT_RESIDUAL_TOLERANCE: f64 = 1e-9;
 const DERIVATIVE_STEP: f64 = 1e-5;
 const MIN_JACOBIAN_DETERMINANT: f64 = 1e-9;
 
+#[cfg(test)]
+mod model_tests;
+
 pub fn mean(pixels: &[DVec3]) -> Result<DVec3, Error> {
     if pixels.is_empty() {
         return Err(Error::UnusableSample("empty patch"));
@@ -141,7 +144,7 @@ pub fn adjustment_layer_white_balance(pixels: &[(DVec3, f64, f64)]) -> Result<Ba
         .iter()
         .map(|&(rgb, area, weight)| (cones * rgb * area, weight))
         .collect();
-    fit_balance(
+    fit_white_balance_model(
         |coordinates| {
             let offsets = Balance {
                 warmth: coordinates.x,
@@ -160,8 +163,18 @@ pub fn adjustment_layer_white_balance(pixels: &[(DVec3, f64, f64)]) -> Result<Ba
             Ok(opponent_coordinates((white / sample).ln()))
         },
         Balance::default(),
-        Conditioning::Relative,
+        16. * f64::EPSILON,
     )
+}
+
+/// Fit balance against a supplied forward-model residual. The absolute residual floor accounts
+/// for quantization in that model, independently of the Jacobian's relative conditioning.
+pub(crate) fn fit_white_balance_model(
+    residual: impl Fn(DVec2) -> Result<DVec2, Error>,
+    initial: Balance,
+    residual_floor: f64,
+) -> Result<Balance, Error> {
+    fit_balance(residual, initial, Conditioning::Relative, residual_floor)
 }
 
 pub fn white_balance_weighted(pixels: &[(DVec3, f64)]) -> Result<Balance, Error> {
@@ -198,15 +211,7 @@ fn fit_roll_neutral(
     scan_patch: impl Iterator<Item = (DVec3, f64)> + Clone,
     camera_to_ap1: DMat3,
 ) -> Result<Balance, Error> {
-    crate::processing::validate_camera_matrix(camera_to_ap1)?;
-    let target = camera_to_ap1.inverse() * DVec3::ONE;
-    if !target.is_finite() || target.min_element() <= 0. {
-        return Err(Error::UnusableSample(
-            "neutral AP1 is not positive in camera RGB",
-        ));
-    }
-    negative.calibration.validate()?;
-    negative.channel_gammas()?;
+    let fit = GammaNeutral::new(negative, camera_to_ap1)?;
     weighted_mean_iter(scan_patch.clone().map(Ok))?;
     let total = scan_patch.clone().map(|(_, w)| w).sum::<f64>();
     if scan_patch
@@ -217,32 +222,72 @@ fn fit_roll_neutral(
             "gamma patch contains floored scan inputs",
         ));
     }
-    let residual = |coordinates: DVec2| -> Result<DVec2, Error> {
-        let balance = Balance {
-            warmth: coordinates.x,
-            tint: coordinates.y,
-        };
-        let inversion = Inversion::new(NegativeInput {
-            balance,
-            ..negative
-        })?;
-        let mut sum = DVec3::ZERO;
-        for (scan, weight) in scan_patch.clone() {
-            sum += inversion.apply(scan)?.rgb * weight;
-        }
-        let positive = sum / total;
-        if !positive.is_finite() || positive.min_element() <= 1e-8 {
+    fit.fit(
+        |candidate| {
+            let inversion = Inversion::new(candidate)?;
+            let mut sum = DVec3::ZERO;
+            for (scan, weight) in scan_patch.clone() {
+                sum += inversion.apply(scan)?.rgb * weight;
+            }
+            Ok(sum / total)
+        },
+        0.,
+    )
+}
+
+/// Gamma-neutral target and solver, independent of the supplied forward-image evaluator.
+pub(crate) struct GammaNeutral {
+    negative: NegativeInput,
+    target: DVec3,
+}
+
+impl GammaNeutral {
+    pub(crate) fn new(negative: NegativeInput, camera_to_ap1: DMat3) -> Result<Self, Error> {
+        crate::processing::validate_camera_matrix(camera_to_ap1)?;
+        let target = camera_to_ap1.inverse() * DVec3::ONE;
+        if !target.is_finite() || target.min_element() <= 0. {
             return Err(Error::UnusableSample(
-                "gamma patch is too near Dmin or has nonpositive mean RGB",
+                "neutral AP1 is not positive in camera RGB",
             ));
         }
-        Ok(DVec2::new(
-            (positive.x / target.x).ln() - (positive.y / target.y).ln(),
-            (positive.z / target.z).ln() - (positive.y / target.y).ln(),
-        ))
-    };
+        negative.calibration.validate()?;
+        negative.channel_gammas()?;
 
-    fit_balance(residual, negative.balance, Conditioning::Absolute)
+        Ok(Self { negative, target })
+    }
+
+    /// The callback returns the patch's positive native-camera mean for a captured candidate.
+    pub(crate) fn fit(
+        &self,
+        forward: impl Fn(NegativeInput) -> Result<DVec3, Error>,
+        residual_floor: f64,
+    ) -> Result<Balance, Error> {
+        let residual = |coordinates: DVec2| {
+            let positive = forward(NegativeInput {
+                balance: Balance {
+                    warmth: coordinates.x,
+                    tint: coordinates.y,
+                },
+                ..self.negative
+            })?;
+            if !positive.is_finite() || positive.min_element() <= 1e-8 {
+                return Err(Error::UnusableSample(
+                    "gamma patch is too near Dmin or has nonpositive mean RGB",
+                ));
+            }
+            Ok(DVec2::new(
+                (positive.x / self.target.x).ln() - (positive.y / self.target.y).ln(),
+                (positive.z / self.target.z).ln() - (positive.y / self.target.y).ln(),
+            ))
+        };
+
+        fit_balance(
+            residual,
+            self.negative.balance,
+            Conditioning::Absolute,
+            residual_floor,
+        )
+    }
 }
 
 // Gamma fitting rejects weak anchor information; layer WB can have a small,
@@ -256,15 +301,15 @@ fn fit_balance(
     residual: impl Fn(DVec2) -> Result<DVec2, Error>,
     initial: Balance,
     conditioning: Conditioning,
+    numerical_floor: f64,
 ) -> Result<Balance, Error> {
     let mut x = DVec2::new(initial.warmth, initial.tint);
     for _ in 0..32 {
         let r = residual(x)?;
-        let numerical_floor = match conditioning {
-            Conditioning::Absolute => 0.,
-            Conditioning::Relative => 16. * f64::EPSILON,
-        };
-        if numerical_floor != 0. && r.length() <= numerical_floor {
+        if matches!(conditioning, Conditioning::Relative)
+            && numerical_floor != 0.
+            && r.length() <= numerical_floor
+        {
             return Ok(Balance {
                 warmth: x.x,
                 tint: x.y,

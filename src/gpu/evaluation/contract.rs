@@ -5,12 +5,15 @@ use crate::geometry::SourceRegion as Rect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Meaning {
-    /// Normalized continuous camera light, before the camera-to-working matrix.
-    #[cfg(all(test, feature = "editor"))]
+    /// Normalized camera light, before interpretation and the camera-to-working matrix.
     Camera,
     CameraCodes,
+    /// Signed native-camera positive, before camera-to-working conversion.
+    NativePositive,
     Neutral,
     Graded,
+    /// A scalar mixing weight repeated in RGB, with input metadata retained in w.
+    Weight,
     Display,
 }
 

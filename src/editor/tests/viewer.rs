@@ -1003,7 +1003,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
     }
 
     for enter in [false, true] {
-        let mut editor = fixture();
+        let mut editor = crate::editor::tests::with_document_services(fixture());
         add_ready_fixture(&mut editor);
         // This proxy fixture's display geometry is larger than its SDK sensor.
         // Use an eligible sensor interior, also inside the displayed source area.
@@ -1083,7 +1083,14 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
                 .0
                 .run_until(Duration::from_secs(5), |editor| !editor.busy);
             feature.0.read(|editor| {
-                assert_eq!(editor.dmin(), Some(expected), "{}", editor.status);
+                let actual = editor
+                    .dmin()
+                    .expect("completed original-camera measurement");
+                assert!(
+                    (actual - expected).abs().max_element() / expected.abs().max_element() < 2e-6,
+                    "{}: {actual:?} != {expected:?}",
+                    editor.status
+                );
                 assert!(editor.active_pick().is_none() && !editor.measurement_pending());
                 assert!(editor.history_label(history::Direction::Undo).is_some());
             });

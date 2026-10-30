@@ -1,6 +1,6 @@
 use super::tests::{fixture, make_plan, matrix, settings};
 use super::*;
-use crate::{geometry::SourceRegion as Rect, gpu::GpuGrade};
+use crate::{geometry::SourceRegion as Rect, gpu::Grading};
 
 #[test]
 fn independent_code_reference_can_be_composed_and_replaced_without_planner_changes() {
@@ -11,7 +11,7 @@ fn independent_code_reference_can_be_composed_and_replaced_without_planner_chang
     let graded = grade(
         neutral,
         &device,
-        Arc::new(GpuGrade::new(&device, roll, snapshot, data.domain().bounds).unwrap()),
+        Arc::new(Grading::new(&device, roll, snapshot, data.domain().bounds).unwrap()),
     )
     .unwrap();
     let original = make_plan(graded.clone(), [27, 23]);

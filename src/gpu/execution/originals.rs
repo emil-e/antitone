@@ -1,7 +1,7 @@
 //! Codec-independent bounded original-sample execution and destination-only readback.
 
 use super::{OutputBlock, Request, SampleEncoding, WorkBudget};
-use crate::gpu::{GpuPipeline, SubmissionGate, evaluation, rgb16};
+use crate::gpu::{ProcessingInput, SubmissionGate, evaluation, rgb16};
 use crate::{
     Error,
     frame_raster::FrameRaster,
@@ -567,18 +567,18 @@ pub(crate) fn execute(
     {
         return Err(Error::Gpu("processing source/recipe mismatch".into()));
     }
-    let source = crate::scan::ImageSource::new(request.scan, request.input)?;
-    let photographic = Arc::new(crate::gpu::GpuGrade::new(
+    let program = crate::gpu::GpuInputProgram::for_scan(request.scan, request.input)?;
+    let photographic = Arc::new(crate::gpu::Grading::new(
         device,
         request.roll,
         request.grade.clone(),
-        source.area(),
+        request.scan.area,
     )?);
-    let grade = Arc::new(GpuPipeline::compose(
+    let grade = Arc::new(ProcessingInput::compose(
         device,
-        source.gpu_program()?,
+        program,
         photographic,
-        source.area(),
+        request.scan.area,
     )?);
     let pipeline = &request.stages;
     let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;

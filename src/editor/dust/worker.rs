@@ -33,11 +33,26 @@ fn search_pixels(
         return Ok(SearchOutcome::Cancelled);
     }
     let scan = input.context.scan()?;
-    let source = crate::scan::ImageSource::new(&scan, input.input)?;
-    crate::repair_source::search(
-        &source,
+    let services = input
+        .services
+        .as_ref()
+        .ok_or_else(|| crate::Error::Gpu("repair image-query services unavailable".into()))?;
+    let renderer = services.renderers.get(&services.device, &services.queue)?;
+    let mut source = crate::gpu::repair_source::Source::new(
+        &services.device,
+        &renderer,
+        (&services.queue, services.renderers.submissions()),
+        &scan,
+        input.input,
+    )?;
+
+    crate::dust_repair::search_image(
         &input.support,
         input.previous_offset,
+        scan.area,
+        &mut source,
+        std::time::Instant::now() + crate::dust_repair::SEARCH_BUDGET,
+        crate::dust_repair::SEARCH_ACCEPTABLE_SCORE,
         &mut crate::dust_repair::Execution {
             cancelled: &stopped,
         },
@@ -48,6 +63,7 @@ pub(super) async fn evaluate(
     request: Request,
     input: source::Context,
     source_epoch: Arc<AtomicU64>,
+    services: Option<source::Services>,
 ) -> Result<Option<Response>, String> {
     crate::background::run(move |retired| {
         let cancelled = || {
@@ -59,9 +75,12 @@ pub(super) async fn evaluate(
         if cancelled() {
             return Ok(None);
         }
-        let result = input
-            .scan()
-            .and_then(|scan| evaluate_with(&scan, &request, &cancelled));
+        let result = input.scan().and_then(|scan| {
+            let services = services.as_ref().ok_or_else(|| {
+                crate::Error::Gpu("repair image-query services unavailable".into())
+            })?;
+            evaluate_with(&scan, &request, services, &cancelled)
+        });
         if cancelled() { Ok(None) } else { result }
     })
     .await

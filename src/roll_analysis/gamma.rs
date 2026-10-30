@@ -3,8 +3,8 @@ use glam::{DMat3, DVec2, DVec3};
 use crate::{
     Error,
     color::{AP1_TO_XYZ, Balance, ap1_to_cones, opponent_coordinates},
-    processing::{Inversion, NegativeInput},
-    sampling::weighted_mean_iter,
+    processing::NegativeInput,
+    roll_analysis::{ForwardModel, model::SampleBatch},
 };
 
 type Bands = Vec<[Vec<DVec3>; 3]>;
@@ -14,21 +14,23 @@ fn bands(
     negative: NegativeInput,
     matrix: DMat3,
     points: &[Vec<DVec3>],
+    model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Bands>, Error> {
-    let inv = Inversion::new(negative)?;
+    let batch = SampleBatch::new(points.iter().map(Vec::as_slice));
+    let mut ranked: Vec<Vec<(usize, f64)>> = points.iter().map(|_| Vec::new()).collect();
+    if !batch.read(model, negative, cancelled, |frame, sample, positive| {
+        ranked[frame].push((sample, (AP1_TO_XYZ * (matrix * positive)).y));
+        Ok(())
+    })? {
+        return Ok(None);
+    }
+
     let mut result = Vec::with_capacity(points.len());
-    for frame in points {
+    for (frame, mut ranked) in points.iter().zip(ranked) {
         if cancelled() {
             return Ok(None);
         }
-        let mut ranked = frame
-            .iter()
-            .map(|&p| inv.apply(p).map(|v| (AP1_TO_XYZ * (matrix * v.rgb)).y))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .enumerate()
-            .collect::<Vec<_>>();
         ranked.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
         let groups = [(0.01, 0.33), (0.33, 0.67), (0.67, 0.99)].map(|(low, high)| {
             ranked[(low * frame.len() as f64).floor() as usize
@@ -60,24 +62,59 @@ fn drift(means: [DVec3; 3]) -> Result<[DVec2; 2], Error> {
     Ok([z[0] - z[1], z[2] - z[1]])
 }
 
+#[cfg(test)]
 fn evaluate(
     negative: NegativeInput,
     matrix: DMat3,
     bands: &Bands,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<f64>, Error> {
-    let inv = Inversion::new(negative)?;
+    evaluate_with_model(
+        negative,
+        matrix,
+        bands,
+        &mut super::model::ScalarReference,
+        cancelled,
+    )
+}
+
+fn evaluate_with_model(
+    negative: NegativeInput,
+    matrix: DMat3,
+    bands: &Bands,
+    model: &mut impl ForwardModel,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<f64>, Error> {
+    let batch = SampleBatch::new(
+        bands
+            .iter()
+            .flat_map(|frame| frame.iter().map(Vec::as_slice)),
+    );
+    let mut means = vec![DVec3::ZERO; batch.groups.len()];
+    if !batch.read(model, negative, cancelled, |group, _, positive| {
+        means[group] += positive;
+        Ok(())
+    })? {
+        return Ok(None);
+    }
+    for (mean, group) in means.iter_mut().zip(&batch.groups) {
+        if group.is_empty() {
+            return Err(Error::UnusableSample("empty patch"));
+        }
+        *mean /= group.len() as f64;
+        if !mean.is_finite() {
+            return Err(Error::NumericalOverflow);
+        }
+        *mean = matrix * *mean;
+    }
+
     let mut total = [DVec2::ZERO; 2];
-    for frame in bands {
+    for &frame in means.as_chunks::<3>().0 {
         if cancelled() {
             return Ok(None);
         }
-        let mut means = [DVec3::ZERO; 3];
-        for (i, pixels) in frame.iter().enumerate() {
-            means[i] = matrix
-                * weighted_mean_iter(pixels.iter().map(|&p| inv.apply(p).map(|v| (v.rgb, 1.))))?;
-        }
-        let d = drift(means)?;
+
+        let d = drift(frame)?;
         for i in 0..2 {
             total[i] += d[i];
         }
@@ -97,10 +134,11 @@ fn search(
     negative: NegativeInput,
     matrix: DMat3,
     bands: &Bands,
+    model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<(Balance, f64)>, Error> {
     let mut best = negative;
-    let Some(mut score) = evaluate(best, matrix, bands, cancelled)? else {
+    let Some(mut score) = evaluate_with_model(best, matrix, bands, model, cancelled)? else {
         return Ok(None);
     };
     let mut step = 0.125;
@@ -128,7 +166,7 @@ fn search(
                     return Err(Error::UnusableSample("gamma drift search did not converge"));
                 }
                 let candidate = NegativeInput { balance, ..base };
-                let value = match evaluate(candidate, matrix, bands, cancelled) {
+                let value = match evaluate_with_model(candidate, matrix, bands, model, cancelled) {
                     Ok(Some(value)) => value,
                     Ok(None) => return Ok(None),
                     Err(Error::UnusableSample(NONPOSITIVE_CONES)) => continue,
@@ -148,17 +186,34 @@ fn search(
     Ok(Some((best.balance, score)))
 }
 
-pub(super) fn fit(
+#[cfg(test)]
+fn fit(
     negative: NegativeInput,
     matrix: DMat3,
     points: &[Vec<DVec3>],
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<Balance>, Error> {
+    fit_with_model(
+        negative,
+        matrix,
+        points,
+        &mut super::model::ScalarReference,
+        cancelled,
+    )
+}
+
+pub(super) fn fit_with_model(
+    negative: NegativeInput,
+    matrix: DMat3,
+    points: &[Vec<DVec3>],
+    model: &mut impl ForwardModel,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Balance>, Error> {
     let initial = NegativeInput {
         balance: Balance::default(),
         ..negative
     };
-    let Some(bands) = bands(initial, matrix, points, cancelled)? else {
+    let Some(bands) = bands(initial, matrix, points, model, cancelled)? else {
         return Ok(None);
     };
     let spans = (negative.calibration.dmin / negative.calibration.dmax).ln();
@@ -184,6 +239,7 @@ pub(super) fn fit(
             },
             matrix,
             &bands,
+            model,
             cancelled,
         ) {
             Ok(Some(result)) => result,

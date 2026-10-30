@@ -19,6 +19,7 @@ pub(super) struct Input {
     pub previous_offset: Option<[i32; 2]>,
     pub input: InputSettings,
     pub context: source::Context,
+    pub services: Option<source::Services>,
     #[cfg(test)]
     pub worker: Option<worker::testing::Search>,
 }
@@ -165,6 +166,7 @@ impl Editor {
             context: self
                 .source_context()
                 .expect("released stroke has a ready source"),
+            services: self.source_services.clone(),
             #[cfg(test)]
             worker: self.document.dust.search_worker.clone(),
         };

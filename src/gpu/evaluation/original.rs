@@ -52,13 +52,13 @@ pub(crate) fn original_chain(
     if scan.flat_field() != field.as_ref().map(|f| f.field()) {
         return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
     }
-    let matrix = if let Some(pipeline) = input.pipeline() {
-        if !pipeline.input_program().matches_native(scan)? {
+    let matrix = if let Some(program) = input.source_program() {
+        if !program.matches_native(scan)? {
             return Err(Error::Gpu(
                 "original input differs from captured camera source".into(),
             ));
         }
-        pipeline.input_program().matrix
+        program.matrix
     } else {
         scan.camera_to_ap1
     };

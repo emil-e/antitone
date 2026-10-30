@@ -9,7 +9,7 @@ use crate::{
 
 fn input(device: &wgpu::Device, scan: &Scan, film: FilmEmulationSettings) -> ProcessingInput {
     ProcessingInput::from(Arc::new(
-        GpuPipeline::new(
+        ProcessingInput::new(
             device,
             InputSettings::Digital,
             Default::default(),

@@ -1,10 +1,11 @@
 #![cfg(all(feature = "ui", feature = "render"))]
+use crate::gpu::camera_fixture::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 use antitone::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
     color::Balance,
     geometry::{SourcePoint, SourceRegion},
-    gpu::{GpuPipeline, ProcessingInput, ProcessingKernel, ProcessingSource, SourceGeometry},
+    gpu::{ProcessingInput, ProcessingSource, SourceGeometry},
     processing::{Calibration, RollSettings},
     rendering::OutputTarget,
     viewer::GpuImage,
@@ -108,7 +109,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
             adapter.get_info()
         );
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
-        let kernel = ProcessingKernel::new(&device).await.unwrap();
+        let kernel = CameraFixture::new(&device).await.unwrap();
         let renderer = antitone::renderer::GpuRenderer::new(&device, &queue)
             .await
             .unwrap();
@@ -179,7 +180,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
                     let mut unsupported = None;
                     for _ in 0..3 {
                         let start = Instant::now();
-                        let result = GpuPipeline::new(
+                        let result = ProcessingInput::new(
                             &device,
                             calibration,
                             roll,

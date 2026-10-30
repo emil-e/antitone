@@ -10,7 +10,7 @@ impl EffectDefinition for Independent {
         Support([self.margin, 0])
     }
 
-    #[cfg(all(feature = "gpu", feature = "render"))]
+    #[cfg(feature = "gpu")]
     fn compose(
         &self,
         input: Arc<crate::gpu::evaluation::ImageNode>,
