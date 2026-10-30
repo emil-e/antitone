@@ -137,10 +137,11 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                 );
                 editor
                     .document
-                    .export_operation
-                    .cancelled
+                    .export
+                    .operation
                     .as_ref()
                     .unwrap()
+                    .cancelled
                     .cancel();
             });
         });
@@ -151,6 +152,6 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             3,
             "cancelled job leaves no temporary file"
         );
-        assert!(editor.document.export_operation.cancelled.is_none());
+        assert!(editor.document.export.operation.is_none());
     });
 }

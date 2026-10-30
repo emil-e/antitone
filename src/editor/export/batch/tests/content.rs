@@ -60,7 +60,7 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
     }
     let mut settings = draft(directory.path());
     settings.precision = ExrPrecision::Full;
-    let request = editor.batch_input(&settings).unwrap();
+    let request = editor.capture_export(&settings).unwrap();
     editor.document.roll.exposure += 1.;
     editor.document.visit.adjustment_layer_settings.exposure += 2.;
     editor.sync_document();
@@ -78,7 +78,8 @@ fn cold_batch_pixels_match_each_sources_accepted_grade_not_active_or_later_setti
         .exposure = -2.;
     let services = editor.export_services.take().unwrap();
     drop(editor);
-    let summary = pollster::block_on(services.batch(request, Cancellation::default(), |_, _| {}));
+    let summary =
+        pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
     assert_eq!((summary.exported(), summary.failed()), (2, 0));
     for (index, name) in ["roll-0.exr", "roll-1.exr"].into_iter().enumerate() {
         let actual = center_pixel(&directory.path().join(name));

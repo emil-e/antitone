@@ -130,13 +130,13 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
             });
             harness.read(|editor| {
                 assert!(
-                    editor.document.export_operation.pending.is_some(),
+                    editor.document.export.operation.is_some(),
                     "{}",
                     editor.status
                 )
             });
             wait_for(&mut harness, |editor| {
-                !editor.busy && editor.document.export_operation.pending.is_none()
+                !editor.busy && editor.document.export.operation.is_none()
             });
             harness.read(|editor| assert!(destination.exists(), "{}", editor.status));
             match format {

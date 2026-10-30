@@ -483,13 +483,13 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                     ))
                 }
                 2 => {
-                    let mut draft = export_batch::Draft::new(
+                    let mut draft = crate::editor::export::batch::Draft::new(
                         OutputTarget::Srgb,
                         PathBuf::from("/exports/Scans/照片-long-export-folder"),
                     );
-                    draft.collision = export_batch::Collision::Replace;
+                    draft.collision = crate::editor::export::batch::Collision::Replace;
                     draft.confirming_replace = true;
-                    editor.document.export_dialog = Some(draft);
+                    editor.document.export.draft = Some(draft);
                 }
                 _ => unreachable!(),
             });
@@ -522,7 +522,8 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                     assert!(
                         !editor
                             .document
-                            .export_dialog
+                            .export
+                            .draft
                             .as_ref()
                             .unwrap()
                             .confirming_replace
@@ -535,7 +536,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                 assert!(
                     editor.transition.is_none()
                         && editor.project_overwrite.is_none()
-                        && editor.document.export_dialog.is_none()
+                        && editor.document.export.draft.is_none()
                 )
             });
             harness.read(|editor| assert!(!editor.busy));

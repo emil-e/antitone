@@ -268,8 +268,8 @@ impl Editor {
                 self.document.visit.picking = Default::default();
                 self.document.visit.canvas.pick_drag = None;
                 self.document.visit.return_notice = None;
-                self.document.export_dialog = None;
-                self.document.export_summary = None;
+                self.document.export.draft = None;
+                self.document.export.summary = None;
                 self.invalidate_original();
                 self.status = if !input_changed && self.document.state.project.active_flat_field().is_some()
                 {

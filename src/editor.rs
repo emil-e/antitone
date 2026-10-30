@@ -94,12 +94,7 @@ mod document_workflow;
 use document_services::{Preparation, Prepared, Request as DocumentRequest};
 #[cfg(all(test, feature = "raw", feature = "export"))]
 mod ab_probe_tests;
-mod export_batch;
-mod export_dialog;
-mod export_services;
-#[cfg(test)]
-mod export_tests;
-mod export_workflow;
+mod export;
 mod frame;
 #[cfg(all(test, feature = "ui-tests"))]
 mod kittest_tests;
@@ -261,7 +256,7 @@ pub struct Editor {
     control_commands: Vec<editing::Command>,
     next_request: u64,
     document_pending: Option<u64>,
-    export_services: Option<export_services::Services>,
+    export_services: Option<export::Services>,
     transition: Option<Transition>,
     after_save: Option<Transition>,
     project_overwrite: Option<(PathBuf, Option<Transition>)>,
@@ -302,7 +297,7 @@ impl Editor {
             device: device.clone(),
             queue: queue.clone(),
         });
-        editor.export_services = Some(export_services::Services::new(
+        editor.export_services = Some(export::Services::new(
             renderers,
             device,
             queue,

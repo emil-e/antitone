@@ -184,7 +184,7 @@ Exercise the [shared cancellation pattern](architecture.md#cooperative-cancellat
 ```sh
 cargo test --locked --features editor --lib -- \
   cancellation:: editor::analysis_workflow::acknowledgement_tests:: \
-  editor::export_workflow:: editor::export_batch::
+  editor::export::
 ```
 
 ## Roll analysis

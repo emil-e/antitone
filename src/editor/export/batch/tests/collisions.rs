@@ -22,7 +22,7 @@ fn competing_destination_at_gpu_submission_is_preserved_for_skip_and_keep_both()
         let mut settings = Draft::new(OutputTarget::Srgb, directory.path().to_owned());
         settings.kind = Kind::Exr;
         settings.collision = collision;
-        let request = editor.batch_input(&settings).unwrap();
+        let request = editor.capture_export(&settings).unwrap();
         let competing = path.clone();
         let armed = AtomicBool::new(true);
         // Source preparation is finished and authored_fixture disables thumbnails.
@@ -35,7 +35,7 @@ fn competing_destination_at_gpu_submission_is_preserved_for_skip_and_keep_both()
         let services = editor.export_services.take().unwrap();
         drop(editor);
         let summary =
-            pollster::block_on(services.batch(request, Cancellation::default(), |_, _| {}));
+            pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
         assert_eq!(std::fs::read(path).unwrap(), b"competing writer");
         assert_eq!(summary.failed(), 0);
         if collision == Collision::KeepBoth {
@@ -55,7 +55,7 @@ fn competing_destination_at_gpu_submission_is_preserved_for_skip_and_keep_both()
 fn a_photo_specific_gpu_rejection_does_not_abort_later_exports() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
-    let mut request = editor.batch_input(&draft(directory.path())).unwrap();
+    let mut request = editor.capture_export(&draft(directory.path())).unwrap();
     let mut mismatched_area = request.photos[0].recipe.composition.area();
     mismatched_area.width -= 1;
     request.photos[0].recipe.composition =
@@ -63,7 +63,8 @@ fn a_photo_specific_gpu_rejection_does_not_abort_later_exports() {
             .unwrap();
     let services = editor.export_services.take().unwrap();
     drop(editor);
-    let summary = pollster::block_on(services.batch(request, Cancellation::default(), |_, _| {}));
+    let summary =
+        pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
     assert_eq!(
         (summary.failed(), summary.exported(), summary.unattempted()),
         (1, 1, 0)
@@ -76,7 +77,7 @@ fn a_photo_specific_gpu_rejection_does_not_abort_later_exports() {
 fn completed_photos_release_their_originals_before_the_batch_finishes() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
-    let request = editor.batch_input(&draft(directory.path())).unwrap();
+    let request = editor.capture_export(&draft(directory.path())).unwrap();
     let Input::Ready(first) = &request.photos[0].input else {
         panic!("first photo must have a captured ready lease");
     };
@@ -85,15 +86,17 @@ fn completed_photos_release_their_originals_before_the_batch_finishes() {
     drop(editor);
     let mut checked = false;
     let summary =
-        pollster::block_on(services.batch(request, Cancellation::default(), |done, _| {
-            if done == 2 {
-                assert!(
-                    first.upgrade().is_none(),
-                    "completed photos must not accumulate mandatory native leases"
-                );
-                checked = true;
-            }
-        }));
+        pollster::block_on(
+            services.export_batch(request, Cancellation::default(), |done, _| {
+                if done == 2 {
+                    assert!(
+                        first.upgrade().is_none(),
+                        "completed photos must not accumulate mandatory native leases"
+                    );
+                    checked = true;
+                }
+            }),
+        );
     assert_eq!(summary.exported(), 2);
     assert!(checked);
 }
@@ -163,10 +166,11 @@ fn filesystem_equivalent_unicode_names_never_replace_an_earlier_batch_output() {
     }
     let mut settings = draft(directory.path());
     settings.collision = Collision::Replace;
-    let request = editor.batch_input(&settings).unwrap();
+    let request = editor.capture_export(&settings).unwrap();
     let services = editor.export_services.take().unwrap();
     drop(editor);
-    let summary = pollster::block_on(services.batch(request, Cancellation::default(), |_, _| {}));
+    let summary =
+        pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
     assert_eq!((summary.exported(), summary.failed()), (2, 0));
     let paths = summary
         .outcomes
@@ -198,7 +202,7 @@ fn duplicate_basenames_are_disambiguated_even_when_replace_is_confirmed() {
     }
     let mut settings = draft(directory.path());
     settings.collision = Collision::Replace;
-    let request = editor.batch_input(&settings).unwrap();
+    let request = editor.capture_export(&settings).unwrap();
     assert_eq!(request.photos[0].path, directory.path().join("frame.exr"));
     assert_eq!(
         request.photos[1].path,
@@ -206,7 +210,8 @@ fn duplicate_basenames_are_disambiguated_even_when_replace_is_confirmed() {
     );
     let services = editor.export_services.take().unwrap();
     drop(editor);
-    let summary = pollster::block_on(services.batch(request, Cancellation::default(), |_, _| {}));
+    let summary =
+        pollster::block_on(services.export_batch(request, Cancellation::default(), |_, _| {}));
     assert_eq!((summary.exported(), summary.failed()), (2, 0));
     let paths = summary
         .outcomes

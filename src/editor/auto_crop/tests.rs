@@ -665,13 +665,13 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
                     && e.document.removal_pending.is_none()
             );
             assert!(e.document.auto_crop_edit().is_some());
-            assert!(e.document.export_operation.pending.is_none());
+            assert!(e.document.export.operation.is_none());
             assert_eq!(e.document.state.project, before);
             assert!(
                 !e.analysis_preparing()
                     && !e.analysis_fitting()
                     && e.document_pending.is_none()
-                    && e.document.export_operation.pending.is_none()
+                    && e.document.export.operation.is_none()
             );
             e.start_document(Preparation::New, cx);
             assert!(e.document.auto_crop_edit().is_none());

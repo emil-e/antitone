@@ -319,7 +319,15 @@ impl TaskActivity {
 impl Editor {
     pub(super) fn cancel_task(&mut self, request: TaskRequest) {
         if let TaskRequest::Export(id) = request {
-            self.cancel_export(id);
+            if self
+                .document
+                .export
+                .operation
+                .as_ref()
+                .is_some_and(|operation| operation.activity == id)
+            {
+                self.cancel_export();
+            }
             return;
         }
         if let TaskRequest::Regions(id) = request {

@@ -1,4 +1,8 @@
+use super::batch::Photo;
 use super::*;
+mod output;
+mod services;
+
 use crate::{
     application::test_support::with_application,
     editor::{
@@ -10,6 +14,106 @@ use std::{
     sync::{Mutex, mpsc},
     time::{Duration, Instant},
 };
+
+impl Editor {
+    #[cfg(test)]
+    pub(in crate::editor) fn export_input(
+        &self,
+        path: PathBuf,
+        format: OutputFormat,
+        overwrite: Overwrite,
+    ) -> Result<Option<PhotoRequest>, Error> {
+        if self.dust_search_pending() {
+            return Err(Error::InvalidParameter(
+                "wait for donor selection before exporting",
+            ));
+        }
+        let Some(ready) = &self.document.visit.canvas.ready else {
+            return Ok(None);
+        };
+        if !self.document.input.ready() {
+            return Ok(None);
+        }
+        self.validate_document_candidate(&self.document)?;
+        let id = self
+            .document
+            .visit
+            .current_source
+            .ok_or_else(|| Error::Project("no accepted source for export".into()))?;
+        let recipe = self.document.image_recipe(id)?;
+        debug_assert_eq!(recipe.composition.area(), ready.area);
+        Ok(Some(PhotoRequest {
+            input: self.source_context().expect("ready export source"),
+            path,
+            format,
+            recipe,
+            overwrite,
+        }))
+    }
+
+    #[cfg(test)]
+    pub(in crate::editor) fn export(
+        &mut self,
+        path: PathBuf,
+        format: OutputFormat,
+        overwrite: Overwrite,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if self.document.auto_crop_edit().is_some() {
+            self.status = "Apply or cancel auto-crop before exporting".into();
+            return;
+        }
+        if self
+            .document
+            .path
+            .as_ref()
+            .is_some_and(|project| super::document::same_path(project, &path))
+        {
+            self.status = "Export destination is the current project document".into();
+            self.report_failure(FailureKind::Export, self.status.clone());
+            return;
+        }
+        self.sync_document();
+        let request = match self.export_input(path, format, overwrite) {
+            Ok(Some(request)) => request,
+            Ok(None) => return,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
+        let mut protected = self
+            .document
+            .project
+            .sources
+            .iter()
+            .filter_map(|s| self.document.source_path(s.id).ok())
+            .collect::<Vec<_>>();
+        protected.extend(self.document.path.clone());
+        if let Err(error) = batch::require_safe(&request.path, &protected) {
+            self.status = error.to_string();
+            self.report_failure(FailureKind::Export, self.status.clone());
+            return;
+        }
+        self.export_photos(
+            batch::Request {
+                photos: vec![Photo {
+                    input: Input::Ready(request.input),
+                    recipe: request.recipe,
+                    path: request.path,
+                }],
+                format,
+                collision: if matches!(overwrite, Overwrite::Confirmed) {
+                    Collision::Replace
+                } else {
+                    Collision::Refuse
+                },
+                protected,
+            },
+            cx,
+        );
+    }
+}
 
 fn hold_first_submission(editor: &Editor) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
     let (started, starts) = mpsc::channel();
@@ -114,7 +218,7 @@ fn captured_export_completes_without_paint_without_rereading_live_document_data(
                 }
             });
             app.run_until(Duration::from_secs(30), |editor| {
-                editor.document.export_operation.pending.is_none()
+                editor.document.export.operation.is_none()
             });
             app.read(|editor| {
                 assert!(
@@ -135,7 +239,7 @@ fn captured_export_completes_without_paint_without_rereading_live_document_data(
 }
 
 #[test]
-fn superseded_export_discards_old_output_and_publishes_the_captured_replacement() {
+fn replacing_the_export_owner_discards_old_output_and_publishes_the_captured_replacement() {
     let editor = fixture();
     let (starts, release) = hold_first_submission(&editor);
     let directory = tempfile::tempdir().unwrap();
@@ -153,8 +257,15 @@ fn superseded_export_discards_old_output_and_publishes_the_captured_replacement(
         wait_for_submission(app, &starts);
         let (id, cancelled) = app.read(|editor| {
             (
-                editor.document.export_operation.pending.unwrap(),
-                editor.document.export_operation.cancelled.clone().unwrap(),
+                editor.document.export.operation.as_ref().unwrap().activity,
+                editor
+                    .document
+                    .export
+                    .operation
+                    .as_ref()
+                    .unwrap()
+                    .cancelled
+                    .clone(),
             )
         });
         app.enter(|editor, access| {
@@ -167,14 +278,33 @@ fn superseded_export_discards_old_output_and_publishes_the_captured_replacement(
         });
         app.pump();
         assert!(cancelled.is_cancelled());
-        app.read(|editor| {
-            assert_ne!(editor.document.export_operation.pending, Some(id));
-            assert!(editor.busy);
+        app.update(|editor| {
+            let current = editor.document.export.operation.as_ref().unwrap().activity;
+            assert_ne!(current, id);
+            editor.cancel_task(TaskRequest::Export(id));
+            editor.tasks.report(
+                TaskRequest::Export(id),
+                TaskProgress::Counted {
+                    completed: 9,
+                    total: 10,
+                },
+            );
+            assert!(
+                !editor
+                    .document
+                    .export
+                    .operation
+                    .as_ref()
+                    .unwrap()
+                    .cancelled
+                    .is_cancelled()
+            );
+            assert!(editor.tasks.is_current(TaskRequest::Export(current)) && editor.busy);
         });
         assert!(!old.exists());
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(30), |editor| {
-            editor.document.export_operation.pending.is_none()
+            editor.document.export.operation.is_none()
         });
         app.read(|editor| {
             assert!(
@@ -214,8 +344,16 @@ fn application_retirement_signals_stop_but_keeps_the_export_source_until_cleanup
             );
         });
         wait_for_submission(app, &starts);
-        let cancelled =
-            app.read(|editor| editor.document.export_operation.cancelled.clone().unwrap());
+        let cancelled = app.read(|editor| {
+            editor
+                .document
+                .export
+                .operation
+                .as_ref()
+                .unwrap()
+                .cancelled
+                .clone()
+        });
         app.close_execution();
         assert!(cancelled.is_cancelled());
         app.update(|editor| editor.document = Document::default().into());
@@ -262,17 +400,18 @@ fn a_stop_after_publication_acknowledges_the_committed_file_without_rewriting_su
             std::thread::sleep(Duration::from_millis(1));
         }
         app.read(|editor| {
-            assert!(editor.document.export_operation.pending.is_some());
+            assert!(editor.document.export.operation.is_some());
             editor
                 .document
-                .export_operation
-                .cancelled
+                .export
+                .operation
                 .as_ref()
                 .unwrap()
+                .cancelled
                 .cancel();
         });
         app.run_until(Duration::from_secs(30), |editor| {
-            editor.document.export_operation.pending.is_none()
+            editor.document.export.operation.is_none()
         });
         app.read(|editor| {
             assert!(
@@ -284,6 +423,161 @@ fn a_stop_after_publication_acknowledges_the_committed_file_without_rewriting_su
         });
         verify_tiff(&path);
     });
+}
+
+#[test]
+fn running_cancel_waits_for_acknowledgement_and_preserves_the_destination() {
+    let editor = fixture();
+    let accepted = editor.document.state.project.clone();
+    let (starts, release) = hold_first_submission(&editor);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("existing.tif");
+    std::fs::write(&path, b"existing destination").unwrap();
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.export(
+                path.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                Overwrite::Confirmed,
+                cx,
+            )
+        });
+        wait_for_submission(app, &starts);
+        app.update(|editor| {
+            let activity = editor.document.export.operation.as_ref().unwrap().activity;
+            editor.cancel_task(TaskRequest::Export(activity));
+        });
+        app.read(|editor| {
+            let operation = editor.document.export.operation.as_ref().unwrap();
+            assert!(operation.cancelled.is_cancelled());
+            assert!(editor.busy && editor.tasks.view().unwrap().cancel.is_none());
+            assert_eq!(editor.document.state.project, accepted);
+        });
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(30), |editor| {
+            editor.document.export.operation.is_none()
+        });
+        app.read(|editor| {
+            assert!(!editor.busy && editor.tasks.view().is_none() && editor.failure.is_none());
+            assert!(editor.status.contains("cancel"));
+            assert_eq!(editor.document.state.project, accepted);
+        });
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    });
+}
+
+#[test]
+fn failed_export_survives_status_updates_until_a_successful_retry() {
+    let editor = fixture();
+    let accepted = editor.document.state.project.clone();
+    let directory = tempfile::tempdir().unwrap();
+    let folder = directory.path().join("missing");
+    let path = folder.join("retry.tif");
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.export(
+                path.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                Overwrite::Refuse,
+                cx,
+            )
+        });
+        app.run_until(Duration::from_secs(30), |editor| {
+            editor.document.export.operation.is_none()
+        });
+        let details = app.read(|editor| {
+            assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
+            assert!(!editor.busy && editor.tasks.view().is_none());
+            editor.failure.as_ref().unwrap().details.clone()
+        });
+        assert!(!path.exists());
+        app.update(|editor| editor.status = "Unrelated status".into());
+        std::fs::create_dir(&folder).unwrap();
+        let paused = crate::background::testing::pause();
+        app.enter(|editor, cx| {
+            editor.export(
+                path.clone(),
+                OutputFormat::Tiff(OutputTarget::Srgb),
+                Overwrite::Refuse,
+                cx,
+            )
+        });
+        app.pump();
+        app.read(|editor| {
+            assert!(editor.busy && editor.document.export.operation.is_some());
+            assert_eq!(editor.failure.as_ref().unwrap().details, details);
+        });
+        drop(paused);
+        app.run_until(Duration::from_secs(30), |editor| {
+            editor.document.export.operation.is_none()
+        });
+        app.read(|editor| {
+            assert!(editor.failure.is_none() && !editor.busy && editor.tasks.view().is_none());
+            assert_eq!(editor.document.state.project, accepted);
+            assert_eq!(
+                editor.document.export.summary.as_ref().unwrap().exported(),
+                1
+            );
+        });
+        verify_tiff(&path);
+    });
+}
+
+#[test]
+fn document_retirement_releases_queued_export_inputs_before_dispatch() {
+    for polled in [false, true] {
+        let editor = fixture();
+        editor.document.cache.set_budget(0);
+        let source = Arc::downgrade(
+            &editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .developed,
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("queued.tif");
+        let paused = crate::background::testing::pause();
+        with_application(editor, |app| {
+            app.enter(|editor, cx| {
+                editor.export(
+                    path.clone(),
+                    OutputFormat::Tiff(OutputTarget::Srgb),
+                    Overwrite::Refuse,
+                    cx,
+                )
+            });
+            if polled {
+                app.pump();
+            }
+            let cancelled = app.read(|editor| {
+                editor
+                    .document
+                    .export
+                    .operation
+                    .as_ref()
+                    .unwrap()
+                    .cancelled
+                    .clone()
+            });
+            app.update(|editor| editor.document = editor.document.replacement(Document::default()));
+            assert!(cancelled.is_cancelled());
+            app.pump();
+            assert!(
+                source.upgrade().is_none(),
+                "retired queued work retained its source"
+            );
+            drop(paused);
+            app.pump();
+            assert!(!path.exists());
+        });
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
 }
 
 #[test]
@@ -349,8 +643,16 @@ fn document_retirement_cancels_export_while_the_physical_call_keeps_its_inputs()
             )
         });
         wait_for_submission(app, &starts);
-        let stopped =
-            app.read(|editor| editor.document.export_operation.cancelled.clone().unwrap());
+        let stopped = app.read(|editor| {
+            editor
+                .document
+                .export
+                .operation
+                .as_ref()
+                .unwrap()
+                .cancelled
+                .clone()
+        });
         app.update(|editor| editor.document = editor.document.replacement(Document::default()));
         assert!(stopped.is_cancelled());
         assert!(
@@ -369,9 +671,9 @@ fn document_retirement_cancels_export_while_the_physical_call_keeps_its_inputs()
             std::thread::yield_now();
         }
         app.read(|editor| {
-            assert!(editor.document.export_operation.pending.is_none());
+            assert!(editor.document.export.operation.is_none());
             assert!(
-                editor.document.export_summary.is_none(),
+                editor.document.export.summary.is_none(),
                 "retired work updated the replacement document"
             );
         });

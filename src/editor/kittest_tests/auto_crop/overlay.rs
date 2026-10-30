@@ -176,9 +176,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             h.step();
             h.read(|editor| {
                 assert!(
-                    !output.exists()
-                        && editor.document.export_operation.pending.is_none()
-                        && !editor.busy,
+                    !output.exists() && editor.document.export.operation.is_none() && !editor.busy,
                     "output commands cannot export a draft"
                 )
             });

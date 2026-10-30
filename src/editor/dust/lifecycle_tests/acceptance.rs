@@ -154,7 +154,7 @@ fn pending_stroke_has_no_donor_or_saved_instruction_then_accepts_only_the_search
             assert!(!path.exists());
             assert!(e.document_pending.is_none());
             e.open_export_dialog();
-            assert!(e.document.export_dialog.is_none());
+            assert!(e.document.export.draft.is_none());
             stroke
         });
         let call = gate.next(app);

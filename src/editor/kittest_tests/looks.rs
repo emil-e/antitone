@@ -1003,7 +1003,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
             });
             harness.update(|editor| editor.clear_look());
             wait_for(&mut harness, |editor| {
-                editor.document.export_operation.pending.is_none()
+                editor.document.export.operation.is_none()
             });
             harness.read(|editor| assert!(editor.failure.is_none()));
             harness.read(|editor| assert!(editor.document.state.project.output.look.is_none()));
@@ -1017,7 +1017,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                 )
             });
             wait_for(&mut harness, |editor| {
-                editor.document.export_operation.pending.is_none()
+                editor.document.export.operation.is_none()
             });
             harness.read(|editor| assert!(editor.failure.is_none()));
             assert_ne!(tiff_codes(&path), tiff_codes(&cleared));

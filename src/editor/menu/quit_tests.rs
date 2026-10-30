@@ -94,9 +94,7 @@ fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation()
     );
     assert!(!editor.allow_close);
     assert_eq!(editor.document.state.project, before);
-    assert!(
-        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
 }
 
 #[test]
@@ -145,9 +143,7 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
             (gate == 1).then_some(Pick::Dmin.display())
         );
         assert_eq!(editor.transition, (gate == 2).then_some(Transition::New));
-        assert!(
-            editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-        );
+        assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
     }
 }
 
@@ -228,7 +224,5 @@ fn cancelling_project_replacement_retires_the_native_close_continuation() {
     );
     assert!(!editor.allow_close);
     assert_eq!(std::fs::read(destination).unwrap(), b"existing project");
-    assert!(
-        editor.document_pending.is_none() && editor.document.export_operation.pending.is_none()
-    );
+    assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
 }

@@ -227,7 +227,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                 );
                 assert!(editor.active_pick().is_none());
                 assert!(editor.document.crop_edit().is_none());
-                assert!(editor.document.export_operation.pending.is_none());
+                assert!(editor.document.export.operation.is_none());
                 assert!(
                     editor
                         .document
@@ -239,7 +239,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                         .is_none()
                         && editor.document.visit.canvas.grade.task.is_none()
                         && !editor.measurement_pending()
-                        && editor.document.export_operation.pending.is_none()
+                        && editor.document.export.operation.is_none()
                 );
 
                 let context = egui::Context::default();
@@ -317,7 +317,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                                 .is_none()
                                 && editor.document.visit.canvas.grade.task.is_none()
                                 && !editor.measurement_pending()
-                                && editor.document.export_operation.pending.is_none(),
+                                && editor.document.export.operation.is_none(),
                             "pending preview scheduled authoritative work"
                         );
                     }

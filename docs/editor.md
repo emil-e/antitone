@@ -93,7 +93,7 @@ File → **Export…** writes Selected photos or All photos in filmstrip order; 
 
 Filenames use the source stem with an optional suffix. Keep both is the non-destructive default, Skip leaves existing files alone, and Replace requires explicit batch confirmation. The last accepted folder is an application preference. Export choices and target overrides do not edit the project or dirty state.
 
-The batch captures accepted crops and adjustments at full resolution, then processes one photo at a time without visiting it. Cancel stops subsequent work and may stop the current photo at existing safe checkpoints; an in-flight native/encoder call can finish before acknowledgement. The modal retains cancelling feedback, and Escape/outside clicks do not dismiss running work. Completion summarizes exported, skipped, failed and remaining photos, with diagnostics and Show in Finder for completed output. Individual failures leave other photos exportable; published files are never rolled back as a batch.
+The [export action](../src/editor/export.rs) captures accepted crops and adjustments at full resolution, then processes one photo at a time without visiting it. Cancel stops subsequent work and may stop the current photo at existing safe checkpoints; an in-flight native/encoder call can finish before acknowledgement. The modal retains cancelling feedback, and Escape/outside clicks do not dismiss running work. Completion summarizes exported, skipped, failed and remaining photos, with diagnostics and Show in Finder for completed output. Individual failures leave other photos exportable; published files are never rolled back as a batch.
 
 ## Source inspection is a view
 

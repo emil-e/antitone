@@ -125,9 +125,7 @@ pub(super) fn complete_export_operation(
     {
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
         app.enter(start);
-        app.run_until(timeout, |editor| {
-            editor.document.export_operation.pending.is_none()
-        });
+        app.run_until(timeout, |editor| editor.document.export.operation.is_none());
         app.close_execution();
     }
     owner.into_inner().unwrap()
@@ -1973,7 +1971,7 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         Overwrite::Refuse,
         &UiContext::render_only(),
     );
-    assert!(editor.document.export_operation.pending.is_none());
+    assert!(editor.document.export.operation.is_none());
     assert!(!editor.busy);
     assert!(editor.status.contains(&rejection), "{}", editor.status);
 }
@@ -2416,12 +2414,12 @@ fn navigation_invalidates_pending_export_dialog() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.document.export_dialog = Some(export_batch::Draft::new(
+            editor.document.export.draft = Some(export::batch::Draft::new(
                 OutputTarget::DisplayP3,
                 PathBuf::new(),
             ));
             editor.load("another.arw".into(), cx);
-            assert!(editor.document.export_dialog.is_none());
+            assert!(editor.document.export.draft.is_none());
             assert!(editor.document.visit.source.pending());
         });
     });
