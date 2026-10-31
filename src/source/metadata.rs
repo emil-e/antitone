@@ -55,7 +55,7 @@ pub(crate) fn source_metadata(
 }
 
 pub(crate) fn verify_source(expected: &Source, actual: &Source) -> Result<()> {
-    if expected.development != actual.development {
+    if !expected.development.same_processing(&actual.development) {
         return Err(failure(format!(
             "{}: RAW development identity differs",
             actual.path.display()
@@ -80,7 +80,7 @@ pub(crate) fn verify_scan(source: &Source, scan: &Scan) -> Result<()> {
         camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
         input_floor: scan.source().input_floor(),
     };
-    if source.development != actual {
+    if !source.development.same_processing(&actual) {
         return Err(failure(
             "developed RAW differs from its recorded header identity",
         ));

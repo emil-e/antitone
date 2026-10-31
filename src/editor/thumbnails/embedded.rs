@@ -71,7 +71,7 @@ impl Services {
                     if cancelled.load(Ordering::Relaxed) {
                         return Ok(None);
                     }
-                    preview.map(|preview| preview.map(|preview| colour_image(&preview)))
+                    preview.and_then(|preview| preview.as_deref().map(colour_image).transpose())
                 })
                 .await
                 {
@@ -435,18 +435,21 @@ fn load(request: &Request, active: &impl Fn() -> bool) -> Result<Option<egui::Co
         return Ok(None);
     }
 
-    Ok(preview.map(|preview| colour_image(&preview)))
+    preview.as_deref().map(colour_image).transpose()
 }
 
-fn colour_image(preview: &crate::embedded_preview::Preview) -> egui::ColorImage {
-    egui::ColorImage::from_rgb(
-        [preview.rgb.width() as usize, preview.rgb.height() as usize],
-        preview.rgb.as_raw(),
-    )
+fn colour_image(preview: &crate::embedded_preview::Preview) -> Result<egui::ColorImage, String> {
+    let rgb = preview.srgb()?;
+    Ok(egui::ColorImage::from_rgb(
+        [rgb.width() as usize, rgb.height() as usize],
+        rgb.as_raw(),
+    ))
 }
 
 #[cfg(test)]
 fn decode(thumbnail: crate::raw::EmbeddedThumbnail) -> Result<Option<egui::ColorImage>, String> {
-    crate::embedded_preview::decode(thumbnail)
-        .map(|preview| preview.map(|preview| colour_image(&preview)))
+    crate::embedded_preview::decode(thumbnail)?
+        .as_ref()
+        .map(colour_image)
+        .transpose()
 }

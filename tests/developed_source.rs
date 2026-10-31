@@ -33,7 +33,7 @@ fn codes(source: &DevelopedSource) -> Vec<[f32; 4]> {
 }
 
 #[test]
-fn frozen_native_codes_metadata_and_capture_match_unique_development() {
+fn frozen_pixels_and_metadata_match_unique_development() {
     let file = fixture::bayer_dng();
     let mut raw = RawFile::open(file.path()).unwrap();
     assert_eq!(
@@ -41,8 +41,6 @@ fn frozen_native_codes_metadata_and_capture_match_unique_development() {
         (fixture::SIDE, fixture::SIDE)
     );
     let metadata = raw.metadata;
-    let capture = raw.region_sensor_diagnostics(region()).unwrap();
-    let whole = raw.unpack().unwrap();
     let image = raw.develop_camera(WB).unwrap();
     let expected: Vec<_> = (0..image.height)
         .flat_map(|y| (0..image.width).map(move |x| (x, y)))
@@ -66,8 +64,6 @@ fn frozen_native_codes_metadata_and_capture_match_unique_development() {
     assert_eq!(source.camera_to_ap1(), scan.camera_to_ap1);
     assert_eq!(source.area(), scan.area);
     assert_eq!(source.input_floor(), scan.input_floor);
-    assert_eq!(source.region_sensor_diagnostics(region()).unwrap(), capture);
-    assert_eq!(source.sensor_diagnostics().unwrap(), whole);
     assert_eq!(codes(source), expected);
     let image = source.camera_image().unwrap();
     assert_eq!(
@@ -81,16 +77,6 @@ fn frozen_native_codes_metadata_and_capture_match_unique_development() {
         ),
         view
     );
-    assert!(
-        source
-            .region_sensor_diagnostics(Rect {
-                width: 0,
-                ..region()
-            })
-            .is_err()
-    );
-    assert_eq!(source.region_sensor_diagnostics(region()).unwrap(), capture);
-    assert_eq!(codes(source), expected);
 }
 
 #[test]
@@ -151,7 +137,6 @@ fn synchronized_handoff_concurrent_readers_and_receiver_final_release() {
     let producer = Scan::open(file.path(), Some(WB)).unwrap();
     let source = producer.source().clone();
     let expected = codes(&source);
-    let capture = source.region_sensor_diagnostics(region()).unwrap();
     let weak = Arc::downgrade(&source);
     let barrier = Arc::new(Barrier::new(3));
     let (send, receive) = std::sync::mpsc::channel::<Arc<DevelopedSource>>();
@@ -161,7 +146,6 @@ fn synchronized_handoff_concurrent_readers_and_receiver_final_release() {
     let a = std::thread::spawn(move || {
         reader_barrier.wait();
         for _ in 0..8 {
-            assert_eq!(reader.region_sensor_diagnostics(region()).unwrap(), capture);
             assert!(
                 reader
                     .camera_image()
@@ -181,7 +165,6 @@ fn synchronized_handoff_concurrent_readers_and_receiver_final_release() {
         final_barrier.wait();
         let mut consumer = Scan::from_source(source.clone());
         for _ in 0..8 {
-            assert_eq!(source.region_sensor_diagnostics(region()).unwrap(), capture);
             assert!(consumer.reference(region()).is_ok());
         }
         let actual = codes(&source);

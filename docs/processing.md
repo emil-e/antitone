@@ -24,7 +24,7 @@ LibRaw develops non-DNG RAWs; the editor routes supported DNGs through Adobe's S
 
 Negative uses one shared scan basis: the camera interpretation and developer contract must match, while WB is determined by the stage rather than stored in that basis. Digital admits mixed cameras and per-source as-shot WB. Crossing input stages redevelops active sources for the target stage and updates their recorded identities. [Project compatibility](projects.md#compatibility-is-about-the-processing-basis) owns admission and switching.
 
-The accepted domain is three-colour integer Bayer without repeated black-level patterns: Sony ARW, Canon CR2/CR3 (including CRAW), Nikon NEF, Olympus ORF and Panasonic RW2 develop through it. LibRaw recognizes further formats (X-Trans, decimated sRAW/mRAW, others); broader compatibility is future work.
+The LibRaw input gate admits three-colour CFA RAWs, including Bayer and Fujifilm X-Trans RAF. LibRaw owns demosaicing: quality 3 selects AHD for Bayer and three-pass interpolation for X-Trans. Both feed the same developed camera-RGB pipeline. Non-CFA sources such as decimated sRAW/mRAW remain outside this gate.
 
 LibRaw's highlight-safe development divides WB gains by their maximum. [Immutable source reads](../src/scan.rs) restore `max(WB) / green(WB)` in floating point before camera conversion, retaining above-one headroom and scaling the precision floor with the signal. CPU sampling, proxies, GPU views, repairs and exports share these samples. Unity-WB Negative and direct SDK DNG keep their existing scale. This decoder correction leaves photographic exposure controls and deliberate capture exposure differences intact; camera/ISO exposure-reference calibration is a separate concern.
 
@@ -32,7 +32,7 @@ Negative inverts before the camera-to-working-space matrix: a matrix mixes chann
 
 ### Direct DNG development
 
-The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers; original pre-opcode CFA is retained separately for sensor diagnostics. [Saved SDK compatibility](projects.md#compatibility-is-about-the-processing-basis) is separate from source-file freshness.
+The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers. [Saved SDK compatibility](projects.md#compatibility-is-about-the-processing-basis) is separate from source-file freshness.
 
 ### Embedded Sony lens correction
 
@@ -46,7 +46,7 @@ Corrected originals retain continuous f32 camera samples (fractions and values a
 
 Digital uses the embedded camera preview as a per-capture brightness reference, leaving Roll and layer exposure at zero. Source preparation folds the fixed gain into the camera-to-AP1 transform, so tools, repairs, viewer, thumbnails and exports receive the same normalized baseline pixels. The native samples and recorded colour matrix remain unchanged; no additional full-image pass is needed. Roll and adjustment-layer grading follow that baseline.
 
-The estimator compares interior luminance quantiles from an as-shot AP1 proxy before brightness normalization with a colour-managed preview. A small [generated inverse neutral-ACES lookup](../assets/ocio/README.md#neutral-exposure-reference) translates display luminance into the current 100-nit rendering convention. This chooses roughly camera-like brightness without copying the camera's contrast, saturation or monochrome style. Photographer-set exposure compensation is not subtracted.
+The estimator compares interior luminance quantiles from an as-shot AP1 proxy before brightness normalization with the preview’s display-linear luminance. Declared sRGB and Adobe RGB previews use their own transfer curves and luminance coefficients, without an intermediate sRGB image; embedded ICC profiles retain colour-managed interpretation. Filmstrip display separately converts Adobe RGB to sRGB. A small [generated inverse neutral-ACES lookup](../assets/ocio/README.md#neutral-exposure-reference) translates display luminance into the current 100-nit rendering convention. This chooses roughly camera-like brightness without copying the camera's contrast, saturation or monochrome style. Photographer-set exposure compensation is not subtracted.
 
 [Lazy source preparation](architecture.md#services-and-workers) resolves the value before publishing a processed positive, including cache hits and cold exports. Edits to crop, WB, exposure or look do not re-meter the capture. Missing usable colour/framing or insufficient nonclipped luminance produces an explicit unavailable result with zero starting EV; manual exposure remains available. [Projects](projects.md#save-accepted-choices-not-working-machinery) retain completed values separately from accepted controls.
 

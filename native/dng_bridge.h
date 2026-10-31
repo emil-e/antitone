@@ -14,7 +14,6 @@ struct AntitoneDngOptions {
 
 struct AntitoneDngView {
     const float *rgb;
-    const uint16_t *original;
     const uint8_t *program;
     size_t program_size;
     uint32_t width, height, raw_width, raw_height;

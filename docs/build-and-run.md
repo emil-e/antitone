@@ -23,7 +23,7 @@ Windows 11 on x64 with an MSVC toolchain builds from a plain PowerShell session;
 
 - Visual Studio 2022 with the C++ tools (or Build Tools) and a Windows 11 SDK. `build.rs` finds MSVC itself and captures `VsDevCmd.bat`'s environment for the CMake steps, which need the SDK resource compiler.
 - Rust through rustup with the `x86_64-pc-windows-msvc` target.
-- CMake, Ninja and the DirectX Shader Compiler are not installed system-wide: `scripts/setup-windows.ps1` downloads pinned, hash-verified copies into the ignored `.cache/tools/` and builds LibRaw 0.22.0 into `.cache/native-deps/`.
+- CMake, Ninja and the DirectX Shader Compiler are not installed system-wide: `scripts/setup-windows.ps1` downloads pinned, hash-verified copies into the ignored `.cache/tools/` and builds LibRaw 0.22.3 into `.cache/native-deps/`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup-windows.ps1

@@ -18,13 +18,34 @@
 
 static_assert(sizeof(AntitoneRawMetadata) == 656);
 static_assert(sizeof(AntitoneRawSonyLens) == 160);
-static_assert(sizeof(AntitoneRawDiagnostics) == 112);
 static_assert(sizeof(AntitoneRawView) == 64);
 static_assert(sizeof(AntitoneRawThumbnail) == 32);
 
 namespace {
 class PreviewRaw : public LibRaw {
+    std::array<bool, LIBRAW_IFD_MAXCOUNT> oriented_ifds{};
+
 public:
+    void capture_orientation(int encoded_tag) {
+        const auto tag = uint32_t(encoded_tag);
+        const auto ifd = tag >> 20;
+        if (ifd && ifd <= oriented_ifds.size() && !(tag & 0xf0000) && (tag & 0xffff) == 0x0112)
+            oriented_ifds[ifd - 1] = true;
+    }
+
+    int preview_flip(INT64 offset, int declared) const {
+        const auto capture = imgdata.sizes.flip;
+        if (declared == 0xffff)
+            return capture;
+        // LibRaw also uses zero for an absent TIFF orientation, not just explicit top-left.
+        const auto count =
+            std::min(libraw_internal_data.identify_data.tiff_nifds, unsigned(LIBRAW_IFD_MAXCOUNT));
+        for (unsigned i = 0; i < count; ++i)
+            if (tiff_ifd[i].offset == offset && !oriented_ifds[i])
+                return capture;
+        return declared;
+    }
+
     int preview_color_space(INT64 offset) const {
         unsigned declared = 0;
         const unsigned count =
@@ -39,7 +60,17 @@ public:
         }
         // A preview IFD's declaration overrides global RAW EXIF. ICC-bearing JPEGs
         // are interpreted by the shared decoder even when this label is unknown.
-        return declared ? (declared == 2 ? 1 : 65535) : imgdata.color.ExifColorSpace;
+        // DNG PreviewColorSpace and LibRaw use different enum values.
+        if (declared == 2)
+            return LIBRAW_COLORSPACE_sRGB;
+        if (declared == 3)
+            return LIBRAW_COLORSPACE_AdobeRGB;
+        if (declared)
+            return 65535;
+        const auto exif = imgdata.color.ExifColorSpace;
+        if (exif != LIBRAW_COLORSPACE_Unknown && exif != LIBRAW_COLORSPACE_NotFound)
+            return exif;
+        return imgdata.makernotes.common.ColorSpace;
     }
 };
 
@@ -82,12 +113,6 @@ int check_threads(int threads, char *error, size_t size) {
         return 0;
     std::snprintf(error, size, "RAW thread budget must be between 1 and 8");
     return -1;
-}
-
-// Capture limits use the immutable RAW levels, before WB/scaling/demosaicing.
-uint8_t capture_flags(const libraw_colordata_t &color, unsigned channel, uint16_t value) {
-    const auto white = color.linear_max[channel] ? color.linear_max[channel] : color.maximum;
-    return uint8_t(value >= white) | (uint8_t(value <= color.black + color.cblack[channel]) << 1);
 }
 
 enum SonyLensField : uint32_t {
@@ -211,6 +236,18 @@ void sony_lens_tag(void *context, int encoded_tag, int type, int count, unsigned
                    : bit == CaParameters       ? lens.ca_length
                                                : lens.vignetting_length;
     length = uint32_t(count);
+}
+
+struct HeaderCapture {
+    PreviewRaw &raw;
+    SonyLensCapture lens;
+};
+
+void header_tag(void *context, int tag, int type, int count, unsigned order, void *input,
+                INT64 base) {
+    auto &capture = *static_cast<HeaderCapture *>(context);
+    capture.raw.capture_orientation(tag);
+    sony_lens_tag(&capture.lens, tag, type, count, order, input, base);
 }
 
 AntitoneRawSonyLens selected_sony_lens(LibRaw &raw, const SonyLensCapture &capture) {
@@ -344,8 +381,8 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     antitone::NativeLog diagnostic("raw", "open");
     auto raw = std::make_unique<PreviewRaw>();
     raw->imgdata.params.use_camera_matrix = 1;
-    SonyLensCapture lens;
-    raw->set_exifparser_handler(sony_lens_tag, &lens);
+    HeaderCapture capture{*raw, {}};
+    raw->set_exifparser_handler(header_tag, &capture);
 #if defined(_WIN32)
     int code = raw->open_file(wide_path(path).c_str());
 #else
@@ -356,13 +393,12 @@ extern "C" void *antitone_raw_open(const char *path, AntitoneRawMetadata *out, c
     raw->set_exifparser_handler(nullptr, nullptr);
     if (check(code, error, size))
         return nullptr;
-    if (raw->imgdata.idata.colors != 3 || !raw->imgdata.idata.filters ||
-        raw->imgdata.idata.filters == 9) {
-        std::snprintf(error, size, "Initial developer requires a three-color Bayer RAW");
+    if (raw->imgdata.idata.colors != 3 || !raw->imgdata.idata.filters) {
+        std::snprintf(error, size, "RAW development requires a three-color CFA source");
         return nullptr;
     }
     metadata(*raw, *out);
-    out->vendor.sony_lens = selected_sony_lens(*raw, lens);
+    out->vendor.sony_lens = selected_sony_lens(*raw, capture.lens);
     diagnostic.complete();
     return static_cast<LibRaw *>(raw.release());
 } catch (const std::bad_alloc &) {
@@ -394,7 +430,8 @@ extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, c
         if ((!jpeg && !rgb) || !item.twidth || !item.theight || item.twidth > max_edge ||
             item.theight > max_edge || uint64_t(item.twidth) * item.theight > max_pixels ||
             !item.tlength || item.tlength > max_bytes ||
-            (rgb && raw.preview_color_space(item.toffset) != 1))
+            (rgb && raw.preview_color_space(item.toffset) != LIBRAW_COLORSPACE_sRGB &&
+             raw.preview_color_space(item.toffset) != LIBRAW_COLORSPACE_AdobeRGB))
             continue;
         const bool enough = item.twidth >= preview_edge || item.theight >= preview_edge;
         const uint64_t area = uint64_t(item.twidth) * item.theight;
@@ -423,8 +460,7 @@ extern "C" int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *out, c
     out->bytes = thumb.tlength;
     out->width = thumb.twidth;
     out->height = thumb.theight;
-    out->flip = list.thumblist[selected].tflip == 0xffff ? raw.imgdata.sizes.flip
-                                                         : list.thumblist[selected].tflip;
+    out->flip = raw.preview_flip(list.thumblist[selected].toffset, list.thumblist[selected].tflip);
     out->color_space = raw.preview_color_space(list.thumblist[selected].toffset);
     out->format = jpeg ? 1 : 2;
     return 0;
@@ -449,47 +485,7 @@ extern "C" int antitone_raw_unpack(void *handle, int threads, char *error, size_
         diagnostic.complete(code, 2);
     if (check(code, error, size))
         return code;
-    const auto &d = raw.imgdata.rawdata;
-    if (!d.raw_image || d.color.cblack[4] || d.color.cblack[5]) {
-        std::snprintf(error, size,
-                      "Probe requires integer Bayer data without a repeated black pattern");
-        return -1;
-    }
     diagnostic.complete();
-    return 0;
-}
-
-extern "C" int antitone_raw_sensor_diagnostics(const void *handle, AntitoneRawDiagnostics *out,
-                                               char *error, size_t size) {
-    const auto &s = static_cast<const LibRaw *>(handle)->imgdata.rawdata.sizes;
-    return antitone_raw_region_diagnostics(handle, 0, 0, s.width, s.height, out, error, size);
-}
-
-extern "C" int antitone_raw_region_diagnostics(const void *handle, uint32_t x0, uint32_t y0,
-                                               uint32_t width, uint32_t height,
-                                               AntitoneRawDiagnostics *out, char *error,
-                                               size_t size) {
-    const auto &d = static_cast<const LibRaw *>(handle)->imgdata.rawdata;
-    const auto &s = d.sizes;
-    const auto &c = d.color;
-    if (!d.raw_image || !width || !height || x0 >= s.width || y0 >= s.height ||
-        width > s.width - x0 || height > s.height - y0) {
-        std::snprintf(error, size, "Invalid sensor sampling rectangle");
-        return -1;
-    }
-    const auto pitch = s.raw_pitch / sizeof(uint16_t);
-    for (unsigned y = y0; y < y0 + height; ++y) {
-        for (unsigned x = x0; x < x0 + width; ++x) {
-            // LibRaw's FC encoding, using the immutable RAW CFA rather than the processed green merge.
-            const unsigned color = (d.iparams.filters >> ((((y << 1) & 14) + (x & 1)) << 1)) & 3;
-            const auto value = d.raw_image[(y + s.top_margin) * pitch + x + s.left_margin];
-            const auto flags = capture_flags(c, color, value);
-            ++out->sites[color];
-            out->below_black[color] += (flags & 2) != 0;
-            out->at_white[color] += (flags & 1) != 0;
-            out->peak[color] = std::max(out->peak[color], static_cast<uint32_t>(value));
-        }
-    }
     return 0;
 }
 
@@ -511,6 +507,7 @@ extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_c
     p.use_auto_wb = p.use_camera_wb = 0;
     p.no_auto_scale = 0;
     p.highlight = 1;
+    // LibRaw dispatches by CFA: AHD for Bayer, three-pass interpolation for X-Trans.
     p.user_qual = 3;
     p.half_size = 0;
     p.four_color_rgb = 0;

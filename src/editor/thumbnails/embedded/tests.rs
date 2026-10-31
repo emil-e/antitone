@@ -125,6 +125,25 @@ fn jpeg_decode_is_bounded_oriented_and_display_referred_without_upscaling() {
 }
 
 #[test]
+fn adobe_rgb_camera_placeholder_is_converted_for_display_instead_of_relabelled() {
+    let image = decode(crate::raw::EmbeddedThumbnail {
+        data: vec![64, 128, 192],
+        rgb_dimensions: Some([1, 1]),
+        flip: 0,
+        color_space: 2,
+    })
+    .unwrap()
+    .unwrap();
+    let pixel = image.pixels[0];
+    for (actual, expected) in [pixel.r(), pixel.g(), pixel.b()]
+        .into_iter()
+        .zip([0, 129, 196])
+    {
+        assert!(actual.abs_diff(expected) <= 1);
+    }
+}
+
+#[test]
 fn embedded_icc_and_exif_are_honoured_without_camera_inversion() {
     use image::ImageEncoder;
     let mut bytes = Vec::new();

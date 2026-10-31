@@ -1,5 +1,4 @@
 //! Direct Adobe DNG SDK camera development and decode-free metadata inspection.
-//! Original CFA is retained separately for sensor diagnostics.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::Path;
@@ -115,7 +114,6 @@ struct NativeOptions {
 #[derive(Clone, Copy)]
 struct NativeView {
     rgb: *const f32,
-    original: *const u16,
     program: *const u8,
     program_size: usize,
     width: u32,
@@ -223,7 +221,7 @@ impl Drop for NativeAllocation {
     }
 }
 
-/// Immutable completed camera RGB and original CFA. No live SDK state remains.
+/// Immutable completed camera RGB. No live SDK state remains.
 pub struct Source {
     allocation: NativeAllocation,
     header: Header,
@@ -301,7 +299,6 @@ impl Source {
             || v.raw_width == 0
             || v.raw_height == 0
             || v.rgb.is_null()
-            || v.original.is_null()
             || v.program.is_null()
         {
             return Err(Error::Rejected("invalid completed native view".into()));
@@ -328,14 +325,6 @@ impl Source {
         // Completed vectors stay immutable until this owner is dropped.
         unsafe {
             std::slice::from_raw_parts(self.allocation.view.rgb.cast(), w as usize * h as usize)
-        }
-    }
-    /// Pre-OpcodeList1 codes in original sensor coordinates, including masked margins.
-    pub fn original_cfa(&self) -> &[u16] {
-        let [w, h] = self.original_dimensions();
-        // Original CFA has independent retained storage with the same owner lifetime.
-        unsafe {
-            std::slice::from_raw_parts(self.allocation.view.original, w as usize * h as usize)
         }
     }
     pub fn capture_limits(&self) -> [f64; 2] {

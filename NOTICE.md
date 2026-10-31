@@ -9,7 +9,7 @@ Antitone's original code is licensed under the MIT license; see `LICENSE`. You m
 - Adobe DNG SDK 1.7.1 build 2768 and its bundled XMP/codec dependencies: see `vendor/dng-sdk/PROVENANCE.md`, the original Adobe license and component notices.
 - This software is based in part on the work of the Independent JPEG Group.
 - XMP includes the RSA Data Security, Inc. MD5 Message-Digest Algorithm and UUID support with their retained notices.
-- LibRaw 0.22.0: dual LGPL/CDDL licensing. Original copyright and license files accompany packages.
+- LibRaw 0.22.3: dual LGPL/CDDL licensing. Original copyright and license files accompany packages.
 - LLVM OpenMP 22.1.8: the original LLVM OpenMP license accompanies the bundled runtime.
 - IBM Plex fonts: SIL Open Font License 1.1, retained in `assets/fonts/OFL.txt`.
 - OpenColorIO-derived rendering algorithms: retained notice in `assets/ocio/LICENSE-OpenColorIO.txt`. The production executable does not dynamically link the OCIO reference library.

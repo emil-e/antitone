@@ -6,7 +6,7 @@ These DNGs are original Antitone test data, generated entirely from integer cons
 
 - 98,950 bytes; little-endian classic TIFF/DNG 1.1, one uncompressed unsigned 16-bit CFA strip, 256×192 sensor sites.
 - RGGB: `CFARepeatPatternDim=[2,2]`, `CFAPattern=[0,1,1,2]`, `CFAPlaneColor=[0,1,2]`, conventional rectangular layout. Plane indexes and the RGB plane-colour list are distinct.
-- Scalar black 64, white 4095. `BlackLevelRepeatDim` is omitted, using its DNG default 1×1. Explicit repeat dimensions remain in pinned LibRaw's `cblack` even for scalar black, which the production bridge rejects.
+- Scalar black 64, white 4095. `BlackLevelRepeatDim` is omitted, using its DNG default 1×1.
 - Three neutral gains (`AsShotNeutral=[1,1,1]`); D65 `ColorMatrix1` is the XYZ→linear-sRGB camera matrix, stored as signed rationals. No second illuminant/calibration is needed for this declared basis.
 - Active sensor area is the whole sensor. Default crop starts at (8,8), size 240×176; normal camera development retains 256×192. Orientation is top-left. No embedded preview, wall-clock value, random seed or path-dependent metadata.
 

@@ -11,9 +11,9 @@ $ProgressPreference = 'SilentlyContinue'
 
 $root = Split-Path -Parent $PSScriptRoot
 $cache = Join-Path $root '.cache/native-deps'
-$archive = Join-Path $cache 'LibRaw-0.22.0.tar.gz'
-$source = Join-Path $cache 'LibRaw-0.22.0-msvc'
-$expected = '5a11327a9cef2496d6a4335e8da30a1604460b6c545a30fe7588cf4c00a0fcae'
+$archive = Join-Path $cache 'LibRaw-0.22.3.tar.gz'
+$source = Join-Path $cache 'LibRaw-0.22.3-msvc'
+$expected = '7edf96c5b70cff88980a02ab0fc8af125cb6a4a377985573c654439d9d02355c'
 
 if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
     throw 'tar.exe is required to extract the pinned LibRaw archive.'
@@ -21,7 +21,7 @@ if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
 New-Item -ItemType Directory -Force $cache | Out-Null
 
 if (-not (Test-Path $archive)) {
-    Invoke-WebRequest -Uri 'https://codeload.github.com/LibRaw/LibRaw/tar.gz/refs/tags/0.22.0' `
+    Invoke-WebRequest -Uri 'https://codeload.github.com/LibRaw/LibRaw/tar.gz/refs/tags/0.22.3' `
         -OutFile $archive -UseBasicParsing
 }
 $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()

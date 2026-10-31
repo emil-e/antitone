@@ -25,7 +25,7 @@ impl FlatFieldSettings {
 
     pub fn require_source(&self, development: &SourceDevelopment) -> Result<()> {
         require(
-            *development == self.development,
+            development.same_processing(&self.development),
             "flat-field source dimensions/development differ from the reference",
         )
     }
@@ -43,7 +43,7 @@ impl FlatFieldSettings {
         self.development.validate()?;
         let reference = project.source(self.reference)?;
         require(
-            reference.development == self.development,
+            reference.development.same_processing(&self.development),
             "flat-field reference identity differs from its accepted map",
         )?;
         require(

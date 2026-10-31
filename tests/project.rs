@@ -81,6 +81,44 @@ fn fixture(directory: &std::path::Path) -> (Project, SourceId, SourceId) {
 }
 
 #[test]
+fn libraw_release_provenance_does_not_gate_project_or_source_compatibility() {
+    let directory = tempfile::tempdir().unwrap();
+    let (project, _, _) = fixture(directory.path());
+    let basis = project.sources[0].development.clone();
+    for version in ["0.22.0", "0.22.3", "future decoder", ""] {
+        let mut changed = project.clone();
+        changed.sources[0].development.decode.backend_version = version.into();
+        changed.require_runtime().unwrap();
+        assert!(basis.same_processing(&changed.sources[0].development));
+        if version != basis.decode.backend_version {
+            assert_ne!(
+                basis, changed.sources[0].development,
+                "provenance remains part of full identity used by caches"
+            );
+        }
+    }
+    let mut encoded = serde_json::to_value(&project).unwrap();
+    encoded["sources"][0]["development"]["decode"]
+        .as_object_mut()
+        .unwrap()
+        .remove("backend_version");
+    let unrecorded: Project = serde_json::from_value(encoded).unwrap();
+    unrecorded.require_runtime().unwrap();
+    assert!(
+        unrecorded.sources[0]
+            .development
+            .decode
+            .backend_version
+            .is_empty()
+    );
+    let mut unsupported = project;
+    unsupported.input = InputSettings::Digital;
+    unsupported.sources[0].development.decode.contract = "unsupported pixel interpretation".into();
+    unsupported.validate().unwrap();
+    assert!(unsupported.require_runtime().is_err());
+}
+
+#[test]
 fn accepted_per_source_analysis_support_roundtrips_and_rejects_invalid_association_or_drafts() {
     use antitone::{coverage::Coverage, scan_regions::Areas};
     let directory = tempfile::tempdir().unwrap();
@@ -614,8 +652,7 @@ fn atomic_roundtrip_preserves_calibration_and_output_after_removal_and_missing_s
     .unwrap();
     assert_eq!(after, before);
     assert_eq!(restored.order, vec![dmax_source_id]);
-    assert!(restored.require_runtime("0.22.0").is_ok());
-    assert!(restored.require_runtime("new decoder").is_err());
+    assert!(restored.require_runtime().is_ok());
 }
 
 #[test]
@@ -671,7 +708,7 @@ fn output_contract_and_old_schemas_are_rejected_without_reinterpretation() {
     let mut legacy = project;
     legacy.output.contract = "ocio-2.6.0-aces2-100nit-antitone-srgb-prophoto-v1".into();
     legacy.validate().unwrap();
-    assert!(legacy.require_runtime("0.22.0").is_err());
+    assert!(legacy.require_runtime().is_err());
 }
 
 #[test]
@@ -702,14 +739,14 @@ fn source_locators_keep_stable_ids_and_runtime_identity_is_checked_at_roll_level
     assert_eq!(project.source(dmin_source_id).unwrap().path, moved);
     let calibration = project.calibration().unwrap();
     project.sources[0].development.decode.contract = "different development contract".into();
-    assert!(project.require_runtime("0.22.0").is_err());
+    assert!(project.require_runtime().is_err());
     assert_eq!(project.calibration().unwrap(), calibration);
     // A scan stage requires one shared acquisition basis, so a mixed decode contract is invalid.
     assert!(project.validate().is_err());
     project.sources[0].development.decode.contract = antitone::project::DEVELOPMENT_CONTRACT.into();
     project.validate().unwrap();
     project.processing_model += 1;
-    assert!(project.require_runtime("0.22.0").is_err());
+    assert!(project.require_runtime().is_err());
 }
 
 #[test]

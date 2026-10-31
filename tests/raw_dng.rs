@@ -1,7 +1,7 @@
 #![cfg(all(feature = "raw", target_os = "macos"))]
 use antitone::{
     geometry::SourceRaster,
-    raw::{DevelopmentPriority, RawFile, Rect, SensorDiagnostics},
+    raw::{DevelopmentPriority, RawFile, Rect},
     scan::Scan,
 };
 use glam::{DMat3, DVec3};
@@ -27,23 +27,8 @@ fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng")
 }
 
-fn expected_diagnostics() -> SensorDiagnostics {
-    let mut expected = SensorDiagnostics::default();
-    for y in 0..192 {
-        for x in 0..256 {
-            // LibRaw's immutable CFA distinguishes the two green sites in slots 1 and 3.
-            let c = [[0, 1], [3, 2]][y % 2][x % 2];
-            let channel = if c == 3 { 1 } else { c };
-            let code = u32::from(PATCHES[(y / 64) * 4 + x / 64][channel]) + 64;
-            expected.sites[c] += 1;
-            expected.peak[c] = expected.peak[c].max(code);
-        }
-    }
-    expected
-}
-
 #[test]
-fn authored_dng_libraw_metadata_sensor_values_and_complete_rgb16_survive_development() {
+fn authored_dng_metadata_and_complete_camera_rgb_survive_development() {
     let path = fixture();
     let original = fs::read(&path).unwrap();
     let mut raw = RawFile::open_uncorrected(&path).unwrap();
@@ -70,17 +55,6 @@ fn authored_dng_libraw_metadata_sensor_values_and_complete_rgb16_survive_develop
             .all(|v| v.abs() < 2e-6)
     );
     assert!(metadata.camera_to_ap1().unwrap().determinant().abs() > 0.1);
-    assert_eq!(raw.unpack().unwrap(), expected_diagnostics());
-    let region = Rect {
-        x: 16,
-        y: 16,
-        width: 32,
-        height: 32,
-    };
-    let before = raw.region_sensor_diagnostics(region).unwrap();
-    assert_eq!(before.sites.iter().sum::<u64>(), 1024);
-    assert_eq!(before.sites, [256; 4]);
-    assert_eq!(before.peak, [3064; 4]);
     // Explicit roll-fixed WB is a supported API; DNG's unused fourth metadata gain is zero.
     let developed = raw.develop_camera(WB).unwrap();
     let mut codes = Vec::new();
@@ -112,18 +86,6 @@ fn authored_dng_libraw_metadata_sensor_values_and_complete_rgb16_survive_develop
             );
         }
     }
-    assert_eq!(raw.region_sensor_diagnostics(region).unwrap(), before);
-    assert_eq!(
-        raw.region_sensor_diagnostics(Rect {
-            x: 0,
-            y: 0,
-            width: 256,
-            height: 192
-        })
-        .unwrap(),
-        expected_diagnostics()
-    );
-    assert_eq!(raw.unpack().unwrap(), expected_diagnostics());
     assert_eq!(fs::read(&path).unwrap(), original);
 }
 

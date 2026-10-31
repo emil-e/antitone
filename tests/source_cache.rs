@@ -73,14 +73,14 @@ fn allocation_snapshot_is_stable_across_consumers_and_charged_once() {
     let input = Input::new();
     let source = input.source();
     let bytes = source.retained_bytes().unwrap();
-    let metadata = source.metadata();
-    assert!(
-        bytes
-            >= u64::from(metadata.width) * u64::from(metadata.height) * 8
-                + u64::from(metadata.raw_width) * u64::from(metadata.raw_height) * 2
-    );
+    let image = source.camera_image().unwrap();
+    let pixel_bytes = if image.is_continuous() {
+        size_of::<[f32; 3]>()
+    } else {
+        size_of::<[u16; 4]>()
+    };
+    assert!(bytes >= u64::from(image.width) * u64::from(image.height) * pixel_bytes as u64);
     let scan = Scan::from_source(source.clone());
-    let _ = scan.source().sensor_diagnostics().unwrap();
     assert_eq!(scan.source().retained_bytes(), Some(bytes));
     let store = SourceCache::new(bytes);
     let accepted = store
@@ -370,7 +370,7 @@ fn exact_keys_exclude_grade_identity_and_fail_closed_without_stats() {
 }
 
 #[test]
-fn mismatched_native_basis_geometry_wb_and_runtime_never_replace_working_entries() {
+fn mismatched_native_basis_geometry_wb_and_processing_never_replace_working_entries() {
     let input = Input::new();
     let source = input.source();
     let store = SourceCache::new(10);
@@ -415,7 +415,15 @@ fn mismatched_native_basis_geometry_wb_and_runtime_never_replace_working_entries
             },
         )
         .unwrap();
-        assert!(store.publish(key, source.clone(), 10).is_err());
+        if field == 1 {
+            assert_eq!(
+                key, input.key,
+                "requests use the current decoder, not recorded provenance"
+            );
+            assert!(Arc::ptr_eq(&store.get(&key).unwrap(), &source));
+        } else {
+            assert!(store.publish(key, source.clone(), 10).is_err());
+        }
     }
     assert_eq!(
         store.charges(),

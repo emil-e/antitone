@@ -31,7 +31,7 @@ fn warp(plane: bool) -> Opcode {
 }
 
 #[test]
-fn owned_basis_retains_original_codes_crop_orientation_and_fixed_wb() {
+fn completed_camera_source_retains_crop_orientation_and_fixed_wb() {
     let fixture = Fixture {
         orientation: 6,
         neutral: [(1, 2), (1, 1), (2, 3)],
@@ -55,8 +55,7 @@ fn owned_basis_retains_original_codes_crop_orientation_and_fixed_wb() {
     assert_eq!(source.capture_limits(), [64., 4160.]);
     assert_eq!(source.fixed_wb(), [2., 1., 1.5]);
     assert_eq!(pixel(&source, 20, 20), [0.5, 0.375, 0.75]);
-    assert_eq!(source.original_cfa()[28 * 64 + 30], 1088);
-    assert!(source.retained_bytes() >= (56 * 56 * 12 + 64 * 64 * 2) as u64);
+    assert!(source.retained_bytes() >= (56 * 56 * 12) as u64);
     // A camera-neutral sample becomes balanced ones, then XYZ D50 without a second WB.
     let white = source.camera_to_xyz_d50() * DVec3::ONE;
     let expected = DVec3::new(0.3457 / 0.3585, 1., (1. - 0.3457 - 0.3585) / 0.3585);
@@ -70,7 +69,6 @@ fn owned_basis_retains_original_codes_crop_orientation_and_fixed_wb() {
             .unwrap(),
         [0.5, 0.375, 0.75]
     );
-    assert_eq!(source.original_cfa()[28 * 64 + 30], 1088);
 }
 
 #[test]
@@ -112,14 +110,13 @@ fn gain_order_keeps_each_sdk_clip_and_wb_is_after_opcodes_without_another_clip()
 }
 
 #[test]
-fn list1_gain_precedes_black_subtraction_and_does_not_replace_original_codes() {
+fn list1_gain_precedes_black_subtraction() {
     let mut fixture = Fixture::default();
     fixture.lists[0].push(Opcode::gain(2., 0));
     let source = develop(&fixture);
     let expected =
         [0.25_f32, 0.375, 0.5].map(|v| ((v * 4096. + 64.) * 2. - 64.).min(4096.) / 4096.);
     assert_eq!(pixel(&source, 20, 20), expected);
-    assert_eq!(source.original_cfa()[28 * 64 + 30], 1088);
 }
 
 #[test]
@@ -193,7 +190,6 @@ fn packed_fourteen_bit_and_uniform_black_patterns_keep_the_same_camera_basis() {
         .collect();
     fixture.extra.push((50714, 5, black));
     let packed = develop(&fixture);
-    assert_eq!(packed.original_cfa(), base.original_cfa());
     assert_eq!(packed.camera_rgb(), base.camera_rgb());
     assert_eq!(packed.interpretation_id(), base.interpretation_id());
     fixture.extra.last_mut().unwrap().2[..4].copy_from_slice(&65u32.to_le_bytes());
@@ -201,7 +197,7 @@ fn packed_fourteen_bit_and_uniform_black_patterns_keep_the_same_camera_basis() {
 }
 
 #[test]
-fn bad_pixel_repair_uses_original_neighbours_and_preserves_diagnostic_codes() {
+fn bad_pixel_repair_uses_the_declared_neighbouring_samples() {
     for (x, y, nx, ny, channel, expected) in [
         (30u32, 28u32, 32u32, 28u32, 0usize, 0.4375f32),
         (31, 28, 32, 29, 1, 0.53125),
@@ -219,8 +215,6 @@ fn bad_pixel_repair_uses_original_neighbours_and_preserves_diagnostic_codes() {
         let source = Source::develop(file.path(), options(), &Cancellation::default()).unwrap();
         let (dx, dy) = ((x - 6) as usize, (y - 4) as usize);
         assert_eq!(pixel(&source, dx, dy)[channel], expected);
-        assert_eq!(source.original_cfa()[(y * 64 + x) as usize], 0);
-        assert_eq!(source.original_cfa()[(ny * 64 + nx) as usize], 4160);
     }
 }
 
@@ -238,7 +232,6 @@ fn in_range_bad_pixel_markers_are_repaired_by_the_sdk() {
     let repaired = Source::develop(file.path(), options(), &Cancellation::default()).unwrap();
     assert_eq!(repaired.header(), header);
     assert_eq!(pixel(&repaired, 24, 24), [0.25, 0.375, 0.5]);
-    assert_eq!(repaired.original_cfa()[28 * 64 + 30], 1000);
 }
 
 #[test]

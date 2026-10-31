@@ -50,6 +50,7 @@ pub struct SourceId(pub u64);
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Development {
+    #[serde(default)]
     pub backend_version: String,
     pub contract: String,
     pub fixed_wb: [f64; 4],
@@ -99,10 +100,16 @@ impl Development {
         }
     }
 
+    fn same_processing(&self, other: &Self) -> bool {
+        self.contract == other.contract
+            && self.fixed_wb == other.fixed_wb
+            && self.inversion_space == other.inversion_space
+            && self.working_space == other.working_space
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
         require(
-            !self.backend_version.is_empty()
-                && !self.contract.is_empty()
+            !self.contract.is_empty()
                 && !self.inversion_space.is_empty()
                 && !self.working_space.is_empty()
                 && self.fixed_wb.iter().all(|v| v.is_finite() && *v > 0.),
@@ -166,6 +173,32 @@ pub struct SourceDevelopment {
 }
 
 impl SourceDevelopment {
+    /// Admission compares processing, not decoder release provenance; caches use full identity.
+    pub fn same_processing(&self, other: &Self) -> bool {
+        self.decode.same_processing(&other.decode)
+            && self.lens_correction == other.lens_correction
+            && self.dng_development == other.dng_development
+            && self.dimensions == other.dimensions
+            && self.active_area == other.active_area
+            && self.camera_model == other.camera_model
+            && self.camera_to_ap1 == other.camera_to_ap1
+            && self.input_floor == other.input_floor
+    }
+
+    /// Acquisitions and caches describe the decoder producing pixels now, not saved provenance.
+    #[cfg(feature = "raw")]
+    pub(crate) fn for_runtime(&self) -> Self {
+        let mut source = self.clone();
+        if source.decode.contract == DEVELOPMENT_CONTRACT {
+            source.decode.backend_version = crate::raw::version();
+        }
+        #[cfg(feature = "dng-sdk")]
+        if source.decode.contract == DNG_DEVELOPMENT_CONTRACT {
+            source.decode.backend_version = crate::dng::INTERPRETATION.into();
+        }
+        source
+    }
+
     #[cfg(feature = "raw")]
     pub(crate) fn from_metadata(
         metadata: &crate::raw::Metadata,
@@ -953,16 +986,14 @@ impl Project {
         Ok(())
     }
 
-    pub fn require_runtime(&self, backend_version: &str) -> Result<()> {
+    pub fn require_runtime(&self) -> Result<()> {
         self.validate()?;
         for source in &self.sources {
             let development = &source.development.decode;
-            let matching_backend = development.backend_version == backend_version
-                && development.contract == DEVELOPMENT_CONTRACT;
+            let matching_backend = development.contract == DEVELOPMENT_CONTRACT;
             #[cfg(feature = "dng-sdk")]
-            let matching_backend = matching_backend
-                || (development.contract == DNG_DEVELOPMENT_CONTRACT
-                    && development.backend_version == crate::dng::INTERPRETATION);
+            let matching_backend =
+                matching_backend || development.contract == DNG_DEVELOPMENT_CONTRACT;
             require(
                 matching_backend
                     && development.inversion_space == "native-camera-RGB"

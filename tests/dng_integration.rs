@@ -90,29 +90,18 @@ fn sdk_scan_uses_original_quantum_fixed_basis_and_continuous_samples() {
     assert!((actual - expected).abs().max_element() < 1e-7);
     let neutral = scan.camera_to_ap1 * DVec3::ONE;
     assert!((neutral - DVec3::ONE).abs().max_element() < 2e-6);
-    let before = scan
-        .source()
-        .region_sensor_diagnostics(Rect::from([24, 24, 1, 1]))
-        .unwrap();
-    assert_eq!(before.at_white[0], 1);
-    assert_eq!(before.peak[0], 4160);
     let lease = scan.source().clone();
     drop(scan);
     std::thread::spawn(move || {
-        assert_eq!(
-            lease
-                .region_sensor_diagnostics(Rect::from([24, 24, 1, 1]))
-                .unwrap(),
-            before
-        );
-        assert!(lease.camera_image().unwrap().pixel(12, 12).is_ok());
+        let actual = lease.camera_image().unwrap().pixel(12, 12).unwrap();
+        assert!((actual - expected).abs().max_element() < 1e-7);
     })
     .join()
     .unwrap();
 }
 
 #[test]
-fn lossless_jpeg_14bit_preserves_original_codes_and_shared_sdk_precision() {
+fn lossless_jpeg_14bit_preserves_developed_pixels_and_shared_sdk_precision() {
     let plain = Fixture {
         bits: 14,
         ramp: true,
@@ -130,10 +119,6 @@ fn lossless_jpeg_14bit_preserves_original_codes_and_shared_sdk_precision() {
     .write();
     let a = Scan::open(plain.path(), None).unwrap();
     let b = Scan::open(compressed.path(), None).unwrap();
-    assert_eq!(
-        a.source().sensor_diagnostics().unwrap(),
-        b.source().sensor_diagnostics().unwrap()
-    );
     assert_eq!(b.source().input_floor(), 1. / 4096.);
     assert_eq!(a.dimensions().unwrap(), b.dimensions().unwrap());
     let (width, height) = a.dimensions().unwrap();
@@ -156,11 +141,6 @@ fn shared_sdk_repairs_in_range_bad_pixel_markers_for_measurements() {
     let expected = DVec3::new(0.25, 0.375, 0.5);
     let measured = scan.reference(Rect::from([24, 24, 1, 1])).unwrap();
     assert!((measured - expected).abs().max_element() < 1e-7);
-    let original = scan
-        .source()
-        .region_sensor_diagnostics(Rect::from([24, 24, 1, 1]))
-        .unwrap();
-    assert_eq!(original.peak[0], 1000);
 }
 
 #[test]
@@ -179,11 +159,6 @@ fn shared_sdk_measurements_accept_repaired_sensor_black() {
             .max_element()
             < 1e-7
     );
-    let original = scan
-        .source()
-        .region_sensor_diagnostics(Rect::from([24, 24, 1, 1]))
-        .unwrap();
-    assert_eq!(original.below_black[0], 1);
     assert_eq!(scan.source().input_floor(), 2. / 4096.);
 }
 
@@ -202,15 +177,6 @@ fn uniform_source(code: u16) -> fixture_path::FixturePath {
 fn developed_white_remains_usable_for_reference_analysis_and_flat_field_estimation() {
     let file = uniform_source(4160);
     let mut scan = Scan::open(file.path(), None).unwrap();
-    assert!(
-        scan.source()
-            .sensor_diagnostics()
-            .unwrap()
-            .at_white
-            .iter()
-            .sum::<u64>()
-            > 0
-    );
     assert_eq!(scan.reference(scan.area).unwrap(), DVec3::ONE);
     let samples = scan
         .analysis_samples(scan.area, 1, || false)
@@ -261,7 +227,6 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
     let wb = [2., 1., 1.5, 1.];
     let scan = Scan::open(file.path(), Some(wb)).unwrap();
     let source = record(file.path(), &scan);
-    let development = scan.source().metadata().development(wb);
     let mut project = Project {
         input: InputSettings::Digital,
         ..Project::default()
@@ -272,7 +237,7 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
     let path = directory.path().join("sdk.antitone");
     project.save(&path, Save::New).unwrap();
     let loaded = Project::load(&path).unwrap();
-    loaded.require_runtime(&antitone::raw::version()).unwrap();
+    loaded.require_runtime().unwrap();
     let reopened = Scan::open(
         &loaded.source(id).unwrap().path,
         Some(loaded.sources[0].development.decode.fixed_wb),
@@ -289,16 +254,21 @@ fn sdk_project_roundtrip_and_cache_keep_backend_precision_and_fixed_wb_identity(
         .unwrap()
         .unwrap();
     assert!(Arc::ptr_eq(&store.get(&key).unwrap(), scan.source()));
-    let mut wrong = development.clone();
-    wrong.backend_version.push_str("-different");
-    let stale = SourceKey::capture(
-        file.path(),
-        &antitone::project::SourceDevelopment {
-            decode: wrong,
-            ..loaded.source(id).unwrap().development.clone()
-        },
-    )
-    .unwrap();
+    let mut recorded = loaded.source(id).unwrap().development.clone();
+    recorded.decode.backend_version.push_str("-previous");
+    let current = SourceKey::capture(file.path(), &recorded).unwrap();
+    assert_eq!(
+        current, key,
+        "recorded provenance does not select a historical decoder"
+    );
+    assert_eq!(
+        current.development().decode.backend_version,
+        antitone::dng::INTERPRETATION
+    );
+    assert!(Arc::ptr_eq(&store.get(&current).unwrap(), scan.source()));
+    let mut wrong = loaded.source(id).unwrap().development.clone();
+    wrong.decode.fixed_wb = [1.; 4];
+    let stale = SourceKey::capture(file.path(), &wrong).unwrap();
     assert!(store.get(&stale).is_none());
     assert!(store.publish_source(stale, scan.source().clone()).is_err());
     let legacy = antitone::project::Development::new(antitone::raw::version(), wb);
@@ -419,7 +389,7 @@ fn supplied_cameras_share_editor_source_and_saved_project_contracts() {
         );
         drop(scan);
         let loaded = Project::load(&destination).unwrap();
-        loaded.require_runtime(&antitone::raw::version()).unwrap();
+        loaded.require_runtime().unwrap();
         let source = loaded.source(id).unwrap();
         let reopened = Scan::open(
             &source.path,
@@ -474,7 +444,7 @@ fn supplied_m9_shared_source_and_project_roundtrip() {
     project.save(&destination, Save::New).unwrap();
     drop(scan);
     let loaded = Project::load(&destination).unwrap();
-    loaded.require_runtime(&antitone::raw::version()).unwrap();
+    loaded.require_runtime().unwrap();
     let source = loaded.source(id).unwrap();
     let scan = Scan::open(
         &source.path,

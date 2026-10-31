@@ -36,7 +36,6 @@ fn execution_budgets_preserve_every_camera_bit_and_metadata_across_partial_tiles
         .unwrap();
         assert_eq!(actual.header(), baseline.header());
         assert_eq!(actual.opcode_counts(), baseline.opcode_counts());
-        assert_eq!(actual.original_cfa(), baseline.original_cfa());
         assert!(
             actual
                 .camera_rgb()
