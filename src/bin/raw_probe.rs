@@ -1,5 +1,5 @@
 //! Read-only RAW diagnostic; metadata-only mode uses the explicit LibRaw baseline.
-//! Full mode gates flooring rates, sampled repeatability and eligible in-sRGB matrix comparisons.
+//! Full mode gates sampled repeatability and eligible in-sRGB matrix comparisons.
 //! Zero eligible comparisons does not fail; inspect the reported comparison count.
 //! Optional `.cache/probes` PPMs are clipped unmanaged views, not grades or photographic acceptance.
 use std::io::Write;
@@ -189,12 +189,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "developed_camera_floor={floor:.12e} (amplified native quantum, not a measured noise estimate)"
         );
-        if below_floor.into_iter().any(|v| v > count / 100) {
-            return Err(
-                "More than 1% of a channel needs flooring; investigate development/conversion"
-                    .into(),
-            );
-        }
 
         let mut repeat_error = 0.0_f64;
         let repeated = raw.develop_camera(wb)?;

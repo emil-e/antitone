@@ -365,7 +365,7 @@ cargo test --locked --offline --features raw,gpu,export,project,ocio-reference -
 
 For scale, bounded release-build runs on an Apple M5 Pro / 48 GiB with ILCE-1M2 / 24–70mm GM II photographs measured roughly 0.22–0.27 s per ~50-MP source for distortion/CA reconstruction (0.42–0.49 s with embedded shading), ~600 MB corrected RGB storage per source and ~1.2 GB peak footprint for the serial CLI probe, with exact sampled repeatability and passing matrix gates. These are spot-checks, not vendor calibration or editor-switching latency acceptance.
 
-Full mode also checks repeatability, flooring and eligible in-sRGB LibRaw matrix comparisons — inspect `compared_grid`; zero eligible comparisons cannot establish agreement. [Authored RAW checks](development.md#feature-specific-checks) preserve Scan immutability, measured anchors (`2e-12`), flooring (at most 1%) and sampled LibRaw matrix agreement (`2/65535`).
+Full mode reports flooring rates and checks repeatability and eligible in-sRGB LibRaw matrix comparisons — inspect `compared_grid`; zero eligible comparisons cannot establish agreement. [Authored RAW checks](development.md#feature-specific-checks) preserve Scan immutability, measured anchors (`2e-12`), flooring (at most 1%) and sampled LibRaw matrix agreement (`2/65535`).
 
 For independent upstream OCIO → Metal:
 

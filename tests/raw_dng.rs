@@ -128,51 +128,92 @@ fn authored_dng_libraw_metadata_sensor_values_and_complete_rgb16_survive_develop
 }
 
 #[test]
-fn authored_dng_automatic_wb_matches_explicit_development_without_changing_metadata() {
+fn authored_dng_automatic_wb_uses_nonunity_as_shot_gains_without_rewriting_metadata() {
+    let mut bytes = fs::read(fixture()).unwrap();
+    let ifd = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+    let count = u16::from_le_bytes(bytes[ifd..ifd + 2].try_into().unwrap()) as usize;
+    let neutral = (0..count)
+        .map(|i| ifd + 2 + i * 12)
+        .find(|&i| u16::from_le_bytes(bytes[i..i + 2].try_into().unwrap()) == 50728)
+        .expect("authored AsShotNeutral");
+    assert_eq!(
+        u16::from_le_bytes(bytes[neutral + 2..neutral + 4].try_into().unwrap()),
+        5
+    );
+    let offset = u32::from_le_bytes(bytes[neutral + 8..neutral + 12].try_into().unwrap()) as usize;
+    assert_eq!(&bytes[offset..offset + 8], &[1, 0, 0, 0, 1, 0, 0, 0]);
+    // Red's declared neutral becomes 1/2, so automatic WB must differ from unity.
+    bytes[offset + 4..offset + 8].copy_from_slice(&2u32.to_le_bytes());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("nonunity-as-shot.dng");
+    fs::write(&path, &bytes).unwrap();
+
+    let mut raw = RawFile::open(&path).unwrap();
+    let as_shot = [2., 1., 1., 1.];
+    assert_eq!(raw.metadata.cam_mul, [2., 1., 1., 0.]);
+    assert_eq!(raw.metadata.as_shot_wb(), as_shot);
+    raw.develop_camera(as_shot).unwrap();
+    assert_eq!(raw.metadata.cam_mul, [2., 1., 1., 0.]);
+    let automatic = Scan::open(&path, None).unwrap();
+    let explicit = Scan::open(&path, Some(as_shot)).unwrap();
+    let unity = Scan::open(&path, Some(WB)).unwrap();
+    assert_eq!(automatic.fixed_wb, as_shot);
+    let automatic_pixels = automatic.preview_source(1024).unwrap();
+    assert_eq!(automatic_pixels, explicit.preview_source(1024).unwrap());
+    assert_ne!(automatic_pixels, unity.preview_source(1024).unwrap());
+}
+
+#[test]
+fn authored_dng_explicit_wb_overrides_as_shot_with_the_backend_sample_scale() {
     let path = fixture();
     let mut raw = RawFile::open(&path).unwrap();
-    assert_eq!(raw.metadata.cam_mul, [1., 1., 1., 0.]);
-    assert_eq!(raw.metadata.as_shot_wb(), WB);
-    assert_eq!(raw.metadata.cam_mul, [1., 1., 1., 0.]);
-    let automatic = Scan::open(&path, None).unwrap();
-    let explicit = Scan::open(&path, Some(WB)).unwrap();
-    assert_eq!(automatic.fixed_wb, WB);
-    assert_eq!(
-        automatic.preview_source(1024).unwrap(),
-        explicit.preview_source(1024).unwrap()
-    );
-    let custom = if raw.metadata.dng_identity().is_some() {
-        [2., 1., 1.5, 1.]
+    // LibRaw divides these gains by their maximum (2); source light restores that
+    // factor relative to green (1). SDK development already uses the source scale.
+    let (custom, native_to_source) = if raw.metadata.dng_identity().is_some() {
+        ([2., 1., 1.5, 1.], 1.)
     } else {
-        [2., 1., 1.5, 0.75]
+        ([2., 1., 1.5, 0.75], 2.)
     };
+    let automatic = Scan::open(&path, None).unwrap();
     let custom_scan = Scan::open(&path, Some(custom)).unwrap();
     assert_eq!(custom_scan.fixed_wb, custom);
-    let mut direct = RawFile::open(&path).unwrap();
-    let direct = direct.develop_camera(custom).unwrap();
+    let direct = raw.develop_camera(custom).unwrap();
     for [x, y] in [[32, 32], [224, 32], [32, 96], [96, 96]] {
         assert_eq!(
             custom_scan.pixel(x, y).unwrap(),
-            direct.pixel(x, y).unwrap()
+            direct.pixel(x, y).unwrap() * native_to_source
         );
         assert_ne!(
             custom_scan.pixel(x, y).unwrap(),
             automatic.pixel(x, y).unwrap()
         );
     }
-    let before = raw
-        .develop_camera(WB)
-        .unwrap()
-        .pixel_samples(32, 32)
-        .unwrap();
+}
+
+#[test]
+fn authored_dng_invalid_explicit_wb_rejects_without_replacing_the_last_developed_image() {
+    let path = fixture();
+    let mut raw = RawFile::open(&path).unwrap();
+    let pixels = |raw: &RawFile| {
+        let image = raw.camera_image().unwrap();
+        let mut pixels = Vec::new();
+        for y in 0..image.height {
+            for x in 0..image.width {
+                pixels.push(image.pixel_samples(x, y).unwrap());
+            }
+        }
+        pixels
+    };
+    raw.develop_camera(WB).unwrap();
+    let before = pixels(&raw);
     for channel in 0..4 {
         for value in [0., -1., f64::NAN, f64::INFINITY, f64::MAX] {
             let mut invalid = WB;
             invalid[channel] = value;
             assert!(raw.develop_camera(invalid).is_err());
-            assert_eq!(
-                raw.camera_image().unwrap().pixel_samples(32, 32).unwrap(),
-                before
+            assert!(
+                pixels(&raw) == before,
+                "invalid gain {value} in channel {channel} changed the developed image"
             );
         }
     }
