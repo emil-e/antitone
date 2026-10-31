@@ -350,7 +350,7 @@ cargo run --locked --offline --release --features raw \
   --bin antitone-raw-probe -- /absolute/photo.ARW
 ```
 
-Metadata mode reports Sony embedded shading/distortion/CA availability, validated radial scales and automatic output dimensions without unpacking or correcting pixels, and can inspect malformed data that normal development rejects. Off is distinct from unavailable coefficients; discovery reads the selected RAW IFD, not rendered previews. Full mode develops the automatically corrected camera raster, checks repeated development and reports reconstruction time/storage separately from LibRaw time. Optional PPMs are clipped unmanaged diagnostics (`ANTITONE_RAW_PPM_EV` selects their exposure); [Sony processing](processing.md#embedded-sony-lens-correction) owns coordinates, reconstruction and capture authority.
+Metadata mode reports Sony embedded shading/distortion/CA availability, validated radial scales and automatic output dimensions without unpacking or correcting pixels, and can inspect malformed data that normal development rejects. Off is distinct from unavailable coefficients; discovery reads the selected RAW IFD, not rendered previews. Full mode develops the automatically corrected camera raster, checks repeated development and reports reconstruction time/storage separately from LibRaw time. Optional PPMs are clipped unmanaged diagnostics (`ANTITONE_RAW_PPM_EV` selects their exposure); [Sony processing](processing.md#embedded-sony-lens-correction) owns coordinates and reconstruction.
 
 Per-component distortion/CA maps and independent shading checks run offline in the pure model tests; authored native cases separately exercise automatic development:
 
@@ -388,7 +388,7 @@ cargo test --locked --offline --release --features editor,ocio-reference --lib \
 
 ### Sony source storage precision
 
-The opt-in [storage study](../src/gpu/tests/lens_precision.rs) holds development and capture eligibility fixed while comparing retained f32 camera codes with whole-code rounding and an eight-fractional-bit diagnostic alternative (within the native range these correspond to RGB16 and Q16.8). Synthetic cases blend declared integer neighbours; supplied negatives use diagnostic calibration and borrowed Sony warps, because their adapted lens has no usable profile — those warps test resampling/rounding, not physical lens calibration. Storage errors use the f64 scalar pipeline followed by independent pinned OCIO rendering to sRGB; GPU timing arms are checked against their scalar inputs under the existing numerical gate.
+The opt-in [storage study](../src/gpu/tests/lens_precision.rs) holds development and numerical sampling support fixed while comparing retained f32 camera codes with whole-code rounding and an eight-fractional-bit diagnostic alternative (within the native range these correspond to RGB16 and Q16.8). Synthetic cases blend declared integer neighbours; supplied negatives use diagnostic calibration and borrowed Sony warps, because their adapted lens has no usable profile — those warps test resampling/rounding, not physical lens calibration. Storage errors use the f64 scalar pipeline followed by independent pinned OCIO rendering to sRGB; GPU timing arms are checked against their scalar inputs under the existing numerical gate.
 
 On one M5 Pro / 48-GiB distortion/CA-only run, maximum differences expressed in encoded 8-bit-level equivalents were:
 
@@ -407,7 +407,7 @@ The `dng-sdk` feature exposes a read-only probe of the vendored SDK backend with
 ```sh
 # Explicit main-sensor pixel bound; inputs remain read-only.
 cargo run --locked --features dng-sdk --bin antitone-dng-probe -- 1000000 /path/to/authored.dng
-# Compare bounded execution budgets; reports split timings and pixel/CFA/eligibility digests.
+# Compare bounded execution budgets; reports split timings and pixel/CFA digests.
 cargo run --locked --release --features dng-sdk --bin antitone-dng-probe -- \
   --threads 8 60000000 /path/to/photo.dng
 ```

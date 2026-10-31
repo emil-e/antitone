@@ -1,4 +1,4 @@
-//! Spatial sampling hypotheses, independent of grading, capture eligibility and output crops.
+//! Spatial sampling hypotheses, independent of grading, numerical eligibility and output crops.
 use crate::{
     Error,
     coverage::Coverage,

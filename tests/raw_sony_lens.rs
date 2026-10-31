@@ -335,7 +335,7 @@ fn foreground_and_background_reconstruction_cover_partial_row_chunks_identically
 }
 
 #[test]
-fn scan_consumers_keep_continuous_values_and_original_capture_authority() {
+fn scan_consumers_keep_continuous_developed_values() {
     let file = source(Order::Little, profile_tags(Order::Little), false, false);
     let mut scan = antitone::scan::Scan::open(file.path(), Some([1.; 4])).unwrap();
     let (width, height, preview) = scan.preview_source(64).unwrap();
@@ -368,11 +368,10 @@ fn scan_consumers_keep_continuous_values_and_original_capture_authority() {
         .unwrap()
         .unwrap();
     assert!(!samples.pixels.is_empty());
-    assert_eq!(samples.rejected_capture, 0);
 }
 
 #[test]
-fn resampled_picks_still_reject_clipped_original_cfa_support() {
+fn resampled_measurements_accept_finite_developed_samples_from_clipped_sensor_sites() {
     let file = source(Order::Little, profile_tags(Order::Little), false, false);
     let mut bytes = fs::read(file.path()).unwrap();
     let count = u16::from_le_bytes(bytes[8..10].try_into().unwrap()) as usize;
@@ -391,31 +390,11 @@ fn resampled_picks_still_reject_clipped_original_cfa_support() {
         width: 1,
         height: 1,
     };
-    let diagnostics = scan.source().capture_eligibility(point).unwrap();
-    assert!(diagnostics.at_white);
-    assert!(
-        scan.source()
-            .region_sensor_diagnostics(point)
-            .unwrap()
-            .at_white
-            .iter()
-            .all(|&n| n == 0),
-        "detailed diagnostics use original coordinates, not corrected eligibility support"
-    );
-    let readers: Vec<_> = (0..4)
-        .map(|_| {
-            let source = scan.source().clone();
-            std::thread::spawn(move || source.capture_eligibility(point).unwrap())
-        })
-        .collect();
-    for reader in readers {
-        assert_eq!(reader.join().unwrap(), diagnostics);
-    }
+    let diagnostics = scan.source().sensor_diagnostics().unwrap();
+    assert!(diagnostics.at_white.iter().sum::<u64>() > 0);
     assert!(scan.pixel(10, 20).unwrap().max_element() < 1.);
-    assert!(
-        scan.reference(point).is_err(),
-        "interpolating away saturation must not make the capture eligible"
-    );
+    let measured = scan.reference(point).unwrap();
+    assert_eq!(measured, scan.pixel(10, 20).unwrap());
     let samples = scan
         .analysis_samples(
             antitone::raw::Rect {
@@ -429,8 +408,9 @@ fn resampled_picks_still_reject_clipped_original_cfa_support() {
         )
         .unwrap()
         .unwrap();
-    assert!(samples.pixels.is_empty());
-    assert_eq!(samples.rejected_capture, 1);
+    assert_eq!(samples.attempted, 1);
+    assert_eq!(samples.pixels, vec![measured]);
+    assert_eq!(samples.rejected_floor, 0);
 }
 
 #[cfg(feature = "project")]

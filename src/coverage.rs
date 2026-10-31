@@ -224,25 +224,6 @@ impl Coverage {
             })
         }))
     }
-
-    /// Native diagnostics inspect exactly the cells contributing to the developed-pixel mean.
-    pub fn row_spans(
-        self,
-        active: SourceRegion,
-    ) -> Result<impl Iterator<Item = SourceRegion>, Error> {
-        let bounds = self.bounds(active)?;
-        Ok((bounds.y..bounds.y + bounds.height).filter_map(move |y| {
-            let mut xs = (bounds.x..bounds.x + bounds.width).filter(|&x| self.weight([x, y]) > 0.);
-            let first = xs.next()?;
-            let last = xs.next_back().unwrap_or(first);
-            Some(SourceRegion {
-                x: first,
-                y,
-                width: last - first + 1,
-                height: 1,
-            })
-        }))
-    }
 }
 
 fn polygon_area(points: &[[f64; 2]]) -> f64 {
@@ -266,7 +247,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn diagnostic_spans_exclude_bad_bounding_box_corners_and_include_weighted_boundaries() {
+    fn weighted_measurements_exclude_bounding_box_corners_and_include_partial_cells() {
         let active = SourceRegion {
             x: 10,
             y: 20,
@@ -277,21 +258,9 @@ mod tests {
             Coverage::new([[12., 20.], [14., 22.], [12., 24.], [10., 22.]].map(SourcePoint))
                 .unwrap();
         let bad = [[10, 20], [13, 20], [10, 23], [13, 23]];
-        let diagnosed: Vec<_> = coverage
-            .row_spans(active)
-            .unwrap()
-            .flat_map(|r| (r.x..r.x + r.width).map(move |x| [x, r.y]))
-            .collect();
-        assert!(bad.iter().all(|p| !diagnosed.contains(p)));
-        assert!(diagnosed.contains(&[11, 20])); // Half-covered developed cell, not just its centre.
-        assert_eq!(
-            diagnosed,
-            coverage
-                .pixels(active)
-                .unwrap()
-                .map(|(p, _)| p)
-                .collect::<Vec<_>>()
-        );
+        let selected: Vec<_> = coverage.pixels(active).unwrap().map(|(p, _)| p).collect();
+        assert!(bad.iter().all(|p| !selected.contains(p)));
+        assert!(selected.contains(&[11, 20])); // Half-covered cell, not just its centre.
         let mean =
             crate::sampling::weighted_mean_iter(coverage.pixels(active).unwrap().map(|(p, w)| {
                 Ok((
@@ -327,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn diamond_coverage_has_independent_fractional_weights_and_matching_spans() {
+    fn diamond_coverage_has_independent_fractional_weights() {
         let active = SourceRegion {
             x: 10,
             y: 20,
@@ -359,36 +328,6 @@ mod tests {
                 .map(|(_, w)| w)
                 .sum::<f64>(),
             8.
-        );
-        let spans: Vec<_> = coverage.row_spans(active).unwrap().collect();
-        assert_eq!(
-            spans,
-            vec![
-                SourceRegion {
-                    x: 11,
-                    y: 20,
-                    width: 2,
-                    height: 1
-                },
-                SourceRegion {
-                    x: 10,
-                    y: 21,
-                    width: 4,
-                    height: 1
-                },
-                SourceRegion {
-                    x: 10,
-                    y: 22,
-                    width: 4,
-                    height: 1
-                },
-                SourceRegion {
-                    x: 11,
-                    y: 23,
-                    width: 2,
-                    height: 1
-                }
-            ]
         );
         assert!(coverage.exact_rectangle(active).is_none());
         let rectangle = Coverage::rectangle(active);

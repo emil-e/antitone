@@ -46,8 +46,6 @@ pub(crate) fn measurement_codes(pixel: [f32; 4], code_scale: f64) -> Result<[u16
 pub struct AnalysisSamples {
     pub pixels: Vec<DVec3>,
     pub attempted: usize,
-    pub rejected_capture: usize,
-    pub rejected_development: usize,
     pub rejected_floor: usize,
 }
 
@@ -159,10 +157,6 @@ impl DevelopedSource {
     /// Detailed original-sensor statistics; `area` is in unwarped native coordinates.
     pub fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics> {
         self.raw.region_sensor_diagnostics(area)
-    }
-
-    pub fn capture_eligibility(&self, area: Rect) -> Result<crate::raw::CaptureFlags> {
-        self.raw.capture_eligibility(area)
     }
 }
 
@@ -449,7 +443,6 @@ impl Scan {
                 "flat-field support must contain the image-centre patch",
             ));
         }
-        self.checked_region(region)?;
         let maximum = region.width.max(region.height) as f64;
         let size = [
             (region.width as f64 / maximum * 256.).round() as usize,
@@ -539,28 +532,8 @@ impl Scan {
         Ok(camera)
     }
 
-    fn checked_region(&mut self, region: Rect) -> Result<crate::raw::CaptureFlags> {
-        let diagnostics = self.source.capture_eligibility(region)?;
-        if diagnostics.at_white {
-            return Err(Error::UnusableSample(
-                "patch includes captured or native-developed white clipping",
-            ));
-        }
-        if diagnostics.below_black {
-            return Err(Error::UnusableSample(
-                "patch contains sensor values at/below black",
-            ));
-        }
-        if diagnostics.repeated_border || diagnostics.processing_limit {
-            return Err(Error::UnusableSample(
-                "patch depends on repeated borders or intermediate development clipping",
-            ));
-        }
-        Ok(diagnostics)
-    }
-
-    /// Bounded original-pixel centres, checked in local 8×8 capture/development
-    /// footprints. The rectangle selects eligibility, not an output crop or film mask.
+    /// Bounded original-pixel centres, checked in local 8×8 numerical footprints.
+    /// The rectangle selects sampling support, not an output crop or film mask.
     pub fn analysis_samples(
         &mut self,
         area: Rect,
@@ -570,7 +543,7 @@ impl Scan {
         self.analysis_samples_in(area, budget, |_| true, cancelled)
     }
 
-    /// Select complete spatial footprints before checking capture and numerical eligibility.
+    /// Select complete spatial footprints before checking numerical eligibility.
     /// The grid remains canonical to `area`; support never resizes/rephases it.
     pub fn analysis_samples_in(
         &mut self,
@@ -608,7 +581,7 @@ impl Scan {
     }
 
     pub fn reference(&mut self, region: Rect) -> Result<DVec3> {
-        self.checked_region(region)?;
+        self.validate_area(region)?;
         let mean = if self.flat_field().is_some() {
             let mut sum = DVec3::ZERO;
             for y in region.y..region.y + region.height {
@@ -631,7 +604,7 @@ impl Scan {
     }
 
     fn patch(&mut self, region: Rect) -> Result<Vec<DVec3>> {
-        self.checked_region(region)?;
+        self.validate_area(region)?;
         let mut pixels = Vec::with_capacity(region.width as usize * region.height as usize);
         for y in region.y..region.y + region.height {
             for x in region.x..region.x + region.width {
@@ -658,18 +631,10 @@ impl Scan {
         sampling::roll_neutral(negative, &self.patch(region)?, matrix)
     }
 
-    pub(crate) fn checked_coverage(&mut self, coverage: Coverage) -> Result<()> {
-        for span in coverage.row_spans(self.area)? {
-            self.checked_region(span)?;
-        }
-        Ok(())
-    }
-
     pub fn reference_coverage(&mut self, coverage: Coverage) -> Result<DVec3> {
         if let Some(region) = coverage.exact_rectangle(self.area) {
             return self.reference(region);
         }
-        self.checked_coverage(coverage)?;
         let mean = sampling::weighted_mean_iter(
             coverage
                 .pixels(self.area)?
@@ -684,7 +649,6 @@ impl Scan {
     }
 
     fn patch_coverage(&mut self, coverage: Coverage) -> Result<Vec<(DVec3, f64)>> {
-        self.checked_coverage(coverage)?;
         coverage
             .pixels(self.area)?
             .map(|([x, y], weight)| {
@@ -726,7 +690,6 @@ impl Scan {
         upstream: crate::adjustment_layers::AdjustmentLayerSnapshot,
         layer: Option<crate::adjustment_layers::AdjustmentLayer>,
     ) -> Result<Balance> {
-        self.checked_coverage(coverage)?;
         let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
             self.refined_input(input)?,
             roll,

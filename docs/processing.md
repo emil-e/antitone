@@ -32,7 +32,7 @@ Negative inverts before the camera-to-working-space matrix: a matrix mixes chann
 
 ### Direct DNG development
 
-The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable source supplies all consumers: the original pre-opcode CFA remains capture authority, with its white/black/repeated-border flags propagated through repairs and warps. [Saved SDK compatibility](projects.md#compatibility-is-about-the-processing-basis) is separate from source-file freshness.
+The SDK backend defines the current bounded integer-Bayer domain: header and opcode inspection establish geometry, basis and precision without decoding every offscreen sensor, and required unsupported instructions reject — there is no uncorrected LibRaw fallback. One immutable developed camera-RGB source supplies all consumers; original pre-opcode CFA is retained separately for sensor diagnostics. [Saved SDK compatibility](projects.md#compatibility-is-about-the-processing-basis) is separate from source-file freshness.
 
 ### Embedded Sony lens correction
 
@@ -40,7 +40,7 @@ Sony RAW development automatically applies available embedded vignetting, distor
 
 The current binding reconstructs one conservative valid rectangle at unchanged pixel pitch from the active image geometry; distortion and red/blue CA scales combine at the radial knots before interpolation. Shading multiplies each original developed sample **before** bilinear reconstruction (`2^(0.5 - 2^(v/8192 - 1))` at the knots, interpolated then reciprocated) — this is the [darktable 5.6.2 v2](https://github.com/darktable-org/darktable/blob/release-5.6.2/src/iop/lens.cc) interpretation; [RawTherapee 5.12](https://github.com/RawTherapee/RawTherapee/blob/5.12/rtengine/lensmetadata.cc) instead interpolates reciprocal gains, agreeing at knots but not between them. Neither decoder inspection nor these public interpretations proves exact vendor output.
 
-Corrected originals retain continuous f32 camera samples (fractions and values above native white included) and release LibRaw's redundant RGB16 development; absent or all-zero profiles keep the native integer source. Corrected clipping flags let picks, Analyze and flat-field estimation check eligibility without tracing geometry. [The source-storage study](diagnostics.md#sony-source-storage-precision) distinguishes rounding differences from headroom loss. All consumers use the corrected developed raster rather than applying their own lens warp: [flat references](flat-field.md) require matching lens development, and [projects](projects.md#compatibility-is-about-the-processing-basis) retain its identity.
+Corrected originals retain continuous f32 camera samples (fractions and values above native white included) and release LibRaw's redundant RGB16 development; absent or all-zero profiles keep the native integer source. [The source-storage study](diagnostics.md#sony-source-storage-precision) distinguishes rounding differences from headroom loss. All consumers use the corrected developed raster rather than applying their own lens warp: [flat references](flat-field.md) require matching lens development, and [projects](projects.md#compatibility-is-about-the-processing-basis) retain its identity.
 
 ## Digital starting brightness
 

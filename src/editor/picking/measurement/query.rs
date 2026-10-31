@@ -40,7 +40,7 @@ impl<'a> Samples<'a> {
             return Err(Error::Cancelled);
         }
 
-        scan.checked_coverage(coverage)?;
+        coverage.bounds(scan.area)?;
 
         let renderer = services.renderers.get(&services.device, &services.queue)?;
         let source = evaluation::camera_source(scan)?;

@@ -15,7 +15,6 @@ struct AntitoneDngOptions {
 struct AntitoneDngView {
     const float *rgb;
     const uint16_t *original;
-    const uint8_t *flags;
     const uint8_t *program;
     size_t program_size;
     uint32_t width, height, raw_width, raw_height;
@@ -27,8 +26,8 @@ struct AntitoneDngView {
     uint64_t retained_bytes;
     // Wall timings are diagnostic only and do not participate in interpretation identity.
     double sdk_area_seconds, warp_sdk_seconds;
-    double bad_pixel_mask_seconds, bilinear_mask_seconds, warp_mask_seconds, total_seconds;
-    uint32_t sdk_workers, mask_workers;
+    double total_seconds;
+    uint32_t sdk_workers;
     uint64_t warp_tile_scratch_bytes;
 };
 

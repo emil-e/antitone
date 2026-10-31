@@ -83,18 +83,6 @@ public:
             std::rethrow_exception(failure);
         }
     }
-
-    template <typename Function> uint32_t rows(uint32_t width, uint32_t height, Function function) {
-        const uint64_t work = uint64_t(width) * height;
-        const auto count = uint32_t(std::min<uint64_t>(
-            std::min(budget, height), std::max<uint64_t>(1, (work + 65535) / 65536)));
-        run(count, [&](uint32_t index) {
-            const auto first = uint32_t(uint64_t(height) * index / count);
-            const auto end = uint32_t(uint64_t(height) * (index + 1) / count);
-            function(first, end);
-        });
-        return count;
-    }
 };
 
 } // namespace antitone_dng

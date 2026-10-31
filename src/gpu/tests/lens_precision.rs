@@ -14,7 +14,7 @@ use api::{
     gpu::{GpuFlatField, ProcessingParameters, ProcessingSource, SourceGeometry},
     lens::EmbeddedLensGeometry,
     processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
-    raw::{RawFile, Rect},
+    raw::RawFile,
     rendering::{CpuRenderer, OutputTarget},
     scan::Scan,
 };
@@ -72,7 +72,7 @@ fn sample(
                     ((2 * y + 1) as u64 * dimensions[1] as u64 / (2 * size[1]) as u64) as u32,
                 ]
             };
-            let (pixel, flags) = if let Some(geometry) = geometry {
+            let pixel = if let Some(geometry) = geometry {
                 let positions = geometry.sample_positions(position[0], position[1]).unwrap();
                 let mut pixel = [0.; 4];
                 for (c, p) in positions.iter().enumerate() {
@@ -89,36 +89,14 @@ fn sample(
                     pixel[c] = ((p00 * (1. - u) + p10 * u) * (1. - v)
                         + (p01 * (1. - u) + p11 * u) * v) as f32;
                 }
-                // Diagnostic-only borrowed warps have no published mask. Use a conservative
-                // native bounding support to exclude questionable capture data from the study.
-                let left =
-                    (positions.iter().map(|p| p.x.floor() as u32).min().unwrap()).saturating_sub(5);
-                let top =
-                    (positions.iter().map(|p| p.y.floor() as u32).min().unwrap()).saturating_sub(5);
-                let right = (positions.iter().map(|p| p.x.ceil() as u32).max().unwrap() + 6)
-                    .min(image.width);
-                let bottom = (positions.iter().map(|p| p.y.ceil() as u32).max().unwrap() + 6)
-                    .min(image.height);
-                (
-                    pixel,
-                    scan.source()
-                        .capture_eligibility(Rect::from([left, top, right - left, bottom - top]))
-                        .unwrap(),
-                )
+                pixel
             } else {
-                (
-                    image.pixel_samples(position[0], position[1]).unwrap(),
-                    scan.source()
-                        .capture_eligibility(Rect::from([position[0], position[1], 1, 1]))
-                        .unwrap(),
-                )
+                image.pixel_samples(position[0], position[1]).unwrap()
             };
             eligible.push(
-                !flags.at_white
-                    && !flags.below_black
-                    && pixel[..3]
-                        .iter()
-                        .all(|&v| v as f64 > scan.effective_floor() * 65535.),
+                pixel[..3]
+                    .iter()
+                    .all(|&v| v as f64 > scan.effective_floor() * 65535.),
             );
             codes.push(pixel);
         }

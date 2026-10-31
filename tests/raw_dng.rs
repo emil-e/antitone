@@ -359,7 +359,7 @@ fn authored_raw_keeps_the_measured_anchor_flooring_and_libraw_matrix_gates() {
 
 #[cfg(any(feature = "export", feature = "project"))]
 #[test]
-fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_source() {
+fn authored_measurements_accept_sensor_white_but_reject_unusable_black_without_mutation() {
     let original = fs::read(fixture()).unwrap();
     let ifd = u32::from_le_bytes(original[4..8].try_into().unwrap()) as usize;
     let entries = u16::from_le_bytes(original[ifd..ifd + 2].try_into().unwrap()) as usize;
@@ -369,12 +369,6 @@ fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_sourc
         .unwrap();
     let offset = u32::from_le_bytes(original[strip + 8..strip + 12].try_into().unwrap()) as usize;
     let directory = tempfile::tempdir().unwrap();
-    let patch = Rect {
-        x: 16,
-        y: 16,
-        width: 32,
-        height: 32,
-    };
     for code in [4095u16, 64u16] {
         let mut bytes = original.clone();
         for y in 16..48 {
@@ -387,15 +381,17 @@ fn authored_raw_rejects_sensor_white_and_black_references_without_mutating_sourc
         fs::write(&path, &bytes).unwrap();
         let mut scan = Scan::open(&path, None).unwrap();
         let before = scan.preview_source(60).unwrap();
-        let capture = scan.source().capture_eligibility(patch).unwrap();
-        assert_eq!(
-            (capture.at_white, capture.below_black),
-            (code == 4095, code == 64)
-        );
-        assert!(matches!(
-            scan.reference(patch),
-            Err(antitone::Error::UnusableSample(_))
-        ));
+        let inner = Rect::from([24, 24, 16, 16]);
+        let measured = scan.reference(inner);
+        if code == 4095 {
+            assert!((measured.unwrap() - DVec3::ONE).abs().max_element() <= 2. / 65535.);
+            let samples = scan.analysis_samples(inner, 1, || false).unwrap().unwrap();
+            assert_eq!(samples.attempted, 1);
+            assert_eq!(samples.pixels.len(), 1);
+            assert!((samples.pixels[0] - DVec3::ONE).abs().max_element() <= 2. / 65535.);
+        } else {
+            assert!(matches!(measured, Err(antitone::Error::UnusableSample(_))));
+        }
         assert_eq!(scan.preview_source(60).unwrap(), before);
         assert_eq!(fs::read(path).unwrap(), bytes);
     }

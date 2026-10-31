@@ -11,10 +11,24 @@ use glam::DVec3;
 use std::{fs, path::PathBuf};
 
 #[test]
-fn authored_roll_samples_real_capture_footprints_and_estimates_a_shared_baseline() {
+fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_support() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw");
     let paths = [root.join("roll-0.dng"), root.join("roll-1.dng")];
     let originals = paths.each_ref().map(|path| fs::read(path).unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let clipped = directory.path().join("roll-0.dng");
+    let mut bytes = originals[0].clone();
+    // The authored uncompressed strip ends the file. Add a small saturated patch
+    // outside the picture: the film-base quantile band should exclude this bright tail.
+    let offset = bytes.len() - 512 * 512 * 2;
+    for y in 16..24 {
+        for x in 16..24 {
+            let at = offset + (y * 512 + x) * 2;
+            bytes[at..at + 2].copy_from_slice(&4095u16.to_le_bytes());
+        }
+    }
+    fs::write(&clipped, &bytes).unwrap();
+    let sources = [clipped, paths[1].clone()];
     let film = Rect {
         x: 8,
         y: 8,
@@ -29,7 +43,7 @@ fn authored_roll_samples_real_capture_footprints_and_estimates_a_shared_baseline
     };
     let mut owned = Vec::new();
     let mut matrix = None;
-    for path in &paths {
+    for (index, path) in sources.iter().enumerate() {
         let mut scan = Scan::open(path, None).unwrap();
         assert_eq!(scan.fixed_wb, [1.; 4]);
         assert_eq!(scan.area, film);
@@ -45,11 +59,12 @@ fn authored_roll_samples_real_capture_footprints_and_estimates_a_shared_baseline
             .analysis_samples(picture, MAX_SAMPLES_PER_FRAME, || false)
             .unwrap()
             .unwrap();
+        if index == 0 {
+            assert!(film_samples.pixels.iter().any(|p| p.max_element() >= 1.));
+        }
         for (samples, count) in [(&film_samples, 3844), (&picture_samples, 1600)] {
             assert_eq!(samples.attempted, count);
             assert_eq!(samples.pixels.len(), count);
-            assert_eq!(samples.rejected_capture, 0);
-            assert_eq!(samples.rejected_development, 0);
             assert_eq!(samples.rejected_floor, 0);
         }
         assert!(
@@ -124,7 +139,7 @@ fn authored_roll_samples_real_capture_footprints_and_estimates_a_shared_baseline
 }
 
 #[test]
-fn spatial_support_precedes_unchanged_capture_gates_without_rephasing_the_grid() {
+fn spatial_support_precedes_numerical_checks_without_rephasing_the_grid() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     let original_bytes = fs::read(&fixture).unwrap();
     let mut bytes = original_bytes.clone();
@@ -167,22 +182,15 @@ fn spatial_support_precedes_unchanged_capture_gates_without_rephasing_the_grid()
         .unwrap();
     assert_eq!(unrestricted.pixels, original.pixels);
     assert_eq!(
-        (
-            unrestricted.attempted,
-            unrestricted.rejected_capture,
-            unrestricted.rejected_development,
-            unrestricted.rejected_floor
-        ),
-        (
-            original.attempted,
-            original.rejected_capture,
-            original.rejected_development,
-            original.rejected_floor
-        )
+        (unrestricted.attempted, unrestricted.rejected_floor),
+        (original.attempted, original.rejected_floor)
     );
-    assert!(
-        original.rejected_capture + original.rejected_development + original.rejected_floor > 0
+    assert!(original.rejected_floor > 0);
+    assert_eq!(
+        original.attempted,
+        original.pixels.len() + original.rejected_floor
     );
+    assert!(original.pixels.iter().any(|p| p.max_element() >= 1.));
     let mut seen = vec![];
     let excluded = scan
         .analysis_samples_in(
@@ -197,15 +205,7 @@ fn spatial_support_precedes_unchanged_capture_gates_without_rephasing_the_grid()
         .unwrap()
         .unwrap();
     assert_eq!(seen, footprints);
-    assert_eq!(
-        (
-            excluded.attempted,
-            excluded.rejected_capture,
-            excluded.rejected_development,
-            excluded.rejected_floor
-        ),
-        (0, 0, 0, 0)
-    );
+    assert_eq!((excluded.attempted, excluded.rejected_floor), (0, 0));
     assert!(excluded.pixels.is_empty());
     let mut subset = vec![];
     let half = scan
@@ -228,7 +228,7 @@ fn spatial_support_precedes_unchanged_capture_gates_without_rephasing_the_grid()
             .filter(|r| r.x + r.width <= area.x + area.width / 2)
             .count()
     );
-    assert!(half.rejected_capture + half.rejected_development + half.rejected_floor > 0);
+    assert!(half.rejected_floor > 0);
     assert_eq!(fs::read(path).unwrap(), bytes);
     assert_eq!(fs::read(fixture).unwrap(), original_bytes);
 }

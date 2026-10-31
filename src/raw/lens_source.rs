@@ -1,15 +1,13 @@
-use super::eligibility::EligibilityMask;
 use crate::{Error, lens::EmbeddedLensGeometry};
 
 pub(super) struct CorrectedImage {
     pub pixels: Vec<[f32; 3]>,
     pub size: [u32; 2],
-    pub eligibility: EligibilityMask,
 }
 
 impl CorrectedImage {
     pub(super) fn retained_bytes(&self) -> usize {
-        self.pixels.capacity() * size_of::<[f32; 3]>() + self.eligibility.retained_bytes()
+        self.pixels.capacity() * size_of::<[f32; 3]>()
     }
 }
 
@@ -17,14 +15,8 @@ pub(super) fn reconstruct(
     input: &[u16],
     input_size: [u32; 2],
     geometry: &EmbeddedLensGeometry,
-    support: &EligibilityMask,
     threads: usize,
 ) -> Result<CorrectedImage, Error> {
-    if support.size() != input_size {
-        return Err(Error::Raw(
-            "capture support differs from native image".into(),
-        ));
-    }
     let size = geometry.size();
     let count = (size[0] as usize)
         .checked_mul(size[1] as usize)
@@ -35,34 +27,23 @@ pub(super) fn reconstruct(
         .try_reserve_exact(count)
         .map_err(|_| Error::Raw("cannot allocate the corrected image".into()))?;
     pixels.resize(count, [0.; 3]);
-    let mut eligibility = EligibilityMask::new(size)?;
-    let row_words = eligibility.row_words();
     let rows = (size[1] as usize).div_ceil(threads.clamp(1, 8));
     std::thread::scope(|scope| -> Result<(), Error> {
         let mut jobs = Vec::new();
-        for (chunk, (output, flags)) in pixels
-            .chunks_mut(rows * size[0] as usize)
-            .zip(eligibility.words_mut().chunks_mut(rows * row_words))
-            .enumerate()
-        {
+        for (chunk, output) in pixels.chunks_mut(rows * size[0] as usize).enumerate() {
             jobs.push(scope.spawn(move || -> Result<(), Error> {
                 let start_y = chunk * rows;
                 for (i, pixel) in output.iter_mut().enumerate() {
                     let x = (i % size[0] as usize) as u32;
-                    let local_y = i / size[0] as usize;
-                    let y = (start_y + local_y) as u32;
-                    let mut capture = 0;
+                    let y = (start_y + i / size[0] as usize) as u32;
                     for (c, point) in geometry.sample_positions(x, y)?.into_iter().enumerate() {
                         let left = point.x.floor() as u32;
                         let top = point.y.floor() as u32;
                         let right = point.x.ceil() as u32;
                         let bottom = point.y.ceil() as u32;
-                        let mut sample = |x: u32, y: u32| {
+                        let sample = |x: u32, y: u32| {
                             let value =
                                 input[(y as usize * input_size[0] as usize + x as usize) * 4 + c];
-                            // Native WB/scaling can clip below the original CFA white threshold.
-                            // Record that loss before shading brightens or interpolation hides it.
-                            capture |= u8::from(value == u16::MAX);
                             f64::from(value) * geometry.source_gain(x, y)
                         };
                         let u = point.x - left as f64;
@@ -70,14 +51,7 @@ pub(super) fn reconstruct(
                         let a = sample(left, top) * (1. - u) + sample(right, top) * u;
                         let b = sample(left, bottom) * (1. - u) + sample(right, bottom) * u;
                         pixel[c] = (a * (1. - v) + b * v) as f32;
-                        // ceil equals floor at an integer coordinate: zero-weight neighbours add no flags.
-                        capture |= support.at(left, top)
-                            | support.at(right, top)
-                            | support.at(left, bottom)
-                            | support.at(right, bottom);
                     }
-                    flags[local_y * row_words + x as usize / 32] |=
-                        u64::from(capture) << (2 * (x % 32));
                 }
                 Ok(())
             }));
@@ -88,37 +62,17 @@ pub(super) fn reconstruct(
         }
         Ok(())
     })?;
-    Ok(CorrectedImage {
-        pixels,
-        size,
-        eligibility,
-    })
+    Ok(CorrectedImage { pixels, size })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        lens::EmbeddedLensProfile,
-        raw::{CaptureFlags, Rect},
-    };
+    use crate::{lens::EmbeddedLensProfile, raw::Rect};
     use glam::DVec2;
 
-    fn source_mask(size: [u32; 2], sites: &[[u32; 3]]) -> EligibilityMask {
-        let mut mask = EligibilityMask::new(size).unwrap();
-        let stride = mask.row_words();
-        for &[x, y, flags] in sites {
-            mask.words_mut()[y as usize * stride + x as usize / 32] |=
-                u64::from(flags) << (2 * (x % 32));
-        }
-        mask
-    }
-
     #[test]
-    fn precomputed_flags_match_the_original_channel_support_union_and_ahd_halo() {
-        let size = [64, 64];
-        let raw = source_mask(size, &[[5, 6, 1], [27, 35, 2], [48, 39, 3]]);
-        let support = raw.ahd_support().unwrap();
+    fn reconstruction_preserves_constant_channels_across_geometry_and_worker_partitions() {
         let profile = EmbeddedLensProfile::from_knots(
             &[1.0625, 1.0625],
             &[DVec2::new(1. + 16384. / 2097152., 1. - 32768. / 2097152.); 2],
@@ -126,43 +80,20 @@ mod tests {
         )
         .unwrap();
         let geometry = EmbeddedLensGeometry::new(profile, Rect::from([7, 11, 40, 28])).unwrap();
-        let image = reconstruct(&vec![100; 64 * 64 * 4], size, &geometry, &support, 8).unwrap();
-        let mut region_flags = 0;
-        for y in 0..image.size[1] {
-            for x in 0..image.size[0] {
-                let mut expected = 0;
-                for p in geometry.sample_positions(x, y).unwrap() {
-                    for yy in
-                        (p.y.floor() as u32).saturating_sub(5)..(p.y.ceil() as u32 + 6).min(size[1])
-                    {
-                        for xx in (p.x.floor() as u32).saturating_sub(5)
-                            ..(p.x.ceil() as u32 + 6).min(size[0])
-                        {
-                            expected |= raw.at(xx, yy);
-                        }
-                    }
-                }
-                assert_eq!(image.eligibility.at(x, y), expected);
-                region_flags |= expected;
-            }
+        let input: Vec<_> = (0..64 * 64).flat_map(|_| [100, 200, 300, 9999]).collect();
+        for threads in [1, 2, 8] {
+            let image = reconstruct(&input, [64, 64], &geometry, threads).unwrap();
+            assert_eq!(image.size, geometry.size());
+            assert_eq!(
+                image.pixels.len(),
+                image.size[0] as usize * image.size[1] as usize
+            );
+            assert!(image.pixels.iter().all(|&p| p == [100., 200., 300.]));
         }
-        assert_eq!(
-            image
-                .eligibility
-                .flags(Rect::from([0, 0, image.size[0], image.size[1]]))
-                .unwrap(),
-            CaptureFlags {
-                at_white: region_flags & 1 != 0,
-                below_black: region_flags & 2 != 0,
-                ..CaptureFlags::default()
-            }
-        );
     }
 
     #[test]
-    fn shading_headroom_is_not_clipping_but_native_clipping_survives_attenuation() {
-        let size = [64, 64];
-        let support = source_mask(size, &[]);
+    fn shading_preserves_headroom_and_scales_native_white_without_clamping() {
         let geometry = |attenuation: f64| {
             EmbeddedLensGeometry::new(
                 EmbeddedLensProfile::from_knots(&[], &[], &[attenuation; 2]).unwrap(),
@@ -172,33 +103,56 @@ mod tests {
         };
         let image = reconstruct(
             &vec![50000; 64 * 64 * 4],
-            size,
+            [64, 64],
             &geometry((-0.5f64).exp2()),
-            &support,
             8,
         )
         .unwrap();
-        assert!(image.pixels.iter().all(|p| p[0] > 65535.));
-        assert_eq!(image.eligibility.at(5, 5), 0);
-        let mut input = vec![10000; 64 * 64 * 4];
-        input[(5 * 64 + 5) * 4] = u16::MAX;
-        let image = reconstruct(&input, size, &geometry((0.25f64).exp2()), &support, 8).unwrap();
-        assert!(image.pixels[5 * 64 + 5][0] < 65535.);
-        assert_eq!(image.eligibility.at(5, 5), 1);
-        assert_eq!(image.eligibility.at(4, 5), 0);
+        let expected = (50000. * 2f64.sqrt()) as f32;
+        assert!(
+            image
+                .pixels
+                .iter()
+                .flatten()
+                .all(|&v| (v - expected).abs() < 0.01)
+        );
+
+        let image = reconstruct(
+            &vec![u16::MAX; 64 * 64 * 4],
+            [64, 64],
+            &geometry((0.25f64).exp2()),
+            8,
+        )
+        .unwrap();
+        let expected = (65535. / 2f64.powf(0.25)) as f32;
+        assert!(
+            image
+                .pixels
+                .iter()
+                .flatten()
+                .all(|&v| (v - expected).abs() < 0.01)
+        );
     }
 
     #[test]
-    fn zero_weight_neighbours_do_not_invalidate_an_identity_sample() {
-        let size = [64, 64];
-        let support = source_mask(size, &[[21, 12, 1]]).ahd_support().unwrap();
+    fn identity_reconstruction_keeps_isolated_native_white_at_its_original_site() {
         let geometry = EmbeddedLensGeometry::new(
             EmbeddedLensProfile::from_knots(&[1., 1.], &[], &[]).unwrap(),
-            Rect::from([0, 0, 40, 28]),
+            Rect::from([0, 0, 64, 64]),
         )
         .unwrap();
-        let image = reconstruct(&vec![100; 64 * 64 * 4], size, &geometry, &support, 2).unwrap();
-        assert_eq!(image.eligibility.at(15, 12), 0);
-        assert_eq!(image.eligibility.at(16, 12), 1);
+        let mut input = vec![10000; 64 * 64 * 4];
+        input[(5 * 64 + 5) * 4] = u16::MAX;
+        let image = reconstruct(&input, [64, 64], &geometry, 2).unwrap();
+        for y in 0..64 {
+            for x in 0..64 {
+                let expected = if [x, y] == [5, 5] {
+                    [65535., 10000., 10000.]
+                } else {
+                    [10000.; 3]
+                };
+                assert_eq!(image.pixels[y * 64 + x], expected);
+            }
+        }
     }
 }

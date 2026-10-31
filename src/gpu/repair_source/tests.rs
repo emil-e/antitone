@@ -180,16 +180,14 @@ fn repair_inputs_ignore_unrepresentable_masked_values_but_reject_required_ones()
 }
 
 #[test]
-fn repair_inputs_do_not_apply_measurement_capture_rejection() {
+fn repair_inputs_accept_developed_zero_and_native_white() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([0, 65535, 600]);
     let scan = Scan::open(file.path(), None).unwrap();
     let region = SourceRegion::from([scan.area.x + 16, scan.area.y + 16, 8, 8]);
-    let flags = scan.source().capture_eligibility(region).unwrap();
-    assert!(
-        flags.at_white && flags.below_black,
-        "the fixture must be unsuitable for calibration picks"
-    );
+    let camera = scan.pixel(region.x, region.y).unwrap();
+    assert_eq!(camera.x, 0.);
+    assert_eq!(camera.y, 1.);
     let gate = SubmissionGate::default();
     let mut source = Source::new(
         &device,

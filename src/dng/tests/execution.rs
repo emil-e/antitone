@@ -23,29 +23,9 @@ fn large_options() -> Options {
 }
 
 #[test]
-fn execution_budgets_preserve_every_camera_bit_capture_state_and_metadata_across_partial_tiles() {
+fn execution_budgets_preserve_every_camera_bit_and_metadata_across_partial_tiles() {
     let file = large_fixture().write();
     let baseline = Source::develop(file.path(), large_options(), &Cancellation::default()).unwrap();
-    let [width, height] = baseline.dimensions();
-    let mut coverage = [false; 5];
-    for y in 0..height {
-        for x in 0..width {
-            let state = baseline.capture_state(x, y).unwrap();
-            for (seen, present) in coverage.iter_mut().zip([
-                state.original_white(),
-                state.original_black(),
-                state.repeated_border(),
-                state.processing_limit(),
-                state.eligible(),
-            ]) {
-                *seen |= present;
-            }
-        }
-    }
-    assert!(
-        coverage.into_iter().all(|seen| seen),
-        "fixture must exercise all eligibility reasons and usable data: {coverage:?}"
-    );
     for threads in [2, 4, 8] {
         let actual = Source::develop_with_threads(
             file.path(),
@@ -68,43 +48,39 @@ fn execution_budgets_preserve_every_camera_bit_capture_state_and_metadata_across
                     .flat_map(|rgb| rgb.map(f32::to_bits))),
             "camera bits differ at execution budget {threads}"
         );
-        for y in 0..height {
-            for x in 0..width {
-                assert_eq!(
-                    actual.capture_state(x, y),
-                    baseline.capture_state(x, y),
-                    "({x},{y}), budget {threads}"
-                );
-            }
-        }
         let timing = actual.timings();
         // Ensure correspondence actually covers parallel execution, not a small-task serial fallback.
         assert!(timing.sdk_workers > 1 && timing.sdk_workers <= threads);
-        assert!(timing.mask_workers > 1 && timing.mask_workers <= threads);
         assert!(timing.warp_tile_scratch_bytes <= 64 * 1024 * 1024);
     }
 }
 
 #[test]
-fn parallel_capture_failure_keeps_its_error_kind_and_releases_every_worker() {
-    let mut fixture = large_fixture();
-    // This large expansion leaves some source rectangles wholly outside the image,
-    // beyond the adapter's admitted dependency domain, after SDK warp execution.
+fn large_warps_use_sdk_border_extension_at_each_execution_budget() {
+    let mut fixture = Fixture {
+        side: 1031,
+        ..Default::default()
+    };
     fixture.lists[2].push(Opcode::warp(&[[1.05, 0., 0., 0., 0., 0.]], [0.5, 0.5]));
     let file = fixture.write();
     for threads in [1, 8] {
-        assert!(matches!(
-            Source::develop_with_threads(
-                file.path(),
-                large_options(),
-                &Cancellation::default(),
-                threads
-            ),
-            Err(Error::Rejected(_))
-        ));
+        let source = Source::develop_with_threads(
+            file.path(),
+            large_options(),
+            &Cancellation::default(),
+            threads,
+        )
+        .unwrap();
+        // Border extension must preserve this spatially constant camera image.
+        for rgb in source.camera_rgb() {
+            for (actual, expected) in rgb.iter().zip([0.5, 0.375, 0.75]) {
+                assert!((actual - expected).abs() < 1e-6);
+            }
+        }
+        if threads == 8 {
+            assert!(source.timings().sdk_workers > 1);
+        }
     }
-    let small = Fixture::default().write();
-    assert!(Source::develop(small.path(), options(), &Cancellation::default()).is_ok());
 }
 
 #[test]
@@ -112,7 +88,6 @@ fn small_sources_keep_serial_execution_and_invalid_budgets_reject() {
     let file = Fixture::default().write();
     let source =
         Source::develop_with_threads(file.path(), options(), &Cancellation::default(), 8).unwrap();
-    assert_eq!(source.timings().mask_workers, 1);
     assert_eq!(source.timings().sdk_workers, 1);
     for threads in [0, 9, u32::MAX] {
         assert!(

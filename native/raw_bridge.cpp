@@ -493,32 +493,6 @@ extern "C" int antitone_raw_region_diagnostics(const void *handle, uint32_t x0, 
     return 0;
 }
 
-extern "C" int antitone_raw_capture_flags(const void *handle, uint64_t *words, size_t count,
-                                          char *error, size_t size) {
-    const auto &data = static_cast<const LibRaw *>(handle)->imgdata.rawdata;
-    const auto &s = data.sizes;
-    const size_t row_words = (size_t(s.width) + 31) / 32;
-    if (!data.raw_image || !s.width || !s.height || !words || count != row_words * s.height) {
-        std::snprintf(error, size, "Invalid capture mask dimensions");
-        return -1;
-    }
-    const auto pitch = s.raw_pitch / sizeof(uint16_t);
-    for (unsigned y = 0; y < s.height; ++y) {
-        for (size_t word = 0; word < row_words; ++word) {
-            uint64_t flags = 0;
-            for (unsigned x = unsigned(word * 32); x < std::min(size_t(s.width), (word + 1) * 32);
-                 ++x) {
-                const unsigned channel =
-                    (data.iparams.filters >> ((((y << 1) & 14) + (x & 1)) << 1)) & 3;
-                const auto value = data.raw_image[(y + s.top_margin) * pitch + x + s.left_margin];
-                flags |= uint64_t(capture_flags(data.color, channel, value)) << (2 * (x % 32));
-            }
-            words[y * row_words + word] = flags;
-        }
-    }
-    return 0;
-}
-
 extern "C" int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
                                     AntitoneRawView *view, char *error, size_t size) {
     antitone::NativeLog diagnostic("raw", "develop");

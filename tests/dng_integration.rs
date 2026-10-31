@@ -54,7 +54,7 @@ fn record(path: &Path, scan: &Scan) -> Source {
 }
 
 #[test]
-fn sdk_scan_uses_original_quantum_fixed_basis_continuous_samples_and_capture_dependencies() {
+fn sdk_scan_uses_original_quantum_fixed_basis_and_continuous_samples() {
     let mut fixture = Fixture {
         marker: Some((30, 28, 4160)),
         ..Default::default()
@@ -88,24 +88,6 @@ fn sdk_scan_uses_original_quantum_fixed_basis_continuous_samples_and_capture_dep
     let actual = image.pixel(12, 12).unwrap();
     let expected = DVec3::new(0.25, 0.1875, 0.375);
     assert!((actual - expected).abs().max_element() < 1e-7);
-    assert!(
-        scan.source()
-            .capture_eligibility(Rect::from([24, 24, 1, 1]))
-            .unwrap()
-            .at_white
-    );
-    assert!(
-        scan.source()
-            .capture_eligibility(Rect::from([0, 0, 1, 1]))
-            .unwrap()
-            .repeated_border
-    );
-    assert!(
-        scan.source()
-            .capture_eligibility(Rect::from([12, 12, 1, 1]))
-            .unwrap()
-            .eligible()
-    );
     let neutral = scan.camera_to_ap1 * DVec3::ONE;
     assert!((neutral - DVec3::ONE).abs().max_element() < 2e-6);
     let before = scan
@@ -163,45 +145,114 @@ fn lossless_jpeg_14bit_preserves_original_codes_and_shared_sdk_precision() {
 }
 
 #[test]
-fn shared_sdk_rejects_in_range_bad_pixel_markers_without_a_libraw_fallback() {
+fn shared_sdk_repairs_in_range_bad_pixel_markers_for_measurements() {
     let mut fixture = Fixture {
         marker: Some((30, 28, 1000)),
         ..Default::default()
     };
     fixture.lists[0].push(Opcode::bad_pixels(1000, 2));
     let file = fixture.write();
-    assert!(RawFile::open_uncorrected(file.path()).is_ok());
-    assert!(RawFile::open(file.path()).is_err());
-    assert!(Scan::open(file.path(), None).is_err());
+    let mut scan = Scan::open(file.path(), None).unwrap();
+    let expected = DVec3::new(0.25, 0.375, 0.5);
+    let measured = scan.reference(Rect::from([24, 24, 1, 1])).unwrap();
+    assert!((measured - expected).abs().max_element() < 1e-7);
+    let original = scan
+        .source()
+        .region_sensor_diagnostics(Rect::from([24, 24, 1, 1]))
+        .unwrap();
+    assert_eq!(original.peak[0], 1000);
 }
 
 #[test]
-fn shared_sdk_bad_pixel_repair_keeps_original_black_capture_rejection() {
+fn shared_sdk_measurements_accept_repaired_sensor_black() {
     let mut fixture = Fixture {
         marker: Some((30, 28, 64)),
         ..Default::default()
     };
     fixture.lists[0].push(Opcode::bad_pixels(64, 2));
     let file = fixture.write();
-    let scan = Scan::open(file.path(), None).unwrap();
-    let repaired = scan.pixel(24, 24).unwrap();
+    let mut scan = Scan::open(file.path(), None).unwrap();
+    let repaired = scan.reference(Rect::from([24, 24, 1, 1])).unwrap();
     assert!(
         (repaired - DVec3::new(0.25, 0.375, 0.5))
             .abs()
             .max_element()
             < 1e-7
     );
-    let state = scan
-        .source()
-        .capture_eligibility(Rect::from([24, 24, 1, 1]))
-        .unwrap();
-    assert!(state.below_black && !state.eligible());
     let original = scan
         .source()
         .region_sensor_diagnostics(Rect::from([24, 24, 1, 1]))
         .unwrap();
     assert_eq!(original.below_black[0], 1);
     assert_eq!(scan.source().input_floor(), 2. / 4096.);
+}
+
+fn uniform_source(code: u16) -> fixture_path::FixturePath {
+    let file = Fixture::default().write();
+    let mut bytes = std::fs::read(file.path()).unwrap();
+    let start = bytes.len() - 64 * 64 * 2;
+    for site in bytes[start..].as_chunks_mut::<2>().0 {
+        site.copy_from_slice(&code.to_le_bytes());
+    }
+    std::fs::write(file.path(), bytes).unwrap();
+    file
+}
+
+#[test]
+fn developed_white_remains_usable_for_reference_analysis_and_flat_field_estimation() {
+    let file = uniform_source(4160);
+    let mut scan = Scan::open(file.path(), None).unwrap();
+    assert!(
+        scan.source()
+            .sensor_diagnostics()
+            .unwrap()
+            .at_white
+            .iter()
+            .sum::<u64>()
+            > 0
+    );
+    assert_eq!(scan.reference(scan.area).unwrap(), DVec3::ONE);
+    let samples = scan
+        .analysis_samples(scan.area, 1, || false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(samples.attempted, 1);
+    assert_eq!(samples.pixels, vec![DVec3::ONE]);
+    assert_eq!(samples.rejected_floor, 0);
+
+    // A constant reference has no spatial illumination variation, even at sensor white.
+    let field = scan.estimate_flat_field(scan.area).unwrap();
+    let first = field.nodes()[0];
+    assert!(
+        field
+            .nodes()
+            .iter()
+            .all(|&gain| (gain - first).abs().max_element() < 1e-12)
+    );
+    let corrected = scan.camera_to_ap1 * first;
+    assert!((corrected - DVec3::splat(corrected.y)).abs().max_element() < 2e-6);
+    assert_eq!(scan.reference(scan.area).unwrap(), DVec3::ONE);
+}
+
+#[test]
+fn zero_signal_still_fails_measurement_and_flat_field_numerical_checks() {
+    let file = uniform_source(64);
+    let mut scan = Scan::open(file.path(), None).unwrap();
+    assert!(matches!(
+        scan.reference(scan.area),
+        Err(antitone::Error::UnusableSample(_))
+    ));
+    let samples = scan
+        .analysis_samples(scan.area, 1, || false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(samples.attempted, 1);
+    assert!(samples.pixels.is_empty());
+    assert_eq!(samples.rejected_floor, 1);
+    assert!(matches!(
+        scan.estimate_flat_field(scan.area),
+        Err(antitone::Error::UnusableSample(_))
+    ));
 }
 
 #[test]
