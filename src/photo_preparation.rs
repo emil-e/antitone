@@ -164,14 +164,6 @@ fn estimate(proxy: &CameraPixels, preview: &Preview, floor: f64) -> ReferenceExp
     let grid = [width.min(native[0]), height.min(native[1])]
         .map(|side| ((f64::from(side) * 0.8).floor() as u32).clamp(1, 64));
     let weights = crate::color::AP1_TO_XYZ.transpose().y_axis;
-    let linear = |code: u8| {
-        let encoded = f64::from(code) / 255.;
-        if encoded <= 0.04045 {
-            encoded / 12.92
-        } else {
-            ((encoded + 0.055) / 1.055).powf(2.4)
-        }
-    };
     let samples = (0..grid[1])
         .flat_map(|y| (0..grid[0]).map(move |x| (x, y)))
         .filter_map(|(x, y)| {
@@ -203,8 +195,7 @@ fn estimate(proxy: &CameraPixels, preview: &Preview, floor: f64) -> ReferenceExp
                     top + (v * f64::from(height)) as u32,
                 )
                 .0;
-            let target_y =
-                0.2126 * linear(rgb[0]) + 0.7152 * linear(rgb[1]) + 0.0722 * linear(rgb[2]);
+            let target_y = preview.luminance(rgb);
             Some((raw_y, target_y))
         });
     match exposure_reference::estimate(samples) {

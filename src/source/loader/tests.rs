@@ -392,19 +392,6 @@ fn actual_native_development_preserves_frozen_pixels_and_native_charge() {
             );
         }
     }
-    assert_eq!(
-        format!(
-            "{:?}",
-            result.region_sensor_diagnostics(expected.area).unwrap()
-        ),
-        format!(
-            "{:?}",
-            expected
-                .source()
-                .region_sensor_diagnostics(expected.area)
-                .unwrap()
-        )
-    );
 }
 
 /// Timing diagnostic for the two-owner schedule at production priorities: solo latency,
@@ -1046,11 +1033,15 @@ fn background_work_yields_while_foreground_demand_lives() {
 }
 
 #[test]
-fn concurrent_native_development_preserves_frozen_pixels_and_sensor_identity() {
+fn concurrent_native_development_preserves_each_sources_distinct_pixels() {
     let a = fixture::bayer_dng();
-    let b = fixture::bayer_dng();
+    let b = fixture::bayer_dng_with_rgb([6000, 24000, 36000]);
     let expected_a = Scan::open(a.path(), Some([1.; 4])).unwrap();
     let expected_b = Scan::open(b.path(), Some([1.; 4])).unwrap();
+    assert_ne!(
+        expected_a.pixel(16, 16).unwrap(),
+        expected_b.pixel(16, 16).unwrap()
+    );
     let scheduler = SourceLoader::new();
     let sa = scheduler.clone();
     let job_a = request(a.path());
@@ -1075,19 +1066,6 @@ fn concurrent_native_development_preserves_frozen_pixels_and_sensor_identity() {
                 );
             }
         }
-        assert_eq!(
-            format!(
-                "{:?}",
-                source.region_sensor_diagnostics(expected.area).unwrap()
-            ),
-            format!(
-                "{:?}",
-                expected
-                    .source()
-                    .region_sensor_diagnostics(expected.area)
-                    .unwrap()
-            )
-        );
     }
 }
 

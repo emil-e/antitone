@@ -42,10 +42,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut max = [f32::NEG_INFINITY; 3];
         let mut sum = [0_f64; 3];
         let mut camera_hash = blake3::Hasher::new();
-        let mut original_hash = blake3::Hasher::new();
-        for value in source.original_cfa() {
-            original_hash.update(&value.to_le_bytes());
-        }
         let [width, height] = source.dimensions();
         for rgb in source.camera_rgb() {
             for p in 0..3 {
@@ -58,11 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mean = sum.map(|v| v / (f64::from(width) * f64::from(height)));
         println!("SOURCE {}", path.display());
         println!("native_timings={:?}", source.timings());
-        println!(
-            "camera_digest={} original_digest={}",
-            camera_hash.finalize(),
-            original_hash.finalize()
-        );
+        println!("camera_digest={}", camera_hash.finalize());
         println!(
             "original={:?} active={:?} origin={:?} crop={:?} orientation={}",
             source.original_dimensions(),

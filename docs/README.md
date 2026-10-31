@@ -34,7 +34,7 @@ Where each area's implementation lives — navigation, not specification. Follow
 
 | Adjustment layers | [controls and masks](../src/adjustment_layers.rs), [GPU grading](../src/gpu/grading.rs), [editor routing](../src/editor/processing.rs) | Immutable snapshots, analytic masks, source-owned layers, whole-document admission |
 
-| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source acquisition](../src/source/mod.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership, camera RGB and capture diagnostics |
+| RAW source | [raw](../src/raw.rs), [scan](../src/scan.rs), [source acquisition](../src/source/mod.rs), [native bridge](../native/raw_bridge.cpp) | LibRaw ownership and immutable camera RGB |
 
 
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |

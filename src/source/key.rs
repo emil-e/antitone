@@ -49,7 +49,7 @@ impl SourceKey {
         Self {
             locator: path.to_path_buf(),
             file,
-            source: source.clone(),
+            source: source.for_runtime(),
         }
     }
 
@@ -81,11 +81,7 @@ impl SourceKey {
         source: &SourceDevelopment,
     ) -> Option<Self> {
         file.revision.as_ref()?;
-        Some(Self {
-            locator: path.to_path_buf(),
-            file,
-            source: source.clone(),
-        })
+        Some(Self::for_load(path, file, source))
     }
 
     pub(crate) fn matches(&self, source: &DevelopedSource) -> bool {
@@ -122,5 +118,38 @@ impl SourceKey {
 impl PartialEq for SourceKey {
     fn eq(&self, other: &Self) -> bool {
         self.file == other.file && self.source == other.source
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acquisition_targets_current_libraw_while_cache_identity_distinguishes_pixel_producers() {
+        let file = crate::raw::sony_fixture::source(
+            crate::raw::sony_fixture::Order::Little,
+            vec![],
+            false,
+            false,
+        );
+        let raw = crate::raw::RawFile::open(file.path()).unwrap();
+        let mut recorded = SourceDevelopment::from_metadata(&raw.metadata, [1.; 4]).unwrap();
+        assert_eq!(
+            recorded.decode.contract,
+            crate::project::DEVELOPMENT_CONTRACT
+        );
+        recorded.decode.backend_version = "historical LibRaw".into();
+        let current = SourceKey::capture(file.path(), &recorded).unwrap();
+        assert_eq!(
+            current.development().decode.backend_version,
+            crate::raw::version()
+        );
+        let mut previous_producer = current.clone();
+        previous_producer.source.decode.backend_version = recorded.decode.backend_version;
+        assert_ne!(
+            previous_producer, current,
+            "pixels produced by different runtimes must not share a cache identity"
+        );
     }
 }

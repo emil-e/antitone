@@ -249,6 +249,19 @@ mod tests {
     }
 
     #[test]
+    fn decoder_version_changes_are_cache_misses_not_file_admission_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = DiskCache::at(directory.path().into());
+        let (key, proxy) = fixture();
+        cache.store(&key, &proxy).unwrap();
+        let mut current = key.clone();
+        current.source.decode.backend_version.push_str("-new");
+        assert!(key.source.same_processing(&current.source));
+        assert!(cache.load(&current).unwrap().is_none());
+        assert_eq!(cache.load(&key).unwrap().unwrap().pixels, proxy.pixels);
+    }
+
+    #[test]
     fn point_sampled_cache_entries_do_not_supply_the_filtered_proxy_contract() {
         let directory = tempfile::tempdir().unwrap();
         let cache = DiskCache::at(directory.path().into());

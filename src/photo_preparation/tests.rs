@@ -16,10 +16,8 @@ fn flat(width: u32, height: u32) -> CameraPixels {
 #[test]
 fn unsupported_geometry_and_tiny_or_dark_references_abstain_instead_of_inventing_samples() {
     let proxy = flat(96, 64);
-    let mut preview = Preview {
-        rgb: image::RgbImage::from_pixel(4, 4, image::Rgb([89; 3])),
-        capture_flip: 0,
-    };
+    let mut preview =
+        Preview::srgb_fixture(image::RgbImage::from_pixel(4, 4, image::Rgb([89; 3])), 0);
     assert_eq!(
         estimate(&proxy, &preview, 1. / 65535.),
         ReferenceExposure::Unavailable(Unavailable::IncomparableFraming)
@@ -69,7 +67,7 @@ fn development() -> SourceDevelopment {
 }
 
 #[cfg(feature = "ocio-reference")]
-fn control(desired: f64) -> (CameraPixels, Preview) {
+fn control(desired: f64, adobe: bool) -> (CameraPixels, Preview) {
     use crate::rendering::{CpuRenderer, OutputTarget};
     let mut proxy = flat(96, 64);
     for y in 0..64 {
@@ -101,15 +99,24 @@ fn control(desired: f64) -> (CameraPixels, Preview) {
     let data = rendered
         .into_iter()
         .flat_map(|pixel| {
-            pixel
-                .to_array()
-                .map(|v| (OutputTarget::Srgb.encode(f64::from(v)).unwrap() * 255.).round() as u8)
+            pixel.to_array().map(|v| {
+                let encoded = if adobe {
+                    f64::from(v).powf(256. / 563.)
+                } else {
+                    OutputTarget::Srgb.encode(f64::from(v)).unwrap()
+                };
+                (encoded * 255.).round() as u8
+            })
         })
         .collect();
-    let preview = Preview {
-        rgb: image::RgbImage::from_raw(96, 64, data).unwrap(),
-        capture_flip: 0,
-    };
+    let preview = embedded_preview::decode(crate::raw::EmbeddedThumbnail {
+        data,
+        rgb_dimensions: Some([96, 64]),
+        flip: 0,
+        color_space: if adobe { 2 } else { 1 },
+    })
+    .unwrap()
+    .unwrap();
     (proxy, preview)
 }
 
@@ -117,7 +124,7 @@ fn control(desired: f64) -> (CameraPixels, Preview) {
 #[test]
 fn quantized_reference_matches_known_gain_through_rotations_and_symmetric_letterboxing() {
     let desired = 0.7;
-    let (proxy, reference) = control(desired);
+    let (proxy, reference) = control(desired, false);
     for flip in [0, 3, 5, 6] {
         let rgb = match flip {
             0 => reference.rgb.clone(),
@@ -129,20 +136,48 @@ fn quantized_reference_matches_known_gain_through_rotations_and_symmetric_letter
         let mut boxed = image::RgbImage::new(rgb.width(), rgb.height() + 20);
         image::imageops::replace(&mut boxed, &rgb, 0, 10);
         for rgb in [rgb, boxed] {
-            let result = estimate(
-                &proxy,
-                &Preview {
-                    rgb,
-                    capture_flip: flip,
-                },
-                1. / 65535.,
-            );
+            let result = estimate(&proxy, &Preview::srgb_fixture(rgb, flip), 1. / 65535.);
             let ReferenceExposure::Matched(value) = result else {
                 panic!("flip={flip} {result:?}");
             };
             assert!((value.ev - desired).abs() < 0.025, "flip={flip} {value:?}");
         }
     }
+}
+
+#[cfg(feature = "ocio-reference")]
+#[test]
+fn native_adobe_preview_recovers_known_gain_through_the_same_aces_inverse() {
+    let desired = 0.7;
+    let (proxy, preview) = control(desired, true);
+    let ReferenceExposure::Matched(value) = estimate(&proxy, &preview, 1. / 65535.) else {
+        panic!("the authored Adobe RGB preview must provide usable samples");
+    };
+    // Same neutral ACES response and 8-bit error budget as the sRGB control above.
+    assert!((value.ev - desired).abs() < 0.025, "{value:?}");
+}
+
+#[test]
+fn a_recorded_unavailable_baseline_is_not_replaced_when_preview_support_improves() {
+    let data = Arc::new(flat(96, 64));
+    let preview = Arc::new(Preview::srgb_fixture(
+        image::RgbImage::from_pixel(96, 64, image::Rgb([128; 3])),
+        0,
+    ));
+    assert!(matches!(
+        estimate(&data, &preview, 1. / 65535.),
+        ReferenceExposure::Matched(_)
+    ));
+    let recorded = ReferenceExposure::Unavailable(Unavailable::NoUsablePreview);
+    let memo = OnceLock::from(recorded.clone());
+    let prepared = proxy(
+        &memo,
+        &development(),
+        InputSettings::Digital,
+        &data,
+        Ok(Some(preview)),
+    );
+    assert_eq!(prepared.reference, Some(recorded));
 }
 
 #[cfg(feature = "ocio-reference")]
@@ -154,7 +189,7 @@ fn source_exposure_survives_pixel_eviction_and_does_not_re_meter_a_later_proxy()
     );
     let file = FileKey::new(path.path());
     let store = Arc::new(SourceCache::new(1 << 20));
-    let (data, reference) = control(0.7);
+    let (data, reference) = control(0.7, false);
     store
         .publish_preview(file.clone(), Arc::new(reference))
         .unwrap();

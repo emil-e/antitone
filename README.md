@@ -52,9 +52,9 @@ covers building and packaging from source.
 
 This is an early public release, and it says so honestly:
 
-- Input is camera RAW from the accepted three-colour Bayer domain: Sony ARW (the
+- Input is camera RAW from three-colour Bayer or X-Trans sensors: Sony ARW (the
   ILCE-1M2 lossless-compressed baseline), Canon CR2/CR3 including CRAW, Nikon NEF,
-  Olympus ORF and Panasonic RW2. Developed JPEG/TIFF/EXR import is not implemented.
+  Olympus ORF, Panasonic RW2 and Fujifilm RAF. Developed JPEG/TIFF/EXR import is not implemented.
 - Negative and Digital RAW input stages share grading and export. Digital photographs
   need no negative calibration and can come from different cameras.
 - One project is one roll; there are no catalogs.

@@ -43,7 +43,7 @@ fn native_source_precision_tracks_green_relative_wb_without_altering_grades() {
     ] {
         let project = digital(wb, gain);
         project.validate().unwrap();
-        project.require_runtime("0.22.0").unwrap();
+        project.require_runtime().unwrap();
         assert_eq!(
             project.sources[0].development.decode.contract,
             DEVELOPMENT_CONTRACT
@@ -59,7 +59,7 @@ fn native_source_precision_tracks_green_relative_wb_without_altering_grades() {
         let loaded: Project =
             serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();
         assert_eq!(loaded, project);
-        loaded.require_runtime("0.22.0").unwrap();
+        loaded.require_runtime().unwrap();
         let mut wrong_floor = loaded.clone();
         wrong_floor.sources[0].development.input_floor = CAMERA_INPUT_FLOOR;
         assert!(wrong_floor.validate().is_err());
@@ -86,7 +86,7 @@ fn green_max_wb_retains_the_native_quantum_and_manual_grades() {
                 ..Default::default()
             },
         ));
-        project.require_runtime("0.22.0").unwrap();
+        project.require_runtime().unwrap();
         assert_eq!(project.roll.exposure, -0.5);
         assert_eq!(
             project.sources[0].grade_snapshot().unwrap().layers()[0]

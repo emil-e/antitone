@@ -88,12 +88,12 @@ fn photographic_reference_initialization() {
             crate::scan::positive_matrix(&InputSettings::Digital, proxy.matrix, Some(reference))
                 .unwrap(),
         );
+        let camera_preview = preview.srgb().unwrap();
         let Some(frame) = reference_frame(
-            &preview.rgb,
+            &camera_preview,
             f64::from(zero.width()) / f64::from(zero.height()),
         ) else {
-            preview
-                .rgb
+            camera_preview
                 .save(output.join(format!(
                     "{}-unmatched-camera.png",
                     path.file_stem().unwrap().to_string_lossy()
@@ -101,9 +101,14 @@ fn photographic_reference_initialization() {
                 .unwrap();
             continue;
         };
-        let camera =
-            image::imageops::crop_imm(&preview.rgb, frame[0], frame[1], frame[2], frame[3])
-                .to_image();
+        let camera = image::imageops::crop_imm(
+            camera_preview.as_ref(),
+            frame[0],
+            frame[1],
+            frame[2],
+            frame[3],
+        )
+        .to_image();
         let camera = image::imageops::resize(
             &camera,
             zero.width(),

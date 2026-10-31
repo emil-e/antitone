@@ -369,15 +369,6 @@ fn photo_orientation_from_tiff(
 pub use crate::geometry::SourceRegion as Rect;
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SensorDiagnostics {
-    pub sites: [u64; 4],
-    pub below_black: [u64; 4],
-    pub at_white: [u64; 4],
-    pub peak: [u32; 4],
-}
-
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct NativeView {
     pixels: *const u16,
@@ -432,28 +423,12 @@ unsafe extern "C" {
         error: *mut c_char,
         size: usize,
     ) -> c_int;
-    fn antitone_raw_sensor_diagnostics(
-        handle: *const c_void,
-        diagnostics: *mut SensorDiagnostics,
-        error: *mut c_char,
-        size: usize,
-    ) -> c_int;
     fn antitone_raw_develop(
         handle: *mut c_void,
         wb: *const f64,
         output_color: c_int,
         threads: c_int,
         view: *mut NativeView,
-        error: *mut c_char,
-        size: usize,
-    ) -> c_int;
-    fn antitone_raw_region_diagnostics(
-        handle: *const c_void,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-        diagnostics: *mut SensorDiagnostics,
         error: *mut c_char,
         size: usize,
     ) -> c_int;
@@ -511,7 +486,6 @@ pub struct RawFile {
     unpacked: bool,
     priority: DevelopmentPriority,
     share: usize,
-    diagnostics: Option<SensorDiagnostics>,
     camera_view: Option<NativeView>,
     correction: Option<crate::lens::EmbeddedLensGeometry>,
     corrected: Option<lens_source::CorrectedImage>,
@@ -562,7 +536,6 @@ impl RawFile {
             unpacked: false,
             priority: DevelopmentPriority::default(),
             share: 1,
-            diagnostics: None,
             camera_view: None,
             correction: None,
             corrected: None,
@@ -643,29 +616,6 @@ impl RawFile {
         self.metadata.sdk = Some(header);
     }
 
-    #[cfg(feature = "dng-sdk")]
-    fn ensure_dng_capture(&mut self) -> Result<(), Error> {
-        if let Some(header) = self.metadata.sdk
-            && self.dng_source.is_none()
-        {
-            let [r, g, b] = header.fixed_wb;
-            self.develop_camera([r, g, b, g])?;
-        }
-        Ok(())
-    }
-
-    #[cfg(feature = "dng-sdk")]
-    fn validate_dng_region(&self, area: Rect) -> Result<(), Error> {
-        if area.width == 0
-            || area.height == 0
-            || u64::from(area.x) + u64::from(area.width) > u64::from(self.metadata.width)
-            || u64::from(area.y) + u64::from(area.height) > u64::from(self.metadata.height)
-        {
-            return Err(Error::Raw("Invalid SDK capture rectangle".into()));
-        }
-        Ok(())
-    }
-
     pub(crate) fn prepare_basis(&mut self, requested: [f64; 4]) -> Result<(), Error> {
         #[cfg(feature = "dng-sdk")]
         if self.metadata.sdk.is_some() {
@@ -720,7 +670,7 @@ impl RawFile {
             return Ok(());
         }
         let mut error = [0; 512];
-        // This uniquely owned handle decodes once, retaining the original sensor snapshot.
+        // This uniquely owned handle decodes once for subsequent camera development.
         let code = unsafe {
             antitone_raw_unpack(
                 self.handle.as_ptr(),
@@ -734,103 +684,6 @@ impl RawFile {
         }
         self.unpacked = true;
         Ok(())
-    }
-
-    /// Explicit whole-sensor statistics, cached independently of decoding/development.
-    pub fn unpack(&mut self) -> Result<SensorDiagnostics, Error> {
-        if let Some(diagnostics) = self.diagnostics {
-            return Ok(diagnostics);
-        }
-        self.ensure_unpacked()?;
-        #[cfg(feature = "dng-sdk")]
-        self.ensure_dng_capture()?;
-        let diagnostics = self.sensor_diagnostics()?;
-        self.diagnostics = Some(diagnostics);
-        Ok(diagnostics)
-    }
-
-    fn sensor_diagnostics(&self) -> Result<SensorDiagnostics, Error> {
-        #[cfg(feature = "dng-sdk")]
-        if self.metadata.sdk.is_some() {
-            return self.native_region_sensor_diagnostics(Rect::from([
-                0,
-                0,
-                self.metadata.width,
-                self.metadata.height,
-            ]));
-        }
-        let mut diagnostics = SensorDiagnostics::default();
-        let mut error = [0; 512];
-        // No SDK calls or mutation: the bridge reads capture data into caller-owned buffers.
-        let code = unsafe {
-            antitone_raw_sensor_diagnostics(
-                self.handle.as_ptr(),
-                &mut diagnostics,
-                error.as_mut_ptr(),
-                error.len(),
-            )
-        };
-        if code != 0 {
-            return Err(native_error("unpack", &error));
-        }
-        Ok(diagnostics)
-    }
-
-    /// Detailed diagnostics in original, unwarped native coordinates.
-    pub fn region_sensor_diagnostics(&mut self, area: Rect) -> Result<SensorDiagnostics, Error> {
-        self.ensure_unpacked()?;
-        #[cfg(feature = "dng-sdk")]
-        self.ensure_dng_capture()?;
-        self.native_region_sensor_diagnostics(area)
-    }
-
-    fn native_region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
-        #[cfg(feature = "dng-sdk")]
-        if let Some(source) = &self.dng_source {
-            self.validate_dng_region(area)?;
-            let header = source.header();
-            let [left, top] = header.active_origin;
-            let [raw_width, _] = header.original_dimensions;
-            let [black, white] = header.capture_limits;
-            let mut diagnostics = SensorDiagnostics::default();
-            for y in area.y..area.y + area.height {
-                for x in area.x..area.x + area.width {
-                    let (sx, sy) = (x + left, y + top);
-                    let color = (header.cfa_pattern >> (8 * ((sy % 2) * 2 + sx % 2))) & 255;
-                    let c = if color == 1 && sy % 2 == 1 {
-                        3
-                    } else {
-                        color as usize
-                    };
-                    let value =
-                        source.original_cfa()[(sy as usize * raw_width as usize) + sx as usize];
-                    diagnostics.sites[c] += 1;
-                    diagnostics.below_black[c] += u64::from(f64::from(value) <= black);
-                    diagnostics.at_white[c] += u64::from(f64::from(value) >= white);
-                    diagnostics.peak[c] = diagnostics.peak[c].max(u32::from(value));
-                }
-            }
-            return Ok(diagnostics);
-        }
-        let mut diagnostics = SensorDiagnostics::default();
-        let mut error = [0; 512];
-        // The bridge reads the immutable RAW snapshot, including its original CFA and black/white levels.
-        let code = unsafe {
-            antitone_raw_region_diagnostics(
-                self.handle.as_ptr(),
-                area.x,
-                area.y,
-                area.width,
-                area.height,
-                &mut diagnostics,
-                error.as_mut_ptr(),
-                error.len(),
-            )
-        };
-        if code != 0 {
-            return Err(native_error("sensor region", &error));
-        }
-        Ok(diagnostics)
     }
 
     pub fn develop_camera(&mut self, fixed_wb: [f64; 4]) -> Result<Developed<'_>, Error> {
@@ -921,7 +774,7 @@ impl RawFile {
                     geometry,
                     threads as usize,
                 )?;
-                // The immutable f32 raster replaces RGB16; keep original CFA, not a redundant RGB copy.
+                // The immutable f32 raster replaces LibRaw's RGB16 allocation.
                 unsafe { antitone_raw_free_image(self.handle.as_ptr()) };
                 self.camera_view = Some(NativeView {
                     pixels: std::ptr::null(),
@@ -1060,8 +913,7 @@ pub(crate) struct FrozenRaw {
 
 // SAFETY: construction consumes the unique RawFile after successful unpack/camera
 // development and view validation. No method exposes RawFile, its handle or mutable
-// SDK access. RGB borrows keep this owner alive; diagnostics only read retained CFA
-// through const bridge loops, with per-call output/error buffers and no LibRaw calls.
+// SDK access. RGB borrows keep this owner alive and read immutable developed pixels.
 // Safe Rust publication provides synchronization. The pinned libraw_r instance owns
 // its unpacker/TLS data; destruction frees instance-owned resources without creator-
 // thread affinity, and can occur only after the last owner/borrow has retired.
@@ -1080,16 +932,6 @@ impl FrozenRaw {
 
     pub(crate) fn camera_image(&self) -> Result<Developed<'_>, Error> {
         self.raw.camera_image()
-    }
-
-    pub(crate) fn sensor_diagnostics(&self) -> Result<SensorDiagnostics, Error> {
-        self.raw
-            .diagnostics
-            .map_or_else(|| self.raw.sensor_diagnostics(), Ok)
-    }
-
-    pub(crate) fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
-        self.raw.native_region_sensor_diagnostics(area)
     }
 }
 
@@ -1380,13 +1222,11 @@ mod tests {
         let thumbnail = raw.embedded_thumbnail().unwrap().unwrap();
         assert_eq!((thumbnail.flip, thumbnail.color_space), (6, 1));
         assert!(!raw.unpacked);
-        assert!(raw.diagnostics.is_none());
         assert!(raw.camera_image().is_err());
         assert_eq!(
             raw.embedded_thumbnail().unwrap().unwrap().data,
             thumbnail.data
         );
-        let before = raw.unpack().unwrap();
         let mut plain = RawFile::open(&root.join("patches.dng")).unwrap();
         let expected = plain.develop_camera([1.; 4]).unwrap();
         let actual = raw.develop_camera([1.; 4]).unwrap();
@@ -1398,7 +1238,6 @@ mod tests {
                 );
             }
         }
-        assert_eq!(raw.unpack().unwrap(), before);
         assert_eq!(
             raw.embedded_thumbnail().unwrap().unwrap().data,
             thumbnail.data
@@ -1488,7 +1327,6 @@ mod tests {
     fn bridge_layout_matches_native_static_assertions() {
         assert_eq!(size_of::<NativeMetadata>(), 656);
         assert_eq!(size_of::<SonyLensData>(), 160);
-        assert_eq!(size_of::<SensorDiagnostics>(), 112);
         assert_eq!(size_of::<NativeView>(), 64);
         #[cfg(feature = "editor")]
         assert_eq!(size_of::<NativeThumbnail>(), 32);
@@ -1511,7 +1349,7 @@ mod tests {
                     jpeg.flip,
                     jpeg.color_space
                 );
-                assert!(!raw.unpacked && raw.camera_view.is_none() && raw.diagnostics.is_none());
+                assert!(!raw.unpacked && raw.camera_view.is_none());
                 assert_eq!(format!("{:?}", raw.metadata), format!("{metadata:?}"));
             }
             let image = raw.develop_camera(metadata.cam_mul).unwrap();
@@ -1676,7 +1514,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "read-only local Canon/Nikon/Olympus/Panasonic RAW samples; decode, development and sensor diagnostics"]
+    #[ignore = "read-only local Canon/Nikon/Olympus/Panasonic RAW samples; decode and camera development"]
     fn vendor_samples_develop_through_the_accepted_camera_domain() {
         // Three-colour integer Bayer bodies across four vendors and every accepted
         // container variant: 12-bit compressed NEF, Olympus hi-res ORF, Panasonic
@@ -1769,7 +1607,7 @@ mod tests {
             assert_eq!(metadata.make(), *make, "{path}");
             assert_eq!(metadata.model(), *model, "{path}");
             assert_eq!(metadata.raw_bps, bps, "{path}");
-            // The acceptance domain: three-colour integer Bayer, no repeated black pattern.
+            // These samples exercise three-colour Bayer cameras.
             assert_eq!(metadata.colors, 3);
             assert_ne!(metadata.filters, 0);
             assert_eq!(
@@ -1801,8 +1639,6 @@ mod tests {
             for ((x, y), value) in picks.into_iter().zip(expected) {
                 assert_eq!(second.pixel_samples(x, y).unwrap(), value, "{path}");
             }
-            // Eligibility of the whole active area matches its sensor diagnostics.
-            raw.region_sensor_diagnostics(area).unwrap();
         }
         // sRAW/mRAW is decimated pre-demosaiced output, not CFA sensor data: rejected.
         assert!(RawFile::open(Path::new("samples/raw-downloads/canon/6d-sraw.CR2")).is_err());
@@ -1831,50 +1667,6 @@ mod tests {
         );
     }
 
-    #[test]
-    #[ignore = "read-only local RAW lazy/full/region diagnostics and cached-development invariants"]
-    fn development_and_region_picks_do_not_compute_or_invalidate_full_diagnostics() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/DSC04393.ARW");
-        let mut raw = RawFile::open(&path).unwrap();
-        let wb = raw.metadata.cam_mul;
-        let area = Rect {
-            x: 4000,
-            y: 2600,
-            width: 128,
-            height: 128,
-        };
-        let before = raw.region_sensor_diagnostics(area).unwrap();
-        assert!(raw.unpacked && raw.diagnostics.is_none());
-        let data = raw.develop_camera(wb).unwrap();
-        let pointer = data.pixels.as_ptr();
-        let pixel = data.pixel_codes(4000, 2600).unwrap();
-        assert!(raw.diagnostics.is_none());
-        assert_eq!(before, raw.region_sensor_diagnostics(area).unwrap());
-        assert!(raw.diagnostics.is_none());
-        let full = raw.unpack().unwrap();
-        assert_eq!(raw.unpack().unwrap(), full);
-        assert_eq!(
-            full.sites.iter().sum::<u64>(),
-            raw.metadata.width as u64 * raw.metadata.height as u64
-        );
-        assert_eq!(raw.camera_image().unwrap().pixels.as_ptr(), pointer);
-        assert_eq!(
-            raw.camera_image().unwrap().pixel_codes(4000, 2600).unwrap(),
-            pixel
-        );
-        raw.set_development_priority(DevelopmentPriority::Background);
-        assert_eq!(raw.camera_image().unwrap().pixels.as_ptr(), pointer);
-        assert!(
-            raw.region_sensor_diagnostics(Rect { width: 0, ..area })
-                .is_err()
-        );
-        assert_eq!(
-            raw.camera_image().unwrap().pixel_codes(4000, 2600).unwrap(),
-            pixel
-        );
-        assert_eq!(before, raw.region_sensor_diagnostics(area).unwrap());
-    }
-
     #[cfg(feature = "project")]
     #[test]
     fn libraw_freeze_requires_valid_camera_development_and_keeps_the_original_allocation() {
@@ -1895,20 +1687,7 @@ mod tests {
         let mut raw = RawFile::open_uncorrected(file.path()).unwrap();
         raw.develop_camera([1.0; 4]).unwrap();
         let pointer = raw.camera_image().unwrap().pixels.as_ptr();
-        assert!(raw.diagnostics.is_none());
         let frozen = raw.freeze().unwrap();
-        assert!(frozen.raw.diagnostics.is_none());
-        assert_eq!(frozen.camera_image().unwrap().pixels.as_ptr(), pointer);
-        let a = Rect {
-            x: 8,
-            y: 8,
-            width: 16,
-            height: 16,
-        };
-        let before = frozen.region_sensor_diagnostics(a).unwrap();
-        frozen.sensor_diagnostics().unwrap();
-        assert_eq!(frozen.region_sensor_diagnostics(a).unwrap(), before);
-        assert!(frozen.raw.diagnostics.is_none());
         assert_eq!(frozen.camera_image().unwrap().pixels.as_ptr(), pointer);
     }
 

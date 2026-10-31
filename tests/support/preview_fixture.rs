@@ -8,6 +8,17 @@ pub fn append(
     rgb: bool,
     colour: Option<u32>,
 ) -> FixturePath {
+    append_oriented(base, dimensions, data, rgb, colour, None)
+}
+
+pub fn append_oriented(
+    base: &std::path::Path,
+    dimensions: [u32; 2],
+    data: &[u8],
+    rgb: bool,
+    colour: Option<u32>,
+    orientation: Option<u16>,
+) -> FixturePath {
     let mut bytes = std::fs::read(base).unwrap();
     assert_eq!(&bytes[..4], b"II\x2a\0");
     let root = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
@@ -29,6 +40,9 @@ pub fn append(
         (278, 4, height),
         (284, 3, 1),
     ];
+    if let Some(orientation) = orientation {
+        entries.push((274, 3, u32::from(orientation)));
+    }
     if let Some(space) = colour {
         entries.push((50970, 4, space));
     }

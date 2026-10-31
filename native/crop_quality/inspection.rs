@@ -90,7 +90,7 @@ fn capture(
         if case.spec.windows.is_empty() {
             return Err("capture requires independently supplied windows for every case".into());
         }
-        case.project.require_runtime(&crate::raw::version())?;
+        case.project.require_runtime()?;
         let locator = case
             .project
             .resolve_path(case.spec.source, &case.project_path)?;

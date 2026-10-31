@@ -33,9 +33,9 @@ fn main() {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
                 let name = if target_os == "windows" {
-                    "LibRaw-0.22.0-msvc"
+                    "LibRaw-0.22.3-msvc"
                 } else {
-                    "LibRaw-0.22.0-openmp"
+                    "LibRaw-0.22.3-openmp"
                 };
                 std::path::PathBuf::from(".cache/native-deps").join(name)
             });

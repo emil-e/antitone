@@ -184,7 +184,9 @@ impl crate::image_recipe::NeutralRecipe {
             camera_to_ap1: scan.camera_to_ap1.to_cols_array_2d(),
             input_floor: scan.source().input_floor(),
         };
-        if self.source_development != actual || self.correction.as_ref() != scan.flat_field() {
+        if !self.source_development.same_processing(&actual)
+            || self.correction.as_ref() != scan.flat_field()
+        {
             return Err(Error::Raw(
                 "repair recipe differs from developed source".into(),
             ));

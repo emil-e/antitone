@@ -73,7 +73,7 @@ fn tiled_raw_selection_uses_the_offset_table_not_its_first_image_offset() {
 }
 
 #[test]
-fn diagnostic_bypass_keeps_original_codes_and_capture_diagnostics() {
+fn lens_bypass_preserves_the_uncorrected_camera_pixels() {
     let order = Order::Little;
     let file = source(order, profile_tags(order), false, false);
     let plain_file = source(order, vec![], false, false);
@@ -88,8 +88,6 @@ fn diagnostic_bypass_keeps_original_codes_and_capture_diagnostics() {
             .unwrap()
             .has_ca()
     );
-    let before = raw.unpack().unwrap();
-    assert_eq!(before.at_white, [0; 4]);
     let developed = raw.develop_camera([1.; 4]).unwrap();
     let baseline = plain.develop_camera([1.; 4]).unwrap();
     assert_eq!(
@@ -108,7 +106,6 @@ fn diagnostic_bypass_keeps_original_codes_and_capture_diagnostics() {
             );
         }
     }
-    assert_eq!(raw.unpack().unwrap(), before);
 }
 
 #[test]
@@ -245,7 +242,6 @@ fn automatic_correction_matches_independent_bilinear_camera_samples_and_repeats(
     let mut corrected = RawFile::open(file.path()).unwrap();
     assert!(corrected.metadata.lens_identity().unwrap().is_some());
     assert_eq!(corrected.metadata.source_dimensions().unwrap(), [64, 64]);
-    let capture = corrected.unpack().unwrap();
     let baseline = original.develop_camera([1.; 4]).unwrap();
     let samples = {
         let image = corrected.develop_camera([1.; 4]).unwrap();
@@ -284,19 +280,6 @@ fn automatic_correction_matches_independent_bilinear_camera_samples_and_repeats(
         );
         samples
     };
-    assert_eq!(corrected.unpack().unwrap(), capture);
-    assert_eq!(
-        corrected
-            .region_sensor_diagnostics(antitone::raw::Rect {
-                x: 0,
-                y: 0,
-                width: 64,
-                height: 64
-            })
-            .unwrap(),
-        capture,
-        "detailed diagnostics retain their original native coordinates"
-    );
     let repeated = corrected.develop_camera([1.; 4]).unwrap();
     for ([x, y], expected) in samples {
         assert_eq!(repeated.pixel_samples(x, y).unwrap(), expected);
@@ -390,8 +373,6 @@ fn resampled_measurements_accept_finite_developed_samples_from_clipped_sensor_si
         width: 1,
         height: 1,
     };
-    let diagnostics = scan.source().sensor_diagnostics().unwrap();
-    assert!(diagnostics.at_white.iter().sum::<u64>() > 0);
     assert!(scan.pixel(10, 20).unwrap().max_element() < 1.);
     let measured = scan.reference(point).unwrap();
     assert_eq!(measured, scan.pixel(10, 20).unwrap());
@@ -497,7 +478,7 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
     let path = directory.path().join("sony.antitone");
     project.save(&path, Save::New).unwrap();
     let reopened = Project::load(&path).unwrap();
-    reopened.require_runtime(&antitone::raw::version()).unwrap();
+    reopened.require_runtime().unwrap();
     let recipe = reopened.image_recipe(id).unwrap();
     assert_eq!(recipe, project.image_recipe(id).unwrap());
     recipe.neutral.require_scan(&scan).unwrap();
@@ -509,7 +490,7 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
     old.set_flat_field(None);
     old.sources[0].development.decode.contract =
         "libraw-camera-ahd-u16-linear-camera-inversion-ap1-bradford-code-floor-v2".into();
-    assert!(old.require_runtime(&antitone::raw::version()).is_err());
+    assert!(old.require_runtime().is_err());
 }
 
 #[cfg(all(feature = "gpu", feature = "export", feature = "ocio-reference"))]

@@ -51,7 +51,7 @@ impl SourceKey {
         Self {
             id: source.id,
             file,
-            source: source.development.clone(),
+            source: source.development.for_runtime(),
         }
     }
 }

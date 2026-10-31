@@ -27,11 +27,6 @@ struct AntitoneRawMetadata {
     uint32_t lens_disabled;
 };
 
-struct AntitoneRawDiagnostics {
-    uint64_t sites[4], below_black[4], at_white[4];
-    uint32_t peak[4];
-};
-
 struct AntitoneRawView {
     const uint16_t *pixels;
     uint32_t width, height, maximum, data_maximum, warnings;
@@ -53,17 +48,11 @@ int antitone_raw_thumbnail(void *handle, AntitoneRawThumbnail *thumbnail, char *
                            size_t error_size);
 int antitone_raw_is_dng(const void *handle);
 int antitone_raw_unpack(void *handle, int threads, char *error, size_t error_size);
-// Read already-unpacked capture data only; output buffers belong to the caller.
-int antitone_raw_sensor_diagnostics(const void *handle, AntitoneRawDiagnostics *diagnostics,
-                                    char *error, size_t error_size);
-int antitone_raw_region_diagnostics(const void *handle, uint32_t x, uint32_t y, uint32_t width,
-                                    uint32_t height, AntitoneRawDiagnostics *diagnostics,
-                                    char *error, size_t error_size);
 int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
                          AntitoneRawView *view, char *error, size_t error_size);
 // Snapshot explicit owner/buffer allocations before freeze; zero means unavailable.
 uint64_t antitone_raw_retained_bytes(void *handle);
-// Release only developed RGB after correction; original sensor storage remains owned.
+// Release LibRaw's developed RGB after materializing corrected camera RGB.
 void antitone_raw_free_image(void *handle);
 void antitone_raw_close(void *handle);
 }

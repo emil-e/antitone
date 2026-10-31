@@ -125,7 +125,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if metadata_only {
             continue;
         }
-        println!("sensor_full_frame={:?}", raw.unpack()?);
         let developed = raw.develop_camera(wb)?;
         if diagnostic_ppm {
             save_diagnostic_ppm(

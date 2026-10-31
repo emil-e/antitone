@@ -2,8 +2,11 @@ use super::*;
 use crate::editor::{Document, document_scope::DocumentScope};
 use std::path::Path;
 
+mod decoder_version;
 #[cfg(feature = "ocio-reference")]
 mod exposure;
+#[cfg(target_os = "macos")]
+mod xtrans;
 
 use std::{
     sync::{

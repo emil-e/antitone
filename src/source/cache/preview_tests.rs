@@ -1,10 +1,10 @@
 use super::*;
 
 fn image() -> Arc<Preview> {
-    Arc::new(Preview {
-        rgb: image::RgbImage::from_pixel(16, 8, image::Rgb([80, 100, 120])),
-        capture_flip: 0,
-    })
+    Arc::new(Preview::srgb_fixture(
+        image::RgbImage::from_pixel(16, 8, image::Rgb([80, 100, 120])),
+        0,
+    ))
 }
 
 fn file() -> crate::fixture_path::FixturePath {

@@ -63,6 +63,18 @@ fn fixture() -> Project {
 }
 
 #[test]
+fn flat_field_use_does_not_require_matching_libraw_release_provenance() {
+    let mut project = fixture();
+    let original_map = project.flat_field().unwrap().clone();
+    project.sources[0].development.decode.backend_version = "another LibRaw release".into();
+    project.validate().unwrap();
+    original_map
+        .require_source(&project.sources[0].development)
+        .unwrap();
+    assert_eq!(project.flat_field().unwrap(), &original_map);
+}
+
+#[test]
 fn map_roundtrip_is_exact_and_does_not_require_reference_file_or_resample_rgb() {
     let mut project = fixture();
     let correction = project.flat_field().cloned();

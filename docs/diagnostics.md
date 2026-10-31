@@ -352,6 +352,14 @@ cargo run --locked --offline --release --features raw \
 
 Metadata mode reports Sony embedded shading/distortion/CA availability, validated radial scales and automatic output dimensions without unpacking or correcting pixels, and can inspect malformed data that normal development rejects. Off is distinct from unavailable coefficients; discovery reads the selected RAW IFD, not rendered previews. Full mode develops the automatically corrected camera raster, checks repeated development and reports reconstruction time/storage separately from LibRaw time. Optional PPMs are clipped unmanaged diagnostics (`ANTITONE_RAW_PPM_EV` selects their exposure); [Sony processing](processing.md#embedded-sony-lens-correction) owns coordinates and reconstruction.
 
+On macOS, the private X-Trans exercise checks import, unity/as-shot WB, Save/Open, both display targets and reopened 192×128 TIFF/EXR exports. Supply a colon-separated list of X-Trans RAFs; Negative uses synthetic anchors to exercise inversion, not assess film calibration:
+
+```sh
+ANTITONE_XTRANS_SAMPLES="/absolute/first.RAF:/absolute/second.RAF" \
+  cargo test --locked --offline --features editor --lib \
+  raf_import_reopen_view_and_bounded_exports -- --ignored --nocapture
+```
+
 Per-component distortion/CA maps and independent shading checks run offline in the pure model tests; authored native cases separately exercise automatic development:
 
 ```sh
@@ -407,7 +415,7 @@ The `dng-sdk` feature exposes a read-only probe of the vendored SDK backend with
 ```sh
 # Explicit main-sensor pixel bound; inputs remain read-only.
 cargo run --locked --features dng-sdk --bin antitone-dng-probe -- 1000000 /path/to/authored.dng
-# Compare bounded execution budgets; reports split timings and pixel/CFA digests.
+# Compare bounded execution budgets; reports split timings and a camera-pixel digest.
 cargo run --locked --release --features dng-sdk --bin antitone-dng-probe -- \
   --threads 8 60000000 /path/to/photo.dng
 ```

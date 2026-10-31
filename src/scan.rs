@@ -5,7 +5,7 @@ use crate::{
     coverage::Coverage,
     geometry::SourceRaster,
     processing::{Calibration, InputSettings, RollSettings},
-    raw::{Developed, FrozenRaw, Metadata, RawFile, Rect, SensorDiagnostics},
+    raw::{Developed, FrozenRaw, Metadata, RawFile, Rect},
     sampling,
 };
 use glam::{DMat3, DVec3};
@@ -148,15 +148,6 @@ impl DevelopedSource {
         self.raw
             .camera_image()?
             .with_source_scale(self.source_scale)
-    }
-
-    pub fn sensor_diagnostics(&self) -> Result<SensorDiagnostics> {
-        self.raw.sensor_diagnostics()
-    }
-
-    /// Detailed original-sensor statistics; `area` is in unwarped native coordinates.
-    pub fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics> {
-        self.raw.region_sensor_diagnostics(area)
     }
 }
 

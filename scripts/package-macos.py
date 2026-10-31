@@ -171,7 +171,7 @@ def write_notices(resources):
     ]:
         copy_notice(sdk + path, notices / "DNG-SDK", path)
     copy_notice("vendor/dng-sdk/PROVENANCE.md", notices / "DNG-SDK")
-    raw = Path(os.environ.get("LIBRAW_SOURCE", ROOT / ".cache/native-deps/LibRaw-0.22.0-openmp"))
+    raw = Path(os.environ.get("LIBRAW_SOURCE", ROOT / ".cache/native-deps/LibRaw-0.22.3-openmp"))
     for name in ["COPYRIGHT", "LICENSE.LGPL", "LICENSE.CDDL"]:
         copy_notice(raw / name, notices / "LibRaw")
     copy_notice(

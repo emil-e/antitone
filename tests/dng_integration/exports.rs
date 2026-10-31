@@ -58,7 +58,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
     project.save(&project_path, Save::New).unwrap();
     drop(scan);
     let loaded = Project::load(&project_path).unwrap();
-    loaded.require_runtime(&antitone::raw::version()).unwrap();
+    loaded.require_runtime().unwrap();
     let source = loaded.source(id).unwrap();
     let scan = Scan::open(&source.path, Some(source.development.decode.fixed_wb)).unwrap();
     assert_eq!(record(file.path(), &scan).development, source.development);

@@ -229,6 +229,7 @@ impl Document {
             Some(expected.development.decode.fixed_wb),
         )?;
         verify_source(expected, &actual)?;
+        self.project.source_mut(id)?.development = actual.development;
         self.source_previews.insert(id, preview);
         Ok(())
     }
@@ -312,7 +313,7 @@ impl Document {
     }
 
     fn validate_structure_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
-        self.project.require_runtime(&crate::raw::version())?;
+        self.project.require_runtime()?;
         if let Some(device) = device
             && let Some(asset) = &self.project.output.look
         {
@@ -406,6 +407,7 @@ impl Document {
         document.spatial_metadata = Arc::new(document.ready_spatial_metadata());
 
         document.validate_with_device(device)?;
+        document.saved = document.project.clone();
         Ok(document)
     }
 

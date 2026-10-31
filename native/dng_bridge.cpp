@@ -117,16 +117,13 @@ protected:
 struct Source {
     AntitoneDngView view{};
     std::vector<float> rgb;
-    std::vector<uint16_t> original;
     std::vector<uint8_t> program;
 
     void finish() {
         view.rgb = rgb.data();
-        view.original = original.data();
         view.program = program.data();
         view.program_size = program.size();
-        view.retained_bytes = sizeof(Source) + rgb.capacity() * sizeof(float) +
-                              original.capacity() * sizeof(uint16_t) + program.capacity();
+        view.retained_bytes = sizeof(Source) + rgb.capacity() * sizeof(float) + program.capacity();
     }
 };
 
@@ -562,7 +559,6 @@ std::unique_ptr<Source> develop(const char *path, const AntitoneDngOptions &opti
     require(stage1.Planes() == 1 &&
                 stage1.Bounds() == dng_rect(source->view.raw_height, source->view.raw_width),
             "Unexpected original capture image");
-    source->original = pixels<uint16_t>(stage1, ttShort);
     admit_opcodes(host, *negative.Get(), *source);
     negative->BuildStage2Image(host);
     require(negative->Stage3BlackLevel() == 0,
