@@ -1,5 +1,5 @@
 //! Direct Adobe DNG SDK camera development and decode-free metadata inspection.
-//! Original CFA and conservative dependency flags remain separate capture authority.
+//! Original CFA is retained separately for sensor diagnostics.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::Path;
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use glam::DMat3;
 
-/// SDK build and stage/WB/precision/capture interpretation, not a source-file revision.
+/// SDK build and stage/WB/precision interpretation, not a source-file revision.
 pub const INTERPRETATION: &str = "adobe-dng-1.7.1.2768-float-bilinear-post-op-wb-quantum-v2";
 
 #[derive(Clone, Default)]
@@ -91,40 +91,14 @@ impl Header {
     }
 }
 
-/// Conservative reasons a developed pixel is not eligible for capture measurements.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CaptureState(u8);
-impl CaptureState {
-    pub fn original_white(self) -> bool {
-        self.0 & 1 != 0
-    }
-    pub fn original_black(self) -> bool {
-        self.0 & 2 != 0
-    }
-    pub fn repeated_border(self) -> bool {
-        self.0 & 4 != 0
-    }
-    /// Intermediate opcode/linearization limits, independent of original sensor limits.
-    pub fn processing_limit(self) -> bool {
-        self.0 & 8 != 0
-    }
-    pub fn eligible(self) -> bool {
-        self.0 == 0
-    }
-}
-
 /// Diagnostic wall times, not processing choices or interpretation identity.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Timings {
     pub sdk_area_seconds: f64,
     pub warp_sdk_seconds: f64,
-    pub bad_pixel_mask_seconds: f64,
-    pub bilinear_mask_seconds: f64,
-    pub warp_mask_seconds: f64,
     pub total_seconds: f64,
     pub sdk_workers: u32,
-    pub mask_workers: u32,
     pub warp_tile_scratch_bytes: u64,
 }
 
@@ -142,7 +116,6 @@ struct NativeOptions {
 struct NativeView {
     rgb: *const f32,
     original: *const u16,
-    flags: *const u8,
     program: *const u8,
     program_size: usize,
     width: u32,
@@ -250,7 +223,7 @@ impl Drop for NativeAllocation {
     }
 }
 
-/// Immutable completed camera RGB, original CFA and eligibility. No live SDK state remains.
+/// Immutable completed camera RGB and original CFA. No live SDK state remains.
 pub struct Source {
     allocation: NativeAllocation,
     header: Header,
@@ -329,7 +302,6 @@ impl Source {
             || v.raw_height == 0
             || v.rgb.is_null()
             || v.original.is_null()
-            || v.flags.is_null()
             || v.program.is_null()
         {
             return Err(Error::Rejected("invalid completed native view".into()));
@@ -365,15 +337,6 @@ impl Source {
         unsafe {
             std::slice::from_raw_parts(self.allocation.view.original, w as usize * h as usize)
         }
-    }
-    pub fn capture_state(&self, x: u32, y: u32) -> Option<CaptureState> {
-        let [w, h] = self.dimensions();
-        if x >= w || y >= h {
-            return None;
-        }
-        let i = y as usize * w as usize + x as usize;
-        // The completed mask contains one byte per developed pixel; coordinates were checked.
-        Some(CaptureState(unsafe { *self.allocation.view.flags.add(i) }))
     }
     pub fn capture_limits(&self) -> [f64; 2] {
         self.header.capture_limits

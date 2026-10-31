@@ -11,7 +11,6 @@ use crate::sampling::mean;
 
 mod sony;
 pub use sony::{SonyLensData, SonyLensDataStatus};
-mod eligibility;
 mod lens_source;
 #[cfg(feature = "editor")]
 mod source_preview;
@@ -378,33 +377,6 @@ pub struct SensorDiagnostics {
     pub peak: [u32; 4],
 }
 
-/// Original sensor-limit warnings affecting a developed region, not corrected RGB saturation.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CaptureFlags {
-    /// Original sensor white, or contributing native RGB clipping in a corrected source.
-    /// Shading headroom above native white does not set this flag.
-    pub at_white: bool,
-    pub below_black: bool,
-    pub repeated_border: bool,
-    pub processing_limit: bool,
-}
-
-impl CaptureFlags {
-    pub fn eligible(self) -> bool {
-        !self.at_white && !self.below_black && !self.repeated_border && !self.processing_limit
-    }
-}
-
-impl From<SensorDiagnostics> for CaptureFlags {
-    fn from(value: SensorDiagnostics) -> Self {
-        Self {
-            at_white: value.at_white.iter().any(|&n| n != 0),
-            below_black: value.below_black.iter().any(|&n| n != 0),
-            ..Self::default()
-        }
-    }
-}
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct NativeView {
@@ -482,13 +454,6 @@ unsafe extern "C" {
         width: u32,
         height: u32,
         diagnostics: *mut SensorDiagnostics,
-        error: *mut c_char,
-        size: usize,
-    ) -> c_int;
-    fn antitone_raw_capture_flags(
-        handle: *const c_void,
-        words: *mut u64,
-        count: usize,
         error: *mut c_char,
         size: usize,
     ) -> c_int;
@@ -819,62 +784,6 @@ impl RawFile {
         self.native_region_sensor_diagnostics(area)
     }
 
-    /// Capture-limit eligibility in the developed source's coordinates.
-    pub fn capture_eligibility(&mut self, area: Rect) -> Result<CaptureFlags, Error> {
-        self.ensure_unpacked()?;
-        #[cfg(feature = "dng-sdk")]
-        self.ensure_dng_capture()?;
-        self.unpacked_capture_eligibility(area)
-    }
-
-    fn unpacked_capture_eligibility(&self, area: Rect) -> Result<CaptureFlags, Error> {
-        #[cfg(feature = "dng-sdk")]
-        if let Some(source) = &self.dng_source {
-            self.validate_dng_region(area)?;
-            let mut flags = CaptureFlags::default();
-            for y in area.y..area.y + area.height {
-                for x in area.x..area.x + area.width {
-                    let state = source.capture_state(x, y).unwrap();
-                    flags.at_white |= state.original_white();
-                    flags.below_black |= state.original_black();
-                    flags.repeated_border |= state.repeated_border();
-                    flags.processing_limit |= state.processing_limit();
-                }
-            }
-            return Ok(flags);
-        }
-        if let Some(image) = &self.corrected {
-            return image.eligibility.flags(area);
-        }
-        if self.correction.is_some() {
-            return Err(Error::Raw(
-                "corrected capture eligibility needs camera development".into(),
-            ));
-        }
-        self.native_region_sensor_diagnostics(area).map(Into::into)
-    }
-
-    fn capture_mask(&self) -> Result<eligibility::EligibilityMask, Error> {
-        let mut mask =
-            eligibility::EligibilityMask::new([self.metadata.width, self.metadata.height])?;
-        let mut error = [0; 512];
-        let words = mask.words_mut();
-        // Const capture reads only; the caller owns all storage and the original levels remain intact.
-        let code = unsafe {
-            antitone_raw_capture_flags(
-                self.handle.as_ptr(),
-                words.as_mut_ptr(),
-                words.len(),
-                error.as_mut_ptr(),
-                error.len(),
-            )
-        };
-        if code != 0 {
-            return Err(native_error("capture mask", &error));
-        }
-        Ok(mask)
-    }
-
     fn native_region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
         #[cfg(feature = "dng-sdk")]
         if let Some(source) = &self.dng_source {
@@ -1005,13 +914,11 @@ impl RawFile {
         if output_color == 0 {
             if let Some(geometry) = &self.correction {
                 let started = std::time::Instant::now();
-                let support = self.capture_mask()?.ahd_support()?;
                 let original = self.borrow_view(view)?;
                 let corrected = lens_source::reconstruct(
                     original.pixels,
                     [view.width, view.height],
                     geometry,
-                    &support,
                     threads as usize,
                 )?;
                 // The immutable f32 raster replaces RGB16; keep original CFA, not a redundant RGB copy.
@@ -1025,7 +932,6 @@ impl RawFile {
                     height = corrected.size[1],
                     reconstruction_seconds = started.elapsed().as_secs_f64(),
                     corrected_bytes = corrected.pixels.capacity() * size_of::<[f32; 3]>(),
-                    eligibility_bytes = corrected.eligibility.retained_bytes(),
                     native_image_retained = false;
                     "embedded_lens_development"
                 );
@@ -1184,10 +1090,6 @@ impl FrozenRaw {
 
     pub(crate) fn region_sensor_diagnostics(&self, area: Rect) -> Result<SensorDiagnostics, Error> {
         self.raw.native_region_sensor_diagnostics(area)
-    }
-
-    pub(crate) fn capture_eligibility(&self, area: Rect) -> Result<CaptureFlags, Error> {
-        self.raw.unpacked_capture_eligibility(area)
     }
 }
 
@@ -1592,46 +1494,6 @@ mod tests {
         assert_eq!(size_of::<NativeThumbnail>(), 32);
     }
 
-    #[cfg(feature = "project")]
-    #[test]
-    fn native_capture_flags_match_thresholds_and_survive_development() {
-        let file = fixture::bayer_dng();
-        let mut bytes = std::fs::read(file.path()).unwrap();
-        let offset = bytes.len() - fixture::SIDE as usize * fixture::SIDE as usize * 2;
-        let sites = [
-            (0u32, 0u32, 0u16),
-            (31, 1, 65535),
-            (32, 0, 0),
-            (63, 63, 65535),
-        ];
-        for (x, y, value) in sites {
-            let start = offset + (y * fixture::SIDE + x) as usize * 2;
-            bytes[start..start + 2].copy_from_slice(&value.to_le_bytes());
-        }
-        std::fs::write(file.path(), bytes).unwrap();
-        let mut raw = RawFile::open_uncorrected(file.path()).unwrap();
-        raw.ensure_unpacked().unwrap();
-        let before = raw.capture_mask().unwrap();
-        for y in 0..fixture::SIDE {
-            for x in 0..fixture::SIDE {
-                let area = Rect::from([x, y, 1, 1]);
-                let expected = CaptureFlags::from(raw.region_sensor_diagnostics(area).unwrap());
-                assert_eq!(before.flags(area).unwrap(), expected);
-                let value = sites
-                    .iter()
-                    .find(|&&(sx, sy, _)| sx == x && sy == y)
-                    .map(|&(_, _, value)| value);
-                assert_eq!(expected.at_white, value == Some(65535));
-                assert_eq!(expected.below_black, value == Some(0));
-            }
-        }
-        raw.develop_camera([1.; 4]).unwrap();
-        let after = raw.capture_mask().unwrap();
-        for (x, y, _) in sites {
-            assert_eq!(before.at(x, y), after.at(x, y));
-        }
-    }
-
     #[cfg(feature = "editor")]
     #[test]
     #[ignore = "read-only local RAW embedded extraction and unchanged camera development"]
@@ -1814,7 +1676,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "read-only local Canon/Nikon/Olympus/Panasonic RAW samples; decode, development and eligibility invariants"]
+    #[ignore = "read-only local Canon/Nikon/Olympus/Panasonic RAW samples; decode, development and sensor diagnostics"]
     fn vendor_samples_develop_through_the_accepted_camera_domain() {
         // Three-colour integer Bayer bodies across four vendors and every accepted
         // container variant: 12-bit compressed NEF, Olympus hi-res ORF, Panasonic
@@ -1940,9 +1802,7 @@ mod tests {
                 assert_eq!(second.pixel_samples(x, y).unwrap(), value, "{path}");
             }
             // Eligibility of the whole active area matches its sensor diagnostics.
-            let flags = raw.capture_eligibility(area).unwrap();
-            let diagnostics = raw.region_sensor_diagnostics(area).unwrap();
-            assert_eq!(flags, CaptureFlags::from(diagnostics), "{path}");
+            raw.region_sensor_diagnostics(area).unwrap();
         }
         // sRAW/mRAW is decimated pre-demosaiced output, not CFA sensor data: rejected.
         assert!(RawFile::open(Path::new("samples/raw-downloads/canon/6d-sraw.CR2")).is_err());

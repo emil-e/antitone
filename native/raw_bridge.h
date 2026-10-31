@@ -59,9 +59,6 @@ int antitone_raw_sensor_diagnostics(const void *handle, AntitoneRawDiagnostics *
 int antitone_raw_region_diagnostics(const void *handle, uint32_t x, uint32_t y, uint32_t width,
                                     uint32_t height, AntitoneRawDiagnostics *diagnostics,
                                     char *error, size_t error_size);
-// Native visible coordinates, 32 pixels per u64, row-aligned; bit 0 white, bit 1 black per pixel.
-int antitone_raw_capture_flags(const void *handle, uint64_t *words, size_t word_count, char *error,
-                               size_t error_size);
 int antitone_raw_develop(void *handle, const double *wb, int output_color, int threads,
                          AntitoneRawView *view, char *error, size_t error_size);
 // Snapshot explicit owner/buffer allocations before freeze; zero means unavailable.

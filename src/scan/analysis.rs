@@ -1,4 +1,4 @@
-//! Canonical footprint selection and native capture eligibility, before camera-light evaluation.
+//! Canonical footprint selection and numerical eligibility before camera-light evaluation.
 
 use super::*;
 
@@ -64,16 +64,9 @@ impl Scan {
                     continue;
                 }
                 plan.samples.attempted += 1;
-                if !self.source.capture_eligibility(footprint)?.eligible() {
-                    plan.samples.rejected_capture += 1;
-                    continue;
-                }
-                let mut white = false;
                 let mut floor = false;
                 for y in footprint.y..footprint.y + 8 {
                     for x in footprint.x..footprint.x + 8 {
-                        white |= !image.is_continuous()
-                            && image.pixel_samples(x, y)?[..3].iter().any(|&v| v >= 65535.);
                         let raw = image.pixel(x, y)?;
                         if !raw.is_finite() {
                             return Err(Error::NumericalOverflow);
@@ -81,9 +74,7 @@ impl Scan {
                         floor |= raw.min_element() <= self.source.input_floor;
                     }
                 }
-                if white {
-                    plan.samples.rejected_development += 1;
-                } else if floor {
+                if floor {
                     // Residual correction cannot rescue a sample already at the native floor:
                     // its local positive gain is no larger than the gain used by the bound.
                     plan.samples.rejected_floor += 1;

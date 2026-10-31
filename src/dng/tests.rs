@@ -56,10 +56,7 @@ fn owned_basis_retains_original_codes_crop_orientation_and_fixed_wb() {
     assert_eq!(source.fixed_wb(), [2., 1., 1.5]);
     assert_eq!(pixel(&source, 20, 20), [0.5, 0.375, 0.75]);
     assert_eq!(source.original_cfa()[28 * 64 + 30], 1088);
-    assert!(source.capture_state(20, 20).unwrap().eligible());
-    assert!(source.capture_state(0, 0).unwrap().repeated_border());
-    assert!(source.capture_state(56, 0).is_none());
-    assert!(source.retained_bytes() >= (56 * 56 * 13 + 64 * 64 * 2) as u64);
+    assert!(source.retained_bytes() >= (56 * 56 * 12 + 64 * 64 * 2) as u64);
     // A camera-neutral sample becomes balanced ones, then XYZ D50 without a second WB.
     let white = source.camera_to_xyz_d50() * DVec3::ONE;
     let expected = DVec3::new(0.3457 / 0.3585, 1., (1. - 0.3457 - 0.3585) / 0.3585);
@@ -97,8 +94,6 @@ fn gain_order_keeps_each_sdk_clip_and_wb_is_after_opcodes_without_another_clip()
         fixture.lists[1] = gains.into_iter().map(|v| Opcode::gain(v, 1)).collect();
         let source = develop(&fixture);
         assert_eq!(pixel(&source, 20, 20), expected);
-        assert!(source.capture_state(20, 20).unwrap().processing_limit());
-        assert!(!source.capture_state(20, 20).unwrap().original_white());
         assert_eq!(source.opcode_counts().0, [0, 2, 0]);
     }
     let mut fixture = Fixture::default();
@@ -114,8 +109,6 @@ fn gain_order_keeps_each_sdk_clip_and_wb_is_after_opcodes_without_another_clip()
     )
     .unwrap();
     assert_eq!(pixel(&source, 20, 20), [2., 1., 1.5]);
-    assert!(!source.capture_state(20, 20).unwrap().original_white());
-    assert!(source.capture_state(20, 20).unwrap().processing_limit());
 }
 
 #[test]
@@ -185,80 +178,6 @@ fn identity_is_exact_and_nonidentity_geometry_matches_the_declared_affine_ramp()
 }
 
 #[test]
-fn changed_sensor_sites_cannot_hide_behind_interpolation_or_sequential_warps() {
-    for count in [0, 1, 2] {
-        for (x, y) in [(30, 28), (31, 29), (30, 29), (6, 4), (61, 59)] {
-            for code in [0, 4160] {
-                let mut fixture = Fixture::default();
-                for _ in 0..count {
-                    fixture.lists[2].push(warp(true));
-                }
-                let baseline = develop(&fixture);
-                fixture.marker = Some((x, y, code));
-                let changed = develop(&fixture);
-                assert_eq!(changed.original_cfa()[(y * 64 + x) as usize], code);
-                let mut affected = 0;
-                for (i, (a, b)) in baseline
-                    .camera_rgb()
-                    .iter()
-                    .zip(changed.camera_rgb())
-                    .enumerate()
-                {
-                    if a != b {
-                        affected += 1;
-                        let flags = changed.capture_state(i as u32 % 56, i as u32 / 56).unwrap();
-                        assert!(
-                            if code == 0 {
-                                flags.original_black()
-                            } else {
-                                flags.original_white()
-                            },
-                            "unflagged dependency: warps={count} site=({x},{y}) output={i}"
-                        );
-                    }
-                }
-                assert!(affected > 0);
-                assert!(changed.capture_state(12, 12).unwrap().eligible());
-            }
-        }
-    }
-}
-
-#[test]
-fn a_later_warp_cannot_hide_new_border_clamping_behind_an_eligible_prior_edge() {
-    let mut fixture = Fixture::default();
-    fixture.lists[2].push(Opcode::warp(&[[0.5, 0., 0., 0., 0., 0.]], [0.5, 0.5]));
-    let contracted = develop(&fixture);
-    assert!(contracted.capture_state(0, 28).unwrap().eligible());
-    fixture.lists[2].push(Opcode::warp(&[[1.05, 0., 0., 0., 0., 0.]], [0.5, 0.5]));
-    let expanded = develop(&fixture);
-    // x=0 maps to -1.4; constant RGB cannot reveal that SDK source-border clamping occurred.
-    assert!(expanded.capture_state(0, 28).unwrap().repeated_border());
-    assert!(!expanded.capture_state(0, 28).unwrap().eligible());
-    assert!(expanded.capture_state(28, 28).unwrap().eligible());
-}
-
-#[test]
-fn original_capture_limits_survive_gains_that_move_values_away_from_those_limits() {
-    for (code, gain) in [(64, 4.), (4160, 0.5)] {
-        let mut fixture = Fixture {
-            marker: Some((30, 28, code)),
-            ..Default::default()
-        };
-        fixture.lists[0].push(Opcode::gain(gain, 0));
-        let source = develop(&fixture);
-        let state = source.capture_state(24, 24).unwrap();
-        assert!(if code == 64 {
-            state.original_black()
-        } else {
-            state.original_white()
-        });
-        assert!(!state.eligible());
-        assert_eq!(source.original_cfa()[28 * 64 + 30], code);
-    }
-}
-
-#[test]
 fn packed_fourteen_bit_and_uniform_black_patterns_keep_the_same_camera_basis() {
     let base = develop(&Fixture::default());
     let mut fixture = Fixture {
@@ -282,53 +201,44 @@ fn packed_fourteen_bit_and_uniform_black_patterns_keep_the_same_camera_basis() {
 }
 
 #[test]
-fn required_bad_pixel_repair_retains_original_limits_and_neighbour_dependencies() {
+fn bad_pixel_repair_uses_original_neighbours_and_preserves_diagnostic_codes() {
     for (x, y, nx, ny, channel, expected) in [
         (30u32, 28u32, 32u32, 28u32, 0usize, 0.4375f32),
         (31, 28, 32, 29, 1, 0.53125),
     ] {
-        for warped in [false, true] {
-            let mut fixture = Fixture {
-                marker: Some((x, y, 0)),
-                ..Default::default()
-            };
-            fixture.lists[0].push(Opcode::bad_pixels(0, 2));
-            if warped {
-                fixture.lists[2].push(warp(true));
-            }
-            let file = fixture.write();
-            let mut bytes = std::fs::read(file.path()).unwrap();
-            let offset = bytes.len() - 64 * 64 * 2 + (ny * 64 + nx) as usize * 2;
-            bytes[offset..offset + 2].copy_from_slice(&4160u16.to_le_bytes());
-            std::fs::write(file.path(), bytes).unwrap();
-            let source = Source::develop(file.path(), options(), &Cancellation::default()).unwrap();
-            let (dx, dy) = ((x - 6) as usize, (y - 4) as usize);
-            if !warped {
-                assert_eq!(pixel(&source, dx, dy)[channel], expected);
-            }
-            let state = source.capture_state(dx as u32, dy as u32).unwrap();
-            assert!(state.original_white() && state.original_black());
-            assert!(!state.eligible());
-            assert_eq!(source.original_cfa()[(y * 64 + x) as usize], 0);
-            assert_eq!(source.original_cfa()[(ny * 64 + nx) as usize], 4160);
-            assert!(source.capture_state(12, 12).unwrap().eligible());
-        }
+        let mut fixture = Fixture {
+            marker: Some((x, y, 0)),
+            ..Default::default()
+        };
+        fixture.lists[0].push(Opcode::bad_pixels(0, 2));
+        let file = fixture.write();
+        let mut bytes = std::fs::read(file.path()).unwrap();
+        let offset = bytes.len() - 64 * 64 * 2 + (ny * 64 + nx) as usize * 2;
+        bytes[offset..offset + 2].copy_from_slice(&4160u16.to_le_bytes());
+        std::fs::write(file.path(), bytes).unwrap();
+        let source = Source::develop(file.path(), options(), &Cancellation::default()).unwrap();
+        let (dx, dy) = ((x - 6) as usize, (y - 4) as usize);
+        assert_eq!(pixel(&source, dx, dy)[channel], expected);
+        assert_eq!(source.original_cfa()[(y * 64 + x) as usize], 0);
+        assert_eq!(source.original_cfa()[(ny * 64 + nx) as usize], 4160);
     }
 }
 
 #[test]
-fn in_range_bad_pixel_sentinels_reject_rather_than_become_eligible_synthesized_capture() {
+fn in_range_bad_pixel_markers_are_repaired_by_the_sdk() {
     let mut fixture = Fixture {
         marker: Some((30, 28, 1000)),
         ..Default::default()
     };
-    let plain = fixture.write();
-    let source = Source::develop(plain.path(), options(), &Cancellation::default()).unwrap();
-    assert!(source.capture_state(24, 24).unwrap().eligible());
+    let plain = develop(&fixture);
+    assert_eq!(pixel(&plain, 24, 24)[0], 936. / 4096.);
     fixture.lists[0].push(Opcode::bad_pixels(1000, 2));
-    let repaired = fixture.write();
-    assert!(Header::read(repaired.path(), options(), &Cancellation::default()).is_err());
-    assert!(Source::develop(repaired.path(), options(), &Cancellation::default()).is_err());
+    let file = fixture.write();
+    let header = Header::read(file.path(), options(), &Cancellation::default()).unwrap();
+    let repaired = Source::develop(file.path(), options(), &Cancellation::default()).unwrap();
+    assert_eq!(repaired.header(), header);
+    assert_eq!(pixel(&repaired, 24, 24), [0.25, 0.375, 0.5]);
+    assert_eq!(repaired.original_cfa()[28 * 64 + 30], 1000);
 }
 
 #[test]

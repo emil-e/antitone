@@ -72,7 +72,7 @@ python3 scripts/generate-raw-fixture.py
 
 Ordinary tests read the repository binaries; they never generate or download them. Exports and projects go to isolated temporary directories. The recipe uses only Python's standard library and `--check` compares bytes without writing.
 
-Sensor-white/black rejection tests edit isolated temporary copies, never the repository data. Numerical gates and eligible-sample requirements live in the tests.
+Sensor-white acceptance and unusable-black rejection tests edit isolated temporary copies, never the repository data. Numerical gates and sample-adequacy checks live in the tests.
 
 The scalar rendering/export comparisons use the opt-in `ocio-reference` feature. Production GPU export/worker checks are documented in [development](../../../docs/development.md#export-checks); normal editor builds do not link OCIO.
 

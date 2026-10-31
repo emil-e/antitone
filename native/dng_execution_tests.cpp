@@ -10,34 +10,6 @@ void require(bool condition) {
     }
 }
 
-void rows_cover_partial_work_once() {
-    constexpr uint32_t width = 517, height = 513;
-    std::vector<uint32_t> values(width * height, 0);
-    std::vector<std::atomic<uint32_t>> visits(height);
-    for (auto &visit : visits) {
-        visit.store(0);
-    }
-    antitone_dng::Execution execution(8);
-    const auto workers = execution.rows(width, height, [&](uint32_t first, uint32_t end) {
-        for (uint32_t y = first; y < end; ++y) {
-            require(visits[y].fetch_add(1) == 0);
-            for (uint32_t x = 0; x < width; ++x) {
-                values[y * width + x] = x + 17 * y + 1;
-            }
-        }
-    });
-    require(workers > 1 && workers <= execution.threads());
-    for (uint32_t y = 0; y < height; ++y) {
-        require(visits[y].load() == 1);
-        for (uint32_t x = 0; x < width; ++x) {
-            require(values[y * width + x] == x + 17 * y + 1);
-        }
-    }
-    uint32_t tiny = 0;
-    require(execution.rows(7, 3, [&](uint32_t first, uint32_t end) { tiny += end - first; }) == 1);
-    require(tiny == 3);
-}
-
 void failure_rethrows_original_only_after_every_worker_retires() {
     struct OriginalFailure {};
 
@@ -98,7 +70,6 @@ void scratch_limits_worker_amplification_not_the_serial_baseline() {
 } // namespace
 
 int main() {
-    rows_cover_partial_work_once();
     failure_rethrows_original_only_after_every_worker_retires();
     scratch_limits_worker_amplification_not_the_serial_baseline();
     std::cout << "DNG worker ownership, failure joins and scratch bounds passed\n";

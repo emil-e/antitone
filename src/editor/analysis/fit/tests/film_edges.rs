@@ -160,15 +160,8 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
                 }
             }
             assert_eq!(
-                [
-                    frame.film.rejected_capture,
-                    frame.film.rejected_development,
-                    frame.film.rejected_floor,
-                    frame.picture.rejected_capture,
-                    frame.picture.rejected_development,
-                    frame.picture.rejected_floor
-                ],
-                [0; 6]
+                [frame.film.rejected_floor, frame.picture.rejected_floor],
+                [0; 2]
             );
             eprintln!(
                 "film_edge_trial reviewed={reviewed} source_index={index} film_before=3844 film_after={} picture_before=1600 picture_after={} numeric_rejected=0",

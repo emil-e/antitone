@@ -56,11 +56,6 @@ double elapsed(Clock::time_point start) {
     return std::chrono::duration<double>(Clock::now() - start).count();
 }
 
-constexpr uint8_t sensor_white = 1;
-constexpr uint8_t sensor_black = 2;
-constexpr uint8_t repeated_border = 4;
-constexpr uint8_t processing_limit = 8;
-
 void require(bool condition, const char *message) {
     if (!condition) {
         throw std::runtime_error(message);
@@ -123,18 +118,15 @@ struct Source {
     AntitoneDngView view{};
     std::vector<float> rgb;
     std::vector<uint16_t> original;
-    std::vector<uint8_t> flags;
     std::vector<uint8_t> program;
 
     void finish() {
         view.rgb = rgb.data();
         view.original = original.data();
-        view.flags = flags.data();
         view.program = program.data();
         view.program_size = program.size();
         view.retained_bytes = sizeof(Source) + rgb.capacity() * sizeof(float) +
-                              original.capacity() * sizeof(uint16_t) + flags.capacity() +
-                              program.capacity();
+                              original.capacity() * sizeof(uint16_t) + program.capacity();
     }
 };
 
@@ -150,28 +142,14 @@ template <typename T> std::vector<T> pixels(const dng_image &image, uint32 type)
 class Host final : public dng_host {
     Source &source;
     antitone_dng::Execution &execution;
-    std::vector<uint8_t> sites;
     uint32 stage = 0;
-    uint32 current_opcode = 0;
 
-    size_t site_index(uint32 x, uint32 y) const {
-        return size_t(y + source.view.active_top) * source.view.raw_width + x +
-               source.view.active_left;
-    }
-
-    void note_limits(const dng_image &image) {
+    void validate_image(const dng_image &image) {
         const auto &v = source.view;
         if (stage == 1) {
-            const auto values = pixels<uint16_t>(image, ttShort);
-            require(values.size() == sites.size(), "Opcode changed original sensor geometry");
-            for (size_t i = 0; i < values.size(); ++i) {
-                if (i % v.raw_width == 0) {
-                    SniffForAbort();
-                }
-                if (values[i] <= v.black || values[i] >= v.white) {
-                    sites[i] |= processing_limit;
-                }
-            }
+            require(image.PixelType() == ttShort && image.Planes() == 1 &&
+                        image.Bounds() == dng_rect(v.raw_height, v.raw_width),
+                    "Opcode changed original sensor geometry");
             return;
         }
         const auto values = pixels<float>(image, ttFloat);
@@ -186,85 +164,9 @@ class Host final : public dng_host {
                     const float value = values[i * planes + p];
                     require(std::isfinite(value) && value >= 0 && value <= 1,
                             "SDK output outside the admitted normalized camera range");
-                    if (value <= 0 || value >= 1) {
-                        if (stage == 2) {
-                            sites[site_index(x, y)] |= processing_limit;
-                        } else {
-                            source.flags[i] |= processing_limit;
-                        }
-                    }
                 }
             }
         }
-    }
-
-    void propagate_bad_pixels(dng_filter_task &filter, const dng_rect &area) {
-        const int32 width = int32(source.view.raw_width);
-        const int32 height = int32(source.view.raw_height);
-        require(area == dng_rect(height, width), "Unexpected bad-pixel repair bounds");
-        std::vector<uint8_t> next(sites.size());
-        const auto workers = execution.rows(width, height, [&](uint32 first, uint32 end) {
-            for (int32 y = int32(first); y < int32(end); ++y) {
-                SniffForAbort();
-                for (int32 x = 0; x < width; ++x) {
-                    // FixBadPixelsConstant reads an immutable source, with a two-site halo
-                    // and 2x2 edge repeat. Union the full halo, not only selected neighbours.
-                    const auto src = filter.SrcArea(dng_rect(y, x, y + 1, x + 1));
-                    require(src.W() == 5 && src.H() == 5,
-                            "Unrecognized bad-pixel dependency kernel");
-                    uint8_t flags = src.l < 0 || src.t < 0 || src.r > width || src.b > height
-                                        ? repeated_border
-                                        : 0;
-                    for (int32 sy = std::max(0, src.t); sy < std::min(height, src.b); ++sy) {
-                        for (int32 sx = std::max(0, src.l); sx < std::min(width, src.r); ++sx) {
-                            flags |= sites[size_t(sy) * width + sx];
-                        }
-                    }
-                    next[size_t(y) * width + x] = flags;
-                }
-            }
-        });
-        source.view.mask_workers = std::max(source.view.mask_workers, workers);
-        sites.swap(next);
-    }
-
-    void propagate_warp(dng_filter_task &filter, const dng_rect &area) {
-        const int32 width = int32(source.view.width);
-        const int32 height = int32(source.view.height);
-        require(area == dng_rect(height, width), "Unexpected SDK warp bounds");
-        std::vector<uint8_t> next(source.flags.size());
-        const auto workers = execution.rows(width, height, [&](uint32 first, uint32 end) {
-            for (int32 y = int32(first); y < int32(end); ++y) {
-                SniffForAbort();
-                for (int32 x = 0; x < width; ++x) {
-                    // SDK returns the union of all planes' reconstruction read bounds.
-                    const auto src = filter.SrcArea(dng_rect(y, x, y + 1, x + 1));
-                    require(src.W() > 0 && src.H() > 0 && src.W() <= 64 && src.H() <= 64,
-                            "Warp dependency span exceeds the prototype's 64-site bound");
-                    // SrcArea already intersects its read bounds with the source image. Touching
-                    // an edge may therefore hide a clamped position, even if prior warps made that
-                    // edge otherwise eligible. Include the clamp-adjusted kernel conservatively.
-                    const bool touches_border =
-                        src.l <= 0 || src.t <= 0 || src.r >= width || src.b >= height;
-                    const int32 pad = touches_border ? 2 : 0;
-                    const int32 left = std::max(0, std::clamp(src.l, 0, width - 1) - pad);
-                    const int32 top = std::max(0, std::clamp(src.t, 0, height - 1) - pad);
-                    const int32 right =
-                        std::min(width, std::clamp(src.r - 1, 0, width - 1) + 1 + pad);
-                    const int32 bottom =
-                        std::min(height, std::clamp(src.b - 1, 0, height - 1) + 1 + pad);
-                    uint8_t flags = touches_border ? repeated_border : 0;
-                    for (int32 sy = top; sy < bottom; ++sy) {
-                        for (int32 sx = left; sx < right; ++sx) {
-                            flags |= source.flags[size_t(sy) * width + sx];
-                        }
-                    }
-                    next[size_t(y) * width + x] = flags;
-                }
-            }
-        });
-        source.view.mask_workers = std::max(source.view.mask_workers, workers);
-        source.flags.swap(next);
     }
 
     void perform_sdk(dng_area_task &task, const dng_rect &area, dng_area_task_progress *progress) {
@@ -327,50 +229,9 @@ public:
         return new FloatNegative(*this);
     }
 
-    void capture_sites() {
-        const auto &v = source.view;
-        sites.resize(source.original.size());
-        for (size_t i = 0; i < sites.size(); ++i) {
-            if (i % v.raw_width == 0) {
-                SniffForAbort();
-            }
-            sites[i] = (source.original[i] >= v.white ? sensor_white : 0) |
-                       (source.original[i] <= v.black ? sensor_black : 0);
-        }
-    }
-
-    void prepare_bilinear(const dng_image &stage2) {
-        const auto start = Clock::now();
+    void validate_stage2(const dng_image &image) {
         stage = 2;
-        note_limits(stage2);
-        const auto &v = source.view;
-        source.flags.resize(size_t(v.width) * v.height);
-        // Admitted rectangular 2x2 Bayer uses InterpolateGeneric: its source tiles have
-        // two-site padding. Union that entire halo, including unused/zero-weight sites.
-        const auto workers = execution.rows(v.width, v.height, [&](uint32 first, uint32 end) {
-            for (int32 y = int32(first); y < int32(end); ++y) {
-                SniffForAbort();
-                for (int32 x = 0; x < int32(v.width); ++x) {
-                    uint8_t flags = 0;
-                    for (int32 dy = -2; dy <= 2; ++dy) {
-                        for (int32 dx = -2; dx <= 2; ++dx) {
-                            const int32 sx = x + dx;
-                            const int32 sy = y + dy;
-                            if (sx < 0 || sy < 0 || sx >= int32(v.width) || sy >= int32(v.height)) {
-                                flags |= repeated_border;
-                            } else {
-                                flags |= sites[site_index(uint32(sx), uint32(sy))];
-                            }
-                        }
-                    }
-                    source.flags[size_t(y) * v.width + x] = flags;
-                }
-            }
-        });
-        source.view.mask_workers = std::max(source.view.mask_workers, workers);
-        sites.clear();
-        sites.shrink_to_fit();
-        source.view.bilinear_mask_seconds += elapsed(start);
+        validate_image(image);
     }
 
     void ApplyOpcodeList(dng_opcode_list &list, dng_negative &negative,
@@ -381,41 +242,24 @@ public:
         for (uint32 i = 0; i < list.Count(); ++i) {
             SniffForAbort();
             auto &opcode = list.Entry(i);
-            current_opcode = opcode.OpcodeID();
             if (opcode.AboutToApply(*this, negative, image->Bounds(), image->Planes())) {
                 opcode.Apply(*this, negative, image);
-                note_limits(*image.Get());
+                validate_image(*image.Get());
                 ++source.view.applied[stage - 1];
             } else {
                 ++source.view.skipped[stage - 1];
             }
         }
-        current_opcode = 0;
     }
 
     void PerformAreaTask(dng_area_task &task, const dng_rect &area,
                          dng_area_task_progress *progress = nullptr) override {
-        auto start = Clock::now();
+        const auto start = Clock::now();
         perform_sdk(task, area, progress);
         const auto sdk_seconds = elapsed(start);
         source.view.sdk_area_seconds += sdk_seconds;
         if (stage == 3) {
             source.view.warp_sdk_seconds += sdk_seconds;
-        }
-        start = Clock::now();
-        if (stage == 1 && current_opcode == 4) {
-            auto *filter = dynamic_cast<dng_filter_task *>(&task);
-            require(filter && std::strcmp(task.Name(), "dng_filter_opcode_task") == 0,
-                    "Unrecognized bad-pixel repair task");
-            propagate_bad_pixels(*filter, area);
-            source.view.bad_pixel_mask_seconds += elapsed(start);
-        }
-        if (stage == 3) {
-            auto *filter = dynamic_cast<dng_filter_task *>(&task);
-            require(filter && std::strcmp(task.Name(), "dng_filter_warp") == 0,
-                    "Unrecognized SDK dependency task");
-            propagate_warp(*filter, area);
-            source.view.warp_mask_seconds += elapsed(start);
         }
     }
 };
@@ -569,12 +413,6 @@ void admit_opcodes(Host &host, dng_negative &negative, Source &source) {
                         const uint32 phase = data.Get_uint32();
                         require(marker <= 65535 && phase < 4,
                                 "Invalid bad-pixel marker or Bayer phase");
-                        // Existing original-limit flags can carry sentinel invalidity only
-                        // outside the valid capture range; in-range markers need a new state.
-                        require(
-                            double(marker) <= source.view.black ||
-                                double(marker) >= source.view.white,
-                            "In-range bad-pixel markers are outside the supported capture domain");
                     }
                     if (!opcode.IsNOP()) {
                         // Warps have cubic absolute-weight norm <=1.890625; bad-pixel repair
@@ -725,12 +563,11 @@ std::unique_ptr<Source> develop(const char *path, const AntitoneDngOptions &opti
                 stage1.Bounds() == dng_rect(source->view.raw_height, source->view.raw_width),
             "Unexpected original capture image");
     source->original = pixels<uint16_t>(stage1, ttShort);
-    host.capture_sites();
     admit_opcodes(host, *negative.Get(), *source);
     negative->BuildStage2Image(host);
     require(negative->Stage3BlackLevel() == 0,
             "Preserved-black development is outside the prototype");
-    host.prepare_bilinear(*negative->Stage2Image());
+    host.validate_stage2(*negative->Stage2Image());
     negative->BuildStage3Image(host);
     require(negative->Stage3Gain() == 1, "Unexpected SDK camera gain");
     const auto &stage3 = *negative->Stage3Image();

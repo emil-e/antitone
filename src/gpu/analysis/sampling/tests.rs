@@ -35,15 +35,7 @@ fn camera_sampling_keeps_the_original_grid_correction_and_deliberate_exposure_om
         .sample(area, 16, |f| f.x >= a.x + 20, || false)
         .unwrap()
         .unwrap();
-    assert_eq!(
-        [
-            actual.attempted,
-            actual.rejected_capture,
-            actual.rejected_development,
-            actual.rejected_floor
-        ],
-        [12, 0, 0, 0]
-    );
+    assert_eq!([actual.attempted, actual.rejected_floor], [12, 0]);
     let expected_points: Vec<_> = [14, 26, 38, 50]
         .into_iter()
         .flat_map(|y| [26, 38, 50].map(move |x| [a.x + x, a.y + y]))
@@ -150,18 +142,26 @@ fn camera_sampling_requires_every_cell_of_the_selected_capture_footprint() {
         .sample(area, 16, |_| true, || false)
         .unwrap()
         .unwrap();
-    assert_eq!(
-        [
-            actual.attempted,
-            actual.rejected_capture,
-            actual.rejected_development,
-            actual.rejected_floor
-        ],
-        [16, 0, 0, 8]
-    );
+    assert_eq!([actual.attempted, actual.rejected_floor], [16, 8]);
     assert_eq!(actual.pixels.len(), 8);
     assert_eq!(actual.pixels.len(), reference.pixels.len());
     for (actual, expected) in actual.pixels.iter().zip(&reference.pixels) {
         assert!((*actual - *expected).abs().max_element() < 2e-6 * expected.abs().max_element());
     }
+}
+
+#[test]
+fn camera_sampling_accepts_native_white_without_a_capture_or_white_value_veto() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let file = crate::raw::fixture::bayer_dng_with_rgb([65535; 3]);
+    let scan = Scan::open(file.path(), None).unwrap();
+    let gate = SubmissionGate::default();
+    let sampler = CameraSampler::new(&device, &renderer, (&queue, &gate), &scan).unwrap();
+    let actual = sampler
+        .sample(scan.area, 1, |_| true, || false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(actual.attempted, 1);
+    assert_eq!(actual.pixels, vec![DVec3::ONE]);
+    assert_eq!(actual.rejected_floor, 0);
 }

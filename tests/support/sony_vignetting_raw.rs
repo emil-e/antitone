@@ -179,7 +179,7 @@ fn gains_are_applied_at_original_sites_before_the_combined_channel_reconstructio
 }
 
 #[test]
-fn headroom_is_not_capture_clipping_and_source_floor_composes_with_residual_flat_field() {
+fn headroom_measurements_and_source_floor_compose_with_residual_flat_field() {
     use antitone::{
         flat_field::FlatField,
         project::{FlatFieldSettings, Project, Save, Source, SourceId},
@@ -204,11 +204,8 @@ fn headroom_is_not_capture_clipping_and_source_floor_composes_with_residual_flat
     let region = antitone::raw::Rect::from([56, 56, 8, 8]);
     assert!(scan.pixel(60, 60).unwrap().max_element() > 1.);
     assert!(scan.reference(region).unwrap().max_element() > 1.);
-    let flags = scan.source().capture_eligibility(region).unwrap();
-    assert!(!flags.at_white && !flags.below_black);
     let samples = scan.analysis_samples(region, 1, || false).unwrap().unwrap();
     assert_eq!(samples.pixels.len(), 1);
-    assert_eq!(samples.rejected_development, 0);
     let estimated = scan.estimate_flat_field(scan.area).unwrap();
     let center_camera = scan
         .source()
