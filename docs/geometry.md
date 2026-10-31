@@ -12,7 +12,7 @@ An image can be developed in one orientation, cropped in another, shown at a thi
 | **Raster** | A sampled representation of a declared region at a chosen resolution |
 | **Canvas** | Logical UI positions, related to the image by viewport layout |
 
-Source coordinates are developed RGB coordinates, not RAW Bayer coordinates. The metadata active area is a rectangle within the source; its origin need not be zero. A thumbnail and an export can represent the same frame at different raster resolutions; zoom and pan move that frame on the canvas without changing composition.
+Source coordinates are developed RGB coordinates, not RAW Bayer coordinates. The metadata active area is a rectangle within the source; its origin need not be zero. A LibRaw inset with an unknown origin leaves the full decoded image active, because dimensions alone do not locate a crop. A thumbnail and an export can represent the same frame at different raster resolutions; zoom and pan move that frame on the canvas without changing composition.
 
 Coordinates use a top-left origin, x right and y down. Integer positions describe pixel edges; integer regions are half-open. Mapping a point does not silently clamp it: an outside-image click must not turn into a measurement of an unrelated edge pixel.
 

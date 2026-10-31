@@ -291,7 +291,11 @@ impl Metadata {
     }
 
     pub fn native_image_area(&self) -> Result<Rect, Error> {
-        if self.inset_width == 0 && self.inset_height == 0 {
+        // LibRaw can report crop dimensions with 0xffff for an unknown origin.
+        // Without a position, retain its decoded raster rather than inventing a crop.
+        let unknown_origin = !self.uses_sdk()
+            && (self.inset_left == u32::from(u16::MAX) || self.inset_top == u32::from(u16::MAX));
+        if unknown_origin || (self.inset_width == 0 && self.inset_height == 0) {
             return Ok(Rect {
                 x: 0,
                 y: 0,
@@ -1682,6 +1686,56 @@ mod tests {
                 height: 6144
             }
         );
+    }
+
+    #[test]
+    fn libraw_inset_with_an_unknown_origin_uses_the_full_decoded_image() {
+        for (left, top) in [(65535, 65535), (65535, 12), (12, 65535)] {
+            let mut m = metadata_fixture();
+            m.width = 6024;
+            m.height = 4024;
+            m.raw_width = 6048;
+            m.raw_height = 4040;
+            m.left_margin = 8;
+            m.top_margin = 4;
+            m.inset_left = left;
+            m.inset_top = top;
+            m.inset_width = 6000;
+            m.inset_height = 3376;
+            assert_eq!(
+                m.native_image_area().unwrap(),
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 6024,
+                    height: 4024,
+                },
+                "inset origin ({left}, {top})"
+            );
+        }
+    }
+
+    #[test]
+    fn positioned_metadata_insets_still_reject_incomplete_or_out_of_bounds_geometry() {
+        for (left, top, width, height) in [
+            (12, 12, 0, 5760),
+            (12, 12, 8640, 0),
+            (12, 12, 8704, 5760),
+            (12, 12, 8640, 6144),
+            (65534, 12, 8640, 5760),
+            (65536, 12, 8640, 5760),
+            (u32::MAX, 12, 8640, 5760),
+        ] {
+            let mut m = metadata_fixture();
+            m.inset_left = left;
+            m.inset_top = top;
+            m.inset_width = width;
+            m.inset_height = height;
+            assert!(
+                m.native_image_area().is_err(),
+                "inset ({left}, {top}, {width}, {height})"
+            );
+        }
     }
 
     #[test]
