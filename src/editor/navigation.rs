@@ -246,7 +246,7 @@ fn can_pan(geometry: CanvasLayout) -> bool {
         || geometry.image.height() > geometry.canvas.height()
 }
 
-fn picker_cursor(
+pub(super) fn picker_cursor(
     geometry: CanvasLayout,
     point: egui::Pos2,
     region: Option<Coverage>,

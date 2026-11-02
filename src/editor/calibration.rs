@@ -19,17 +19,17 @@ pub(super) fn pick_dmin<'scope>(
 ) -> Result<Task<()>, String> {
     let mut image = measurement::capture_scan(editor)?;
     let services = editor.source_services.clone();
+    let reading = measurement::pick(
+        editor,
+        DMIN,
+        move |region, cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+        },
+        cx.clone(),
+    );
     cx.spawn(move |cx| async move {
-        let Some(value) = measurement::pick(
-            DMIN,
-            move |region, cancelled| {
-                let services = measurement::query_services(services.as_ref())?;
-                query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
-            },
-            cx.clone(),
-        )
-        .await
-        else {
+        let Some(value) = reading.await else {
             return;
         };
         cx.update(|editor| {
@@ -47,17 +47,17 @@ pub(super) fn pick_dmax<'scope>(
 ) -> Result<Task<()>, String> {
     let mut image = measurement::capture_scan(editor)?;
     let services = editor.source_services.clone();
+    let reading = measurement::pick(
+        editor,
+        DMAX,
+        move |region, cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+        },
+        cx.clone(),
+    );
     cx.spawn(move |cx| async move {
-        let Some(value) = measurement::pick(
-            DMAX,
-            move |region, cancelled| {
-                let services = measurement::query_services(services.as_ref())?;
-                query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
-            },
-            cx.clone(),
-        )
-        .await
-        else {
+        let Some(value) = reading.await else {
             return;
         };
         cx.update(|editor| {
@@ -76,19 +76,19 @@ pub(super) fn pick_gamma<'scope>(
     let mut image = measurement::capture_scan(editor)?;
     let services = editor.source_services.clone();
     let input = editor.input();
+    let reading = measurement::pick(
+        editor,
+        GAMMA,
+        move |region, cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            query::gamma(services, &mut image, region, input, &|| {
+                cancelled.is_cancelled()
+            })
+        },
+        cx.clone(),
+    );
     cx.spawn(move |cx| async move {
-        let Some(value) = measurement::pick(
-            GAMMA,
-            move |region, cancelled| {
-                let services = measurement::query_services(services.as_ref())?;
-                query::gamma(services, &mut image, region, input, &|| {
-                    cancelled.is_cancelled()
-                })
-            },
-            cx.clone(),
-        )
-        .await
-        else {
+        let Some(value) = reading.await else {
             return;
         };
         cx.update(|editor| {

@@ -531,7 +531,7 @@ impl tool::Tool for CropTool {
                 icon: icons::Icon::Crop,
                 title: "Crop",
             },
-            primary: Some("Apply"),
+            primary: Some("Apply".into()),
             dismiss: "Cancel",
             warning: self
                 .edit

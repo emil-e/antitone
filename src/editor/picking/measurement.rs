@@ -62,78 +62,68 @@ impl Drop for Retire<'_> {
     }
 }
 
-/// Await a region selection and its measurement; cancellation and reported failures yield no value.
-pub(in crate::editor) async fn pick<T, F>(
+/// Open the interaction now; await selection and measurement without retaining the Editor borrow.
+pub(in crate::editor) fn pick<'scope, T, F>(
+    editor: &mut Editor,
     display: Display,
     measure: F,
-    cx: UiContext<'_, Editor>,
-) -> Option<T>
+    cx: UiContext<'scope, Editor>,
+) -> impl std::future::Future<Output = Option<T>> + use<'scope, T, F>
 where
     T: Send + 'static,
     F: FnOnce(Coverage, Cancellation) -> Result<T, Error> + Send + 'static,
 {
-    let (selection, receive) = cx.update(|editor| {
-        if !matches!(
-            editor.document.tool.as_ref(),
-            Some(super::super::legacy_tool::Tool::Pick(_))
-        ) {
-            if !editor.prepare_tool() {
-                return None;
-            }
-            editor
-                .document
-                .set_legacy_tool(super::super::legacy_tool::Tool::Pick(Vec::new()));
-        }
-        if editor.document.visit.picking.selection.is_some() {
-            editor.cancel_picker();
-        }
-        editor.show_picker(display);
-        let (reply, receive) = oneshot::channel();
-        let selection = Rc::new(Selection {
-            id: editor.request_id(),
-            reply: std::cell::RefCell::new(Some(reply)),
-            cancelled: Cancellation::default(),
+    let (reply, receive) = oneshot::channel();
+    let selection = Rc::new(Selection {
+        id: editor.request_id(),
+        reply: std::cell::RefCell::new(Some(reply)),
+        cancelled: Cancellation::default(),
+    });
+    let prepared = editor
+        .install_picker(display, Some(selection.clone()))
+        .map(|_| Retire {
+            selection: selection.clone(),
+            cx: cx.clone(),
+            armed: true,
         });
-        editor.document.visit.picking.selection = Some(selection.clone());
-        Some((selection, receive))
-    })??;
-    let mut retire = Retire {
-        selection: selection.clone(),
-        cx: cx.clone(),
-        armed: true,
-    };
     #[cfg(test)]
-    let gate = cx.read(|editor| editor.document.visit.picking.measurement_gate.clone());
-    let region = receive.await.ok()?;
-    if selection.cancelled.is_cancelled() {
-        return None;
-    }
-    let measured = async {
-        crate::background::run(move |cancelled| {
-            #[cfg(test)]
-            if let Some(gate) = gate {
-                gate.wait(cancelled.clone())?;
-            }
-            measure(region, cancelled).map_err(|error| error.to_string())
-        })
-        .await
-        .map_err(|_| "Measurement worker panicked".to_owned())
-        .and_then(|result| result)
-    };
-    let stopped = async {
-        selection.cancelled.wait().await;
-        None
-    };
-    let result = futures_lite::future::or(async { Some(measured.await) }, stopped).await?;
-    if selection.cancelled.is_cancelled() {
-        return None;
-    }
-    cx.update(|editor| {
-        if let Err(error) = &result {
-            editor.status = error.clone();
+    let gate = editor.document.visit.picking.measurement_gate.clone();
+    async move {
+        let mut retire = prepared?;
+        if selection.cancelled.is_cancelled() {
+            return None;
         }
-        editor.finish_selection(&selection);
-    })?;
-    retire.armed = false;
-    result.ok()
+        let region = receive.await.ok()?;
+        if selection.cancelled.is_cancelled() {
+            return None;
+        }
+        let measured = async {
+            crate::background::run(move |cancelled| {
+                #[cfg(test)]
+                if let Some(gate) = gate {
+                    gate.wait(cancelled.clone())?;
+                }
+                measure(region, cancelled).map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|_| "Measurement worker panicked".to_owned())
+            .and_then(|result| result)
+        };
+        let stopped = async {
+            selection.cancelled.wait().await;
+            None
+        };
+        let result = futures_lite::future::or(async { Some(measured.await) }, stopped).await?;
+        if selection.cancelled.is_cancelled() {
+            return None;
+        }
+        cx.update(|editor| {
+            if let Err(error) = &result {
+                editor.status = error.clone();
+            }
+            editor.finish_selection(&selection);
+        })?;
+        retire.armed = false;
+        result.ok()
+    }
 }

@@ -37,7 +37,8 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
             );
             assert!(editor.document.tool.is_none());
             editor.begin_pick(Pick::Dmin, cx);
-            assert!(matches!(editor.document.tool.as_ref(), Some(Tool::Pick(_))));
+            assert!(editor.hosted_picker());
+            assert!(editor.document.tool.is_none());
         });
         app.pump();
         app.read(|editor| assert_eq!(editor.active_pick(), Some(Pick::Dmin.display())));

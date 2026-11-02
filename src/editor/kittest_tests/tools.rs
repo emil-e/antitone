@@ -198,7 +198,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                     e.active_canvas().last_layout.unwrap().0,
                     e.document.target,
                     matrix,
-                    (!e.document.source).then(|| {
+                    matches!(kind, Pick::Wb).then(|| {
                         e.adjustment_layer_snapshot(
                             e.document
                                 .state
@@ -464,7 +464,12 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
                     modifiers: egui::Modifiers::NONE,
                 });
                 harness.step();
-                harness.read(|editor| assert!(editor.document.visit.canvas.pick_drag.is_none()));
+                harness.read(|editor| {
+                    assert_eq!(
+                        editor.active_canvas().last_layout.unwrap().0.image,
+                        geometry.image
+                    )
+                });
                 harness.read(|editor| assert_eq!(editor.pick_region(), selection));
                 harness.read(|editor| assert_eq!(editor.document.state.project, before));
                 harness.get_by_label("Cancel").click();

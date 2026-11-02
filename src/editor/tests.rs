@@ -599,7 +599,7 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
     );
     for (kind, invalid) in [(Pick::Dmin, 0.001), (Pick::Dmax, 1.)] {
         editor.preview_picker(kind);
-        assert!(editor.document.source);
+        assert!(editor.canvas_inspection());
         editor.set_pick_region(Some(patch()));
         assert!(
             (match kind {
@@ -624,7 +624,7 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
             original
         );
         editor.preview_picker(kind);
-        assert!(editor.document.source);
+        assert!(editor.canvas_inspection());
         editor.finish_pick(&crate::application::UiContext::render_only());
         assert!(!editor.document.source);
         assert_eq!(
@@ -660,7 +660,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
             );
             for (index, kind) in order.into_iter().enumerate() {
                 editor.preview_picker(kind);
-                assert!(editor.document.source);
+                assert!(editor.canvas_inspection());
                 editor.set_pick_region(Some(patch()));
                 let value = DVec3::splat(if kind == Pick::Dmin { 0.2 } else { 0.005 });
                 (match kind {
@@ -874,6 +874,9 @@ fn closed_application_does_not_leave_a_pick_busy() {
 impl Editor {
     pub(super) fn preview_picker(&mut self, kind: Pick) {
         if self.prepare_pick(&crate::application::UiContext::render_only()) {
+            if kind == Pick::Analysis {
+                self.document.set_legacy_tool(legacy_tool::Tool::Area);
+            }
             self.show_picker(kind.display());
         }
     }
@@ -1678,12 +1681,8 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
         editor.document.visit.photo_orientation,
     )
     .unwrap();
-    let uncropped = editor
-        .document
-        .visit
-        .canvas
-        .viewport
-        .layout_composition(canvas, full, 2.);
+    let uncropped =
+        editor.with_tool_viewport(|viewport| viewport.layout_composition(canvas, full, 2.));
     assert_eq!(uncropped.scale, layout.scale);
     assert!((uncropped.source_point(canvas.center()) - anchor).length() < 0.002);
     editor.finish_pick(&crate::application::UiContext::render_only());
@@ -1748,6 +1747,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
         editor.dmax(),
     );
     for kind in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb] {
+        editor.document.visit.canvas.last_layout = Some((original, 2.));
         editor.preview_picker(kind);
         let measuring = if matches!(kind, Pick::Dmin | Pick::Dmax) {
             Composition::new(
@@ -1760,18 +1760,14 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
             composition
         };
         let layout = editor
-            .document
-            .visit
-            .canvas
-            .viewport
-            .layout_composition(canvas, measuring, 2.);
+            .with_tool_viewport(|viewport| viewport.layout_composition(canvas, measuring, 2.));
         assert_eq!(layout.scale, original.scale);
         assert!((layout.source_point(canvas.center()) - source_anchor).length() < 0.002);
         if matches!(kind, Pick::Gamma | Pick::Wb) {
             assert_eq!(layout.image, original.image);
-            assert!(!editor.document.source);
+            assert!(!editor.canvas_inspection());
         } else {
-            assert!(editor.document.source);
+            assert!(editor.canvas_inspection());
             assert_eq!(layout.area, area);
         }
         editor.finish_pick(&crate::application::UiContext::render_only());
@@ -1868,7 +1864,7 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
             let source_id = editor.document.visit.current_source;
             editor.preview_picker(Pick::Dmin);
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
-            editor.document.visit.canvas.viewport.zoom = Some(0.25);
+            editor.with_tool_viewport(|viewport| viewport.zoom = Some(0.25));
             editor.finish_pick(cx);
             assert!(!editor.document.visit.source.pending());
             assert_eq!(editor.document.visit.current_source, source_id);

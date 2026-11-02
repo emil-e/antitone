@@ -199,6 +199,7 @@ impl Editor {
 
     fn tool_shortcuts(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         if self.active_pick().is_some()
+            && !self.hosted_picker()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.status = "Pick cancelled; processing unchanged".into();
@@ -206,6 +207,7 @@ impl Editor {
             self.set_pick_region(None);
         }
         if self.active_pick().is_some()
+            && !self.hosted_picker()
             && self.pick_region().is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
         {
@@ -213,7 +215,10 @@ impl Editor {
         }
         self.with_current_tool(|tool, editor| tool.shortcuts(ui, editor));
         if let Some(tool) = self.current_tool() {
-            let primary = tool.presentation().primary.is_some();
+            let primary = tool
+                .presentation()
+                .primary
+                .is_some_and(|primary| primary.enabled);
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 self.hosted_action(tool::Action::Dismiss);
                 ui.ctx().request_repaint();

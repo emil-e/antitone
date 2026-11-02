@@ -23,6 +23,7 @@ mod history;
 mod looks;
 mod masks;
 mod menus;
+mod picking;
 mod progress;
 mod project;
 mod roll_selection;

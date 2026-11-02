@@ -32,8 +32,6 @@ impl Editor {
         if !self.prepare_tool() {
             return false;
         }
-        self.document
-            .set_legacy_tool(legacy_tool::Tool::Pick(Vec::new()));
         true
     }
 
@@ -47,6 +45,7 @@ impl Editor {
             return;
         }
         if kind == Pick::Analysis {
+            self.document.set_legacy_tool(legacy_tool::Tool::Area);
             self.show_picker(kind.display());
             if self.document.analysis_review().is_some() {
                 self.refresh_review_region();
@@ -65,7 +64,9 @@ impl Editor {
         };
         match result {
             Ok(task) => {
-                self.document.pick_actions_mut().push(task);
+                let actions = &mut self.document.visit.picking.actions;
+                actions.retain(|action| !action.is_finished());
+                actions.push(task);
             }
             Err(error) => {
                 if self.active_pick().is_some() {

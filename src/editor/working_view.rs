@@ -898,7 +898,7 @@ impl Editor {
         let pixels = frame.output.iter().fold(16usize, |bytes, dimension| {
             bytes.saturating_mul(*dimension as usize)
         });
-        if self.document.source {
+        if self.canvas_inspection() {
             self.discard_original();
             self.document.thumbnails.reserve_view(0);
             return false;
@@ -960,7 +960,7 @@ impl Editor {
             .working_view
             .wanted
             .as_ref()
-            .is_some_and(|wanted| wanted.spec.is_inspection() != self.document.source)
+            .is_some_and(|wanted| wanted.spec.is_inspection() != self.canvas_inspection())
         {
             self.document.visit.working_view.retire_support();
         }
@@ -978,7 +978,7 @@ impl Editor {
             mailbox.demand = None;
             drop(mailbox);
 
-            if self.document.source && self.document.visit.working_view.wanted.is_some() {
+            if self.canvas_inspection() && self.document.visit.working_view.wanted.is_some() {
                 self.document
                     .visit
                     .working_view
@@ -1027,7 +1027,7 @@ impl Editor {
         }
 
         let source_input = self.source_context().expect("ready working source");
-        if self.document.source {
+        if self.canvas_inspection() {
             let spec = SourceRequest::inspection(frame)?;
             self.request_working(
                 Demand {

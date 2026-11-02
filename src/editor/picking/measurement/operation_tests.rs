@@ -45,6 +45,7 @@ fn an_unlisted_caller_awaits_the_whole_interaction_and_receives_its_own_value_ty
         let task = app.enter(|editor, cx| {
             let mut image = capture_scan(editor).unwrap();
             let value = pick(
+                editor,
                 Display::sample("Custom camera statistics", View::Source),
                 move |region, _| {
                     sampled.store(true, Ordering::Relaxed);
@@ -98,11 +99,48 @@ fn an_unlisted_caller_awaits_the_whole_interaction_and_receives_its_own_value_ty
 }
 
 #[test]
+fn replacing_an_unpolled_request_cannot_reopen_it_over_the_successor() {
+    let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let before = editor.document.state.project.clone();
+    let called = Arc::new(AtomicBool::new(false));
+    with_application(editor, |app| {
+        let sampled = called.clone();
+        let task = app.enter(|editor, cx| {
+            let value = pick(
+                editor,
+                Display::sample("Retired request", View::Source),
+                move |_, _| {
+                    sampled.store(true, Ordering::Relaxed);
+                    Ok(42)
+                },
+                cx.clone(),
+            );
+            assert!(editor.hosted_picker());
+            let task = cx.spawn(move |_| value).unwrap();
+            editor.begin_crop();
+            task
+        });
+        app.run_until(Duration::from_secs(5), |_| task.is_finished());
+        assert_eq!(pollster::block_on(task), None);
+        assert!(!called.load(Ordering::Relaxed));
+        app.pump();
+        app.read(|editor| {
+            assert!(editor.cropping());
+            assert!(!editor.hosted_picker());
+            assert!(editor.active_pick().is_none());
+            assert!(!editor.busy);
+            assert_eq!(editor.document.state.project, before);
+        });
+    });
+}
+
+#[test]
 fn discarding_an_unpolled_pick_inside_a_state_transaction_safely_withdraws_it() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
-        app.enter(|_editor, cx| {
+        app.enter(|editor, cx| {
             let value = pick(
+                editor,
                 Display::sample("Unused reading", View::Source),
                 |_, _| Ok(42),
                 cx.clone(),
@@ -118,11 +156,14 @@ fn discarding_an_unpolled_pick_inside_a_state_transaction_safely_withdraws_it() 
 fn dropping_a_polled_pick_inside_a_state_transaction_defers_its_ui_cleanup() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
-        let mut value = Box::pin(pick(
-            Display::sample("Dropped reading", View::Source),
-            |_, _| Ok(42),
-            app.access(),
-        ));
+        let mut value = app.enter(|editor, cx| {
+            Box::pin(pick(
+                editor,
+                Display::sample("Dropped reading", View::Source),
+                |_, _| Ok(42),
+                cx.clone(),
+            ))
+        });
         assert!(
             futures_lite::future::block_on(futures_lite::future::poll_once(&mut value)).is_none()
         );
@@ -145,8 +186,9 @@ fn dropping_the_caller_during_measurement_withdraws_ui_but_retains_running_input
     let resumed = Rc::new(Cell::new(false));
     with_application(editor, |app| {
         let continued = resumed.clone();
-        let task = app.enter(|_editor, cx| {
+        let task = app.enter(|editor, cx| {
             let value = pick(
+                editor,
                 Display::sample("Abandoned measurement", View::Source),
                 move |region, _| image.reference_coverage(region),
                 cx.clone(),
@@ -201,8 +243,9 @@ fn cancelling_selection_resumes_the_caller_without_a_value_or_running_measuremen
     let called = Arc::new(AtomicBool::new(false));
     with_application(editor, |app| {
         let sampled = called.clone();
-        let task = app.enter(|_editor, cx| {
+        let task = app.enter(|editor, cx| {
             let value = pick(
+                editor,
                 Display::sample("Optional reading", View::Source),
                 move |_, _| {
                     sampled.store(true, Ordering::Relaxed);
@@ -226,8 +269,9 @@ fn measurement_failures_are_presented_and_the_caller_only_needs_to_handle_no_val
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     let before = editor.document.state.project.clone();
     with_application(editor, |app| {
-        let task = app.enter(|_editor, cx| {
+        let task = app.enter(|editor, cx| {
             let value = pick(
+                editor,
                 Display::sample("Fallible reading", View::Source),
                 |_, _| Err::<f64, _>(Error::UnusableSample("declared measurement failure")),
                 cx.clone(),
@@ -258,8 +302,9 @@ fn dropping_an_unpolled_caller_withdraws_the_interaction_without_resuming_it() {
     with_application(editor, |app| {
         let continued = resumed.clone();
         let sampled = called.clone();
-        let task = app.enter(|_editor, cx| {
+        let task = app.enter(|editor, cx| {
             let value = pick(
+                editor,
                 Display::sample("Abandoned reading", View::Source),
                 move |_, _| {
                     sampled.store(true, Ordering::Relaxed);
@@ -284,8 +329,9 @@ fn dropping_an_unpolled_caller_withdraws_the_interaction_without_resuming_it() {
 fn retiring_the_display_visit_cancels_an_independently_owned_waiter_too() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
-        let task = app.enter(|_editor, cx| {
+        let task = app.enter(|editor, cx| {
             let value = pick(
+                editor,
                 Display::sample("Visit reading", View::Source),
                 |_, _| Ok(42),
                 cx.clone(),
@@ -307,8 +353,9 @@ fn retiring_the_display_visit_cancels_an_independently_owned_waiter_too() {
 fn a_cancelled_callers_cleanup_cannot_withdraw_the_next_interaction() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     with_application(editor, |app| {
-        let first = app.enter(|_editor, cx| {
+        let first = app.enter(|editor, cx| {
             let value = pick(
+                editor,
                 Display::sample("First reading", View::Source),
                 |_, _| Ok(1),
                 cx.clone(),
@@ -320,8 +367,9 @@ fn a_cancelled_callers_cleanup_cannot_withdraw_the_next_interaction() {
             app.read(|editor| editor.active_pick().unwrap().label),
             "First reading"
         );
-        let next = app.enter(|_editor, cx| {
+        let next = app.enter(|editor, cx| {
             let value = pick(
+                editor,
                 Display::sample("Next reading", View::Source),
                 |_, _| Ok(2),
                 cx.clone(),
@@ -351,8 +399,9 @@ fn a_worker_panic_yields_no_value_and_does_not_strand_the_interaction() {
     let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     let gate = testing::Gate::install(&mut editor);
     with_application(editor, |app| {
-        let task = app.enter(|_editor, cx| {
+        let task = app.enter(|editor, cx| {
             let value = pick(
+                editor,
                 Display::sample("Panicking reading", View::Source),
                 |_, _| Ok(42),
                 cx.clone(),

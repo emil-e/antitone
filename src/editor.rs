@@ -973,7 +973,7 @@ impl Editor {
             && !self.creating_mask()
             && matches!(
                 self.document.tool.as_ref(),
-                None | Some(legacy_tool::Tool::Pick(_))
+                None | Some(legacy_tool::Tool::Area)
             )
             && self.document.input.ready();
         let can_pick = self.tool_start_available() && self.document.visit.canvas.ready.is_some();

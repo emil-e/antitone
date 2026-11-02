@@ -111,17 +111,17 @@ pub(super) fn pick_roll<'scope>(
     let mut image = measurement::capture_scan(editor)?;
     let services = editor.source_services.clone();
     let input = RollInput::capture(editor);
+    let reading = measurement::pick(
+        editor,
+        ROLL,
+        move |region, cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+        },
+        cx.clone(),
+    );
     cx.spawn(move |cx| async move {
-        let Some(value) = measurement::pick(
-            ROLL,
-            move |region, cancelled| {
-                let services = measurement::query_services(services.as_ref())?;
-                input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
-            },
-            cx.clone(),
-        )
-        .await
-        else {
+        let Some(value) = reading.await else {
             return;
         };
         cx.update(|editor| {
@@ -140,31 +140,17 @@ pub(super) fn pick_layer<'scope>(
     let mut image = measurement::capture_scan(editor)?;
     let services = editor.source_services.clone();
     let input = LayerInput::capture(editor)?;
-    let target = (
-        editor.document.visit.current_source,
-        editor.adjustment_layer_target(),
+    let reading = measurement::pick(
+        editor,
+        LAYER,
+        move |region, cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+        },
+        cx.clone(),
     );
     cx.spawn(move |cx| async move {
-        // Selection can change before this first poll opens and locks the picker.
-        if cx.read(|editor| {
-            (
-                editor.document.visit.current_source,
-                editor.adjustment_layer_target(),
-            )
-        }) != target
-        {
-            return;
-        }
-        let Some(value) = measurement::pick(
-            LAYER,
-            move |region, cancelled| {
-                let services = measurement::query_services(services.as_ref())?;
-                input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
-            },
-            cx.clone(),
-        )
-        .await
-        else {
+        let Some(value) = reading.await else {
             return;
         };
         cx.update(|editor| {

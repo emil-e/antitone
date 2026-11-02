@@ -16,11 +16,26 @@ pub(super) enum Action {
     Dismiss,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Primary {
+    pub label: &'static str,
+    pub enabled: bool,
+}
+
+impl From<&'static str> for Primary {
+    fn from(label: &'static str) -> Self {
+        Self {
+            label,
+            enabled: true,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Presentation {
     pub show_viewer: bool,
     pub identity: presentation::ToolIdentity<'static>,
-    pub primary: Option<&'static str>,
+    pub primary: Option<Primary>,
     pub dismiss: &'static str,
     pub warning: Option<String>,
     pub help: &'static str,
@@ -211,7 +226,7 @@ impl Editor {
         let activity = self.tool_activity();
         match self.document.tool.as_ref() {
             Some(legacy_tool::Tool::Mask(_)) => self.finish_mask(false),
-            Some(legacy_tool::Tool::Pick(_)) => {
+            Some(legacy_tool::Tool::Area) => {
                 self.cancel_picker();
                 self.document.tool.clear();
             }

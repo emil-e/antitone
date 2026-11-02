@@ -34,6 +34,13 @@ impl super::Editor {
     }
 
     pub(super) fn canvas_inspection(&self) -> bool {
-        self.document.flat_edit().is_some() || self.document.source
+        self.document.flat_edit().is_some()
+            || if self.fullscreen.is_some() {
+                self.document.source
+            } else {
+                self.active_pick().map_or(self.document.source, |display| {
+                    display.view != super::picking::View::Working
+                })
+            }
     }
 }

@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{
-        Pick, Preparation, Prepared,
+        Preparation, Prepared,
         tests::{add_ready_fixture, fixture},
     },
 };
@@ -12,6 +12,33 @@ struct Dropped(Rc<Cell<bool>>);
 impl Drop for Dropped {
     fn drop(&mut self) {
         self.0.set(true);
+    }
+}
+
+struct OwnedInteraction {
+    _task: async_executor::Task<()>,
+}
+impl crate::editor::tool::Tool for OwnedInteraction {
+    fn presentation(&self, _editor: &crate::editor::Editor) -> crate::editor::tool::Presentation {
+        crate::editor::tool::Presentation {
+            show_viewer: false,
+            identity: crate::editor::presentation::ToolIdentity {
+                icon: crate::editor::icons::Icon::Pick,
+                title: "Owned interaction",
+            },
+            primary: None,
+            dismiss: "Cancel",
+            fit_label: "Fit",
+            warning: None,
+            help: "",
+            navigation_help: None,
+        }
+    }
+    fn action(
+        &mut self,
+        _action: crate::editor::tool::Action,
+        _editor: &mut crate::editor::Editor,
+    ) {
     }
 }
 
@@ -37,8 +64,7 @@ fn document_retirement_drops_child_continuations_and_cache_despite_captured_snap
             })
             .unwrap();
         app.update(|scope| {
-            scope.visit.picking.display = Some(Pick::Dmin.display());
-            scope.set_legacy_tool(super::super::legacy_tool::Tool::Pick(vec![task]));
+            scope.visit.picking.actions.push(task);
         });
         app.pump();
         app.update(|scope| *scope = Document::default().into());
@@ -65,7 +91,10 @@ fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifet
             .unwrap();
         app.update(|scope| {
             assert!(scope.tool.is_none());
-            scope.set_legacy_tool(super::super::legacy_tool::Tool::Pick(vec![task]));
+            scope.set_hosted_tool(
+                super::super::tool::Placement::Photo,
+                Box::new(OwnedInteraction { _task: task }),
+            );
         });
         app.pump();
         app.update(|scope| {
@@ -78,15 +107,12 @@ fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifet
             scope.set_analysis_operation(None);
             scope.set_auto_crop_operation(None);
             scope.clear_dust();
-            assert!(matches!(
-                scope.tool.as_ref(),
-                Some(super::super::legacy_tool::Tool::Pick(_))
-            ));
+            assert!(scope.visit.hosted_tool.installed().is_some());
         });
         app.pump();
         assert!(!dropped.get());
-        let owner = app.update(|scope| scope.tool.take().unwrap());
-        app.read(|scope| assert!(scope.tool.is_none()));
+        let owner = app.update(|scope| std::mem::take(&mut scope.visit.hosted_tool));
+        app.read(|scope| assert!(scope.visit.hosted_tool.installed().is_none()));
         app.pump();
         assert!(!dropped.get());
         drop(owner);

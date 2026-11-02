@@ -17,7 +17,7 @@ pub(super) struct AutoCrop {
 /// Legacy interactions not yet migrated to the shared tool host.
 pub(super) enum Tool {
     Mask(Box<MaskEdit>),
-    Pick(Vec<async_executor::Task<()>>),
+    Area,
     Analyze(Box<Analyze>),
     AutoCrop(Box<AutoCrop>),
     Flat(Box<FlatEdit>),
@@ -46,7 +46,6 @@ impl Editor {
                 .as_ref()
                 .map(|work| TaskRequest::Regions(work.id)),
             Some(Tool::Flat(edit)) => edit.activity,
-            Some(Tool::Pick(_)) => self.document.visit.picking.activity(),
             _ => None,
         }
     }
@@ -55,13 +54,7 @@ impl Editor {
         if self.has_hosted_tool() {
             return true;
         }
-        match self.document.tool.as_ref() {
-            None => false,
-            Some(Tool::Pick(actions)) => {
-                self.active_pick().is_some() || actions.iter().any(|task| !task.is_finished())
-            }
-            _ => true,
-        }
+        self.document.tool.is_some()
     }
 }
 
@@ -135,10 +128,7 @@ impl DocumentScope {
     }
 
     pub fn is_photo_bound(&self) -> bool {
-        matches!(
-            self.tool.as_ref(),
-            Some(Tool::Mask(_)) | Some(Tool::Pick(_))
-        )
+        matches!(self.tool.as_ref(), Some(Tool::Mask(_)) | Some(Tool::Area))
     }
 
     pub fn analysis_operation(&self) -> Option<&analysis_workflow::Operation> {
@@ -255,12 +245,5 @@ impl DocumentScope {
             Some(Tool::AutoCrop(tool)) => tool.draft.take(),
             _ => None,
         }
-    }
-
-    pub fn pick_actions_mut(&mut self) -> &mut Vec<async_executor::Task<()>> {
-        let Some(Tool::Pick(actions)) = self.tool.as_mut() else {
-            panic!("picker actions belong to the active picker");
-        };
-        actions
     }
 }

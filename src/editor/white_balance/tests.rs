@@ -291,7 +291,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
 }
 
 #[test]
-fn changing_layer_before_the_wb_caller_is_polled_withdraws_it_and_a_new_pick_can_apply() {
+fn wb_target_is_locked_before_polling_and_cancel_allows_a_new_layer_pick_without_old_publication() {
     use crate::{adjustment_layers::AdjustmentLayer, editor::adjustment_layers::Target};
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
@@ -341,6 +341,10 @@ fn changing_layer_before_the_wb_caller_is_polled_withdraws_it_and_a_new_pick_can
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.begin_pick(Pick::Wb, cx);
+            assert_eq!(editor.active_pick(), Some(LAYER));
+            editor.select_adjustment_layer(Target::Layer(second));
+            assert_eq!(editor.adjustment_layer_target(), Target::Layer(first));
+            editor.end_tool();
             editor.select_adjustment_layer(Target::Layer(second));
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(second));
         });

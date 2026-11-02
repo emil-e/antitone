@@ -294,7 +294,7 @@ impl Editor {
                 }
             }
         };
-        if !self.document.source && self.document.flat_edit().is_none() {
+        if !self.canvas_inspection() && self.document.flat_edit().is_none() {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust(signature, cx);
             }
@@ -366,15 +366,15 @@ impl Editor {
         {
             self.discard_original();
         }
-        let purpose = if normal && !self.document.source && self.document.visit.working_view.compare
-        {
-            Some(OriginalPurpose::Reference)
-        } else {
-            (!source_outside_frame
-                && !pending
-                && (active_pick.is_some() || self.document.flat_edit().is_some()))
-            .then_some(OriginalPurpose::Tool)
-        };
+        let purpose =
+            if normal && !self.canvas_inspection() && self.document.visit.working_view.compare {
+                Some(OriginalPurpose::Reference)
+            } else {
+                (!source_outside_frame
+                    && !pending
+                    && (active_pick.is_some() || self.document.flat_edit().is_some()))
+                .then_some(OriginalPurpose::Tool)
+            };
         self.observe_original(
             purpose,
             self.canvas_source_context()
@@ -618,30 +618,14 @@ impl Editor {
     }
 
     fn paint_canvas_selection(&self, ui: &mut egui::Ui, geometry: CanvasLayout, fullscreen: bool) {
-        let canvas = geometry.canvas;
         self.paint_mask(ui, geometry);
+        if self.hosted_picker() {
+            return;
+        }
         if self.document.analysis_review().is_some() {
-            self.paint_review_areas(ui, geometry, canvas);
+            self.paint_review_areas(ui, geometry, geometry.canvas);
         } else if !fullscreen && let Some(region) = self.pick_region() {
-            ui.painter().with_clip_rect(canvas).rect_stroke(
-                geometry.screen_coverage(region),
-                0.,
-                egui::Stroke::new(1., egui::Color32::WHITE),
-                egui::StrokeKind::Inside,
-            );
-            let screen = geometry.screen_coverage(region);
-            for point in [
-                screen.min,
-                screen.max,
-                screen.left_bottom(),
-                screen.right_top(),
-            ] {
-                ui.painter().with_clip_rect(canvas).rect_filled(
-                    egui::Rect::from_center_size(point, egui::vec2(6., 6.)),
-                    0.,
-                    egui::Color32::WHITE,
-                );
-            }
+            picking::paint_selection(ui, geometry, region);
         }
     }
 

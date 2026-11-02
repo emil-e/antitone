@@ -170,7 +170,12 @@ impl Editor {
             apply_enabled: if self.document.auto_crop_edit().is_some() {
                 self.auto_crop_editable()
             } else {
-                navigating && review_ready && (hosted.is_some() || self.pick_region().is_some())
+                navigating
+                    && review_ready
+                    && hosted.as_ref().map_or_else(
+                        || self.pick_region().is_some(),
+                        |tool| tool.primary.is_none_or(|primary| primary.enabled),
+                    )
             },
         });
 
@@ -179,7 +184,7 @@ impl Editor {
             .and_then(|tool| tool.warning.clone())
             .or_else(|| self.viewer_warning());
         let look_error = self.look_rendering_error();
-        let normal_controls = tool.is_none() || hosted.is_some();
+        let normal_controls = tool.is_none() || hosted.is_some() && !self.hosted_picker();
         let inspecting = navigating && calibrated && tool.is_none() && !masking;
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
@@ -236,7 +241,7 @@ impl Editor {
                 let trailing_width = presentation::CONTROL_HEIGHT
                     + VIEWER_ITEM_GAP
                     + if let Some(group) = tool_group {
-                        if let Some(tool) = &hosted { group.width_actions(ui, tool.primary, tool.dismiss) }
+                        if let Some(tool) = &hosted { group.width_actions(ui, tool.primary.map(|primary| primary.label), tool.dismiss) }
                         else if reviewing {
                             group.width_named(ui, apply_label)
                         } else {
@@ -483,7 +488,7 @@ impl Editor {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(group) = tool_group {
                         if let Some(tool) = &hosted {
-                            let actions = group.show_actions(ui, tool.primary, tool.dismiss, warning.as_deref()).inner;
+                            let actions = group.show_actions(ui, tool.primary.map(|primary| primary.label), tool.dismiss, warning.as_deref()).inner;
                             cancel = actions.dismiss.clicked();
                             apply = actions.primary.is_some_and(|response| response.clicked());
                             return;
