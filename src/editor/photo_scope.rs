@@ -47,7 +47,7 @@ impl Editor {
         if self.document.is_photo_bound() {
             self.cancel_active_tool();
         }
-        let hosted_activity = self.cropping().then(|| self.tool_activity()).flatten();
+        let hosted_activity = self.document.visit.hosted_tool.activity(self);
         let activity = self.document.visit.activity();
         let layers = self.document.visit.adjustment_layers.selection_only();
         let working_view = self.document.visit.working_view.for_visit();

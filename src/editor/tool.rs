@@ -1,8 +1,6 @@
 use super::*;
 use crate::viewport::CanvasLayout;
 use std::any::{Any, TypeId};
-#[cfg(test)]
-use std::cell::{Ref, RefMut};
 
 #[cfg(test)]
 mod tests;
@@ -108,7 +106,7 @@ impl Slot {
     fn occupied(&self) -> bool {
         !matches!(self, Self::Empty)
     }
-    fn activity(&self, editor: &Editor) -> Option<TaskRequest> {
+    pub(super) fn activity(&self, editor: &Editor) -> Option<TaskRequest> {
         match self {
             Self::Empty => None,
             Self::Executing(info) => info.activity,
@@ -116,14 +114,14 @@ impl Slot {
         }
     }
     #[cfg(test)]
-    fn installed(&self) -> Option<&dyn Tool> {
+    pub(super) fn installed(&self) -> Option<&dyn Tool> {
         match self {
             Self::Installed(tool) => Some(tool.as_ref()),
             _ => None,
         }
     }
     #[cfg(test)]
-    fn installed_mut(&mut self) -> Option<&mut dyn Tool> {
+    pub(super) fn installed_mut(&mut self) -> Option<&mut dyn Tool> {
         match self {
             Self::Installed(tool) => Some(tool.as_mut()),
             _ => None,
@@ -186,58 +184,10 @@ impl DocumentScope {
         self.clear_hosted_tools();
         self.tool.0 = Some(tool);
     }
-    #[cfg(test)]
-    pub(super) fn crop_edit(&self) -> Option<Ref<'_, CropEdit>> {
-        let tool = self.visit.hosted_tool.installed()?;
-        let crop = (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>()?;
-        Some(crop.edit.as_ref()?.borrow())
-    }
-    #[cfg(test)]
-    pub(super) fn crop_edit_mut(&mut self) -> Option<RefMut<'_, CropEdit>> {
-        let tool = self.visit.hosted_tool.installed()?;
-        let crop = (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>()?;
-        Some(crop.edit.as_ref()?.borrow_mut())
-    }
     pub(super) fn clear_crop_edit(&mut self) {
         if self.visit.hosted_tool.is::<crop_editor::CropTool>() {
             self.visit.hosted_tool = Slot::Empty;
         }
-    }
-    #[cfg(test)]
-    pub(super) fn set_crop_edit(&mut self, edit: Option<CropEdit>) {
-        if let Some(edit) = edit {
-            self.tool.clear();
-            self.hosted_tool = Slot::Empty;
-            self.visit.hosted_tool =
-                Slot::Installed(Box::new(crop_editor::CropTool::from_edit(edit)));
-        } else {
-            self.clear_crop_edit();
-        }
-    }
-    #[cfg(test)]
-    pub(super) fn crop_state(&self) -> Option<std::rc::Rc<std::cell::RefCell<CropEdit>>> {
-        let tool = self.visit.hosted_tool.installed()?;
-        (tool as &dyn Any)
-            .downcast_ref::<crop_editor::CropTool>()?
-            .edit
-            .clone()
-    }
-    #[cfg(test)]
-    pub(super) fn crop_auto_crop_pending(&self) -> bool {
-        self.visit
-            .hosted_tool
-            .installed()
-            .and_then(|tool| (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>())
-            .is_some_and(crop_editor::CropTool::auto_crop_pending)
-    }
-    #[cfg(test)]
-    pub(super) fn crop_viewport_mut(&mut self) -> Option<&mut Viewport> {
-        let tool = self.visit.hosted_tool.installed_mut()?;
-        Some(
-            &mut (tool as &mut dyn Any)
-                .downcast_mut::<crop_editor::CropTool>()?
-                .viewport,
-        )
     }
 }
 

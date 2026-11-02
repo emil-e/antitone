@@ -1,5 +1,71 @@
 use super::*;
 use crate::geometry::Flips;
+use std::{
+    any::Any,
+    cell::{Ref, RefMut},
+};
+
+impl DocumentScope {
+    pub(in crate::editor) fn crop_edit(&self) -> Option<Ref<'_, CropEdit>> {
+        let tool = self.visit.hosted_tool.installed()?;
+        let crop = (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>()?;
+        Some(crop.edit.as_ref()?.borrow())
+    }
+    pub(in crate::editor) fn crop_edit_mut(&mut self) -> Option<RefMut<'_, CropEdit>> {
+        let tool = self.visit.hosted_tool.installed()?;
+        let crop = (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>()?;
+        Some(crop.edit.as_ref()?.borrow_mut())
+    }
+    pub(in crate::editor) fn set_crop_edit(&mut self, edit: Option<CropEdit>) {
+        if let Some(edit) = edit {
+            self.tool.clear();
+            self.hosted_tool = tool::Slot::Empty;
+            self.visit.hosted_tool =
+                tool::Slot::Installed(Box::new(crop_editor::CropTool::from_edit(edit)));
+        } else {
+            self.clear_crop_edit();
+        }
+    }
+    pub(in crate::editor) fn crop_state(
+        &self,
+    ) -> Option<std::rc::Rc<std::cell::RefCell<CropEdit>>> {
+        let tool = self.visit.hosted_tool.installed()?;
+        (tool as &dyn Any)
+            .downcast_ref::<crop_editor::CropTool>()?
+            .edit
+            .clone()
+    }
+    pub(in crate::editor) fn crop_auto_crop_pending(&self) -> bool {
+        self.visit
+            .hosted_tool
+            .installed()
+            .and_then(|tool| (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>())
+            .is_some_and(crop_editor::CropTool::auto_crop_pending)
+    }
+    pub(in crate::editor) fn crop_viewport_mut(&mut self) -> Option<&mut Viewport> {
+        let tool = self.visit.hosted_tool.installed_mut()?;
+        Some(
+            &mut (tool as &mut dyn Any)
+                .downcast_mut::<crop_editor::CropTool>()?
+                .viewport,
+        )
+    }
+}
+
+impl CropTool {
+    fn auto_crop_pending(&self) -> bool {
+        self.auto_crop_task
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
+    }
+
+    fn from_edit(edit: CropEdit) -> Self {
+        Self {
+            edit: Some(Rc::new(RefCell::new(edit))),
+            ..Default::default()
+        }
+    }
+}
 
 pub(in crate::editor) fn request_auto_crop(
     photo: SourceId,

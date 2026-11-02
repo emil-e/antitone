@@ -6,6 +6,7 @@ struct Probe {
     actions: Rc<Cell<usize>>,
     first_config: Rc<Cell<Option<usize>>>,
     drawer: Option<presentation::ToolDrawer<'static>>,
+    activity: Option<TaskRequest>,
 }
 impl Probe {
     fn new(dropped: &Rc<Cell<usize>>, actions: &Rc<Cell<usize>>) -> Self {
@@ -14,6 +15,7 @@ impl Probe {
             actions: actions.clone(),
             first_config: Rc::new(Cell::new(None)),
             drawer: None,
+            activity: None,
         }
     }
 }
@@ -53,6 +55,9 @@ impl Tool for Probe {
             self.actions.set(self.actions.get() + 1);
             editor.status = "Probe draft reset".into();
         }
+    }
+    fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
+        self.activity
     }
     fn action(&mut self, _action: Action, editor: &mut Editor) {
         self.actions.set(self.actions.get() + 1);
@@ -264,6 +269,62 @@ fn document_and_photo_slots_follow_their_scopes_without_synthetic_actions() {
     assert!(editor.current_tool().is_none());
     assert_eq!(actions.get(), 0);
     drop(captured);
+}
+
+#[test]
+fn photo_departure_retires_only_its_hosted_activity_while_document_activity_survives() {
+    for placement in [Placement::Document, Placement::Photo] {
+        for executing in [false, true] {
+            for matching_activity in [false, true] {
+                let mut editor = Editor::state();
+                let dropped = Rc::new(Cell::new(0));
+                let actions = Rc::new(Cell::new(0));
+                let task = Task::Regions(73);
+                let mut probe = Probe::new(&dropped, &actions);
+                probe.activity = Some(task.request());
+                assert!(editor.activate_tool(placement, Box::new(probe)));
+                let foreground = if matching_activity {
+                    task
+                } else {
+                    Task::Save(73)
+                };
+                editor.tasks.begin(foreground);
+                editor.busy = true;
+                assert!(editor.tasks.is_current(foreground.request()));
+                let document_owned = matches!(placement, Placement::Document);
+                let activity_survives = document_owned || !matching_activity;
+                let depart = |editor: &mut Editor| {
+                    editor.replace_photo_scope(1);
+                    assert_eq!(
+                        editor.tasks.is_current(foreground.request()),
+                        activity_survives
+                    );
+                    assert_eq!(editor.busy, activity_survives);
+                };
+                if executing {
+                    editor
+                        .with_current_tool(|_, editor| depart(editor))
+                        .unwrap();
+                } else {
+                    depart(&mut editor);
+                }
+                assert_eq!(editor.has_hosted_tool(), document_owned);
+                assert_eq!(dropped.get(), usize::from(!document_owned));
+                assert_eq!(
+                    actions.get(),
+                    0,
+                    "scope departure must not synthesize an action"
+                );
+                editor.end_tool();
+                assert_eq!(dropped.get(), 1);
+                assert_eq!(
+                    editor.tasks.is_current(foreground.request()),
+                    !matching_activity
+                );
+                assert_eq!(editor.busy, !matching_activity);
+            }
+        }
+    }
 }
 
 #[test]

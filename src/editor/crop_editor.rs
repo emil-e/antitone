@@ -7,8 +7,8 @@ pub(super) mod tests;
 
 #[derive(Default)]
 pub(super) struct CropTool {
-    pub(super) edit: Option<Rc<RefCell<CropEdit>>>,
-    pub(super) viewport: Viewport,
+    edit: Option<Rc<RefCell<CropEdit>>>,
+    viewport: Viewport,
     auto_crop_task: Option<async_executor::Task<()>>,
 }
 
@@ -24,21 +24,6 @@ impl CropTool {
         };
         if let Some(task) = auto_crop::propose_photo_crop(editor, photo, state, cx) {
             self.auto_crop_task = Some(task);
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn auto_crop_pending(&self) -> bool {
-        self.auto_crop_task
-            .as_ref()
-            .is_some_and(|task| !task.is_finished())
-    }
-
-    #[cfg(test)]
-    pub(super) fn from_edit(edit: CropEdit) -> Self {
-        Self {
-            edit: Some(Rc::new(RefCell::new(edit))),
-            ..Default::default()
         }
     }
 }
