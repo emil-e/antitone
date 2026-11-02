@@ -35,36 +35,21 @@ fn stroke_tasks_return_their_outcome_and_completion_withdraws_pending_geometry()
             });
             app.update(|editor| {
                 assert!(editor.pending_dust_strokes().is_empty());
-                let task = &mut editor
-                    .document
-                    .dust_mut()
-                    .expect("active Dust cleanup")
-                    .searches
-                    .tasks[0]
-                    .task;
-                assert!(task.is_finished());
-                let actual = futures_lite::future::block_on(futures_lite::future::poll_once(task));
+                let actual = {
+                    let mut searches = super::super::testing::searches(editor).borrow_mut();
+                    let task = &mut searches.tasks[0].task;
+                    assert!(task.is_finished());
+                    futures_lite::future::block_on(futures_lite::future::poll_once(task))
+                };
                 assert_eq!(actual, Some(expected.clone()));
                 let source = editor.document.visit.current_source.unwrap();
                 assert_eq!(
                     editor.dust_repairs(source).is_some(),
                     matches!(expected, Ok(Some(_)))
                 );
-                editor
-                    .document
-                    .dust_mut()
-                    .expect("active Dust cleanup")
-                    .searches
-                    .prune();
-                assert!(
-                    editor
-                        .document
-                        .dust_mut()
-                        .expect("active Dust cleanup")
-                        .searches
-                        .tasks
-                        .is_empty()
-                );
+                let mut searches = super::super::testing::searches(editor).borrow_mut();
+                searches.prune();
+                assert!(searches.tasks.is_empty());
             });
         });
     }

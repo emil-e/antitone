@@ -25,6 +25,12 @@ pub struct CanvasLayout {
 }
 
 impl Viewport {
+    pub fn can_pan(&self, layout: CanvasLayout) -> bool {
+        self.preserve_anchor
+            || layout.image.width() > layout.canvas.width()
+            || layout.image.height() > layout.canvas.height()
+    }
+
     pub fn fit(&mut self) {
         *self = Self::default();
     }

@@ -6,7 +6,7 @@ impl Editor {
         use presentation::{ToolButton, ToolShelf};
 
         let cropping = self.cropping();
-        let dusting = self.document.dust().is_some();
+        let dusting = self.dusting();
         let auto_cropping = self.document.auto_crop_edit().is_some();
         let tool_active = self.tool_interacting();
         let ready = !self.busy && self.document.visit.canvas.ready.is_some();

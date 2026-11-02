@@ -18,60 +18,44 @@ pub(super) enum Action {
 
 #[derive(Clone)]
 pub(super) struct Presentation {
+    pub show_viewer: bool,
     pub identity: presentation::ToolIdentity<'static>,
-    pub drawer: Option<presentation::ToolDrawer<'static>>,
     pub primary: Option<&'static str>,
     pub dismiss: &'static str,
     pub warning: Option<String>,
     pub help: &'static str,
-}
-
-pub(super) struct ViewConfig<'a> {
-    pub viewport: &'a mut Viewport,
-    pub composition: Option<Composition>,
-    pub source_outside_frame: bool,
-    pub inset: f32,
-    pub constrain_pan: bool,
-    pub fit_once: Option<Coverage>,
-    pub primary_interaction: bool,
-    pub navigation_enabled: bool,
-}
-impl ViewConfig<'_> {
-    pub fn layout(&mut self, canvas: egui::Rect, pixels_per_point: f32) -> Option<CanvasLayout> {
-        let composition = self.composition?;
-        let inset = self
-            .inset
-            .min((canvas.width().min(canvas.height()) - 1.).max(0.) * 0.5);
-        let mut layout = self.viewport.layout_fitted(
-            canvas.shrink(inset),
-            composition,
-            pixels_per_point,
-            self.fit_once,
-            self.constrain_pan,
-        );
-        layout.canvas = canvas;
-        Some(layout)
-    }
-}
-
-pub(super) struct Canvas<'a> {
-    pub ui: &'a mut egui::Ui,
-    pub response: &'a egui::Response,
-    pub layout: CanvasLayout,
+    pub navigation_help: Option<&'static str>,
+    pub fit_label: &'static str,
 }
 
 pub(super) trait Tool: Any {
-    fn presentation(&self) -> Presentation;
-    fn configure<'a>(&'a mut self, _view: &mut ViewConfig<'a>) {}
-    fn drawer(
-        &mut self,
-        _ui: &mut egui::Ui,
-        _reset: bool,
-        _editor: &mut Editor,
-        _cx: &UiContext<'_, Editor>,
-    ) {
+    fn presentation(&self, editor: &Editor) -> Presentation;
+    fn composition(&mut self, normal: Composition) -> Composition {
+        normal
     }
-    fn canvas(&mut self, _canvas: &mut Canvas<'_>, _editor: &mut Editor) {}
+    fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
+        &mut editor.active_canvas_mut().viewport
+    }
+    fn drawer(&mut self, _ui: &mut egui::Ui, _editor: &mut Editor, _cx: &UiContext<'_, Editor>) {}
+    fn canvas(
+        &mut self,
+        canvas: &mut canvas::Canvas<'_>,
+        editor: &mut Editor,
+        cx: &UiContext<'_, Editor>,
+    ) -> CanvasLayout {
+        let composition = self.composition(canvas.composition);
+        let rect = canvas.response.rect;
+        let ppp = canvas.ui.ctx().pixels_per_point();
+        let relayout =
+            |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
+        let viewport = self.viewport(editor);
+        let layout = canvas.layout(viewport, relayout);
+        let (layout, _) =
+            navigation::navigate_view(viewport, canvas.ui, canvas.response, layout, relayout);
+        canvas.paint_image(editor, layout, false, cx);
+        layout
+    }
+    fn shortcuts(&mut self, _ui: &mut egui::Ui, _editor: &mut Editor) {}
     fn action(&mut self, action: Action, editor: &mut Editor);
     // Compatibility with the existing foreground activity owner; the operation
     // remains responsible for its task and cancellation semantics.
@@ -133,12 +117,12 @@ impl Slot {
             Self::Executing(info) => Some(info.clone()),
             Self::Installed(tool) => Some(Info {
                 kind: tool.as_ref().type_id(),
-                presentation: tool.presentation(),
+                presentation: tool.presentation(editor),
                 activity: tool.activity(editor),
             }),
         }
     }
-    fn is<T: Tool>(&self) -> bool {
+    pub(super) fn is<T: Tool>(&self) -> bool {
         match self {
             Self::Empty => false,
             Self::Executing(info) => info.is::<T>(),
@@ -179,6 +163,11 @@ impl DocumentScope {
     fn clear_hosted_tools(&mut self) {
         self.hosted_tool = Slot::Empty;
         self.visit.hosted_tool = Slot::Empty;
+    }
+    pub(super) fn set_hosted_tool(&mut self, placement: Placement, tool: Box<dyn Tool>) {
+        self.clear_hosted_tools();
+        self.tool.clear();
+        *self.hosted_slot_mut(placement) = Slot::Installed(tool);
     }
     pub(super) fn set_legacy_tool(&mut self, tool: legacy_tool::Tool) {
         self.clear_hosted_tools();
@@ -229,7 +218,6 @@ impl Editor {
             Some(legacy_tool::Tool::Analyze(_)) => self.close_analysis(),
             Some(legacy_tool::Tool::AutoCrop(_)) => self.finish_auto_crop(false),
             Some(legacy_tool::Tool::Flat(_)) => self.finish_flat_edit(),
-            Some(legacy_tool::Tool::Dust(_)) => self.finish_dust_cleanup(),
             None => {}
         }
         if let Some(activity) = activity
@@ -266,7 +254,6 @@ impl Editor {
         let activity = self.hosted_tool_activity();
         self.document.clear_hosted_tools();
         self.document.visit.canvas.last_layout = None;
-        self.invalidate_original();
         if let Some(activity) = activity
             && self.tasks.finish(activity)
         {
@@ -281,57 +268,19 @@ impl Editor {
         if !self.prepare_tool() {
             return false;
         }
-        {
-            let mut view = self.normal_tool_view(None);
-            tool.configure(&mut view);
+        if let Some(ready) = &self.document.visit.canvas.ready {
+            tool.composition(self.normal_canvas_composition(ready.area, self.active_pick()));
         }
-        *self.document.hosted_slot_mut(placement) = Slot::Installed(tool);
-        self.invalidate_original();
+        self.document.set_hosted_tool(placement, tool);
         true
     }
 
-    fn normal_tool_view(&mut self, composition: Option<Composition>) -> ViewConfig<'_> {
-        let composition = composition.or_else(|| {
-            self.document.visit.canvas.ready.as_ref().map(|ready| {
-                Composition::with_crop(
-                    ready.area,
-                    self.document.roll_orientation,
-                    self.document.visit.photo_orientation,
-                    self.document.visit.crop,
-                )
-                .expect("accepted photo composition")
-            })
-        });
-        let viewport = match self.document.tool.as_mut() {
-            Some(legacy_tool::Tool::Flat(flat)) => &mut flat.view.viewport,
-            _ => &mut self.document.visit.canvas.viewport,
-        };
-        ViewConfig {
-            viewport,
-            composition,
-            source_outside_frame: false,
-            inset: 0.,
-            constrain_pan: true,
-            fit_once: None,
-            primary_interaction: false,
-            navigation_enabled: true,
-        }
-    }
-
-    pub(super) fn with_tool_view<R>(
-        &mut self,
-        composition: Option<Composition>,
-        body: impl FnOnce(&mut ViewConfig<'_>) -> R,
-    ) -> R {
+    pub(super) fn with_tool_viewport<R>(&mut self, body: impl FnOnce(&mut Viewport) -> R) -> R {
         if self.fullscreen.is_some() || self.current_tool().is_none() {
-            return body(&mut self.normal_tool_view(composition));
+            return body(&mut self.active_canvas_mut().viewport);
         }
-        self.with_current_tool(|tool, editor| {
-            let mut view = editor.normal_tool_view(composition);
-            tool.configure(&mut view);
-            body(&mut view)
-        })
-        .expect("view capture cannot recursively invoke the executing tool")
+        self.with_current_tool(|tool, editor| body(tool.viewport(editor)))
+            .expect("viewport access cannot recursively invoke the executing tool")
     }
 
     pub(super) fn with_current_tool<R>(
@@ -364,32 +313,6 @@ impl Editor {
         self.with_current_tool(|tool, editor| tool.action(action, editor));
     }
     pub(super) fn hosted_drawer(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        self.with_current_tool(|tool, editor| {
-            if let Some(drawer) = tool.presentation().drawer {
-                drawer.show(ui, |ui, reset| tool.drawer(ui, reset, editor, cx));
-            } else {
-                tool.drawer(ui, false, editor, cx);
-            }
-        });
-    }
-    pub(super) fn hosted_canvas(
-        &mut self,
-        ui: &mut egui::Ui,
-        response: &egui::Response,
-        layout: CanvasLayout,
-        enabled: bool,
-    ) {
-        ui.add_enabled_ui(enabled, |ui| {
-            self.with_current_tool(|tool, editor| {
-                tool.canvas(
-                    &mut Canvas {
-                        ui,
-                        response,
-                        layout,
-                    },
-                    editor,
-                )
-            });
-        });
+        self.with_current_tool(|tool, editor| tool.drawer(ui, editor, cx));
     }
 }

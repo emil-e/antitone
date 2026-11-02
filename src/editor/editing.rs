@@ -245,8 +245,8 @@ impl Editor {
                 }
             }
             PhotoAction::Dust => {
-                if self.document.dust().is_some() {
-                    self.finish_dust_cleanup();
+                if self.dusting() {
+                    self.hosted_action(tool::Action::Dismiss);
                 } else {
                     self.begin_dust_cleanup();
                 }

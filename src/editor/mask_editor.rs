@@ -302,7 +302,7 @@ impl Editor {
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()
-            && !self.document.dust().is_some()
+            && !self.dusting()
             && !self.document.visit.adjustment_layers.confirming()
             && self.fullscreen.is_none()
     }
@@ -583,7 +583,7 @@ impl Editor {
             || self.cropping()
             || self.document.source
             || self.tab != 1
-            || self.document.dust().is_some()
+            || self.dusting()
         {
             return;
         }

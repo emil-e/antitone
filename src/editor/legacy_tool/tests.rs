@@ -25,7 +25,8 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
             editor.begin_crop();
             editor.document.crop_edit_mut().unwrap().draft.size = [100, 100];
             editor.begin_dust_cleanup();
-            assert!(matches!(editor.document.tool.as_ref(), Some(Tool::Dust(_))));
+            assert!(editor.current_tool().unwrap().is::<dust::DustTool>());
+            assert!(editor.document.tool.is_none());
             editor.begin_linear_mask(None);
             assert!(matches!(editor.document.tool.as_ref(), Some(Tool::Mask(_))));
             editor.begin_pick(Pick::Dmin, cx);

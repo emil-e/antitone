@@ -136,7 +136,7 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
     assert_eq!(repaired.source(id).unwrap().repairs.repairs().len(), 1);
     editor = round_trip(editor, &cropped, &repaired);
     assert!(
-        editor.document.dust().is_some(),
+        editor.dusting(),
         "undo/redo between strokes must keep the tool usable"
     );
     editor.delete_selected_dust_repair();

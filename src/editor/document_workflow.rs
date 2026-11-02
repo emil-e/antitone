@@ -56,11 +56,7 @@ impl Editor {
             }
             Preparation::History(_, _, direction) => Some(history::Pending::Restore {
                 direction: *direction,
-                cleanup: self
-                    .document
-                    .dust()
-                    .is_some()
-                    .then_some(self.document.visit.dust.show_masks),
+                cleanup: self.dusting().then(|| self.dust_outlines()),
             }),
         };
         self.cancel_active_tool();

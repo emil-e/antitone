@@ -425,7 +425,7 @@ fn dust_cursor_matches_selection_paint_and_donor_action_precedence() {
         e.dust_canvas_cursor(geometry, Some(donor), false),
         egui::CursorIcon::PointingHand
     );
-    e.document.visit.dust.show_masks = false;
+    e.set_dust_outlines(false);
     assert_eq!(
         e.dust_canvas_cursor(geometry, Some(target), false),
         egui::CursorIcon::Crosshair

@@ -1,6 +1,7 @@
 use super::*;
 use glam::DMat3;
 
+mod grading;
 mod stability;
 
 fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell<FloatCapture>) {
@@ -160,7 +161,7 @@ fn crop_owned_view_retires_without_accepting_drafts_or_overwriting_normal_naviga
                 assert_eq!(editor.document.visit.canvas.viewport, normal);
             });
             h.update(|editor| {
-                let selected = editor.with_tool_view(None, |view| *view.viewport);
+                let selected = editor.with_tool_viewport(|viewport| *viewport);
                 assert_ne!(
                     selected, normal,
                     "fixture must distinguish temporary from normal view"
@@ -549,21 +550,15 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
             harness.update(|editor| {
                 let layout = editor.document.crop_edit().unwrap().layout.unwrap();
                 let density = 1.;
-                editor.with_tool_view(None, |view| {
-                    view.viewport.zoom_at(
-                        layout,
-                        density,
-                        layout.scale * 1.8,
-                        layout.image.center(),
-                    )
+                editor.with_tool_viewport(|viewport| {
+                    viewport.zoom_at(layout, density, layout.scale * 1.8, layout.image.center())
                 });
             });
             harness.step();
             harness.update(|editor| {
                 let layout = editor.document.crop_edit().unwrap().layout.unwrap();
-                editor.with_tool_view(None, |view| {
-                    view.viewport.pan(layout, 1., egui::vec2(65., -35.))
-                });
+                editor
+                    .with_tool_viewport(|viewport| viewport.pan(layout, 1., egui::vec2(65., -35.)));
             });
             harness.step();
             assert_crop_patch_pixels(&mut harness, &capture);

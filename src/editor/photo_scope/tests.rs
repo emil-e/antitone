@@ -132,8 +132,38 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
 
 #[test]
 fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
+    use std::sync::{Mutex, mpsc};
     let mut editor = crate::editor::tests::with_document_services(fixture());
     add_ready_fixture(&mut editor);
+    let held_path = editor
+        .document
+        .visit
+        .canvas
+        .ready
+        .as_ref()
+        .unwrap()
+        .path
+        .clone();
+    let (entered, starts) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    let resume = Mutex::new(resume);
+    // The background pause holds measurement, not the native source owner.
+    let loader =
+        crate::editor::source_loading::SourceLoader::new_observed(move |path, phase, _| {
+            if path == held_path
+                && matches!(phase, crate::editor::source_loading::NativePhase::Open)
+            {
+                entered.send(()).map_err(|error| error.to_string())?;
+                resume
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(10))
+                    .map_err(|error| error.to_string())?;
+                return Err("released synthetic source request".into());
+            }
+            Ok(())
+        });
+    editor.source_services.as_mut().unwrap().developments = loader.clone();
     let hold = crate::background::testing::pause();
     with_application(editor, |app| {
         app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
@@ -145,6 +175,10 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
             editor.apply_pick(access);
         });
         app.pump();
+        assert!(
+            app.read(Editor::measurement_pending),
+            "the departing visit must have a pending measurement"
+        );
         app.update(Editor::sync_document);
         let (view, path, project) = app.read(|editor| {
             (
@@ -165,15 +199,38 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
         assert!(app.read(|e| e.document.visit.source.pending()));
         app.enter(|editor, cx| editor.load(path, cx));
         assert!(app.read(|e| e.document.visit.source.pending()));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.pump();
+            if starts.try_recv().is_ok() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "source request did not reach its native gate"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         app.pump();
         app.read(|editor| {
             assert_ne!(editor.document.visit.view, view);
             assert!(!editor.measurement_pending());
+            assert!(editor.document.visit.source.pending());
             assert_eq!(editor.document.state.project, project);
             assert!(editor.busy, "the new visit still owns its source load");
         });
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.document.visit.source.pending()
+        });
+        app.read(|editor| {
+            assert!(!editor.busy);
+            assert!(!editor.measurement_pending());
+            assert_eq!(editor.document.state.project, project);
+        });
     });
     drop(hold);
+    loader.close_and_wait().unwrap();
 }
 
 #[test]

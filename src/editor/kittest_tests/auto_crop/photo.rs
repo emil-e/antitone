@@ -17,11 +17,11 @@ fn photo_auto_crop_drawer_updates_only_its_draft_and_dust_can_switch_directly_to
                 )
             });
             click_action(&mut h, "Dust repair");
-            h.read(|editor| assert!(editor.document.dust().is_some()));
+            h.read(|editor| assert!(editor.dusting()));
             click_action(&mut h, "Crop & straighten");
             h.read(|editor| {
                 assert!(editor.cropping());
-                assert!(editor.document.dust().is_none());
+                assert!(!editor.dusting());
             });
             let before = h.read(|editor| editor.document.crop_edit().unwrap().draft);
             let state = h.read(|editor| editor.document.crop_state().unwrap());

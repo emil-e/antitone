@@ -2,8 +2,7 @@ use super::{frame, key, pointer};
 use crate::editor::{
     icons::Icon,
     presentation::{
-        CONTROL_HEIGHT, INSPECTOR_ROW_HEIGHT, SessionToolGroup, ToolButton, ToolDrawer, ToolGroup,
-        ToolIdentity, ToolShelf,
+        CONTROL_HEIGHT, INSPECTOR_ROW_HEIGHT, ToolButton, ToolGroup, ToolIdentity, ToolShelf,
     },
 };
 use egui::{Context, FullOutput, Ui};
@@ -172,25 +171,27 @@ fn stage_tool_shelf_distinguishes_commands_active_tools_and_changed_state() {
 }
 
 #[test]
-fn session_group_measures_and_returns_one_right_aligned_done_action() {
+fn session_actions_measure_and_return_only_the_supplied_done_action() {
     let context = Context::default();
     for enabled in [true, false] {
         frame(&context, 315., true, vec![], |ui| {
-            let group = SessionToolGroup {
+            let group = ToolGroup {
                 identity: ToolIdentity {
                     icon: Icon::Dust,
                     title: "Dust cleanup",
                 },
                 busy: !enabled,
-                done_enabled: enabled,
+                cancel_enabled: enabled,
+                apply_enabled: false,
             };
             let next = ui.next_auto_id();
-            let measured = group.width(ui);
+            let measured = group.width_actions(ui, None, "Done");
             assert_eq!(ui.next_auto_id(), next);
-            let response = group.show(ui);
+            let response = group.show_actions(ui, None, "Done", None);
             assert!((response.response.rect.width() - measured).abs() < 1e-5);
-            assert_eq!(response.response.rect.height(), 28.);
-            assert_eq!(response.inner.enabled(), enabled);
+            assert_eq!(response.response.rect.height(), CONTROL_HEIGHT);
+            assert!(response.inner.primary.is_none());
+            assert_eq!(response.inner.dismiss.enabled(), enabled);
         });
     }
 }
@@ -401,6 +402,15 @@ fn group_responses_keep_mouse_keyboard_focus_and_disabled_transition_behavior() 
     assert!(!restored.cancel.clicked() && !restored.apply.clicked());
 }
 
+fn reset_header(ui: &mut Ui, enabled: Option<bool>, help: &str) -> bool {
+    enabled.is_some_and(|enabled| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            crate::editor::icons::button(ui, Icon::Reset, enabled, "Reset draft", help).clicked()
+        })
+        .inner
+    })
+}
+
 #[test]
 fn inspector_titles_resets_and_body_actions_fit_and_expose_supplied_availability() {
     for scale in [1., 2.] {
@@ -419,17 +429,13 @@ fn inspector_titles_resets_and_body_actions_fit_and_expose_supplied_availability
                         frame(&context, width, enabled, vec![], |ui| {
                             ui.push_id("inspector", |ui| {
                                 ui.vertical(|ui| {
-                                    ToolDrawer {
-                                        identity: ToolIdentity {
-                                            icon: Icon::Crop,
-                                            title,
-                                        },
-                                        reset,
-                                        reset_help: "Reset this draft.",
-                                        reveal: false,
+                                    ToolIdentity {
+                                        icon: Icon::Crop,
+                                        title,
                                     }
-                                    .show(
+                                    .inspector(
                                         ui,
+                                        |ui| reset_header(ui, reset, "Reset this draft."),
                                         |ui: &mut Ui, reset_clicked| {
                                             assert!(!reset_clicked);
                                             ui.button("Body action")
@@ -493,16 +499,15 @@ fn inspector_header_result_reaches_body_without_owning_state_or_reset_scope() {
     assert!(!response.clicked());
     let render = |events| {
         frame(&context, 315., true, events, |ui| {
-            ToolDrawer {
-                identity: ToolIdentity {
-                    icon: Icon::Crop,
-                    title: "Crop & straighten",
-                },
-                reset: Some(true),
-                reset_help: "Reset crop and angle.",
-                reveal: false,
+            ToolIdentity {
+                icon: Icon::Crop,
+                title: "Crop & straighten",
             }
-            .show(ui, |_, reset| reset)
+            .inspector(
+                ui,
+                |ui| reset_header(ui, Some(true), "Reset crop and angle."),
+                |_, reset| reset,
+            )
         })
     };
     let (_, output) = render(vec![]);

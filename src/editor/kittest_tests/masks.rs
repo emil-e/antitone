@@ -292,7 +292,7 @@ fn creation_popup_escape_and_dust_keep_canvas_ownership_unambiguous() {
         harness.read(|editor| assert!(editor.document.mask_edit().is_none()));
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
         click(&mut harness, "Dust repair");
-        harness.read(|editor| assert!(editor.document.dust().is_some()));
+        harness.read(|editor| assert!(editor.dusting()));
         assert!(
             !harness
                 .get_by_role_and_label(egui::accesskit::Role::Button, "Add linear")
@@ -302,7 +302,7 @@ fn creation_popup_escape_and_dust_keep_canvas_ownership_unambiguous() {
         harness.read(|editor| assert!(!editor.mask_handles_available()));
         click(&mut harness, "Add linear");
         harness.read(|editor| {
-            assert!(editor.document.dust().is_none());
+            assert!(!editor.dusting());
             assert!(editor.document.mask_edit().is_some());
             assert_eq!(editor.document.project, before);
         });

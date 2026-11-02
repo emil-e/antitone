@@ -1,5 +1,5 @@
 use super::*;
-use crate::dust_repair::RepairId;
+use crate::{dust_repair::RepairId, editor::history::Direction};
 
 mod persistence;
 
@@ -83,7 +83,7 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         let source = h.read(|editor| editor.document.visit.current_source.unwrap());
         let project = h.read(|editor| editor.document.state.project.clone());
         h.read(|editor| assert!(editor.document.dirty()));
-        h.read(|editor| assert!(editor.document.dust().is_some()));
+        h.read(|editor| assert!(editor.dusting()));
         h.read(|editor| assert!(editor.active_pick().is_none()));
         assert!(
             h.get_by_label("Reset dust repairs")
@@ -365,8 +365,58 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
         ready(&mut h, 0);
         h.get_by_label("Done").click();
         h.step();
-        h.read(|editor| assert!(!editor.document.dust().is_some()));
-        h.read(|editor| assert!(!editor.document.visit.dust.show_masks));
+        h.read(|editor| assert!(!editor.dusting()));
+        h.read(|editor| assert!(!editor.dust_outlines()));
+    });
+}
+
+#[test]
+fn accepted_repairs_remain_in_the_painted_image_after_crop_replaces_dust() {
+    tools::calibrated_harness(|mut h| {
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
+        ready(&mut h, 1);
+        let signature = h.read(|e| e.dust_signature().unwrap());
+        let evaluated = h.read(|e| e.dust_evaluations(signature)[0].clone());
+        let before = h.read(|e| e.document.state.project.clone());
+        let history = h.read(|e| e.history_label(Direction::Undo));
+        for phase in ["dust-tool", "dust-replaced-by-crop", "dust-closed-normal"] {
+            if phase == "dust-replaced-by-crop" {
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+                    .click();
+                h.step();
+            } else if phase == "dust-closed-normal" {
+                h.get_by_label("Cancel").click();
+                h.step();
+            }
+            ready(&mut h, 1);
+            h.try_run_realtime().unwrap();
+            let canvas = h.read(|e| {
+                assert_eq!(e.dusting(), phase == "dust-tool");
+                assert_eq!(e.cropping(), phase == "dust-replaced-by-crop");
+                assert_eq!(e.document.state.project, before);
+                assert_eq!(e.history_label(Direction::Undo), history);
+                let view = e.document.visit.working_view.displayed.as_ref().unwrap();
+                assert_eq!(view.spec.repairs.0.len(), 1);
+                assert!(Arc::ptr_eq(&view.spec.repairs.0[0].evaluated, &evaluated));
+                e.active_canvas().last_layout.unwrap().0.canvas
+            });
+            assert!(
+                h.output().shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::Shape::Callback(callback)
+                    if canvas.contains(callback.rect.center()))
+                }),
+                "the repaired canvas image was not painted in {phase}"
+            );
+            if std::env::var_os("ANTITONE_UI_CAPTURE").is_some() {
+                h.event(egui::Event::PointerGone);
+                h.step();
+            }
+            save_capture(&h.render().unwrap(), phase);
+        }
     });
 }
 
@@ -392,7 +442,7 @@ fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
         assert!(h.get_by_label("View source").accesskit_node().is_disabled());
         h.get_by_label("View source").click();
         h.step();
-        h.read(|editor| assert!(!editor.document.source && editor.document.dust().is_some()));
+        h.read(|editor| assert!(!editor.document.source && editor.dusting()));
         key(&mut h, egui::Key::F);
         h.read(|editor| assert!(editor.fullscreen.is_some()));
         let brush = h.read(|editor| editor.document.visit.dust.brush_size);
@@ -403,7 +453,7 @@ fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
         h.update(|editor| editor.fullscreen_changed(false));
         h.step();
         h.read(|editor| assert!(editor.fullscreen.is_none()));
-        h.read(|editor| assert!(editor.document.dust().is_some()));
+        h.read(|editor| assert!(editor.dusting()));
         h.read(|editor| assert_eq!(editor.document.state.project, project));
         h.get_by_label("Done").click();
         h.step();
@@ -427,8 +477,14 @@ fn navigating_back_to_a_repaired_photo_keeps_inactive_dust_artwork_hidden() {
                 ..Default::default()
             },
             |ui| {
-                h.read(|editor| {
-                    editor.paint_dust(ui, editor.active_canvas().last_layout.unwrap().0)
+                h.enter(|editor, cx| {
+                    let layout = editor.active_canvas().last_layout.unwrap().0;
+                    let response = ui.interact(
+                        layout.canvas,
+                        ui.id().with("artwork-probe"),
+                        egui::Sense::hover(),
+                    );
+                    editor.hosted_canvas(ui, &response, layout.composition, None, false, cx);
                 })
             },
         );
@@ -436,7 +492,7 @@ fn navigating_back_to_a_repaired_photo_keeps_inactive_dust_artwork_hidden() {
         output
             .shapes
             .iter()
-            .any(|shape| !matches!(shape.shape, egui::Shape::Noop))
+            .any(|shape| !matches!(shape.shape, egui::Shape::Noop | egui::Shape::Callback(_)))
     };
     tools::calibrated_harness(|mut h| {
         h.enter(|editor, cx| editor.add_raws(vec![other], cx));
@@ -469,7 +525,7 @@ fn navigating_back_to_a_repaired_photo_keeps_inactive_dust_artwork_hidden() {
         });
         ready(&mut h, 1);
         h.read(|editor| {
-            assert!(!editor.document.dust().is_some());
+            assert!(!editor.dusting());
             assert_eq!(editor.dust_repairs(source).unwrap().repairs().len(), 1);
         });
         assert!(

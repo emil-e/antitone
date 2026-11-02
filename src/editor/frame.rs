@@ -196,7 +196,7 @@ impl Editor {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
                 && !self.document.mask_edit().is_some_and(MaskEdit::dragging)
             {
-                self.with_tool_view(None, |view| view.viewport.fit());
+                self.with_tool_viewport(Viewport::fit);
             }
             self.select_active_shortcut(ui.ctx());
             self.tool_shortcuts(ui, cx);
@@ -218,6 +218,7 @@ impl Editor {
         {
             self.apply_pick(cx);
         }
+        self.with_current_tool(|tool, editor| tool.shortcuts(ui, editor));
         if let Some(tool) = self.current_tool() {
             let primary = tool.presentation().primary.is_some();
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -244,19 +245,6 @@ impl Editor {
         {
             self.finish_mask(false);
         }
-        if self.document.dust().is_some()
-            && ui.input_mut(|input| {
-                input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-                    || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
-            })
-        {
-            self.delete_selected_dust_repair();
-        }
-        if self.document.dust().is_some()
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.finish_dust_cleanup();
-        }
     }
 
     fn selection_shortcuts(
@@ -275,7 +263,7 @@ impl Editor {
         {
             self.delete_selected_adjustment_layer();
         }
-        if !self.document.dust().is_some()
+        if !self.dusting()
             && self.document.auto_crop_edit().is_none()
             && !adjustment_delete
             && !self.document.visit.adjustment_layers.dragging()

@@ -290,7 +290,7 @@ impl Editor {
                 self.menus.panel = None;
                 self.menus.pending.push_front(Quit);
             }
-            Fit => self.with_tool_view(None, |view| view.viewport.fit()),
+            Fit => self.with_tool_viewport(Viewport::fit),
             Scopes => {
                 self.scopes.visible = !self.scopes.visible;
                 self.preferences.scopes_visible = self.scopes.visible;

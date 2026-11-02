@@ -21,7 +21,6 @@ pub(super) enum Tool {
     Analyze(Box<Analyze>),
     AutoCrop(Box<AutoCrop>),
     Flat(Box<FlatEdit>),
-    Dust(Box<dust::Cleanup>),
 }
 
 impl Editor {
@@ -138,7 +137,7 @@ impl DocumentScope {
     pub fn is_photo_bound(&self) -> bool {
         matches!(
             self.tool.as_ref(),
-            Some(Tool::Mask(_)) | Some(Tool::Pick(_)) | Some(Tool::Dust(_))
+            Some(Tool::Mask(_)) | Some(Tool::Pick(_))
         )
     }
 
@@ -263,63 +262,5 @@ impl DocumentScope {
             panic!("picker actions belong to the active picker");
         };
         actions
-    }
-
-    pub fn begin_dust(&mut self) {
-        if !matches!(self.tool.as_ref(), Some(Tool::Dust(_))) {
-            self.set_legacy_tool(Tool::Dust(Default::default()));
-        }
-    }
-
-    pub fn clear_dust(&mut self) {
-        if matches!(self.tool.as_ref(), Some(Tool::Dust(_))) {
-            self.tool.clear();
-        }
-    }
-
-    pub fn dust_mask_draft(&self) -> Option<&dust::MaskDraft> {
-        self.dust()?.mask_draft.as_ref()
-    }
-
-    pub fn dust_mask_draft_mut(&mut self) -> Option<&mut dust::MaskDraft> {
-        self.dust_mut()?.mask_draft.as_mut()
-    }
-
-    pub fn set_dust_mask_draft(&mut self, value: Option<dust::MaskDraft>) {
-        if let Some(tool) = self.dust_mut() {
-            tool.mask_draft = value;
-        }
-    }
-
-    pub fn dust_donor_draft(&self) -> Option<&dust::DonorDraft> {
-        self.dust()?.donor_draft.as_ref()
-    }
-
-    pub fn dust_donor_draft_mut(&mut self) -> Option<&mut dust::DonorDraft> {
-        self.dust_mut()?.donor_draft.as_mut()
-    }
-
-    pub fn set_dust_donor_draft(&mut self, value: Option<dust::DonorDraft>) {
-        if let Some(tool) = self.dust_mut() {
-            tool.donor_draft = value;
-        }
-    }
-
-    pub fn take_dust_donor_draft(&mut self) -> Option<dust::DonorDraft> {
-        self.dust_mut()?.donor_draft.take()
-    }
-
-    pub fn dust(&self) -> Option<&dust::Cleanup> {
-        match self.tool.as_ref() {
-            Some(Tool::Dust(tool)) => Some(tool),
-            _ => None,
-        }
-    }
-
-    pub fn dust_mut(&mut self) -> Option<&mut dust::Cleanup> {
-        match self.tool.as_mut() {
-            Some(Tool::Dust(tool)) => Some(tool),
-            _ => None,
-        }
     }
 }

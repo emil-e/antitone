@@ -75,7 +75,7 @@ fn moving_crop_keeps_the_painted_frame_fixed_on_motion_hold_and_release_passes()
                 .constrained(area)
                 .unwrap();
                 editor.document.crop_edit_mut().unwrap().draft = draft;
-                editor.with_tool_view(None, |view| view.viewport.fit());
+                editor.with_tool_viewport(|viewport| viewport.fit());
                 (
                     editor.document.state.project.clone(),
                     editor.document.visit.canvas.viewport,

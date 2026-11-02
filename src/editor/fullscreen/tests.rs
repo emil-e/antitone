@@ -191,6 +191,59 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
 }
 
 #[test]
+fn fullscreen_preserves_normal_navigation_anchor_with_or_without_a_hosted_interaction() {
+    for dust in [false, true] {
+        let mut editor = ready();
+        editor.tab = 1;
+        let context = egui::Context::default();
+        if dust {
+            editor.begin_dust_cleanup();
+            assert!(editor.dusting());
+        }
+        frame(&mut editor, &context, Some(false), vec![]);
+        editor.document.visit.canvas.viewport.zoom = Some(2.);
+        frame(&mut editor, &context, Some(false), vec![]);
+        let layout = editor.active_canvas().last_layout.unwrap().0;
+        editor
+            .document
+            .visit
+            .canvas
+            .viewport
+            .pan(layout, 1., egui::vec2(80., -20.));
+        frame(&mut editor, &context, Some(false), vec![]);
+        let viewport = editor.document.visit.canvas.viewport;
+        let before = editor.active_canvas().last_layout.unwrap().0;
+        let anchor = before
+            .composition
+            .frame_to_source(before.frame_point(before.canvas.center()));
+        frame(&mut editor, &context, Some(false), key(egui::Key::F));
+        frame_with_size(
+            &mut editor,
+            &context,
+            Some(true),
+            egui::vec2(1920., 1080.),
+            vec![],
+        );
+        let after = editor.active_canvas().last_layout.unwrap().0;
+        let actual = after
+            .composition
+            .frame_to_source(after.frame_point(after.canvas.center()));
+        assert_eq!(after.scale, before.scale);
+        for axis in 0..2 {
+            assert!(
+                (actual.0[axis] - anchor.0[axis]).abs() < 1e-3,
+                "fullscreen moved the source anchor: {anchor:?} -> {actual:?}, Dust={dust}"
+            );
+        }
+        frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
+        editor.fullscreen_changed(false);
+        frame(&mut editor, &context, Some(false), vec![]);
+        assert_eq!(editor.document.visit.canvas.viewport, viewport);
+        assert_eq!(editor.dusting(), dust);
+    }
+}
+
+#[test]
 fn fullscreen_navigation_uses_normal_view_and_preserves_the_suspended_crop_view() {
     let mut editor = ready();
     let context = egui::Context::default();
@@ -213,18 +266,13 @@ fn fullscreen_navigation_uses_normal_view_and_preserves_the_suspended_crop_view(
     editor.invalidate_original();
     frame(&mut editor, &context, Some(false), vec![]);
     let draft = editor.document.crop_edit().unwrap().draft;
-    let crop_view = editor.with_tool_view(None, |view| *view.viewport);
+    let crop_view = editor.with_tool_viewport(|viewport| *viewport);
     assert_ne!(crop_view, normal);
     let project = editor.document.state.project.clone();
     frame(&mut editor, &context, Some(false), key(egui::Key::F));
     frame(&mut editor, &context, Some(true), vec![]);
-    editor.with_tool_view(None, |view| {
-        assert!(!view.source_outside_frame);
-        assert_eq!(
-            view.composition.unwrap().crop(),
-            Crop::from_region(view.composition.unwrap().area())
-        );
-    });
+    let composition = editor.active_canvas().last_layout.unwrap().0.composition;
+    assert_eq!(composition.crop(), Crop::from_region(composition.area()));
     let layout = editor.active_canvas().last_layout.unwrap().0;
     let center = layout.canvas.center();
     frame(
@@ -298,10 +346,7 @@ fn fullscreen_navigation_uses_normal_view_and_preserves_the_suspended_crop_view(
     frame(&mut editor, &context, Some(false), vec![]);
     assert!(editor.fullscreen.is_none());
     assert_eq!(editor.document.visit.canvas.viewport, normal);
-    assert_eq!(
-        editor.with_tool_view(None, |view| *view.viewport),
-        crop_view
-    );
+    assert_eq!(editor.with_tool_viewport(|viewport| *viewport), crop_view);
     assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     assert_eq!(editor.document.state.project, project);
 }

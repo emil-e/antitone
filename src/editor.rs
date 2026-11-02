@@ -880,7 +880,9 @@ impl Editor {
         if self.document.auto_crop_edit().is_some() {
             self.finish_auto_crop(false);
         }
-        self.finish_dust_cleanup();
+        if self.dusting() {
+            self.end_tool();
+        }
         self.reset_repairs_pending = replacement;
         if self
             .document
@@ -970,10 +972,9 @@ impl Editor {
         }
 
         let editable = !self.busy
-            && self.current_tool().is_none()
             && matches!(
                 self.document.tool.as_ref(),
-                None | Some(legacy_tool::Tool::Pick(_)) | Some(legacy_tool::Tool::Dust(_))
+                None | Some(legacy_tool::Tool::Pick(_))
             )
             && self.document.input.ready();
         let can_pick = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
@@ -1208,7 +1209,6 @@ impl Editor {
                 } else if self.tab == 1 {
                     ui.add_enabled_ui(!reviewing, |ui| {
                         ui.add_enabled_ui(!self.busy, |ui| self.hosted_drawer(ui, cx));
-                        self.dust_controls(ui, cx);
                     });
                     if self.adjustment_layer_controls(ui, cx, editable, can_pick) {
                         start_pick = Some(Pick::Wb);
@@ -1217,7 +1217,6 @@ impl Editor {
                     if self.document.input.capabilities().film_emulation {
                         let allowed = !self.busy
                             && !reviewing
-                            && !self.cropping()
                             && self.document.auto_crop_edit().is_none()
                             && self.document.flat_edit().is_none()
                             && self.document.mask_edit().is_none();
@@ -1246,7 +1245,6 @@ impl Editor {
                     self.look_controls(ui, cx);
                     ui.add_enabled_ui(
                         !reviewing
-                            && !self.cropping()
                             && self.document.auto_crop_edit().is_none()
                             && self.document.flat_edit().is_none()
                             && self.document.mask_edit().is_none(),

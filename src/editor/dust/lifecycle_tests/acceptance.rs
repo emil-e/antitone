@@ -499,6 +499,81 @@ fn older_search_can_accept_its_repair_but_cannot_steal_selection_from_a_newer_st
 }
 
 #[test]
+fn retirement_drops_search_owner_without_borrowing_captured_edits() {
+    for replace in [false, true] {
+        for polled in [false, true] {
+            for executing in [false, true] {
+                with_search(editor(), |app, gate| {
+                    let (source, before, accepted, interaction, edit) = app.enter(|e, cx| {
+                        let source = e.document.visit.current_source.unwrap();
+                        let before = e.history_snapshot();
+                        let accepted = e.effective_dust_repairs(source);
+                        queue(e, [80, 80], cx);
+                        assert!(e.current_tool().unwrap().is::<DustTool>());
+                        assert!(e.document.tool.is_none());
+                        e.begin_dust_mask(Some(RepairId(1)));
+                        e.document
+                            .dust_mask_draft_mut()
+                            .unwrap()
+                            .pixels
+                            .insert([54, 50]);
+                        assert_ne!(e.effective_dust_repairs(source), accepted);
+                        let state = e.dust_session().unwrap();
+                        (
+                            source,
+                            before,
+                            accepted,
+                            Rc::downgrade(&state),
+                            state.edit.clone(),
+                        )
+                    });
+                    let call = polled.then(|| gate.next(app));
+                    app.update(|e| {
+                        let retire = |e: &mut Editor| {
+                            let _draft = edit.borrow_mut();
+                            if replace {
+                                e.begin_crop();
+                            } else {
+                                e.end_tool();
+                            }
+                            assert_eq!(e.document.state.project, before);
+                            assert_eq!(e.history_label(history::Direction::Undo), None);
+                        };
+                        if executing {
+                            e.with_current_tool(|_, e| retire(e)).unwrap();
+                        } else {
+                            retire(e);
+                        }
+                        assert!(interaction.upgrade().is_none());
+                        assert!(!e.dusting());
+                        assert!(!e.dust_history_draft());
+                        assert!(!e.dust_search_pending());
+                        assert!(e.pending_dust_strokes().is_empty());
+                        assert_eq!(e.effective_dust_repairs(source), accepted);
+                    });
+                    if let Some(call) = call {
+                        app.run_until(Duration::from_secs(5), |_| call.cancelled.is_cancelled());
+                        call.complete(Ok(SearchOutcome::Candidate([30, 0])));
+                    }
+                    app.pump();
+                    assert!(
+                        gate.is_empty(),
+                        "retired unpolled work must not start a search"
+                    );
+                    app.read(|e| {
+                        assert_eq!(e.document.state.project, before);
+                        assert_eq!(e.cropping(), replace);
+                        assert_eq!(e.has_hosted_tool(), replace);
+                        assert_eq!(e.history_label(history::Direction::Undo), None);
+                    });
+                    drop(edit);
+                });
+            }
+        }
+    }
+}
+
+#[test]
 fn ending_dust_discards_unfinished_strokes_without_changing_accepted_repairs() {
     with_search(editor(), |app, gate| {
         let before = app.read(|e| e.document.state.project.clone());
@@ -510,7 +585,7 @@ fn ending_dust_discards_unfinished_strokes_without_changing_accepted_repairs() {
             e.finish_dust_cleanup();
             assert!(!e.dust_search_pending());
             assert!(e.pending_dust_strokes().is_empty());
-            assert!(!e.document.dust().is_some());
+            assert!(!e.dusting());
         });
         app.run_until(Duration::from_secs(5), |_| call.cancelled.is_cancelled());
         call.complete(Ok(SearchOutcome::Candidate([30, 0])));
@@ -520,6 +595,68 @@ fn ending_dust_discards_unfinished_strokes_without_changing_accepted_repairs() {
             assert_eq!(e.history_label(history::Direction::Undo), None);
         });
     });
+}
+
+#[test]
+fn accepted_healing_and_gpu_patches_survive_ending_dust_or_replacing_it_with_crop() {
+    for replace in [false, true] {
+        let mut e = coherent_editor();
+        let source = e.document.visit.current_source.unwrap();
+        let repair = e
+            .dust_repairs_mut(source)
+            .insert(
+                SupportMask::new([50, 50], [3, 3], vec![true; 9]).unwrap(),
+                RepairOrigin::Manual,
+                [30, 0],
+            )
+            .unwrap();
+        let services = e.source_services.as_ref().unwrap();
+        e.document.visit.working_view =
+            WorkingView::new(services.device.clone(), services.queue.clone());
+        let before = e.history_snapshot();
+        let history = e.history_label(history::Direction::Undo);
+        e.begin_dust_cleanup();
+        assert!(e.current_tool().unwrap().is::<DustTool>());
+        let hold = crate::background::testing::pause();
+        with_application(e, |app| {
+            let request = app.enter(|e, cx| {
+                e.schedule_dust(e.dust_signature().unwrap(), cx);
+                captured_request(e)
+            });
+            app.pump();
+            app.update(|e| {
+                if replace {
+                    e.begin_crop();
+                } else {
+                    e.end_tool();
+                }
+                assert!(!e.dusting());
+                assert_eq!(e.cropping(), replace);
+                assert_eq!(
+                    e.document.visit.dust.pending_request(),
+                    Some(request.request)
+                );
+                assert!(!request.cancelled.load(std::sync::atomic::Ordering::Relaxed));
+                assert_eq!(e.document.state.project, before);
+            });
+            drop(hold);
+            app.run_until(Duration::from_secs(15), |e| {
+                e.document.dust.has_evaluation(source, repair)
+            });
+            app.update(|e| {
+                let evaluated = e.document.dust.cached[&(source, repair)].evaluated.clone();
+                let patches = e.dust_gpu_snapshot(None).unwrap();
+                assert_eq!(patches.0.len(), 1);
+                assert!(Arc::ptr_eq(&patches.0[0].evaluated, &evaluated));
+                e.end_tool();
+                let normal = e.dust_gpu_snapshot(None).unwrap();
+                assert_eq!(normal.0.len(), 1);
+                assert!(Arc::ptr_eq(&patches.0[0], &normal.0[0]));
+                assert_eq!(e.document.state.project, before);
+                assert_eq!(e.history_label(history::Direction::Undo), history);
+            });
+        });
+    }
 }
 
 fn coherent_editor() -> Editor {

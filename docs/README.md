@@ -39,7 +39,7 @@ Where each area's implementation lives — navigation, not specification. Follow
 
 | DNG backend | [adapter](../src/dng.rs), [native owner](../native/dng_bridge.cpp) | Direct SDK development and decode-free inspection in the shared source model |
 | Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu/flat.rs) | Source-coordinate illumination gains |
-| Image recipe and repairs | [accepted recipe](../src/image_recipe.rs), [source evaluator](../src/repair_source.rs), [repair model](../src/dust_repair.rs), [controller](../src/editor/dust.rs), [GPU patches](../src/gpu/repairs.rs) | Shared accepted recipe; consumer-owned repair execution |
+| Image recipe and repairs | [accepted recipe](../src/image_recipe.rs), [source evaluator](../src/repair_source.rs), [repair model](../src/dust_repair.rs), [interaction](../src/editor/dust/interaction.rs), [repair evaluation](../src/editor/dust.rs), [GPU patches](../src/gpu/repairs.rs) | Shared accepted recipe; consumer-owned repair execution |
 | Roll analysis | [spatial support](../src/scan_regions.rs), [estimator](../src/roll_analysis.rs), [fitter](../src/roll_analysis/gamma.rs) | Source-owned sampling hypotheses, sample-derived starting settings |
 | GPU | [processing](../src/gpu.rs), [renderer](../src/renderer.rs) | Interactive processing and reusable rendering resources |
 | Rendering/output | [rendering](../src/rendering.rs), [export](../src/export.rs), [native transform](../native/rendering_transform.h) | ACES, file encoding and output safety |

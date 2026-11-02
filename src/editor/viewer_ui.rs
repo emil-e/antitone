@@ -121,43 +121,30 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) -> Option<f32> {
         use icons::Icon;
-        use presentation::{
-            SessionToolGroup, TextAction, ToolGroup, ToolIdentity, VIEWER_ITEM_GAP,
-        };
+        use presentation::{TextAction, ToolGroup, ToolIdentity, VIEWER_ITEM_GAP};
 
         let mut zoom_action = None;
         let fullscreen = self.fullscreen.is_some();
         let hosted = (!fullscreen)
-            .then(|| self.current_tool().map(|tool| tool.presentation()))
+            .then(|| {
+                self.current_tool()
+                    .map(|tool| tool.presentation())
+                    .filter(|tool| tool.show_viewer)
+            })
             .flatten();
-        let source_outside_frame = self.with_tool_view(None, |view| view.source_outside_frame);
+        let fit_label = hosted.as_ref().map_or("Fit", |tool| tool.fit_label);
         let masking = !fullscreen && self.document.mask_edit().is_some();
         let creating = !fullscreen && self.document.mask_edit().is_some_and(MaskEdit::creating);
-        let dust_session =
-            !fullscreen && self.document.dust().is_some() && !self.canvas_inspection();
         let tool = hosted
             .as_ref()
             .map(|tool| (tool.identity.icon, tool.identity.title))
-            .or_else(|| {
-                (!fullscreen && !dust_session)
-                    .then(|| self.viewer_tool())
-                    .flatten()
-            });
-        let session_group = dust_session.then_some(SessionToolGroup {
-            identity: ToolIdentity {
-                icon: Icon::Dust,
-                title: "Dust cleanup",
-            },
-            busy: self.busy,
-            done_enabled: !self.busy,
-        });
+            .or_else(|| (!fullscreen).then(|| self.viewer_tool()).flatten());
         let has_repairs = self
             .document
             .visit
             .current_source
             .and_then(|id| self.dust_repairs(id))
             .is_some_and(|repairs| !repairs.repairs().is_empty());
-        let mut finish_dust = false;
 
         let mut cancel = false;
         let mut apply = false;
@@ -194,7 +181,8 @@ impl Editor {
             .and_then(|tool| tool.warning.clone())
             .or_else(|| self.viewer_warning());
         let look_error = self.look_rendering_error();
-        let inspecting = navigating && calibrated && tool.is_none() && !dust_session && !masking;
+        let normal_controls = tool.is_none() || hosted.is_some();
+        let inspecting = navigating && calibrated && tool.is_none() && !masking;
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
         } else {
@@ -219,7 +207,7 @@ impl Editor {
                     " · Cached preview"
                 } else if self.canvas_inspection() || self.active_canvas().ready.is_none() {
                     ""
-                } else if self.document.visit.working_view.enabled() && tool.is_none() {
+                } else if self.document.visit.working_view.enabled() && normal_controls {
                     if look_error.is_some() {
                         " · Look unavailable"
                     } else if self.document.visit.working_view.error.is_some() {
@@ -256,8 +244,6 @@ impl Editor {
                         } else {
                             group.width(ui)
                         }
-                    } else if let Some(group) = session_group {
-                        group.width(ui)
                     } else {
                         ui.painter()
                             .layout_no_wrap(
@@ -268,7 +254,7 @@ impl Editor {
                             .size()
                             .x
                     };
-                let show_zoom_steps = tool.is_none() && !dust_session && !masking
+                let show_zoom_steps = tool.is_none() && !masking
                     || ui.available_width()
                         >= trailing_width
                             + presentation::CONTROL_HEIGHT
@@ -278,16 +264,12 @@ impl Editor {
                     ui,
                     Icon::Fit,
                     navigating,
-                    if source_outside_frame { "Fit source" } else { "Fit" },
-                    if source_outside_frame {
-                        "Fit the full source (Z)."
-                    } else {
-                        "Fit the image (Z)."
-                    },
+                    fit_label,
+                    &format!("{fit_label} (Z)."),
                 )
                 .clicked()
                 {
-                    self.with_tool_view(None, |view| view.viewport.fit());
+                    self.with_tool_viewport(Viewport::fit);
                 }
                 let layout = self.active_canvas().last_layout.map(|(layout, _)| layout);
                 let zoom = layout.map_or("—".into(), |layout| {
@@ -334,7 +316,7 @@ impl Editor {
                     self.toggle_fullscreen(ui.ctx());
                 }
                 ui.separator();
-                if tool.is_none() {
+                if normal_controls {
                     ui.add_enabled_ui(inspecting, |ui| {
                         icons::toggle(
                             ui,
@@ -349,7 +331,7 @@ impl Editor {
                         );
                     });
                 }
-                if !self.canvas_inspection() && tool.is_none() && self.document.visit.working_view.enabled() {
+                if !self.canvas_inspection() && normal_controls && self.document.visit.working_view.enabled() {
                     ui.add_enabled_ui(inspecting, |ui| {
                         icons::toggle(
                             ui,
@@ -442,14 +424,11 @@ impl Editor {
                     .show(|ui| {
                         ui.set_width(290.);
                         ui.label(egui::RichText::new("Viewer navigation").strong());
-                        ui.small(if dust_session {
-                            "Scroll changes brush size · Cmd/Ctrl-scroll or pinch zooms"
-                        } else {
-                            "Scroll pans · Cmd/Ctrl-scroll or pinch zooms"
-                        });
+                        ui.small(hosted.as_ref().and_then(|tool| tool.navigation_help)
+                            .unwrap_or("Scroll pans · Cmd/Ctrl-scroll or pinch zooms"));
                         ui.small("Click: Fit / 100% outside canvas tools · Z: Fit · F: Fullscreen");
                         ui.small("Zoomed drag pans · Space-drag / middle-drag always pans");
-                        if !fullscreen && tool.is_none() && !dust_session {
+                        if !fullscreen && tool.is_none() {
                             ui.separator();
                             ui.label(egui::RichText::new("Filmstrip selection").strong());
                             ui.small("Cmd-click toggles selection · Shift-click selects a range");
@@ -461,7 +440,6 @@ impl Editor {
                         if let Some(help) = self.mask_help().filter(|_| {
                             !fullscreen
                                 && self.tab == 1
-                                && !dust_session
                                 && hosted.is_none()
                                 && self.active_pick().is_none()
                         }) {
@@ -470,7 +448,11 @@ impl Editor {
                         } else if let Some(tool) = &hosted {
                             ui.separator();
                             ui.small(tool.help);
-                            ui.small("Enter: primary action · Escape: dismiss");
+                            ui.small(if tool.primary.is_some() {
+                                "Enter: primary action · Escape: dismiss"
+                            } else {
+                                "Escape: dismiss"
+                            });
                         } else if !fullscreen &&self.document.auto_crop_edit().is_some() {
                             ui.separator();
                             ui.small(
@@ -480,17 +462,7 @@ impl Editor {
                                 "Browsing is optional and never retargets the proposals · H hides artwork.",
                             );
                             ui.small("Enter applies the fixed set · Escape cancels");
-                        } else if dust_session {
-                            ui.separator();
-                            ui.small(
-                                "Draw for a new heal · click an outline to select another heal.",
-                            );
-                            ui.small(
-                                "Shift-drag adds to selected · Option-drag removes · Delete removes selected.",
-                            );
-                            ui.small(
-                                "Drag the source outline to move it · release commits changes · H hides outlines.",
-                            );
+
                         } else if !fullscreen &&self.document.analysis_review().is_some() {
                             ui.separator();
                             ui.small(
@@ -524,8 +496,7 @@ impl Editor {
                         .inner;
                         cancel = actions.cancel.clicked();
                         apply = actions.apply.clicked();
-                    } else if let Some(group) = session_group {
-                        finish_dust = group.show(ui).inner.clicked();
+
                     } else if creating {
                         cancel = TextAction::new("Cancel drawing").show(ui).clicked();
                         ui.add(
@@ -541,10 +512,7 @@ impl Editor {
             });
         });
 
-        if finish_dust {
-            self.finish_dust_cleanup();
-            ui.ctx().request_repaint();
-        } else if cancel {
+        if cancel {
             if hosted.is_some() {
                 self.hosted_action(tool::Action::Dismiss);
             } else if self.document.auto_crop_edit().is_some() {

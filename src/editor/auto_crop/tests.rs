@@ -661,7 +661,7 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
                 e.document.crop_edit().is_none()
                     && e.active_pick().is_none()
                     && e.document.flat_edit().is_none()
-                    && !e.document.dust().is_some()
+                    && !e.dusting()
                     && e.document.removal_pending.is_none()
             );
             assert!(e.document.auto_crop_edit().is_some());

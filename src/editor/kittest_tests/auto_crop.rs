@@ -494,7 +494,7 @@ fn photo_auto_crop_initializes_the_normal_crop_draft_at_both_layouts() {
             h.read(|editor| assert_eq!(editor.document.visit.crop, Some(proposed)));
             wait_crop(&mut h, proposed);
             click_action(&mut h, "Dust repair");
-            h.read(|editor| assert!(editor.document.dust().is_some()));
+            h.read(|editor| assert!(editor.dusting()));
             click_action(&mut h, "Done");
             h.read(|editor| assert_eq!(editor.document.state.project, expected));
         });

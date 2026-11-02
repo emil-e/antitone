@@ -1,5 +1,7 @@
 use super::*;
 use crate::geometry::Flips;
+
+mod navigation;
 use std::{
     any::Any,
     cell::{Ref, RefMut},
@@ -163,25 +165,7 @@ fn painting_uses_the_pass_frame_even_after_a_different_draft_has_been_staged() {
 }
 
 #[test]
-fn configuration_seeds_the_draft_once_without_borrowing_normal_navigation_as_its_own() {
-    fn query(
-        tool: &mut CropTool,
-        viewport: &mut Viewport,
-        composition: Option<Composition>,
-    ) -> (Option<Composition>, Viewport) {
-        let mut view = tool::ViewConfig {
-            viewport,
-            composition,
-            source_outside_frame: false,
-            inset: 0.,
-            constrain_pan: true,
-            fit_once: None,
-            primary_interaction: false,
-            navigation_enabled: true,
-        };
-        tool::Tool::configure(tool, &mut view);
-        (view.composition, *view.viewport)
-    }
+fn composition_seeds_the_draft_once_and_viewport_access_keeps_normal_navigation_independent() {
     let base = Composition::with_crop(
         AREA,
         RollOrientation {
@@ -195,24 +179,22 @@ fn configuration_seeds_the_draft_once_without_borrowing_normal_navigation_as_its
         Some(Crop::from_region(PATCH)),
     )
     .unwrap();
-    let mut normal = Viewport::default();
-    normal.zoom = Some(1.75);
-    let before = normal;
-    let mut tool = CropTool::default();
-    assert_eq!(query(&mut tool, &mut normal, None), (None, before));
-    assert!(tool.edit.is_none());
-    assert_eq!(query(&mut tool, &mut normal, Some(base)).0, Some(base));
+    let mut editor = Editor::state();
+    editor.document.visit.canvas.viewport.zoom = Some(1.75);
+    let before = editor.document.visit.canvas.viewport;
+    let mut crop = CropTool::default();
+    assert!(crop.edit.is_none());
+    assert_eq!(tool::Tool::composition(&mut crop, base), base);
     let changed = Crop {
         size: [42, 28],
         ..base.crop()
     };
-    tool.edit.as_ref().unwrap().borrow_mut().draft = changed;
-    tool.viewport.zoom = Some(2.5);
+    crop.edit.as_ref().unwrap().borrow_mut().draft = changed;
+    crop.viewport.zoom = Some(2.5);
     for _ in 0..3 {
-        let (composition, selected) = query(&mut tool, &mut normal, Some(base));
-        assert_eq!(composition.unwrap().crop(), changed);
-        assert_eq!(selected.zoom, Some(2.5));
-        assert_eq!(normal, before);
+        assert_eq!(tool::Tool::composition(&mut crop, base).crop(), changed);
+        assert_eq!(tool::Tool::viewport(&mut crop, &mut editor).zoom, Some(2.5));
+        assert_eq!(editor.document.visit.canvas.viewport, before);
     }
 }
 
@@ -664,17 +646,9 @@ fn release_ends_the_owned_crop_drag_even_when_canvas_input_becomes_disabled() {
     let end = layout.image.max - egui::vec2(25., 18.);
     h.frame(vec![egui::Event::PointerMoved(end)]);
     assert!(h.editor.document.crop_edit().unwrap().drag.is_some());
-    assert!(
-        !h.editor
-            .with_tool_view(None, |view| view.navigation_enabled)
-    );
     h.enabled = false;
     h.press(end, false);
     assert!(h.editor.document.crop_edit().unwrap().drag.is_none());
-    assert!(
-        h.editor
-            .with_tool_view(None, |view| view.navigation_enabled)
-    );
     h.enabled = true;
     let layout = h.frame(vec![]);
     h.press(layout.image.center(), true);

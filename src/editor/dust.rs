@@ -11,13 +11,20 @@ use crate::{
     },
     geometry::SourceRegion,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::{BTreeSet, HashMap},
+    rc::{Rc, Weak},
+};
 
+mod interaction;
 mod search;
 mod worker;
 
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod testing;
 
 fn initial_brush_size(active: SourceRegion) -> u32 {
     ((active.width.min(active.height) as f64 * 0.01).round() as u32).clamp(4, 128)
@@ -165,30 +172,41 @@ impl MaskDraft {
 }
 
 #[derive(Default)]
-pub(super) struct Cleanup {
-    pub(super) mask_draft: Option<MaskDraft>,
-    searches: search::State,
-    pub(super) donor_draft: Option<DonorDraft>,
+struct Edit {
+    mask_draft: Option<MaskDraft>,
+    donor_draft: Option<DonorDraft>,
+    show_masks: bool,
 }
 
-pub(super) struct Interaction {
+// Search continuations capture Edit, never this task owner.
+#[derive(Default)]
+struct Interaction {
+    edit: Rc<RefCell<Edit>>,
+    searches: RefCell<search::State>,
+}
+
+pub(super) struct DustTool {
+    interaction: Rc<Interaction>,
+    reveal_controls: bool,
+}
+
+/// Photo-owned rendering and preferences, independent of the hosted interaction.
+pub(super) struct PhotoState {
     pub brush_size: u32,
     brush_source: Option<SourceId>,
     pending: Option<Pending>,
-    reveal_controls: bool,
-    pub show_masks: bool,
+    preview: Weak<Interaction>,
     pub render_error: Option<String>,
     gpu: HashMap<RepairId, Arc<crate::gpu::repairs::Patch>>,
 }
 
-impl Default for Interaction {
+impl Default for PhotoState {
     fn default() -> Self {
         Self {
             brush_size: 12,
             brush_source: None,
             pending: None,
-            reveal_controls: false,
-            show_masks: false,
+            preview: Weak::new(),
             render_error: None,
             gpu: HashMap::new(),
         }
@@ -213,7 +231,7 @@ impl Drop for Pending {
     }
 }
 
-impl Interaction {
+impl PhotoState {
     fn reset_repairs(&mut self) {
         self.pending = None;
         self.gpu.clear();
@@ -749,10 +767,26 @@ fn repair_outline_hit(
 }
 
 impl Editor {
+    pub(super) fn dusting(&self) -> bool {
+        self.document.visit.hosted_tool.is::<DustTool>()
+    }
+
+    fn dust_session(&self) -> Option<Rc<Interaction>> {
+        self.document.visit.dust.preview.upgrade()
+    }
+
+    pub(super) fn dust_outlines(&self) -> bool {
+        self.dust_session()
+            .is_some_and(|session| session.edit.borrow().show_masks)
+    }
+
     pub(super) fn dust_history_draft(&self) -> bool {
-        self.document.dust_mask_draft().is_some()
-            || self.document.dust_donor_draft().is_some()
-            || self.dust_search_pending()
+        self.dust_session().is_some_and(|session| {
+            let edit = session.edit.borrow();
+            edit.mask_draft.is_some()
+                || edit.donor_draft.is_some()
+                || !session.searches.borrow().is_empty()
+        })
     }
 
     pub(super) fn dust_repairs(&self, source: SourceId) -> Option<&RepairSet> {
@@ -853,206 +887,25 @@ impl Editor {
         self.dust_repairs_mut(source).clear();
         self.document.dust.clear_repairs(source);
         if self.document.visit.current_source == Some(source) {
-            if let Some(cleanup) = self.document.dust_mut() {
-                cleanup.searches = Default::default();
-                cleanup.mask_draft = None;
-                cleanup.donor_draft = None;
+            if let Some(session) = self.dust_session() {
+                *session.searches.borrow_mut() = Default::default();
+                let mut edit = session.edit.borrow_mut();
+                edit.mask_draft = None;
+                edit.donor_draft = None;
             }
             self.document.visit.dust.reset_repairs();
         }
         self.record_edit(before, "Reset Dust repairs", Some(source));
     }
 
-    pub(super) fn dust_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        use presentation::ToolIdentity;
-        let Some(cleanup) = self.document.dust_mut() else {
-            return;
-        };
-        cleanup.searches.prune();
-        if std::mem::take(&mut self.document.visit.dust.reveal_controls) {
-            ui.scroll_to_cursor(Some(egui::Align::Min));
-        }
-        let Some(source) = self.document.visit.current_source else {
-            return;
-        };
-        let repair_count = self
-            .dust_repairs(source)
-            .map_or(0, |set| set.repairs().len());
-        let searching = self.dust_pending_supports(source).next().is_some();
-        let available = !self.busy
-            && self.document.visit.canvas.ready.is_some()
-            && self.active_pick().is_none()
-            && self.document.dust_donor_draft().is_none();
-        let mut reset_repairs = false;
-        ToolIdentity {
-            icon: icons::Icon::Dust,
-            title: "Dust repair",
-        }
-        .inspector(
-            ui,
-            |ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let reset = presentation::reset_button(
-                        ui,
-                        available && (repair_count > 0 || searching),
-                        "dust repairs",
-                    );
-                    ui.weak(format!("{repair_count} repairs"));
-                    reset
-                })
-                .inner
-            },
-            |ui, reset| {
-                ui.horizontal(|ui| {
-                    ui.label("Brush size")
-                        .on_hover_text("Diameter in source pixels.");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.weak(format!("{} px", self.document.visit.dust.brush_size));
-                    });
-                });
-                ui.scope(|ui| {
-                    ui.spacing_mut().slider_width = ui.available_width();
-                    ui.add(
-                        egui::Slider::new(&mut self.document.visit.dust.brush_size, 1..=128)
-                            .show_value(false)
-                            .step_by(1.),
-                    );
-                });
-                if let Some(error) = &self.document.visit.dust.render_error {
-                    ui.small("A repair is outside the current grade's GPU range.")
-                        .on_hover_text(error);
-                }
-                ui.checkbox(&mut self.document.visit.dust.show_masks, "Show repair outlines")
-                    .on_hover_text("Hold H for a momentary unobstructed preview.");
-                let rejected = self.document.dust_mask_draft()
-                    .is_some_and(|draft| draft.rejected);
-                let guidance = egui::RichText::new(if rejected {
-                    "Stroke too large · release to discard it and use smaller repairs."
-                } else if self.selected_dust_repair().is_some()
-                {
-                    "Draw for a new heal · Shift adds to selected · Option removes · drag its source."
-                } else {
-                    "Draw for a new heal · click an outline to select it · Delete removes selected."
-                });
-                ui.small(if rejected {
-                    guidance.color(ui.visuals().error_fg_color)
-                } else {
-                    guidance
-                });
-                if searching {
-                    ui.horizontal(|ui| { ui.spinner(); ui.weak("Finding donor…"); });
-                } else if repair_count == 0 {
-                    ui.small("Manual masks only · automatic proposals are not wired yet");
-                }
-                reset_repairs = reset.clicked();
-            },
-        );
-        if reset_repairs {
-            self.control_command(editing::Command::ResetRepairs(source), cx);
-            self.status = "Dust repairs reset".into();
-            self.invalidate_settled();
-        }
-    }
-
     fn invalidate_settled(&mut self) {
         self.invalidate_original();
     }
 
-    pub(super) fn dust_interaction(
-        &mut self,
-        ui: &egui::Ui,
-        response: &egui::Response,
-        geometry: crate::viewport::CanvasLayout,
-        canvas_input: bool,
-        panning: bool,
-        cx: &UiContext<'_, Self>,
-    ) {
-        if !self.document.dust().is_some()
-            || self.tab != 1
-            || self.fullscreen.is_some()
-            || self.document.source
-        {
-            return;
-        }
-        let modifies = ui.input(|input| {
-            input
-                .raw
-                .events
-                .iter()
-                .find_map(|event| match event {
-                    egui::Event::PointerButton {
-                        button: egui::PointerButton::Primary,
-                        modifiers,
-                        ..
-                    } => Some(*modifiers),
-                    _ => None,
-                })
-                .unwrap_or(input.modifiers)
-        });
-        let allowed = canvas_input
-            && !panning
-            && !self.busy
-            && self.active_pick().is_none()
-            && !self.cropping()
-            && self.document.flat_edit().is_none()
-            && self.document.analysis_review().is_none()
-            && ui.is_enabled()
-            && !ui.input(|i| i.key_down(egui::Key::Space));
-        if allowed {
-            let started = response.drag_started_by(egui::PointerButton::Primary);
-            let clicked = response.clicked_by(egui::PointerButton::Primary);
-            let start = started
-                .then(|| ui.input(|i| i.pointer.press_origin()))
-                .flatten()
-                .or_else(|| response.interact_pointer_pos());
-            if (started || clicked)
-                && self.document.dust_mask_draft().is_none()
-                && !self.dust_donor_dragging()
-                && let Some(point) = start.filter(|p| geometry.image.contains(*p))
-            {
-                if modifies.alt || modifies.shift {
-                    if let Some(id) = self.selected_dust_repair() {
-                        self.begin_dust_mask(Some(id));
-                    }
-                } else if let Some(id) = self.dust_repair_at(geometry, point) {
-                    self.select_dust_repair(id);
-                } else if self.dust_donor_at(geometry, point) {
-                    if started {
-                        self.begin_dust_donor_drag(geometry, point);
-                    }
-                } else {
-                    self.begin_dust_mask(None);
-                }
-                if self.document.dust_mask_draft().is_some() {
-                    self.begin_dust_stroke();
-                    self.paint_dust_stroke(geometry, point, modifies.alt);
-                }
-            }
-            if response.dragged_by(egui::PointerButton::Primary)
-                && let Some(point) = response.interact_pointer_pos()
-            {
-                if self.dust_donor_dragging() {
-                    self.drag_dust_donor(geometry, point);
-                } else if self.document.dust_mask_draft().is_some() {
-                    self.paint_dust_stroke(geometry, point, modifies.alt);
-                }
-            }
-            if clicked {
-                self.commit_dust_mask(cx);
-            }
-        }
-        if response.drag_stopped_by(egui::PointerButton::Primary) {
-            self.end_dust_stroke();
-            self.end_dust_donor_drag();
-            self.commit_dust_mask(cx);
-        }
-    }
-
     pub(super) fn begin_dust_cleanup(&mut self) {
-        if !self.prepare_tool() || !self.document.input.ready() {
+        if !self.document.input.ready() || !self.tool_start_available() {
             return;
         }
-        self.document.source = false;
         if self.document.visit.dust.brush_source != self.document.visit.current_source
             && let (Some(source), Some(active)) = (
                 self.document.visit.current_source,
@@ -1067,56 +920,20 @@ impl Editor {
             self.document.visit.dust.brush_size = initial_brush_size(active);
             self.document.visit.dust.brush_source = Some(source);
         }
-        self.document.begin_dust();
-        self.document.visit.dust.reveal_controls = true;
-        self.document.visit.dust.show_masks = true;
+        let tool = DustTool::new(true, true);
+        let preview = Rc::downgrade(&tool.interaction);
+        if self.activate_tool(tool::Placement::Photo, Box::new(tool)) {
+            self.document.source = false;
+            self.document.visit.dust.preview = preview;
+        }
     }
 
-    pub(super) fn finish_dust_cleanup(&mut self) {
-        if self.document.dust().is_none() {
-            return;
-        }
-        if self.dust_search_pending() {
-            self.status = "Unfinished Dust strokes discarded".into();
-        }
+    pub(super) fn restore_dust(&mut self, show_masks: bool) {
+        let tool = DustTool::new(show_masks, false);
+        let preview = Rc::downgrade(&tool.interaction);
         self.document
-            .dust_mut()
-            .expect("active Dust cleanup")
-            .searches = search::State::default();
-        self.cancel_dust_mask();
-        self.document.clear_dust();
-        self.document.visit.dust.show_masks = false;
-        self.document.set_dust_donor_draft(None);
-    }
-
-    pub(super) fn begin_dust_mask(&mut self, target: Option<RepairId>) {
-        if self.document.dust().is_none() {
-            self.begin_dust_cleanup();
-        }
-        if let (Some(source), Some(repair)) = (self.document.visit.current_source, target)
-            && self.dust_target_pending(source, repair)
-        {
-            self.status = "Wait for this repair's donor search before editing its mask".into();
-            return;
-        }
-        self.document.begin_dust();
-        self.document.visit.dust.show_masks = true;
-        self.document.set_dust_donor_draft(None);
-        let support = target.and_then(|id| {
-            let source = self.document.visit.current_source?;
-            self.dust_repairs(source)?
-                .repairs()
-                .iter()
-                .find(|repair| repair.id == id)
-                .map(|repair| repair.support.clone())
-        });
-        self.document
-            .set_dust_mask_draft(Some(MaskDraft::new(target, support.as_ref())));
-    }
-
-    pub(super) fn cancel_dust_mask(&mut self) {
-        self.document.set_dust_mask_draft(None);
-        self.document.set_dust_donor_draft(None);
+            .set_hosted_tool(tool::Placement::Photo, Box::new(tool));
+        self.document.visit.dust.preview = preview;
     }
 
     pub(super) fn selected_dust_repair(&self) -> Option<RepairId> {
@@ -1132,535 +949,17 @@ impl Editor {
             })
     }
 
-    pub(super) fn commit_dust_mask(&mut self, cx: &UiContext<'_, Self>) {
-        let Some(draft) = self.document.dust_mask_draft() else {
-            return;
-        };
-        let target = draft.target;
-        if draft.pixels.is_empty() {
-            self.cancel_dust_mask();
-            if target.is_some() {
-                self.delete_selected_dust_repair();
-            }
-        } else {
-            self.apply_dust_mask(cx);
-        }
-    }
-
-    pub(super) fn adjust_dust_brush_from_scroll(
-        &mut self,
-        ui: &egui::Ui,
-        geometry: crate::viewport::CanvasLayout,
-    ) {
-        if !self.document.dust().is_some() || self.document.source {
-            return;
-        }
-        let delta = ui.input_mut(|input| {
-            if input
-                .pointer
-                .hover_pos()
-                .is_none_or(|point| !geometry.image.contains(point))
-            {
-                return 0.;
-            }
-            let delta = input
-                .raw
-                .events
-                .iter()
-                .filter_map(|event| match event {
-                    egui::Event::MouseWheel {
-                        delta, modifiers, ..
-                    } if !modifiers.command && !modifiers.ctrl => Some(delta.x + delta.y),
-                    _ => None,
-                })
-                .sum();
-            // Egui smooths wheel input across later frames. Cleanup owns an ordinary
-            // wheel gesture for brush sizing, so suppress both its first pan and tail.
-            input.smooth_scroll_delta = egui::Vec2::ZERO;
-            delta
-        });
-        if delta.abs() < f32::EPSILON {
-            return;
-        }
-        let step = ((delta.abs() / 12.).round() as u32).max(1);
-        self.document.visit.dust.brush_size = if delta > 0. {
-            self.document
-                .visit
-                .dust
-                .brush_size
-                .saturating_add(step)
-                .min(128)
-        } else {
-            self.document
-                .visit
-                .dust
-                .brush_size
-                .saturating_sub(step)
-                .max(1)
-        };
-    }
-
-    fn apply_dust_mask(&mut self, cx: &UiContext<'_, Self>) {
-        let Some(source) = self.document.visit.current_source else {
-            self.cancel_dust_mask();
-            return;
-        };
-        let Some(draft) = &self.document.dust_mask_draft() else {
-            return;
-        };
-        if draft.rejected {
-            self.cancel_dust_mask();
-            self.status = "Dust stroke rejected: repair budget exceeded; no changes applied".into();
-            return;
-        }
-        let target = draft.target;
-        let support = match draft.support() {
-            Ok(support) => support,
-            Err(error) => {
-                self.status = format!("Dust mask rejected: {error}");
-                self.cancel_dust_mask();
-                return;
-            }
-        };
-        let previous = target.and_then(|id| {
-            self.dust_repairs(source)?
-                .repairs()
-                .iter()
-                .find(|r| r.id == id)
-                .cloned()
-        });
-        if let Some(previous) = &previous
-            && previous.support == support
-        {
-            self.cancel_dust_mask();
-            return;
-        }
-        if target.is_some() && previous.is_none() {
-            self.cancel_dust_mask();
-            return;
-        }
-        self.cancel_dust_mask();
-        self.status = "Finding a donor…".into();
-        self.find_dust_donor(source, previous, support, cx);
-        self.invalidate_settled();
-    }
-
-    fn dust_source_position(
-        &self,
-        geometry: crate::viewport::CanvasLayout,
-        point: egui::Pos2,
-    ) -> Option<[f64; 2]> {
-        if !geometry.image.contains(point) {
-            return None;
-        }
-        let source = geometry
-            .composition
-            .frame_to_source(geometry.frame_point(point))
-            .0;
-        let active = self.document.visit.canvas.ready.as_ref()?.area;
-        (source[0] >= f64::from(active.x)
-            && source[1] >= f64::from(active.y)
-            && source[0] < f64::from(active.x + active.width)
-            && source[1] < f64::from(active.y + active.height))
-        .then_some(source)
-    }
-
-    pub(super) fn begin_dust_stroke(&mut self) {
-        if let Some(draft) = self.document.dust_mask_draft_mut() {
-            draft.clear_stroke();
-        }
-    }
-
-    pub(super) fn paint_dust_stroke(
-        &mut self,
-        geometry: crate::viewport::CanvasLayout,
-        point: egui::Pos2,
-        temporary_erase: bool,
-    ) {
-        let Some(position) = self.dust_source_position(geometry, point) else {
-            self.end_dust_stroke();
-            return;
-        };
-        let Some(source) = self.document.visit.current_source else {
-            return;
-        };
-        if self
-            .document
-            .dust_mask_draft()
-            .is_some_and(|draft| draft.rejected)
-        {
-            return;
-        }
-        let Some(target) = self.document.dust_mask_draft().map(|draft| draft.target) else {
-            return;
-        };
-        let blocked = self
-            .dust_repairs(source)
-            .into_iter()
-            .flat_map(RepairSet::repairs)
-            .filter(|repair| Some(repair.id) != target)
-            .map(|repair| repair.support.clone())
-            .chain(self.dust_pending_supports(source).cloned())
-            .collect::<Vec<_>>();
-        let active = self.document.visit.canvas.ready.as_ref().unwrap().area;
-        let erase = temporary_erase;
-        let brush_size = self.document.visit.dust.brush_size;
-        let result = brush_stroke(
-            self.document.dust_mask_draft_mut().unwrap(),
-            position,
-            brush_size,
-            erase,
-            active,
-            &blocked,
-        );
-        match result {
-            Ok((_, true)) => self.status = "Dust masks cannot overlap another repair".into(),
-            Ok(_) => {}
-            Err(_) => {
-                self.document.dust_mask_draft_mut().unwrap().rejected = true;
-                self.status = "Dust stroke too large; release to discard it".into();
-            }
-        }
-    }
-
-    pub(super) fn end_dust_stroke(&mut self) {
-        if let Some(draft) = self.document.dust_mask_draft_mut() {
-            draft.clear_stroke();
-        }
-    }
-
-    pub(super) fn dust_canvas_cursor(
-        &self,
-        geometry: crate::viewport::CanvasLayout,
-        point: Option<egui::Pos2>,
-        modifying: bool,
-    ) -> egui::CursorIcon {
-        if self.dust_donor_dragging() {
-            egui::CursorIcon::Grabbing
-        } else if modifying || self.document.dust_mask_draft().is_some() {
-            egui::CursorIcon::Crosshair
-        } else if point.is_some_and(|p| self.dust_repair_at(geometry, p).is_some()) {
-            egui::CursorIcon::PointingHand
-        } else if point.is_some_and(|p| self.dust_donor_at(geometry, p)) {
-            egui::CursorIcon::Grab
-        } else {
-            egui::CursorIcon::Crosshair
-        }
-    }
-
-    pub(super) fn dust_repair_at(
-        &self,
-        geometry: crate::viewport::CanvasLayout,
-        point: egui::Pos2,
-    ) -> Option<RepairId> {
-        if self.busy
-            || self.tab != 1
-            || self.document.source
-            || !self.document.visit.dust.show_masks
-            || self.active_pick().is_some()
-            || self.document.dust_donor_draft().is_some()
-        {
-            return None;
-        }
-        let source_point = self.dust_source_position(geometry, point)?;
-        let pixel = [
-            source_point[0].floor() as u32,
-            source_point[1].floor() as u32,
-        ];
-        let source = self.document.visit.current_source?;
-        let set = self.dust_repairs(source)?;
-        let selected = self.selected_dust_repair();
-        set.repairs()
-            .iter()
-            .filter(|repair| Some(repair.id) == selected)
-            .chain(
-                set.repairs()
-                    .iter()
-                    .rev()
-                    .filter(|repair| Some(repair.id) != selected),
-            )
-            .find(|repair| {
-                repair.support.contains(pixel)
-                    || repair_outline_hit(geometry, &repair.support, point)
-            })
-            .map(|repair| repair.id)
-    }
-
-    pub(super) fn select_dust_repair(&mut self, id: RepairId) {
-        if let Some(source) = self.document.visit.current_source
-            && self
-                .dust_repairs(source)
-                .is_some_and(|set| set.repairs().iter().any(|repair| repair.id == id))
-        {
-            if let Some(cleanup) = self.document.dust_mut() {
-                cleanup.searches.manual_selection(source);
-            }
-            self.document.dust.selected.insert(source, id);
-        }
-    }
-
-    pub(super) fn delete_selected_dust_repair(&mut self) {
-        let Some(source) = self.document.visit.current_source else {
-            return;
-        };
-        let Some(id) = self.selected_dust_repair() else {
-            return;
-        };
-        self.cancel_dust_mask();
-        let before = self.history_snapshot();
-        if self.dust_repairs_mut(source).remove(id).is_ok() {
-            self.record_edit(before, "Delete Dust repair", Some(source));
-            self.document.dust.removed(source, id);
-            if let Some(cleanup) = self.document.dust_mut() {
-                cleanup.searches.cancel_target(source, id);
-            }
-            self.document.visit.dust.removed(source, id);
-            self.status = "Dust repair deleted".into();
-            self.invalidate_settled();
-        }
-    }
-
-    pub(super) fn dust_donor_regions(&self) -> Vec<DonorRegion> {
-        self.dust_donor_regions_inner().unwrap_or_default()
-    }
-
-    fn dust_donor_regions_inner(&self) -> Option<Vec<DonorRegion>> {
-        let source = self.document.visit.current_source?;
-        let repair_id = self
-            .document
-            .dust_donor_draft()
-            .map(|draft| draft.repair)
-            .or_else(|| {
-                self.document
-                    .dust_mask_draft()
-                    .and_then(|draft| draft.target)
-            })
-            .or_else(|| {
-                (self.document.dust().is_some() && self.document.dust_mask_draft().is_none())
-                    .then(|| self.selected_dust_repair())
-                    .flatten()
-            })?;
-        if self.dust_target_pending(source, repair_id) {
-            return None;
-        }
-        let effective = self.effective_dust_repair(source, repair_id)?;
-        let active = self.document.visit.canvas.ready.as_ref()?.area;
-        let target = donor_target(&effective.support, active).ok()?;
-        let donor = SourceRegion {
-            x: u32::try_from(i64::from(target.x) + i64::from(effective.offset[0])).ok()?,
-            y: u32::try_from(i64::from(target.y) + i64::from(effective.offset[1])).ok()?,
-            width: target.width,
-            height: target.height,
-        };
-        Some(vec![DonorRegion {
-            support: effective.support,
-            target,
-            donor,
-        }])
-    }
-
-    pub(super) fn dust_donor_at(
-        &self,
-        geometry: crate::viewport::CanvasLayout,
-        point: egui::Pos2,
-    ) -> bool {
-        self.dust_donor_hit(geometry, point).is_some()
-    }
-
-    fn dust_donor_hit(
-        &self,
-        geometry: crate::viewport::CanvasLayout,
-        point: egui::Pos2,
-    ) -> Option<DonorRegion> {
-        if !self.document.visit.dust.show_masks {
-            return None;
-        }
-        let position = self.dust_source_position(geometry, point)?;
-        self.dust_donor_regions().into_iter().find(|region| {
-            let offset = [
-                f64::from(region.donor.x) - f64::from(region.target.x),
-                f64::from(region.donor.y) - f64::from(region.target.y),
-            ];
-            let target = [position[0] - offset[0], position[1] - offset[1]];
-            let inside = target[0] >= 0.
-                && target[1] >= 0.
-                && region
-                    .support
-                    .contains([target[0].floor() as u32, target[1].floor() as u32]);
-            let anchor = support_anchor(&region.support);
-            inside
-                || screen_source_point(geometry, [anchor[0] + offset[0], anchor[1] + offset[1]])
-                    .distance(point)
-                    <= 10.
-        })
-    }
-
-    pub(super) fn begin_dust_donor_drag(
-        &mut self,
-        geometry: crate::viewport::CanvasLayout,
-        point: egui::Pos2,
-    ) {
-        let Some(region) = self.dust_donor_hit(geometry, point) else {
-            return;
-        };
-        let Some(source_point) = self.dust_source_position(geometry, point) else {
-            return;
-        };
-        if self.document.dust_donor_draft().is_none() {
-            let Some(repair) = self.selected_dust_repair() else {
-                return;
-            };
-            let (target, donor) = (region.target, region.donor);
-            let (Ok(offset_x), Ok(offset_y)) = (
-                i32::try_from(i64::from(donor.x) - i64::from(target.x)),
-                i32::try_from(i64::from(donor.y) - i64::from(target.y)),
-            ) else {
-                return;
-            };
-            let offset = [offset_x, offset_y];
-            self.document.set_dust_donor_draft(Some(DonorDraft {
-                repair,
-                offset,
-                drag: None,
-            }));
-        }
-        if let Some(draft) = self.document.dust_donor_draft_mut() {
-            draft.drag = Some(DonorDrag {
-                source: source_point,
-                offset: draft.offset,
-            });
-        }
-    }
-
-    pub(super) fn drag_dust_donor(
-        &mut self,
-        geometry: crate::viewport::CanvasLayout,
-        point: egui::Pos2,
-    ) {
-        let Some(position) = self.dust_source_position(geometry, point) else {
-            return;
-        };
-        let Some(active) = self
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .map(|ready| ready.area)
-        else {
-            return;
-        };
-        let Some(support) = self
-            .document
-            .visit
-            .current_source
-            .and_then(|source| {
-                self.selected_dust_repair()
-                    .and_then(|id| self.effective_dust_repair(source, id))
-            })
-            .map(|r| r.support)
-        else {
-            return;
-        };
-        let Ok(target) = donor_target(&support, active) else {
-            return;
-        };
-        let Some(draft) = self.document.dust_donor_draft_mut() else {
-            return;
-        };
-        let Some(drag) = draft.drag else {
-            return;
-        };
-        let requested = [
-            i64::from(drag.offset[0]) + (position[0] - drag.source[0]).round() as i64,
-            i64::from(drag.offset[1]) + (position[1] - drag.source[1]).round() as i64,
-        ];
-        let minimum = [
-            i64::from(active.x) - i64::from(target.x),
-            i64::from(active.y) - i64::from(target.y),
-        ];
-        let maximum = [
-            i64::from(active.x + active.width) - i64::from(target.x + target.width),
-            i64::from(active.y + active.height) - i64::from(target.y + target.height),
-        ];
-        let offset = [
-            requested[0].clamp(minimum[0], maximum[0]) as i32,
-            requested[1].clamp(minimum[1], maximum[1]) as i32,
-        ];
-        if draft.offset != offset {
-            draft.offset = offset;
-            self.invalidate_settled();
-        }
-    }
-
-    pub(super) fn dust_donor_dragging(&self) -> bool {
-        self.document
-            .dust_donor_draft()
-            .is_some_and(|draft| draft.drag.is_some())
-    }
-
-    pub(super) fn end_dust_donor_drag(&mut self) {
-        let Some(draft) = self.document.take_dust_donor_draft() else {
-            return;
-        };
-        if draft.drag.is_none() {
-            return;
-        }
-        let Some(source) = self.document.visit.current_source else {
-            return;
-        };
-        let Some((support, accepted_offset)) = self
-            .dust_repairs(source)
-            .and_then(|set| {
-                set.repairs()
-                    .iter()
-                    .find(|repair| repair.id == draft.repair)
-            })
-            .map(|repair| (repair.support.clone(), repair.offset))
-        else {
-            return;
-        };
-        if draft.offset == accepted_offset {
-            return;
-        }
-        let before = self.history_snapshot();
-        let result = self
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .map(|ready| ready.area)
-            .ok_or(Error::InvalidParameter("manual donor unavailable"))
-            .and_then(|active| validate_dust_offset(draft.offset, &support, active))
-            .and_then(|()| {
-                self.dust_repairs_mut(source)
-                    .set_offset(draft.repair, draft.offset)
-            });
-        match result {
-            Ok(()) => {
-                self.dust_repair_changed(source, draft.repair);
-                self.record_edit(before, "Dust donor", Some(source));
-                self.status = "Dust source updated".into();
-            }
-            Err(error) => {
-                self.status = format!("Dust source rejected: {error}");
-            }
-        }
-        self.invalidate_settled();
-    }
-
     fn effective_dust_repairs(&self, source: SourceId) -> Vec<Repair> {
-        let target = self
-            .document
-            .dust_mask_draft()
+        let session = self.dust_session();
+        let edit = session.as_ref().map(|session| session.edit.borrow());
+        let mask = edit.as_ref().and_then(|edit| edit.mask_draft.as_ref());
+        let target = mask
             .filter(|draft| !draft.rejected)
             .and_then(|draft| draft.target);
-        let support = self
-            .document
-            .dust_mask_draft()
+        let support = mask
             .filter(|draft| draft.target.is_some() && !draft.rejected)
             .and_then(|draft| draft.support().ok());
+        let donor = edit.as_ref().and_then(|edit| edit.donor_draft);
         self.dust_repairs(source)
             .into_iter()
             .flat_map(RepairSet::repairs)
@@ -1669,11 +968,7 @@ impl Editor {
                 if Some(repair.id) == target {
                     repair.support = support.clone()?;
                 }
-                if let Some(donor) = self
-                    .document
-                    .dust_donor_draft()
-                    .filter(|donor| donor.repair == repair.id)
-                {
+                if let Some(donor) = donor.filter(|donor| donor.repair == repair.id) {
                     repair.offset = donor.offset;
                 }
                 Some(repair)
@@ -1976,191 +1271,6 @@ impl Editor {
                     .evaluations(source, self.id, signature, &repairs)
             })
     }
-
-    pub(super) fn paint_dust(&self, ui: &egui::Ui, geometry: crate::viewport::CanvasLayout) {
-        let Some(source) = self.document.visit.current_source else {
-            return;
-        };
-        if self.tab != 1 || self.fullscreen.is_some() || self.canvas_inspection() {
-            return;
-        }
-        let set = self.dust_repairs(source);
-        let selected = self.selected_dust_repair();
-        let signature = self.dust_signature();
-        let mask_target = self
-            .document
-            .dust_mask_draft()
-            .and_then(|draft| draft.target);
-        let painter = ui.painter().with_clip_rect(geometry.canvas);
-        let overlays_hidden = ui.ctx().input(|input| input.key_down(egui::Key::H));
-        if self.document.visit.dust.show_masks && !overlays_hidden {
-            for repair in set.into_iter().flat_map(RepairSet::repairs) {
-                if mask_target == Some(repair.id) || self.dust_target_pending(source, repair.id) {
-                    continue;
-                }
-                let pending = self
-                    .document
-                    .visit
-                    .dust
-                    .pending
-                    .as_ref()
-                    .is_some_and(|pending| {
-                        pending.evaluation.loaded == self.id
-                            && pending.evaluation.source == source
-                            && Some(pending.evaluation.signature) == signature
-                            && pending.evaluation.repair == *repair
-                    });
-                let failed = self
-                    .document
-                    .dust
-                    .failed
-                    .get(&(source, repair.id))
-                    .is_some_and(|failed| {
-                        failed.loaded == self.id
-                            && Some(failed.signature) == signature
-                            && failed.repair == *repair
-                    });
-                let active = selected == Some(repair.id);
-                let color = if mask_target.is_some() {
-                    egui::Color32::from_white_alpha(45)
-                } else if !repair.enabled {
-                    egui::Color32::from_white_alpha(65)
-                } else if failed {
-                    ui.visuals().error_fg_color.linear_multiply(0.7)
-                } else if pending {
-                    egui::Color32::from_rgb(235, 180, 80).linear_multiply(0.7)
-                } else if active {
-                    egui::Color32::from_rgb(100, 220, 240)
-                } else {
-                    egui::Color32::from_white_alpha(85)
-                };
-                paint_support_outline(
-                    &painter,
-                    geometry,
-                    &repair.support,
-                    [0., 0.],
-                    color,
-                    if active { 1.5 } else { 1. },
-                );
-            }
-        }
-        if self.document.visit.dust.show_masks && !overlays_hidden {
-            for support in self.dust_pending_supports(source) {
-                paint_support_outline(
-                    &painter,
-                    geometry,
-                    support,
-                    [0., 0.],
-                    ui.visuals().weak_text_color(),
-                    1.5,
-                );
-            }
-        }
-        if !overlays_hidden
-            && let Some(mask) = self
-                .document
-                .dust_mask_draft()
-                .and_then(|draft| draft.support().ok())
-        {
-            paint_support_outline(
-                &painter,
-                geometry,
-                &mask,
-                [0., 0.],
-                if self
-                    .document
-                    .dust_mask_draft()
-                    .is_some_and(|draft| draft.rejected)
-                {
-                    ui.visuals().error_fg_color
-                } else {
-                    egui::Color32::from_rgb(100, 220, 240)
-                },
-                1.,
-            );
-        }
-        let (point, add, erase, hide_cursor) = ui.ctx().input(|input| {
-            (
-                input.pointer.hover_pos(),
-                input.modifiers.shift,
-                input.modifiers.alt,
-                input.key_down(egui::Key::H) || input.key_down(egui::Key::Space),
-            )
-        });
-        if self.document.dust().is_some()
-            && !self.document.source
-            && !self.dust_donor_dragging()
-            && !hide_cursor
-            && let Some(point) = point
-            && self.dust_canvas_cursor(geometry, Some(point), add || erase)
-                == egui::CursorIcon::Crosshair
-            && let Some(source_point) = self.dust_source_position(geometry, point)
-        {
-            let center = screen_source_point(geometry, source_point);
-            let radius =
-                (self.document.visit.dust.brush_size as f32 * 0.5 * geometry.scale).max(2.);
-            painter.circle_stroke(
-                center,
-                radius + 0.5,
-                egui::Stroke::new(2., egui::Color32::from_black_alpha(170)),
-            );
-            painter.circle_stroke(
-                center,
-                radius,
-                egui::Stroke::new(
-                    1.5,
-                    if self
-                        .document
-                        .dust_mask_draft()
-                        .is_some_and(|draft| draft.rejected)
-                    {
-                        ui.visuals().error_fg_color
-                    } else if erase {
-                        egui::Color32::from_rgb(240, 120, 100)
-                    } else if add {
-                        egui::Color32::from_rgb(100, 220, 240)
-                    } else {
-                        egui::Color32::WHITE
-                    },
-                ),
-            );
-        }
-        if overlays_hidden || !self.document.visit.dust.show_masks {
-            return;
-        }
-        for region in self.dust_donor_regions() {
-            let (target, donor, support) = (region.target, region.donor, region.support);
-            let offset = [
-                f64::from(donor.x) - f64::from(target.x),
-                f64::from(donor.y) - f64::from(target.y),
-            ];
-            paint_support_outline(
-                &painter,
-                geometry,
-                &support,
-                [0., 0.],
-                egui::Color32::WHITE,
-                2.,
-            );
-            paint_support_outline(
-                &painter,
-                geometry,
-                &support,
-                offset,
-                egui::Color32::from_rgb(100, 220, 240),
-                2.,
-            );
-            let target_anchor = support_anchor(&support);
-            let donor_anchor = [target_anchor[0] + offset[0], target_anchor[1] + offset[1]];
-            painter.line_segment(
-                [
-                    screen_source_point(geometry, target_anchor),
-                    screen_source_point(geometry, donor_anchor),
-                ],
-                egui::Stroke::new(1., egui::Color32::from_gray(220)),
-            );
-        }
-    }
 }
 
 #[cfg(test)]
@@ -2288,7 +1398,7 @@ mod tests {
                 .unwrap();
         }
         let first = committed.repairs()[0].clone();
-        let mut interaction = Interaction::default();
+        let mut interaction = PhotoState::default();
         interaction.start(&Request {
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             request: 4,
