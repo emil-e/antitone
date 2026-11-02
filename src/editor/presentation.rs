@@ -232,10 +232,6 @@ pub(super) fn inspector_dropdown<R>(
     response
 }
 
-pub(super) fn reset_button(ui: &mut Ui, enabled: bool, name: &str) -> Response {
-    reset_button_at(ui, enabled, name, CONTROL_HEIGHT)
-}
-
 /// Inspector reset sits on the row it resets, so it shares that row's height.
 pub(super) fn reset_button_at(ui: &mut Ui, enabled: bool, name: &str, size: f32) -> Response {
     let name = format!("Reset {name}");
@@ -456,43 +452,6 @@ impl<'a> ToolButton<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct SessionToolGroup<'a> {
-    pub(super) identity: ToolIdentity<'a>,
-    pub(super) busy: bool,
-    pub(super) done_enabled: bool,
-}
-
-impl SessionToolGroup<'_> {
-    fn done(self) -> TextAction<'static> {
-        TextAction::new("Done")
-            .enabled(self.done_enabled)
-            .primary()
-            .toolbar(0.)
-            .help("Done (Escape).")
-    }
-
-    fn content_width(self, ui: &Ui) -> f32 {
-        tool_identity_width(ui, self.identity)
-            + self.done().width(ui)
-            + 2. * ui.spacing().item_spacing.x
-            + TOOL_ACTION_SPACE
-    }
-
-    pub(super) fn width(self, ui: &Ui) -> f32 {
-        self.content_width(ui) + 2. * f32::from(TOOL_FRAME_MARGIN)
-    }
-
-    pub(super) fn show(self, ui: &mut Ui) -> egui::InnerResponse<Response> {
-        let width = self.content_width(ui);
-        tool_group_frame(ui, width, |ui| {
-            paint_tool_identity(ui, self.identity, self.busy);
-            ui.add_space(TOOL_ACTION_SPACE);
-            self.done().show(ui)
-        })
-    }
-}
-
-#[derive(Clone, Copy)]
 pub(super) struct ToolIdentity<'a> {
     pub(super) icon: Icon,
     pub(super) title: &'a str,
@@ -542,35 +501,6 @@ impl ToolIdentity<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct ToolDrawer<'a> {
-    pub identity: ToolIdentity<'a>,
-    pub reset: Option<bool>,
-    pub reset_help: &'a str,
-    pub reveal: bool,
-}
-
-impl ToolDrawer<'_> {
-    pub(super) fn show<R>(self, ui: &mut Ui, contents: impl FnOnce(&mut Ui, bool) -> R) -> R {
-        if self.reveal {
-            ui.scroll_to_cursor(Some(egui::Align::Min));
-        }
-        self.identity.inspector(
-            ui,
-            |ui| {
-                self.reset.is_some_and(|enabled| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        icons::button(ui, Icon::Reset, enabled, "Reset draft", self.reset_help)
-                            .clicked()
-                    })
-                    .inner
-                })
-            },
-            contents,
-        )
-    }
-}
-
 /// Viewer transaction presentation; availability and dispatch remain caller-owned.
 #[derive(Clone, Copy)]
 pub(super) struct ToolGroup<'a> {
@@ -600,10 +530,6 @@ fn tool_identity_width(ui: &Ui, identity: ToolIdentity<'_>) -> f32 {
     )
     .size()
     .x + TOOL_ICON_SIZE
-}
-
-fn paint_tool_identity(ui: &mut Ui, identity: ToolIdentity<'_>, busy: bool) {
-    paint_tool_identity_warned(ui, identity, busy, None);
 }
 
 fn paint_tool_identity_warned(
@@ -731,12 +657,17 @@ impl ToolGroup<'_> {
         tool_group_frame(ui, width, |ui| {
             paint_tool_identity_warned(ui, self.identity, self.busy, warning);
             ui.add_space(TOOL_ACTION_SPACE);
+            let dismiss = TextAction::new(dismiss)
+                .enabled(self.cancel_enabled)
+                .toolbar(0.)
+                .help("Escape");
+            let dismiss = if primary.is_none() {
+                dismiss.primary()
+            } else {
+                dismiss
+            };
             RoleActions {
-                dismiss: TextAction::new(dismiss)
-                    .enabled(self.cancel_enabled)
-                    .toolbar(0.)
-                    .help("Escape")
-                    .show(ui),
+                dismiss: dismiss.show(ui),
                 primary: primary.map(|label| self.apply(label).show(ui)),
             }
         })

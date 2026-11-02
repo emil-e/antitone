@@ -1,11 +1,13 @@
 use super::*;
 use std::{cell::Cell, rc::Rc};
 
+mod navigation;
+
 struct Probe {
     dropped: Rc<Cell<usize>>,
     actions: Rc<Cell<usize>>,
     first_config: Rc<Cell<Option<usize>>>,
-    drawer: Option<presentation::ToolDrawer<'static>>,
+    reset: Option<bool>,
     activity: Option<TaskRequest>,
 }
 impl Probe {
@@ -14,7 +16,7 @@ impl Probe {
             dropped: dropped.clone(),
             actions: actions.clone(),
             first_config: Rc::new(Cell::new(None)),
-            drawer: None,
+            reset: None,
             activity: None,
         }
     }
@@ -25,36 +27,59 @@ impl Drop for Probe {
     }
 }
 impl Tool for Probe {
-    fn presentation(&self) -> Presentation {
+    fn presentation(&self, _editor: &Editor) -> Presentation {
         Presentation {
+            show_viewer: true,
             identity: presentation::ToolIdentity {
                 icon: icons::Icon::Crop,
                 title: "Probe",
             },
-            drawer: self.drawer,
             primary: None,
             dismiss: "Done",
+            fit_label: "Fit",
             warning: None,
             help: "",
+            navigation_help: None,
         }
     }
-    fn configure<'a>(&'a mut self, _view: &mut ViewConfig<'a>) {
+    fn composition(&mut self, normal: Composition) -> Composition {
         if self.first_config.get().is_none() {
             self.first_config.set(Some(self.dropped.get()));
         }
+        normal
     }
-    fn drawer(
-        &mut self,
-        ui: &mut egui::Ui,
-        reset: bool,
-        editor: &mut Editor,
-        _cx: &UiContext<'_, Editor>,
-    ) {
-        ui.label("Probe body");
-        if reset {
-            self.actions.set(self.actions.get() + 1);
-            editor.status = "Probe draft reset".into();
+    fn drawer(&mut self, ui: &mut egui::Ui, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
+        presentation::ToolIdentity {
+            icon: icons::Icon::Pick,
+            title: "Reference bounds",
         }
+        .inspector(
+            ui,
+            |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let reset = self.reset.is_some_and(|enabled| {
+                        icons::button(
+                            ui,
+                            icons::Icon::Reset,
+                            enabled,
+                            "Reset reference bounds",
+                            "Reset reference bounds.",
+                        )
+                        .clicked()
+                    });
+                    ui.weak("4 regions");
+                    reset
+                })
+                .inner
+            },
+            |ui, reset| {
+                ui.label("Probe body");
+                if reset {
+                    self.actions.set(self.actions.get() + 1);
+                    editor.status = "Probe draft reset".into();
+                }
+            },
+        );
     }
     fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
         self.activity
@@ -66,21 +91,13 @@ impl Tool for Probe {
 }
 
 #[test]
-fn host_draws_supplied_drawer_and_delivers_only_enabled_reset_intent() {
+fn tool_composes_its_drawer_and_handles_enabled_header_actions() {
     for enabled in [true, false] {
         for reset in [None, Some(false), Some(true)] {
             let actions = Rc::new(Cell::new(0));
             let dropped = Rc::new(Cell::new(0));
             let mut probe = Probe::new(&dropped, &actions);
-            probe.drawer = Some(presentation::ToolDrawer {
-                identity: presentation::ToolIdentity {
-                    icon: icons::Icon::Pick,
-                    title: "Reference bounds",
-                },
-                reset,
-                reset_help: "Reset reference bounds.",
-                reveal: false,
-            });
+            probe.reset = reset;
             let mut editor = Editor::state();
             assert!(editor.activate_tool(Placement::Photo, Box::new(probe)));
             crate::application::test_support::with_application(editor, |app| {
@@ -128,9 +145,13 @@ fn host_draws_supplied_drawer_and_delivers_only_enabled_reset_intent() {
                         .any(|(_, node)| node.role() == egui::accesskit::Role::Label
                             && node.label().or_else(|| node.value()) == Some("Probe body"))
                 );
+                assert!(nodes.iter().any(|(_, node)| {
+                    node.role() == egui::accesskit::Role::Label
+                        && node.label().or_else(|| node.value()) == Some("4 regions")
+                }));
                 let button = nodes
                     .iter()
-                    .find(|(_, node)| node.label() == Some("Reset draft"));
+                    .find(|(_, node)| node.label() == Some("Reset reference bounds"));
                 assert_eq!(button.is_some(), reset.is_some());
                 if let Some((_, button)) = button {
                     assert_eq!(button.is_disabled(), !enabled || reset != Some(true));
@@ -168,17 +189,19 @@ fn host_draws_supplied_drawer_and_delivers_only_enabled_reset_intent() {
 
 struct Candidate(Crop);
 impl Tool for Candidate {
-    fn presentation(&self) -> Presentation {
+    fn presentation(&self, _editor: &Editor) -> Presentation {
         Presentation {
+            show_viewer: true,
             identity: presentation::ToolIdentity {
                 icon: icons::Icon::Crop,
                 title: "Candidate",
             },
-            drawer: None,
             primary: Some("Accept"),
             dismiss: "Discard",
+            fit_label: "Fit",
             warning: None,
             help: "",
+            navigation_help: None,
         }
     }
     fn action(&mut self, action: Action, editor: &mut Editor) {
@@ -250,6 +273,15 @@ fn document_and_photo_slots_follow_their_scopes_without_synthetic_actions() {
     assert_eq!(configured.get(), None);
     assert!(editor.activate_tool(Placement::Photo, Box::new(photo)));
     assert_eq!(dropped.get(), 1);
+    editor.canvas_composition(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        },
+        None,
+    );
     assert_eq!(configured.get(), Some(1));
     editor.replace_photo_scope(2);
     assert_eq!(dropped.get(), 2);

@@ -161,7 +161,7 @@ impl Editor {
             && self.active_pick().is_none()
             && !self.cropping()
             && self.document.flat_edit().is_none()
-            && !self.document.dust().is_some()
+            && !self.dusting()
             && self.auto_crop_valid()
     }
 

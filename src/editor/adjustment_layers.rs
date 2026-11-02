@@ -205,7 +205,6 @@ impl Editor {
         !self.busy
             && self.document.input.ready()
             && self.active_pick().is_none()
-            && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.mask_edit().is_none()
@@ -452,9 +451,8 @@ impl Editor {
 
     pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
         self.tab == 1
-            && !self.document.dust().is_some()
+            && !self.dusting()
             && self.active_pick().is_none()
-            && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.mask_edit().is_none()
@@ -502,9 +500,8 @@ impl Editor {
             record.adjustment.photo
         });
         let before = (photo, adjustment);
-        let available = self.adjustment_layer_actions_available()
-            && !self.document.dust().is_some()
-            && ui.is_enabled();
+        let available =
+            self.adjustment_layer_actions_available() && !self.dusting() && ui.is_enabled();
         let mut action = None;
         let mut rename_finish = None;
         let mut invert_action = None;

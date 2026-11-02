@@ -9,7 +9,7 @@ mod tests;
 pub(super) struct PhotoScope {
     pub view: u64,
     pub hosted_tool: super::tool::Slot,
-    pub dust: super::dust::Interaction,
+    pub dust: super::dust::PhotoState,
     pub working_view: WorkingView,
     pub canvas: super::canvas_view::CanvasView,
     pub pending_preview: Option<super::thumbnails::SelectedPreview>,

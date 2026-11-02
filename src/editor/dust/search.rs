@@ -83,15 +83,17 @@ async fn apply_stroke(
     input: Input,
     stroke: Rc<PendingStroke>,
     active: SourceRegion,
+    editing: Rc<RefCell<Edit>>,
     cx: UiContext<'_, Editor>,
 ) -> Applied {
     let choice = worker::search(input).await;
+    let select = stroke.select.get() && editing.borrow().mask_draft.is_none();
     cx.update(|editor| {
         let result = match choice {
             Ok(SearchOutcome::Candidate(offset)) => {
                 validate_dust_offset(offset, &stroke.support, active)
                     .map_err(|error| error.to_string())
-                    .and_then(|()| editor.accept_donor(&stroke, offset))
+                    .and_then(|()| editor.accept_donor(&stroke, offset, select))
                     .map(Some)
             }
             Ok(SearchOutcome::Impossible) => {
@@ -116,42 +118,51 @@ async fn apply_stroke(
 impl Editor {
     #[cfg(test)]
     pub(in crate::editor) fn pending_dust_strokes(&self) -> Vec<PendingStroke> {
-        self.document
-            .dust()
-            .into_iter()
-            .flat_map(|cleanup| cleanup.searches.pending())
-            .map(|pending| (*pending.stroke).clone())
-            .collect()
+        self.dust_session().map_or_else(Vec::new, |session| {
+            session
+                .searches
+                .borrow()
+                .pending()
+                .map(|pending| (*pending.stroke).clone())
+                .collect()
+        })
     }
 
     pub(in crate::editor) fn dust_search_pending(&self) -> bool {
-        self.document
-            .dust()
-            .is_some_and(|cleanup| !cleanup.searches.is_empty())
+        self.dust_session()
+            .is_some_and(|session| !session.searches.borrow().is_empty())
     }
 
     pub(super) fn dust_target_pending(&self, source: SourceId, repair: RepairId) -> bool {
-        self.document
-            .dust()
-            .is_some_and(|cleanup| cleanup.searches.has_target(source, repair))
+        self.dust_session()
+            .is_some_and(|session| session.searches.borrow().has_target(source, repair))
     }
 
     pub(super) fn dust_pending_supports(
         &self,
         source: SourceId,
-    ) -> impl Iterator<Item = &SupportMask> {
-        self.document
-            .dust()
+    ) -> impl Iterator<Item = SupportMask> {
+        self.dust_session()
+            .map_or_else(Vec::new, |session| {
+                session
+                    .searches
+                    .borrow()
+                    .supports(source)
+                    .cloned()
+                    .collect()
+            })
             .into_iter()
-            .flat_map(move |cleanup| cleanup.searches.supports(source))
     }
+}
 
+impl DustTool {
     pub(super) fn find_dust_donor(
         &mut self,
+        editor: &mut Editor,
         source: SourceId,
         previous: Option<Repair>,
         support: SupportMask,
-        cx: &UiContext<'_, Self>,
+        cx: &UiContext<'_, Editor>,
     ) {
         let stroke = Rc::new(PendingStroke {
             source,
@@ -162,48 +173,41 @@ impl Editor {
         let input = Input {
             support,
             previous_offset: previous.as_ref().map(|repair| repair.offset),
-            input: self.input(),
-            context: self
+            input: editor.input(),
+            context: editor
                 .source_context()
                 .expect("released stroke has a ready source"),
-            services: self.source_services.clone(),
+            services: editor.source_services.clone(),
             #[cfg(test)]
-            worker: self.document.dust.search_worker.clone(),
+            worker: editor.document.dust.search_worker.clone(),
         };
-        let active = self.document.visit.canvas.ready.as_ref().unwrap().area;
+        let active = editor.document.visit.canvas.ready.as_ref().unwrap().area;
         if previous.is_none() {
-            self.document.dust.selected.remove(&source);
+            editor.document.dust.selected.remove(&source);
         }
-        self.document
-            .dust_mut()
-            .expect("active Dust cleanup")
-            .searches
-            .prune();
-        self.document
-            .dust_mut()
-            .expect("active Dust cleanup")
-            .searches
-            .manual_selection(source);
+        {
+            let mut searches = self.interaction.searches.borrow_mut();
+            searches.prune();
+            searches.manual_selection(source);
+        }
         let model = stroke.clone();
-        match cx.spawn(move |cx| apply_stroke(input, stroke, active, cx)) {
-            Some(task) => self
-                .document
-                .dust_mut()
-                .expect("active Dust cleanup")
-                .searches
-                .tasks
-                .push(Pending {
-                    stroke: model,
-                    task,
-                }),
-            None => self.status = "Dust stroke not accepted: Application stopped".into(),
+        let editing = self.interaction.edit.clone();
+        match cx.spawn(move |cx| apply_stroke(input, stroke, active, editing, cx)) {
+            Some(task) => self.interaction.searches.borrow_mut().tasks.push(Pending {
+                stroke: model,
+                task,
+            }),
+            None => editor.status = "Dust stroke not accepted: Application stopped".into(),
         }
     }
+}
 
+impl Editor {
     fn accept_donor(
         &mut self,
         stroke: &PendingStroke,
         offset: [i32; 2],
+        select: bool,
     ) -> Result<RepairId, String> {
         let source = stroke.source;
         let before = self.history_snapshot();
@@ -220,7 +224,7 @@ impl Editor {
             ),
         }
         .map_err(|error| error.to_string())?;
-        if stroke.select.get() && self.document.dust_mask_draft().is_none() {
+        if select {
             self.document.dust.selected.insert(source, repair);
         }
         self.dust_repair_changed(source, repair);

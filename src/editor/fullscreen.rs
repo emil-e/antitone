@@ -46,6 +46,9 @@ impl Editor {
                 view.exiting = true;
             }
         } else {
+            let normal_viewport = std::ptr::from_ref(&self.active_canvas().viewport);
+            let normal_layout =
+                self.with_tool_viewport(|viewport| std::ptr::eq(viewport, normal_viewport));
             let native_before = context.input(|input| input.viewport().fullscreen == Some(true));
             self.fullscreen = Some(FullscreenView {
                 id: self.id,
@@ -60,9 +63,8 @@ impl Editor {
                 restored: false,
                 exiting: false,
             });
-            // A hosted tool's last painted layout belongs to its private viewport,
-            // not the normal navigation being suspended for photo-only inspection.
-            if self.current_tool().is_none()
+            // Use the old layout only when it was produced by the normal viewport.
+            if normal_layout
                 && self.active_canvas().viewport.zoom.is_some()
                 && let Some((layout, density)) = self.active_canvas().last_layout
             {

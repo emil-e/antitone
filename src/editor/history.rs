@@ -322,16 +322,13 @@ impl Editor {
                 self.document.history.complete(direction);
                 self.document.visit.working_view.clear();
                 self.document.source = !self.document.input.ready();
-                if cleanup.is_some()
+                if let Some(show_masks) = cleanup
                     && !self.document.source
                     && self.document.visit.canvas.ready.is_some()
                 {
-                    self.document.begin_dust();
-                } else {
-                    self.document.clear_dust();
-                }
-                if let Some(show_masks) = cleanup {
-                    self.document.visit.dust.show_masks = show_masks;
+                    self.restore_dust(show_masks);
+                } else if self.dusting() {
+                    self.end_tool();
                 }
                 self.status = format!("{} {label}", direction.verb());
             }
@@ -345,8 +342,7 @@ impl Editor {
             ..
         }) = pending
         {
-            self.document.begin_dust();
-            self.document.visit.dust.show_masks = show_masks;
+            self.restore_dust(show_masks);
         }
     }
 
