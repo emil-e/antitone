@@ -32,7 +32,8 @@ impl Editor {
         if !self.prepare_tool() {
             return false;
         }
-        self.document.tool = Some(tool::Tool::Pick(Vec::new()));
+        self.document
+            .set_legacy_tool(legacy_tool::Tool::Pick(Vec::new()));
         true
     }
 
@@ -203,6 +204,15 @@ pub(super) enum Scope {
     Rendering,
 }
 
+pub(super) enum PhotoAction {
+    TurnLeft,
+    TurnRight,
+    FlipHorizontal,
+    FlipVertical,
+    Crop,
+    Dust,
+}
+
 pub(super) enum Command {
     Reset(Scope, controls::Reset),
     InvertAdjustmentLayer(crate::project::AdjustmentLayerId, bool),
@@ -211,7 +221,7 @@ pub(super) enum Command {
         drop: Option<(adjustment_layers::OrderKey, usize)>,
         finish: bool,
     },
-    Photo(crop_editor::ToolAction),
+    Photo(PhotoAction),
     Roll(analysis::Orientation),
     Adjustment(adjustment_layers::Action),
 
@@ -223,6 +233,102 @@ pub(super) enum Command {
 }
 
 impl Editor {
+    pub(super) fn apply_photo_action(&mut self, action: PhotoAction) {
+        match action {
+            PhotoAction::Crop => {
+                if self.document.auto_crop_edit().is_some() {
+                    self.finish_auto_crop(false);
+                } else if self.cropping() {
+                    self.hosted_action(tool::Action::Dismiss);
+                } else {
+                    self.begin_crop();
+                }
+            }
+            PhotoAction::Dust => {
+                if self.document.dust().is_some() {
+                    self.finish_dust_cleanup();
+                } else {
+                    self.begin_dust_cleanup();
+                }
+            }
+            _ => {
+                let result = self.edit_photo_geometry("Photo orientation", |orientation, _| {
+                    match action {
+                        PhotoAction::TurnLeft => orientation.turn_counterclockwise(),
+                        PhotoAction::TurnRight => orientation.turn_clockwise(),
+                        PhotoAction::FlipHorizontal => orientation.flips.horizontal ^= true,
+                        PhotoAction::FlipVertical => orientation.flips.vertical ^= true,
+                        _ => unreachable!(),
+                    }
+                    Ok(())
+                });
+                if let Err(error) = result {
+                    self.status = format!("Photo orientation rejected: {error}");
+                }
+            }
+        }
+    }
+
+    pub(super) fn edit_photo_geometry(
+        &mut self,
+        label: &'static str,
+        edit: impl FnOnce(&mut PhotoOrientation, &mut Option<Crop>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let mut orientation = self.document.visit.photo_orientation;
+        let mut crop = self.document.visit.crop;
+        edit(&mut orientation, &mut crop)?;
+        if let Some(candidate) = crop {
+            let area = self
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .map(|ready| ready.area)
+                .or_else(|| {
+                    let source = self
+                        .document
+                        .state
+                        .project
+                        .source(self.document.visit.current_source?)
+                        .ok()?;
+                    Some(source.development.active_area.into())
+                })
+                .ok_or(Error::InvalidParameter(
+                    "Photo geometry source is unavailable",
+                ))?;
+            candidate.region(area)?;
+        }
+        if orientation == self.document.visit.photo_orientation && crop == self.document.visit.crop
+        {
+            return Ok(());
+        }
+        let before = self.history_snapshot();
+        self.document.visit.photo_orientation = orientation;
+        self.document.visit.crop = crop;
+        self.document.visit.canvas.viewport.fit();
+        self.invalidate_original();
+        self.record_edit(before, label, self.document.visit.current_source);
+        Ok(())
+    }
+
+    pub(super) fn accept_crop(&mut self, draft: Crop) -> Result<(), Error> {
+        let area = self
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .ok_or(Error::InvalidParameter("Crop source is unavailable"))?
+            .area;
+        self.edit_photo_geometry("Crop", |_, crop| {
+            *crop = (draft != Crop::from_region(area)).then_some(draft);
+            Ok(())
+        })?;
+        self.document.visit.canvas.viewport.fit();
+        Ok(())
+    }
+
     pub(super) fn validate_control_edit(
         &self,
         previous: ControlSettings,
@@ -357,7 +463,7 @@ impl Editor {
                 drop,
                 finish,
             } => self.adjustment_layer_order_input(start, drop, finish),
-            Command::Photo(action) => self.apply_photo_tool_action(action),
+            Command::Photo(action) => self.apply_photo_action(action),
             Command::Roll(action) => self.apply_roll_orientation(action),
             Command::Adjustment(action) => self.apply_adjustment_layer_action(action),
 

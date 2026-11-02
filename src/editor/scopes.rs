@@ -280,7 +280,7 @@ impl Editor {
         if self.busy || self.document_pending.is_some() {
             return Err("Waiting for image");
         }
-        if self.document.crop_edit().is_some() {
+        if self.cropping() {
             return Err("Apply crop to update scopes");
         }
         let ready = self

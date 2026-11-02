@@ -191,6 +191,122 @@ fn fullscreen_suspends_crop_and_picker_without_escape_cancelling_them() {
 }
 
 #[test]
+fn fullscreen_navigation_uses_normal_view_and_preserves_the_suspended_crop_view() {
+    let mut editor = ready();
+    let context = egui::Context::default();
+    frame(&mut editor, &context, Some(false), vec![]);
+    editor.document.visit.canvas.viewport.zoom = Some(2.);
+    frame(&mut editor, &context, Some(false), vec![]);
+    let normal = editor.document.visit.canvas.viewport;
+    editor.begin_crop();
+    editor
+        .document
+        .crop_edit_mut()
+        .unwrap()
+        .install_proposal(Crop::from_region(Rect {
+            x: 100,
+            y: 90,
+            width: 400,
+            height: 300,
+        }));
+    editor.document.visit.canvas.last_layout = None;
+    editor.invalidate_original();
+    frame(&mut editor, &context, Some(false), vec![]);
+    let draft = editor.document.crop_edit().unwrap().draft;
+    let crop_view = editor.with_tool_view(None, |view| *view.viewport);
+    assert_ne!(crop_view, normal);
+    let project = editor.document.state.project.clone();
+    frame(&mut editor, &context, Some(false), key(egui::Key::F));
+    frame(&mut editor, &context, Some(true), vec![]);
+    editor.with_tool_view(None, |view| {
+        assert!(!view.source_outside_frame);
+        assert_eq!(
+            view.composition.unwrap().crop(),
+            Crop::from_region(view.composition.unwrap().area())
+        );
+    });
+    let layout = editor.active_canvas().last_layout.unwrap().0;
+    let center = layout.canvas.center();
+    frame(
+        &mut editor,
+        &context,
+        Some(true),
+        vec![egui::Event::PointerMoved(center), egui::Event::Zoom(1.25)],
+    );
+    let zoomed = editor.document.visit.canvas.viewport;
+    assert!(zoomed.zoom.unwrap() > normal.zoom.unwrap());
+    frame(&mut editor, &context, Some(true), vec![]);
+    assert_eq!(
+        editor.document.visit.canvas.viewport, zoomed,
+        "next layout must not discard fullscreen zoom"
+    );
+    for (point, pressed) in [
+        (center, true),
+        (center + egui::vec2(40., 25.), true),
+        (center + egui::vec2(40., 25.), false),
+    ] {
+        let mut events = vec![egui::Event::PointerMoved(point)];
+        if point == center || !pressed {
+            events.push(egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Middle,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        frame(&mut editor, &context, Some(true), events);
+    }
+    let panned = editor.document.visit.canvas.viewport;
+    assert_ne!(panned, zoomed);
+    frame(&mut editor, &context, Some(true), vec![]);
+    assert_eq!(editor.document.visit.canvas.viewport, panned);
+    let output = frame(&mut editor, &context, Some(true), vec![]);
+    let fit = super::super::tests::ui_labels(output)
+        .into_iter()
+        .find(|(name, _)| name == "Fit")
+        .unwrap()
+        .1
+        .center();
+    for pressed in [true, false] {
+        frame(
+            &mut editor,
+            &context,
+            Some(true),
+            vec![
+                egui::Event::PointerMoved(fit),
+                egui::Event::PointerButton {
+                    pos: fit,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    assert!(editor.document.visit.canvas.viewport.zoom.is_none());
+    frame(
+        &mut editor,
+        &context,
+        Some(true),
+        vec![egui::Event::PointerMoved(center), egui::Event::Zoom(2.)],
+    );
+    assert!(editor.document.visit.canvas.viewport.zoom.is_some());
+    frame(&mut editor, &context, Some(true), key(egui::Key::Z));
+    assert!(editor.document.visit.canvas.viewport.zoom.is_none());
+    frame(&mut editor, &context, Some(true), key(egui::Key::Escape));
+    editor.fullscreen_changed(false);
+    frame(&mut editor, &context, Some(false), vec![]);
+    assert!(editor.fullscreen.is_none());
+    assert_eq!(editor.document.visit.canvas.viewport, normal);
+    assert_eq!(
+        editor.with_tool_view(None, |view| *view.viewport),
+        crop_view
+    );
+    assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
+    assert_eq!(editor.document.state.project, project);
+}
+
+#[test]
 fn preexisting_native_fullscreen_is_not_changed_by_photo_only_viewing() {
     for native_before in [false, true] {
         let mut editor = ready();

@@ -38,7 +38,7 @@ fn document_retirement_drops_child_continuations_and_cache_despite_captured_snap
             .unwrap();
         app.update(|scope| {
             scope.visit.picking.display = Some(Pick::Dmin.display());
-            scope.tool = Some(super::super::tool::Tool::Pick(vec![task]));
+            scope.set_legacy_tool(super::super::legacy_tool::Tool::Pick(vec![task]));
         });
         app.pump();
         app.update(|scope| *scope = Document::default().into());
@@ -65,11 +65,11 @@ fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifet
             .unwrap();
         app.update(|scope| {
             assert!(scope.tool.is_none());
-            scope.tool = Some(super::super::tool::Tool::Pick(vec![task]));
+            scope.set_legacy_tool(super::super::legacy_tool::Tool::Pick(vec![task]));
         });
         app.pump();
         app.update(|scope| {
-            assert!(scope.take_crop_edit().is_none());
+            assert!(scope.crop_edit().is_none());
             assert!(scope.take_mask_edit().is_none());
             assert!(scope.take_flat_edit().is_none());
             scope.set_crop_edit(None);
@@ -79,8 +79,8 @@ fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifet
             scope.set_auto_crop_operation(None);
             scope.clear_dust();
             assert!(matches!(
-                scope.tool,
-                Some(super::super::tool::Tool::Pick(_))
+                scope.tool.as_ref(),
+                Some(super::super::legacy_tool::Tool::Pick(_))
             ));
         });
         app.pump();

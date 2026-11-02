@@ -1002,7 +1002,7 @@ impl Editor {
         !self.busy
             && self.document.thumbnails.budgets.pressure != memory::Pressure::Critical
             && (self.active_pick().is_none() || self.document.analysis_review().is_some())
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.mask_edit().is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()
@@ -1070,7 +1070,7 @@ impl Editor {
         let reviewing = self.document.analysis_review().is_some() && !self.analysis_fitting();
         let selection_enabled = (!self.busy || selected_loading || reviewing)
             && self.document.flat_edit().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.mask_edit().is_none()
             && (self.active_pick().is_none() || reviewing)
             && self.document.removal_pending.is_none();

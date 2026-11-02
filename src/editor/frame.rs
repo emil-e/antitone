@@ -196,7 +196,7 @@ impl Editor {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
                 && !self.document.mask_edit().is_some_and(MaskEdit::dragging)
             {
-                self.active_canvas_mut().viewport.fit();
+                self.with_tool_view(None, |view| view.viewport.fit());
             }
             self.select_active_shortcut(ui.ctx());
             self.tool_shortcuts(ui, cx);
@@ -218,13 +218,16 @@ impl Editor {
         {
             self.apply_pick(cx);
         }
-        if self.document.crop_edit().is_some() {
+        if let Some(tool) = self.current_tool() {
+            let primary = tool.presentation().primary.is_some();
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                self.finish_crop(false);
-            } else if ui
-                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+                self.hosted_action(tool::Action::Dismiss);
+                ui.ctx().request_repaint();
+            } else if primary
+                && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
             {
-                self.finish_crop(true);
+                self.hosted_action(tool::Action::Primary);
+                ui.ctx().request_repaint();
             }
         }
         if self.document.auto_crop_edit().is_some() {
@@ -285,7 +288,7 @@ impl Editor {
             *file_action = Some(FileAction::Remove);
         }
         if self.active_pick().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.mask_edit().is_none()
             && !self.document.visit.adjustment_layers.dragging()
             && !self.document.state.project.order.is_empty()
@@ -496,12 +499,8 @@ impl Editor {
             // Inspect the validated, focus-committed Photo state before confirming a reset.
             self.request_analysis(cx);
         } else if let Some(action) = auto_crop {
-            match action {
-                auto_crop::Action::Photo(photo) => self.propose_photo_crop(photo, cx),
-                auto_crop::Action::Batch { photos, scope } => {
-                    self.review_crop_proposals(photos, scope, cx)
-                }
-            }
+            let auto_crop::Action::Batch { photos, scope } = action;
+            self.review_crop_proposals(photos, scope, cx);
             ui.ctx().request_repaint();
         }
     }

@@ -74,13 +74,15 @@ where
 {
     let (selection, receive) = cx.update(|editor| {
         if !matches!(
-            editor.document.tool,
-            Some(super::super::tool::Tool::Pick(_))
+            editor.document.tool.as_ref(),
+            Some(super::super::legacy_tool::Tool::Pick(_))
         ) {
             if !editor.prepare_tool() {
                 return None;
             }
-            editor.document.tool = Some(super::super::tool::Tool::Pick(Vec::new()));
+            editor
+                .document
+                .set_legacy_tool(super::super::legacy_tool::Tool::Pick(Vec::new()));
         }
         if editor.document.visit.picking.selection.is_some() {
             editor.cancel_picker();

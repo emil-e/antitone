@@ -542,6 +542,35 @@ impl ToolIdentity<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ToolDrawer<'a> {
+    pub identity: ToolIdentity<'a>,
+    pub reset: Option<bool>,
+    pub reset_help: &'a str,
+    pub reveal: bool,
+}
+
+impl ToolDrawer<'_> {
+    pub(super) fn show<R>(self, ui: &mut Ui, contents: impl FnOnce(&mut Ui, bool) -> R) -> R {
+        if self.reveal {
+            ui.scroll_to_cursor(Some(egui::Align::Min));
+        }
+        self.identity.inspector(
+            ui,
+            |ui| {
+                self.reset.is_some_and(|enabled| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        icons::button(ui, Icon::Reset, enabled, "Reset draft", self.reset_help)
+                            .clicked()
+                    })
+                    .inner
+                })
+            },
+            contents,
+        )
+    }
+}
+
 /// Viewer transaction presentation; availability and dispatch remain caller-owned.
 #[derive(Clone, Copy)]
 pub(super) struct ToolGroup<'a> {
@@ -554,6 +583,11 @@ pub(super) struct ToolGroup<'a> {
 pub(super) struct ToolActions {
     pub(super) cancel: Response,
     pub(super) apply: Response,
+}
+
+pub(super) struct RoleActions {
+    pub(super) dismiss: Response,
+    pub(super) primary: Option<Response>,
 }
 
 fn tool_identity_width(ui: &Ui, identity: ToolIdentity<'_>) -> f32 {
@@ -662,13 +696,48 @@ impl ToolGroup<'_> {
         apply_label: &'static str,
         warning: Option<&str>,
     ) -> egui::InnerResponse<ToolActions> {
-        let width = self.content_width(ui, apply_label);
+        let actions = self.show_actions(ui, Some(apply_label), "Cancel", warning);
+        egui::InnerResponse {
+            inner: ToolActions {
+                cancel: actions.inner.dismiss,
+                apply: actions.inner.primary.unwrap(),
+            },
+            response: actions.response,
+        }
+    }
+
+    pub(super) fn width_actions(
+        self,
+        ui: &Ui,
+        primary: Option<&'static str>,
+        dismiss: &'static str,
+    ) -> f32 {
+        tool_identity_width(ui, self.identity)
+            + TextAction::new(dismiss).toolbar(0.).width(ui)
+            + primary.map_or(0., |label| self.apply(label).width(ui))
+            + (if primary.is_some() { 3. } else { 2. }) * ui.spacing().item_spacing.x
+            + TOOL_ACTION_SPACE
+            + 2. * f32::from(TOOL_FRAME_MARGIN)
+    }
+
+    pub(super) fn show_actions(
+        self,
+        ui: &mut Ui,
+        primary: Option<&'static str>,
+        dismiss: &'static str,
+        warning: Option<&str>,
+    ) -> egui::InnerResponse<RoleActions> {
+        let width = self.width_actions(ui, primary, dismiss) - 2. * f32::from(TOOL_FRAME_MARGIN);
         tool_group_frame(ui, width, |ui| {
             paint_tool_identity_warned(ui, self.identity, self.busy, warning);
             ui.add_space(TOOL_ACTION_SPACE);
-            ToolActions {
-                cancel: self.cancel().show(ui),
-                apply: self.apply(apply_label).show(ui),
+            RoleActions {
+                dismiss: TextAction::new(dismiss)
+                    .enabled(self.cancel_enabled)
+                    .toolbar(0.)
+                    .help("Escape")
+                    .show(ui),
+                primary: primary.map(|label| self.apply(label).show(ui)),
             }
         })
     }

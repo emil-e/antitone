@@ -227,8 +227,11 @@ impl Editor {
         if self.document.visit.picking.selection.is_some() {
             self.cancel_picker();
         }
-        if matches!(self.document.tool, Some(tool::Tool::Pick(_))) {
-            self.document.tool = None;
+        if matches!(
+            self.document.tool.as_ref(),
+            Some(legacy_tool::Tool::Pick(_))
+        ) {
+            self.document.tool.clear();
         }
     }
 }

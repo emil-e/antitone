@@ -275,7 +275,7 @@ impl Editor {
         let commands = !self.busy
             && self.document.visit.canvas.ready.is_some()
             && self.active_pick().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.mask_edit().is_none()

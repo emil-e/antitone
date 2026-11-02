@@ -70,7 +70,7 @@ impl Editor {
 
     pub(in crate::editor) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         let allowed = (!self.busy || self.document.look.is_some())
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()

@@ -165,7 +165,8 @@ impl Editor {
                 .project
                 .source(source)
                 .ok()
-                .map(|source| self.canvas_composition(source.development.active_area.into(), None));
+                .map(|source| source.development.active_area.into())
+                .map(|area| self.canvas_composition(area, None));
             if let Some(composition) = composition {
                 match self.document.thumbnails.selected_preview(
                     self.id,

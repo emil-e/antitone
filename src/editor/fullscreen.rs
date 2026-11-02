@@ -60,15 +60,11 @@ impl Editor {
                 restored: false,
                 exiting: false,
             });
-            if self.active_canvas().viewport.zoom.is_some()
-                && let Some((layout, density)) = self
-                    .document
-                    .crop_edit()
-                    .and_then(|edit| {
-                        edit.layout
-                            .map(|layout| (layout, context.pixels_per_point()))
-                    })
-                    .or(self.active_canvas().last_layout)
+            // A hosted tool's last painted layout belongs to its private viewport,
+            // not the normal navigation being suspended for photo-only inspection.
+            if self.current_tool().is_none()
+                && self.active_canvas().viewport.zoom.is_some()
+                && let Some((layout, density)) = self.active_canvas().last_layout
             {
                 self.active_canvas_mut()
                     .viewport

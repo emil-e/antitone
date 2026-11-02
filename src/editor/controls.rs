@@ -2,7 +2,7 @@ use super::{
     icons::{self, Icon},
     presentation::{
         INSPECTOR_ROW_HEIGHT, PARAMETER_GAP, PARAMETER_NUMERIC_WIDTH, PARAMETER_SLIDER_HEIGHT,
-        PARAMETER_UNIT_WIDTH, SectionHeader, SectionTool, ToolIdentity, labelled_row_at, section,
+        PARAMETER_UNIT_WIDTH, SectionHeader, SectionTool, labelled_row_at, section,
     },
 };
 use crate::adjustment_layers::{DEFAULT_COLOUR_MIX, DEFAULT_PIVOT};
@@ -16,34 +16,6 @@ use crate::{
 use egui::{Color32, Response, Ui};
 use glam::{DMat2, DMat3, DVec2, DVec3};
 use std::ops::RangeInclusive;
-
-pub(super) fn active_tool<R>(
-    ui: &mut Ui,
-    icon: Icon,
-    title: &str,
-    reset: Option<bool>,
-    contents: impl FnOnce(&mut Ui, bool) -> R,
-) -> R {
-    ToolIdentity { icon, title }.inspector(
-        ui,
-        |ui| {
-            reset.is_some_and(|enabled| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    icons::button(
-                        ui,
-                        Icon::Reset,
-                        enabled,
-                        "Reset draft",
-                        "Reset crop and angle.",
-                    )
-                    .clicked()
-                })
-                .inner
-            })
-        },
-        contents,
-    )
-}
 
 pub(super) const DEFAULT_RADIAL_FEATHER: f64 = 0.8;
 

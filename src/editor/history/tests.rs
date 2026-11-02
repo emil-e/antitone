@@ -86,14 +86,14 @@ fn authored_history_restores_import_crop_dust_local_and_analysis_through_the_rea
     let before_crop = editor.history_snapshot();
     editor.begin_crop();
     editor.document.crop_edit_mut().unwrap().draft.size = [256, 256];
-    editor.finish_crop(false);
+    editor.hosted_action(tool::Action::Dismiss);
     assert_eq!(
         editor.document.state.project, before_crop,
         "cancelled crops are not edits"
     );
     editor.begin_crop();
     editor.document.crop_edit_mut().unwrap().draft.size = [256, 256];
-    editor.finish_crop(true);
+    editor.hosted_action(tool::Action::Primary);
     let cropped = editor.document.state.project.clone();
     editor = round_trip(editor, &before_crop, &cropped);
 

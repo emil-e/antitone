@@ -298,7 +298,7 @@ impl Editor {
             && self.document.input.ready()
             && !self.document.source
             && self.active_pick().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()
@@ -580,7 +580,7 @@ impl Editor {
             || self.fullscreen.is_some()
             || self.document.analysis_review().is_some()
             || self.active_pick().is_some()
-            || self.document.crop_edit().is_some()
+            || self.cropping()
             || self.document.source
             || self.tab != 1
             || self.document.dust().is_some()

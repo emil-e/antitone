@@ -1,4 +1,5 @@
 use super::*;
+use crate::editor::crop_editor::tests::request_auto_crop;
 use crate::{
     application::test_support::{TestApplication, with_application},
     editor::{analysis, history, source_loading, tests::authored_fixture},
@@ -487,7 +488,7 @@ fn retiring_a_photo_discards_its_crop_consumer_but_keeps_shared_regions_for_the_
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.begin_crop();
-            editor.propose_photo_crop(editor.document.visit.current_source.unwrap(), cx);
+            request_auto_crop(editor.document.visit.current_source.unwrap(), editor, cx);
         });
         app.pump();
         let replacement_draft = app.update(|editor| {
@@ -512,16 +513,9 @@ fn retiring_a_photo_discards_its_crop_consumer_but_keeps_shared_regions_for_the_
             );
         });
         app.enter(|editor, cx| {
-            editor.propose_photo_crop(editor.document.visit.current_source.unwrap(), cx)
+            request_auto_crop(editor.document.visit.current_source.unwrap(), editor, cx)
         });
-        app.run_until(LIMIT, |editor| {
-            editor
-                .document
-                .crop_edit()
-                .unwrap()
-                .auto_crop_task
-                .is_none()
-        });
+        app.run_until(LIMIT, |editor| !editor.document.crop_auto_crop_pending());
         app.read(|editor| {
             assert_ne!(
                 editor.document.crop_edit().unwrap().draft,
@@ -543,7 +537,7 @@ fn failed_or_rejected_photo_region_preparation_can_retry_in_the_same_crop_visit(
         with_application(editor, |app| {
             app.enter(|editor, cx| {
                 editor.begin_crop();
-                editor.propose_photo_crop(editor.document.visit.current_source.unwrap(), cx);
+                request_auto_crop(editor.document.visit.current_source.unwrap(), editor, cx);
             });
             let before = app.read(|editor| editor.document.crop_edit().unwrap().draft);
             if rejected_publication {
@@ -556,17 +550,12 @@ fn failed_or_rejected_photo_region_preparation_can_retry_in_the_same_crop_visit(
             }
             app.run_until(LIMIT, |editor| {
                 editor.document.spatial_preparing.is_none()
-                    && editor
-                        .document
-                        .crop_edit()
-                        .unwrap()
-                        .auto_crop_task
-                        .is_none()
+                    && !editor.document.crop_auto_crop_pending()
             });
             let retry = app.enter(|editor, cx| {
                 assert_eq!(editor.document.crop_edit().unwrap().draft, before);
                 let retry = programmed(editor);
-                editor.propose_photo_crop(editor.document.visit.current_source.unwrap(), cx);
+                request_auto_crop(editor.document.visit.current_source.unwrap(), editor, cx);
                 assert!(
                     editor.document.spatial_preparing.is_some(),
                     "failure stranded retry admission"
@@ -574,14 +563,7 @@ fn failed_or_rejected_photo_region_preparation_can_retry_in_the_same_crop_visit(
                 retry
             });
             retry.send(Ok(Some(metadata.clone()))).unwrap();
-            app.run_until(LIMIT, |editor| {
-                editor
-                    .document
-                    .crop_edit()
-                    .unwrap()
-                    .auto_crop_task
-                    .is_none()
-            });
+            app.run_until(LIMIT, |editor| !editor.document.crop_auto_crop_pending());
             app.read(|editor| assert_ne!(editor.document.crop_edit().unwrap().draft, before));
         });
         scheduler.close_and_wait().unwrap();

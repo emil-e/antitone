@@ -60,7 +60,7 @@ fn cursor(q: [egui::Pos2; 4], handle: [i8; 2]) -> egui::CursorIcon {
 impl Editor {
     pub(in crate::editor) fn auto_crop_context(&self) -> bool {
         self.fullscreen.is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.active_pick().is_none()
             && self.document.flat_edit().is_none()
             && self

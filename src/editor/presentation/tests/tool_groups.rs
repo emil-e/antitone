@@ -1,9 +1,8 @@
 use super::{frame, key, pointer};
 use crate::editor::{
-    controls,
     icons::Icon,
     presentation::{
-        CONTROL_HEIGHT, INSPECTOR_ROW_HEIGHT, SessionToolGroup, ToolButton, ToolGroup,
+        CONTROL_HEIGHT, INSPECTOR_ROW_HEIGHT, SessionToolGroup, ToolButton, ToolDrawer, ToolGroup,
         ToolIdentity, ToolShelf,
     },
 };
@@ -22,6 +21,46 @@ fn group(title: &str, busy: bool, apply_enabled: bool) -> ToolGroup<'_> {
         busy,
         cancel_enabled: !busy,
         apply_enabled,
+    }
+}
+
+#[test]
+fn role_actions_forward_labels_optional_primary_and_enabled_clicks() {
+    for primary in [Some("Accept draft"), None] {
+        for enabled in [true, false] {
+            let context = Context::default();
+            let render = |events| {
+                frame(&context, 315., true, events, |ui| {
+                    let group = ToolGroup {
+                        identity: ToolIdentity {
+                            icon: Icon::Crop,
+                            title: "Interaction",
+                        },
+                        busy: false,
+                        cancel_enabled: enabled,
+                        apply_enabled: enabled,
+                    };
+                    group.show_actions(ui, primary, "Done", None).inner
+                })
+            };
+            render(vec![]);
+            let (actions, output) = render(vec![]);
+            assert_eq!(actions.primary.is_some(), primary.is_some());
+            assert_eq!(node(&output, "Done").role(), egui::accesskit::Role::Button);
+            if let Some(label) = primary {
+                assert_eq!(node(&output, label).role(), egui::accesskit::Role::Button);
+            }
+            let position = actions.dismiss.rect.center();
+            render(pointer(position, true));
+            let (actions, _) = render(pointer(position, false));
+            assert_eq!(actions.dismiss.clicked(), enabled);
+            if let Some(action) = actions.primary {
+                let position = action.rect.center();
+                render(pointer(position, true));
+                let (actions, _) = render(pointer(position, false));
+                assert_eq!(actions.primary.unwrap().clicked(), enabled);
+            }
+        }
     }
 }
 
@@ -380,11 +419,17 @@ fn inspector_titles_resets_and_body_actions_fit_and_expose_supplied_availability
                         frame(&context, width, enabled, vec![], |ui| {
                             ui.push_id("inspector", |ui| {
                                 ui.vertical(|ui| {
-                                    controls::active_tool(
-                                        ui,
-                                        Icon::Crop,
-                                        title,
+                                    ToolDrawer {
+                                        identity: ToolIdentity {
+                                            icon: Icon::Crop,
+                                            title,
+                                        },
                                         reset,
+                                        reset_help: "Reset this draft.",
+                                        reveal: false,
+                                    }
+                                    .show(
+                                        ui,
                                         |ui: &mut Ui, reset_clicked| {
                                             assert!(!reset_clicked);
                                             ui.button("Body action")
@@ -448,13 +493,16 @@ fn inspector_header_result_reaches_body_without_owning_state_or_reset_scope() {
     assert!(!response.clicked());
     let render = |events| {
         frame(&context, 315., true, events, |ui| {
-            controls::active_tool(
-                ui,
-                Icon::Crop,
-                "Crop & straighten",
-                Some(true),
-                |_, reset| reset,
-            )
+            ToolDrawer {
+                identity: ToolIdentity {
+                    icon: Icon::Crop,
+                    title: "Crop & straighten",
+                },
+                reset: Some(true),
+                reset_help: "Reset crop and angle.",
+                reveal: false,
+            }
+            .show(ui, |_, reset| reset)
         })
     };
     let (_, output) = render(vec![]);

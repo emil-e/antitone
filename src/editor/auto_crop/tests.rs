@@ -256,7 +256,7 @@ fn partial_proposals_keep_source_reasons_without_warning_about_uncaptured_photos
             let reason = e.source_tool_warning(ids[1]).unwrap().to_owned();
             e.select_active_photo_only();
             e.adjust_auto_crop_margin(2.);
-            assert_eq!(e.source_tool_warning(ids[1]), Some(reason.as_str()));
+            assert_eq!(e.source_tool_warning(ids[1]), Some(reason));
             assert!(e.source_tool_warning(ids[3]).is_none());
             assert_eq!(e.document.state.project, before);
             e.finish_auto_crop(false);
@@ -313,7 +313,7 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
             assert_eq!(e.document.visit.crop, Some(small()));
             assert_eq!(e.document.crop_edit().unwrap().draft, proposed);
             assert!(e.document.auto_crop_edit().is_none());
-            e.finish_crop(true);
+            e.hosted_action(tool::Action::Primary);
             e.sync_document();
             expected.source_mut(ids[0]).unwrap().crop = Some(proposed);
             assert_eq!(e.document.state.project, expected);
@@ -698,12 +698,12 @@ fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     assert_eq!(e.document.crop_edit().unwrap().draft, expected);
     assert_eq!(e.document.visit.crop, Some(small()));
     assert_eq!(e.document.state.project, before);
-    e.finish_crop(false);
+    e.hosted_action(tool::Action::Dismiss);
     assert_eq!(e.document.visit.canvas.viewport, viewport);
     assert_eq!(e.document.state.project, before);
     e.begin_crop();
     e.auto_crop_photo(e.document.visit.current_source.unwrap());
-    e.finish_crop(true);
+    e.hosted_action(tool::Action::Primary);
     e.sync_document();
     let mut accepted = before;
     accepted
@@ -764,7 +764,7 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
             .is_none(),
         "successful retry retires the cue"
     );
-    e.finish_crop(false);
+    e.hosted_action(tool::Action::Dismiss);
     assert!(
         e.source_tool_warning(e.document.visit.current_source.unwrap())
             .is_none()
