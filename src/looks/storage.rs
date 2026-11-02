@@ -2,7 +2,7 @@ use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use flate2::{Compression, Decompress, FlushDecompress, Status, write::ZlibEncoder};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 
 const ENCODING: &str = "zlib-rgb32le-base64-v1";
 const MAX_COMPRESSED: usize = MAX_NODE_BYTES + 65536;
@@ -28,14 +28,20 @@ struct Embedded {
     samples: String,
 }
 
+// Coalesce scalar writes: a large LUT otherwise calls the compressor millions of times.
+fn write_samples(output: impl Write, nodes: &[[f32; 3]]) -> std::io::Result<()> {
+    let mut output = BufWriter::new(output);
+    for value in nodes.iter().flatten() {
+        output.write_all(&value.to_le_bytes())?;
+    }
+    output.into_inner().map_err(|error| error.into_error())?;
+    Ok(())
+}
+
 impl Serialize for LookAsset {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        for value in self.lut.nodes().iter().flatten() {
-            encoder
-                .write_all(&value.to_le_bytes())
-                .map_err(serde::ser::Error::custom)?;
-        }
+        write_samples(&mut encoder, self.lut.nodes()).map_err(serde::ser::Error::custom)?;
         let bytes = encoder.finish().map_err(serde::ser::Error::custom)?;
         let (domain_min, domain_max) = self.lut.domain();
         Embedded {
@@ -153,6 +159,84 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!(restored.lut.id(), original.lut.id());
+    }
+
+    #[test]
+    fn embedding_flushes_multiple_buffers_and_the_tail_without_changing_sample_bits() {
+        let size = 17u32;
+        let bits = [
+            0,
+            0x8000_0000,
+            0x3e80_0001,
+            0xbf00_0001,
+            0x3f80_0001,
+            1,
+            0x3f00_0011,
+        ];
+        let nodes: Vec<[f32; 3]> = (0..size.pow(3) as usize)
+            .map(|i| std::array::from_fn(|c| f32::from_bits(bits[(i * 3 + c) % bits.len()])))
+            .collect();
+        let expected: Vec<u8> = nodes
+            .iter()
+            .flatten()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        #[derive(Default)]
+        struct Sink {
+            bytes: Vec<u8>,
+            writes: usize,
+        }
+        impl Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.writes += 1;
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut sink = Sink::default();
+        write_samples(&mut sink, &nodes).unwrap();
+        assert_eq!(sink.bytes, expected);
+        assert!(
+            sink.writes < nodes.len(),
+            "sample writes must coalesce across nodes, not call compression for each float"
+        );
+        let original = LookAsset::new(
+            "Buffered samples".into(),
+            LookOrigin::Imported,
+            Arc::new(Lut3D::new(size, [-0.5; 3], [1.; 3], nodes).unwrap()),
+        )
+        .unwrap();
+        let bytes = serde_json::to_vec(&original).unwrap();
+        let stored: Embedded = serde_json::from_slice(&bytes).unwrap();
+        let compressed = STANDARD.decode(stored.samples).unwrap();
+        let mut decoder = flate2::read::ZlibDecoder::new(compressed.as_slice());
+        let mut payload = Vec::new();
+        std::io::Read::read_to_end(&mut decoder, &mut payload).unwrap();
+        assert_eq!(
+            payload, expected,
+            "stored format is exact RGB float32 little-endian, including the final partial buffer"
+        );
+        let restored: LookAsset = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(restored.lut.id(), original.lut.id());
+        assert_eq!(
+            restored
+                .lut
+                .nodes()
+                .iter()
+                .flatten()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+            original
+                .lut
+                .nodes()
+                .iter()
+                .flatten()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+        );
     }
 
     #[test]
