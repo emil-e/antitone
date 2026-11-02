@@ -192,7 +192,11 @@ impl Editor {
     }
 
     pub(super) fn finish_adjustment_layer_interaction(&mut self) {
-        self.finish_mask(false);
+        if self.creating_mask() {
+            self.end_tool();
+        } else {
+            self.finish_mask(false);
+        }
         self.document.visit.adjustment_layers.rename = None;
         self.document.visit.adjustment_layers.owns_delete = false;
         self.document.visit.adjustment_layers.order_drag = None;
@@ -207,7 +211,7 @@ impl Editor {
             && self.active_pick().is_none()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && self.document.analysis_review().is_none()
             && !self.document.visit.adjustment_layers.confirming()
     }
@@ -455,7 +459,7 @@ impl Editor {
             && self.active_pick().is_none()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && self.document.analysis_review().is_none()
             && self.document.visit.adjustment_layers.owns_delete
             && matches!(self.adjustment_layer_target(), Target::Layer(_))

@@ -1007,7 +1007,7 @@ impl Editor {
             && self.document.thumbnails.budgets.pressure != memory::Pressure::Critical
             && (self.active_pick().is_none() || self.document.analysis_review().is_some())
             && !self.cropping()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && self.document_pending.is_none()
             && self.transition.is_none()
             && self.project_overwrite.is_none()
@@ -1075,7 +1075,7 @@ impl Editor {
         let selection_enabled = (!self.busy || selected_loading || reviewing)
             && self.document.flat_edit().is_none()
             && !self.cropping()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && (self.active_pick().is_none() || reviewing)
             && self.document.removal_pending.is_none();
         let height = self

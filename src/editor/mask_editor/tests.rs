@@ -34,13 +34,12 @@ fn linear_gestures_inverse_map_composition_and_allow_off_image_geometry() {
         let AdjustmentLayerCoverage::Linear { start: a, end: b } = mask else {
             unreachable!()
         };
-        assert!((screen_point(layout, a) - start).length() < 0.001);
-        assert!((screen_point(layout, b) - end).length() < 0.001);
-        assert!(matches!(
-            handle_at(Some(mask), layout, start),
-            Handle::Start
-        ));
-        assert!(matches!(handle_at(Some(mask), layout, end), Handle::End));
+        assert!((screen_point(layout, a) - end).length() < 0.001);
+        assert!((screen_point(layout, b) - start).length() < 0.001);
+        assert_eq!(mask.coverage(source_point(layout, start)).unwrap(), 1.);
+        assert_eq!(mask.coverage(source_point(layout, end)).unwrap(), 0.);
+        assert!(matches!(handle_at(Some(mask), layout, start), Handle::End));
+        assert!(matches!(handle_at(Some(mask), layout, end), Handle::Start));
         let middle = start + (end - start) * 0.5;
         assert!(matches!(
             handle_at(Some(mask), layout, middle),
@@ -249,60 +248,36 @@ fn inverse_mapping_keeps_subpixel_precision_at_large_source_origins() {
 }
 
 #[test]
-fn creation_promotes_one_accepted_id_and_gesture_cancel_keeps_navigation() {
+fn creation_draft_keeps_ids_navigation_and_comparison_until_accepted() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         let before = editor.document.state.project.clone();
-        let mut viewport = editor.document.visit.canvas.viewport;
-        viewport.zoom = Some(3.);
         editor.document.visit.working_view.compare = true;
         editor.begin_linear_mask(None);
-        assert!(!editor.document.visit.working_view.compare);
-        assert!(editor.document.mask_edit().is_some());
-        assert!(!editor.document.mask_edit().unwrap().valid());
-        editor.document.mask_edit_mut().unwrap().mask = Some(AdjustmentLayerCoverage::Linear {
+        assert!(editor.creating_mask());
+        assert!(editor.document.mask_edit().is_none());
+        assert!(editor.current_tool().unwrap().is::<CreationTool>());
+        let draft = editor.mask_creation().unwrap();
+        assert!(!draft.borrow().valid());
+        draft.borrow_mut().mask = Some(AdjustmentLayerCoverage::Linear {
             start: SourcePoint([121., 74.]),
             end: SourcePoint([141., 90.]),
         });
-        let (_, first) = editor.document.mask_edit().unwrap().candidate().unwrap();
-        let (_, repeated) = editor.document.mask_edit().unwrap().candidate().unwrap();
+        let (_, first) = draft.borrow().candidate().unwrap();
+        let (_, repeated) = draft.borrow().candidate().unwrap();
         assert_eq!(first, repeated);
         assert_eq!(editor.document.state.project, before);
+        assert!(editor.document.visit.working_view.compare);
         editor.document.visit.canvas.viewport.zoom = Some(3.);
-        editor.finish_mask(false);
-        assert!(editor.document.mask_edit().is_none());
+        let viewport = editor.document.visit.canvas.viewport;
+        let retired = Rc::downgrade(&draft);
+        drop(draft);
+        editor.end_tool();
+        assert!(retired.upgrade().is_none());
+        assert!(!editor.masking());
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert!(editor.document.visit.working_view.compare);
         assert_eq!(editor.document.state.project, before);
-        editor.begin_linear_mask(None);
-        editor.document.mask_edit_mut().unwrap().mask = Some(AdjustmentLayerCoverage::Linear {
-            start: SourcePoint([121., 74.]),
-            end: SourcePoint([141., 90.]),
-        });
-        editor.finish_mask(true);
-        assert!(editor.document.mask_edit().is_none(), "{}", editor.status);
-        let source = editor
-            .document
-            .project
-            .source(editor.document.visit.current_source.unwrap())
-            .unwrap();
-        let layers = source.adjustment_layers.as_ref().unwrap();
-        let prior = before
-            .source(source.id)
-            .unwrap()
-            .adjustment_layers
-            .as_ref()
-            .unwrap();
-        assert_eq!(layers.next_id, prior.next_id + 1);
-        assert_eq!(layers.layers.len(), prior.layers.len() + 1);
-        assert_eq!(layers.layers.last().unwrap().id, first);
-        assert_eq!(
-            editor.adjustment_layer_target(),
-            adjustment_layers::Target::Layer(first)
-        );
-        editor
-            .validate_document_candidate(&editor.document)
-            .unwrap();
     });
 }
 

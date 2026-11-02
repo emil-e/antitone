@@ -133,8 +133,7 @@ impl Editor {
             })
             .flatten();
         let fit_label = hosted.as_ref().map_or("Fit", |tool| tool.fit_label);
-        let masking = !fullscreen && self.document.mask_edit().is_some();
-        let creating = !fullscreen && self.document.mask_edit().is_some_and(MaskEdit::creating);
+        let masking = !fullscreen && self.masking();
         let tool = hosted
             .as_ref()
             .map(|tool| (tool.identity.icon, tool.identity.title))
@@ -153,9 +152,8 @@ impl Editor {
             self.document.source = true;
         }
 
-        let navigating = self.active_canvas().ready.is_some()
-            && !self.busy
-            && !self.document.mask_edit().is_some_and(MaskEdit::dragging);
+        let navigating =
+            self.active_canvas().ready.is_some() && !self.busy && !self.mask_dragging();
         let reviewing = self.document.analysis_review().is_some();
         let apply_label = if reviewing { "Analyze roll" } else { "Apply" };
         let review_ready = self.document.analysis_review().is_none_or(|review| {
@@ -254,12 +252,16 @@ impl Editor {
                             .size()
                             .x
                     };
+                let source_controls = usize::from(normal_controls)
+                    + usize::from(self.canvas_inspection()
+                        || normal_controls && self.document.visit.working_view.enabled());
+                // Fit, zoom steps and fullscreen, plus the readout, separator and current view controls.
+                let navigation_icons = 4 + source_controls;
+                let navigation_width = 50.
+                    + navigation_icons as f32 * presentation::CONTROL_HEIGHT
+                    + (navigation_icons + 3) as f32 * VIEWER_ITEM_GAP;
                 let show_zoom_steps = tool.is_none() && !masking
-                    || ui.available_width()
-                        >= trailing_width
-                            + presentation::CONTROL_HEIGHT
-                            + VIEWER_ITEM_GAP
-                            + if self.canvas_inspection() { 224. } else { 192. };
+                    || ui.available_width() >= trailing_width + navigation_width;
                 if icons::button(
                     ui,
                     Icon::Fit,
@@ -497,12 +499,6 @@ impl Editor {
                         cancel = actions.cancel.clicked();
                         apply = actions.apply.clicked();
 
-                    } else if creating {
-                        cancel = TextAction::new("Cancel drawing").show(ui).clicked();
-                        ui.add(
-                            egui::Label::new(self.document.mask_edit().unwrap().creation_label())
-                                .truncate(),
-                        );
                     } else {
                         ui.add(
                             egui::Label::new(egui::RichText::new(state).small().weak()).truncate(),

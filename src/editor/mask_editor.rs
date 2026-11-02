@@ -7,7 +7,20 @@ use crate::{
     viewport::CanvasLayout,
 };
 use glam::DVec2;
+use std::{
+    cell::RefCell,
+    rc::{Rc, Weak},
+};
+mod creation;
 mod radial;
+
+/// Non-owning observation for admission and navigation outside the tool callback.
+#[derive(Default)]
+pub(super) struct State {
+    creation: Weak<RefCell<MaskEdit>>,
+}
+
+pub(super) use creation::CreationTool;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
@@ -26,7 +39,7 @@ impl Kind {
     fn help(self) -> &'static str {
         match self {
             Self::Linear => {
-                "Draw toward the affected side. Drag endpoints to change the fade; drag the connector to move it. Release accepts; Escape cancels this gesture."
+                "Drag endpoints to change the fade; drag the connector to move it. Release accepts; Escape cancels this gesture."
             }
             Self::Radial => {
                 "Draw outward from the centre. Drag inside to move, squares to reshape, the outer handle to rotate, or the inner diamond to feather. Release accepts; Escape cancels this gesture."
@@ -49,7 +62,7 @@ impl MaskDrag {
     }
 }
 
-/// Only an armed creation or a captured pointer gesture, never a persistent editing mode.
+/// Captured geometry and inputs shared by creation and existing-handle gestures.
 pub(super) struct MaskEdit {
     loaded: u64,
     source: Source,
@@ -86,14 +99,6 @@ impl MaskEdit {
         self.error.as_deref()
     }
 
-    pub(super) fn creation_label(&self) -> String {
-        format!(
-            "{} {}",
-            if self.creating() { "Draw" } else { "Refining" },
-            self.kind.title().to_lowercase()
-        )
-    }
-
     pub(super) fn creating(&self) -> bool {
         self.id.is_none()
     }
@@ -105,6 +110,27 @@ impl MaskEdit {
 
     pub(super) fn dragging(&self) -> bool {
         self.drag.is_some()
+    }
+
+    fn begin_drag(&mut self, layout: CanvasLayout, origin: egui::Pos2) {
+        self.drag = Some(match self.kind {
+            Kind::Linear => MaskDrag::Linear(LinearDrag {
+                handle: if self.creating() {
+                    Handle::New
+                } else {
+                    handle_at(self.mask, layout, origin)
+                },
+                point: source_point(layout, origin),
+                mask: self.mask,
+                layout,
+            }),
+            Kind::Radial => MaskDrag::Radial(radial::RadialDrag::begin(
+                if self.creating() { None } else { self.mask },
+                layout,
+                origin,
+                self.feather,
+            )),
+        });
     }
 
     fn candidate(&self) -> Result<(Source, AdjustmentLayerId), Error> {
@@ -213,8 +239,8 @@ impl LinearDrag {
                 }
             }
             _ => AdjustmentLayerCoverage::Linear {
-                start: self.point,
-                end: next,
+                start: next,
+                end: self.point,
             },
         }
     }
@@ -231,6 +257,30 @@ fn hits(mask: AdjustmentLayerCoverage, layout: CanvasLayout, point: egui::Pos2) 
 }
 
 impl Editor {
+    #[cfg(test)]
+    pub(super) fn mask_creation(&self) -> Option<Rc<RefCell<MaskEdit>>> {
+        self.document.visit.masks.creation.upgrade()
+    }
+
+    pub(super) fn creating_mask(&self) -> bool {
+        self.document.visit.masks.creation.upgrade().is_some()
+    }
+
+    pub(super) fn masking(&self) -> bool {
+        self.creating_mask() || self.document.mask_edit().is_some()
+    }
+
+    pub(super) fn mask_dragging(&self) -> bool {
+        self.document.mask_edit().is_some_and(MaskEdit::dragging)
+            || self
+                .document
+                .visit
+                .masks
+                .creation
+                .upgrade()
+                .is_some_and(|edit| edit.borrow().dragging())
+    }
+
     fn mask_source(&self) -> Result<Source, Error> {
         let mut source = self
             .document
@@ -291,6 +341,7 @@ impl Editor {
 
     pub(super) fn mask_handles_available(&self) -> bool {
         self.adjustment_layer_overlays_visible()
+            && !self.creating_mask()
             && !self.document.visit.adjustment_layers.dragging()
             && self.tab == 1
             && !self.busy
@@ -360,7 +411,7 @@ impl Editor {
                 if let Some(id) = id {
                     self.select_adjustment_layer(adjustment_layers::Target::Layer(id));
                 }
-                self.document.set_mask_edit(Some(MaskEdit {
+                let edit = MaskEdit {
                     loaded: self.id,
                     source,
                     roll: self.document.roll,
@@ -380,8 +431,16 @@ impl Editor {
                     },
                     drag: None,
                     error: None,
-                }));
-                self.document.visit.working_view.compare = false;
+                };
+                if edit.creating() {
+                    let edit = Rc::new(RefCell::new(edit));
+                    self.document.visit.masks.creation = Rc::downgrade(&edit);
+                    self.document
+                        .set_hosted_tool(tool::Placement::Photo, Box::new(CreationTool::new(edit)));
+                } else {
+                    self.document.set_mask_edit(Some(edit));
+                    self.document.visit.working_view.compare = false;
+                }
                 self.status = format!("Draw {} · Escape cancels", kind.title().to_lowercase());
             }
             Err(error) => self.status = format!("Mask unavailable: {error}"),
@@ -396,7 +455,7 @@ impl Editor {
     }
 
     pub(super) fn finish_mask(&mut self, accept: bool) {
-        let Some(mut edit) = self.document.take_mask_edit() else {
+        let Some(edit) = self.document.take_mask_edit() else {
             return;
         };
         self.document.visit.working_view.compare = edit.compare;
@@ -408,37 +467,32 @@ impl Editor {
             self.status = "Mask gesture discarded: source or settings changed".into();
             return;
         }
-        let result = edit.candidate().and_then(|(candidate, id)| {
-            self.validate_source_candidate(&candidate)?;
-            self.edit_adjustment_layers(|layers| {
-                *layers = candidate
-                    .adjustment_layers
-                    .expect("candidate has local records");
-                Ok(())
-            })?;
-            Ok(id)
-        });
+        let result = edit
+            .candidate()
+            .and_then(|candidate| self.accept_mask(candidate));
         match result {
             Ok(id) => {
-                let created = edit.creating();
                 self.select_adjustment_layer(adjustment_layers::Target::Layer(id));
-                if created {
-                    self.document.visit.adjustment_layers.reveal_controls = true;
-                }
                 self.status = format!("{} selected", edit.kind.title());
             }
             Err(error) => {
                 self.status = format!("Mask rejected: {error}");
-                if edit.creating() {
-                    edit.mask = None;
-                    edit.preview = None;
-                    edit.drag = None;
-                    edit.error = Some(error.to_string());
-                    self.document.visit.working_view.compare = false;
-                    self.document.set_mask_edit(Some(edit));
-                }
             }
         }
+    }
+
+    fn accept_mask(
+        &mut self,
+        (candidate, id): (Source, AdjustmentLayerId),
+    ) -> Result<AdjustmentLayerId, Error> {
+        self.validate_source_candidate(&candidate)?;
+        self.edit_adjustment_layers(|layers| {
+            *layers = candidate
+                .adjustment_layers
+                .expect("candidate has local records");
+            Ok(())
+        })?;
+        Ok(id)
     }
 
     pub(super) fn mask_preview_source(&self) -> Option<&Source> {
@@ -530,24 +584,7 @@ impl Editor {
                 }
             }
             if let Some(edit) = self.document.mask_edit_mut() {
-                edit.drag = Some(match edit.kind {
-                    Kind::Linear => MaskDrag::Linear(LinearDrag {
-                        handle: if edit.creating() {
-                            Handle::New
-                        } else {
-                            handle_at(edit.mask, layout, origin)
-                        },
-                        point: source_point(layout, origin),
-                        mask: edit.mask,
-                        layout,
-                    }),
-                    Kind::Radial => MaskDrag::Radial(radial::RadialDrag::begin(
-                        if edit.creating() { None } else { edit.mask },
-                        layout,
-                        origin,
-                        edit.feather,
-                    )),
-                });
+                edit.begin_drag(layout, origin);
             }
         }
         if !panning
@@ -601,6 +638,7 @@ impl Editor {
             || self.document.source
             || self.tab != 1
             || self.dusting()
+            || self.creating_mask()
         {
             return;
         }
@@ -612,81 +650,96 @@ impl Editor {
         let Some(mask) = mask else {
             return;
         };
-        let invert = selected.is_some_and(|adjustment| adjustment.invert)
-            && !self.document.mask_edit().is_some_and(MaskEdit::creating);
-        let painter = ui.painter().with_clip_rect(layout.canvas);
-        if self.document.visit.adjustment_layers.show_coverage {
-            paint_coverage(
-                &painter,
-                layout,
-                mask,
-                invert,
-                ui.visuals().selection.stroke.color,
-            );
+        let invert = selected.is_some_and(|adjustment| adjustment.invert);
+        paint_geometry(
+            ui,
+            layout,
+            mask,
+            invert,
+            self.document.visit.adjustment_layers.show_coverage,
+            self.document.mask_edit().is_some_and(MaskEdit::dragging),
+        );
+    }
+}
+
+fn paint_geometry(
+    ui: &egui::Ui,
+    layout: CanvasLayout,
+    mask: AdjustmentLayerCoverage,
+    invert: bool,
+    coverage: bool,
+    dragging: bool,
+) {
+    let painter = ui.painter().with_clip_rect(layout.canvas);
+    if coverage {
+        paint_coverage(
+            &painter,
+            layout,
+            mask,
+            invert,
+            ui.visuals().selection.stroke.color,
+        );
+    }
+    if let AdjustmentLayerCoverage::Radial { .. } = mask {
+        radial::paint(&painter, layout, mask);
+        return;
+    }
+    let AdjustmentLayerCoverage::Linear { start, end } = mask else {
+        unreachable!()
+    };
+    let a = screen_point(layout, start);
+    let b = screen_point(layout, end);
+    if !a.is_finite() || !b.is_finite() {
+        return;
+    }
+    let delta = b - a;
+    if !delta.is_finite() || !delta.length_sq().is_finite() {
+        return;
+    }
+    let stroke = egui::Stroke::new(1., egui::Color32::WHITE);
+    painter.line_segment([a, b], stroke);
+    if delta.length_sq() > 0. {
+        let extent = egui::vec2(-delta.y, delta.x).normalized() * layout.canvas.size().length();
+        for point in [a, b] {
+            painter.line_segment([point - extent, point + extent], stroke);
         }
-        if let AdjustmentLayerCoverage::Radial { .. } = mask {
-            radial::paint(&painter, layout, mask);
-            return;
-        }
-        let AdjustmentLayerCoverage::Linear { start, end } = mask else {
-            unreachable!()
-        };
-        let a = screen_point(layout, start);
-        let b = screen_point(layout, end);
-        if !a.is_finite() || !b.is_finite() {
-            return;
-        }
-        let delta = b - a;
-        if !delta.is_finite() || !delta.length_sq().is_finite() {
-            return;
-        }
-        let stroke = egui::Stroke::new(1., egui::Color32::WHITE);
-        painter.line_segment([a, b], stroke);
-        if delta.length_sq() > 0. {
-            let extent = egui::vec2(-delta.y, delta.x).normalized() * layout.canvas.size().length();
-            for point in [a, b] {
-                painter.line_segment([point - extent, point + extent], stroke);
-            }
-            let direction = delta.normalized() * if invert { -1. } else { 1. };
-            let tip = a + delta * 0.5 + direction * 7.;
-            let side = egui::vec2(-direction.y, direction.x) * 4.;
-            painter.add(egui::Shape::convex_polygon(
-                vec![
-                    tip,
-                    tip - direction * 10. + side,
-                    tip - direction * 10. - side,
-                ],
+        let direction = delta.normalized() * if invert { -1. } else { 1. };
+        let tip = a + delta * 0.5 + direction * 7.;
+        let side = egui::vec2(-direction.y, direction.x) * 4.;
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                tip,
+                tip - direction * 10. + side,
+                tip - direction * 10. - side,
+            ],
+            egui::Color32::WHITE,
+            egui::Stroke::new(1., egui::Color32::BLACK),
+        ));
+    }
+    let hover = ui.input(|input| input.pointer.hover_pos());
+    for (point, full) in [(a, invert), (b, !invert)] {
+        painter.circle_filled(point, 6., egui::Color32::BLACK);
+        painter.circle(
+            point,
+            4.,
+            if full {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::BLACK
+            },
+            stroke,
+        );
+        if dragging || hover.is_some_and(|hover| hover.distance(point) < 15.) {
+            let text = if full { "100%" } else { "0%" };
+            let galley = painter.layout_no_wrap(
+                text.into(),
+                egui::FontId::proportional(12.),
                 egui::Color32::WHITE,
-                egui::Stroke::new(1., egui::Color32::BLACK),
-            ));
-        }
-        let hover = ui.input(|input| input.pointer.hover_pos());
-        for (point, full) in [(a, invert), (b, !invert)] {
-            painter.circle_filled(point, 6., egui::Color32::BLACK);
-            painter.circle(
-                point,
-                4.,
-                if full {
-                    egui::Color32::WHITE
-                } else {
-                    egui::Color32::BLACK
-                },
-                stroke,
             );
-            if self.document.mask_edit().is_some_and(MaskEdit::dragging)
-                || hover.is_some_and(|hover| hover.distance(point) < 15.)
-            {
-                let text = if full { "100%" } else { "0%" };
-                let galley = painter.layout_no_wrap(
-                    text.into(),
-                    egui::FontId::proportional(12.),
-                    egui::Color32::WHITE,
-                );
-                let rect = egui::Rect::from_min_size(point + egui::vec2(9., -18.), galley.size())
-                    .expand(3.);
-                painter.rect_filled(rect, 2., egui::Color32::BLACK);
-                painter.galley(rect.min + egui::vec2(3., 3.), galley, egui::Color32::WHITE);
-            }
+            let rect =
+                egui::Rect::from_min_size(point + egui::vec2(9., -18.), galley.size()).expand(3.);
+            painter.rect_filled(rect, 2., egui::Color32::BLACK);
+            painter.galley(rect.min + egui::vec2(3., 3.), galley, egui::Color32::WHITE);
         }
     }
 }

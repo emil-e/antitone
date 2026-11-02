@@ -970,6 +970,7 @@ impl Editor {
         }
 
         let editable = !self.busy
+            && !self.creating_mask()
             && matches!(
                 self.document.tool.as_ref(),
                 None | Some(legacy_tool::Tool::Pick(_))
@@ -1217,7 +1218,7 @@ impl Editor {
                             && !reviewing
                             && self.document.auto_crop_edit().is_none()
                             && self.document.flat_edit().is_none()
-                            && self.document.mask_edit().is_none();
+                            && !self.masking();
                         ui.add_enabled_ui(allowed, |ui| {
                             presentation::section(
                                 ui,
@@ -1245,7 +1246,7 @@ impl Editor {
                         !reviewing
                             && self.document.auto_crop_edit().is_none()
                             && self.document.flat_edit().is_none()
-                            && self.document.mask_edit().is_none(),
+                            && !self.masking(),
                         |ui| {
                             let changed = self.document.target != OutputTarget::DisplayP3;
                             let (_, action) = presentation::section(

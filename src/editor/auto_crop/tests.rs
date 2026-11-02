@@ -155,7 +155,7 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
         let before = e.document.state.project.clone();
         e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
         assert!(e.auto_crop_valid());
-        assert!(e.document.mask_edit().is_none());
+        assert!(!e.masking());
         assert_eq!(
             e.adjustment_layer_target(),
             adjustment_layers::Target::Layer(local)
@@ -169,7 +169,7 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
         e.begin_linear_mask(None);
         e.begin_radial_mask(None);
         e.delete_selected_adjustment_layer();
-        assert!(e.document.mask_edit().is_some());
+        assert!(e.creating_mask());
         assert!(e.document.auto_crop_edit().is_none());
         assert!(!e.document.visit.adjustment_layers.confirming());
         assert_eq!(e.document.state.project, before);

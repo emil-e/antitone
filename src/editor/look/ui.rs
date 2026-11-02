@@ -73,7 +73,7 @@ impl Editor {
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()
-            && self.document.mask_edit().is_none();
+            && !self.masking();
         let loaded_labels = loaded_lut_labels(&self.look.loaded);
         let name = self
             .document

@@ -28,7 +28,14 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
             assert!(editor.current_tool().unwrap().is::<dust::DustTool>());
             assert!(editor.document.tool.is_none());
             editor.begin_linear_mask(None);
-            assert!(matches!(editor.document.tool.as_ref(), Some(Tool::Mask(_))));
+            assert!(editor.creating_mask());
+            assert!(
+                editor
+                    .current_tool()
+                    .unwrap()
+                    .is::<mask_editor::CreationTool>()
+            );
+            assert!(editor.document.tool.is_none());
             editor.begin_pick(Pick::Dmin, cx);
             assert!(matches!(editor.document.tool.as_ref(), Some(Tool::Pick(_))));
         });

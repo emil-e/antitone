@@ -10,6 +10,7 @@ pub(super) struct PhotoScope {
     pub view: u64,
     pub hosted_tool: super::tool::Slot,
     pub dust: super::dust::PhotoState,
+    pub masks: super::mask_editor::State,
     pub working_view: WorkingView,
     pub canvas: super::canvas_view::CanvasView,
     pub pending_preview: Option<super::thumbnails::SelectedPreview>,

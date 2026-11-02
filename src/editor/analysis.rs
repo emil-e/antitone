@@ -278,7 +278,7 @@ impl Editor {
             && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && !self.document.visit.adjustment_layers.confirming()
             && !reviewing
             && self.document.removal_pending.is_none();

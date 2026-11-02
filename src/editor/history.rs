@@ -253,7 +253,7 @@ impl Editor {
             && self.document.flat_edit().is_none()
             && !self.cropping()
             && self.document.auto_crop_edit().is_none()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && self.document.analysis_review().is_none()
             && !self.analysis_preparing()
             && !self.analysis_fitting()

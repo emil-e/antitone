@@ -44,7 +44,7 @@ impl Editor {
             && self.active_pick().is_none()
             && self.document.flat_edit().is_none()
             && !self.cropping()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && self.failure.is_none()
             && self.document_pending.is_none()
             && self.transition.is_none()

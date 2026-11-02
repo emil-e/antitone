@@ -59,14 +59,14 @@ fn retiring_a_visit_discards_local_tool_state_without_changing_accepted_adjustme
             } else {
                 editor.begin_linear_mask(None);
             }
-            assert!(editor.document.mask_edit().is_some());
+            assert!(editor.creating_mask());
             let accepted = editor.document.state.project.clone();
             let before = editor
                 .history_label(crate::editor::history::Direction::Undo)
                 .map(str::to_owned);
             let next = editor.request_id();
             editor.replace_photo_scope(next);
-            assert!(editor.document.mask_edit().is_none());
+            assert!(!editor.masking());
             assert!(!editor.adjustment_layer_owns_delete());
             assert!(!editor.document.visit.adjustment_layers.show_coverage);
             assert_eq!(

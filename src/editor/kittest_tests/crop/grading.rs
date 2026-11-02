@@ -189,7 +189,7 @@ fn live_grading_survives_crop_apply_cancel_and_tool_replacement() {
                     assert!(editor.dusting());
                 }
                 if exit == "Add linear" {
-                    assert!(editor.document.mask_edit().is_some_and(MaskEdit::creating));
+                    assert!(editor.creating_mask());
                 }
             });
             if exit == "Dust repair" {

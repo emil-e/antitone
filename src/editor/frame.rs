@@ -187,7 +187,7 @@ impl Editor {
             && !egui::Popup::is_any_open(ui.ctx())
         {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
-                && !self.document.mask_edit().is_some_and(MaskEdit::dragging)
+                && !self.mask_dragging()
             {
                 self.with_tool_viewport(Viewport::fit);
             }
@@ -270,7 +270,7 @@ impl Editor {
         }
         if self.active_pick().is_none()
             && !self.cropping()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && !self.document.visit.adjustment_layers.dragging()
             && !self.document.state.project.order.is_empty()
         {
@@ -457,13 +457,13 @@ impl Editor {
     ) {
         let auto_crop = self.document.auto_crop_requested.take();
         if let Some(action) = actions.file {
-            if self.document.mask_edit().is_none() {
+            if !self.masking() {
                 self.file_action(action, cx);
             } else {
                 self.status = "Apply or cancel the mask before a file action".into();
             }
         } else if actions.export {
-            if self.document.mask_edit().is_none() {
+            if !self.masking() {
                 self.open_export_dialog();
             } else {
                 self.status = "Apply or cancel the mask before exporting".into();
