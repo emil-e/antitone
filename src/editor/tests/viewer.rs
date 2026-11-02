@@ -158,7 +158,7 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
             editor.document.crop_edit().unwrap().layout.unwrap().canvas,
             canvas
         );
-        editor.finish_crop(false);
+        editor.hosted_action(tool::Action::Dismiss);
         editor.document.source = true;
         editor.source_exposure = 12.3;
         editor.status = "Rejected measurement; accepted processing unchanged".into();
@@ -470,7 +470,7 @@ fn viewer_requests_a_native_rotation_cursor_and_restores_it_on_popup_and_crop_ex
     assert_ne!(blocked.platform_output.cursor_icon, egui::CursorIcon::None);
     assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
     egui::Popup::close_all(&context);
-    editor.finish_crop(false);
+    editor.hosted_action(tool::Action::Dismiss);
     let exited = frame(&mut editor, &context, size, vec![]);
     assert!(exited.platform_output.cursor_image.is_none());
     assert_ne!(exited.platform_output.cursor_icon, egui::CursorIcon::None);
@@ -510,7 +510,7 @@ fn bottom_crop_handles_are_unobstructed_without_reframing_or_docking() {
             pointer(handle - egui::vec2(0., 20.), false),
         );
         assert_ne!(editor.document.crop_edit().unwrap().draft, draft);
-        editor.finish_crop(false);
+        editor.hosted_action(tool::Action::Dismiss);
     }
 }
 

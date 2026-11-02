@@ -101,7 +101,7 @@ impl Editor {
                     || self.document_pending.is_some()
                     || self.active_pick().is_some()
                     || self.document.flat_edit().is_some()
-                    || self.document.crop_edit().is_some()
+                    || self.cropping()
                     || !preview.current_source(
                         &self.document,
                         self.document.visit.current_source,

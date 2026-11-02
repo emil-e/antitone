@@ -219,6 +219,6 @@ fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_au
     );
     editor.begin_crop();
     assert!(editor.document.crop_edit().is_some());
-    editor.finish_crop(false);
+    editor.hosted_action(tool::Action::Dismiss);
     assert_eq!(editor.document.state.project, project);
 }

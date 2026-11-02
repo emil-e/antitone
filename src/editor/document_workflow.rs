@@ -250,7 +250,7 @@ impl Editor {
                     .selected
                     .and_then(|id| self.document.state.project.source(id).ok())
                     .and_then(|source| source.crop);
-                self.document.set_crop_edit(None);
+                self.document.clear_crop_edit();
                 self.document.visit.canvas.last_layout = None;
                 self.document.film_emulation = self.document.state.project.output.film_emulation;
                 self.document.halation = self.document.state.project.output.halation;

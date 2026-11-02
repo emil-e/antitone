@@ -1,245 +1,497 @@
 use super::*;
-use crate::{
-    application::test_support::with_application,
-    editor::{
-        analysis_services::Services,
-        analysis_workflow::{
-            testing,
-            tests::{LIMIT, fixture},
-        },
-        source_loading,
-    },
-};
-use std::{
-    cell::RefCell,
-    sync::{Arc, Weak, mpsc},
-};
+use std::{cell::Cell, rc::Rc};
 
-#[test]
-fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
-    let sources = source_loading::SourceLoader::new();
-    let editor = fixture(sources.clone());
-    let before = editor.document.project.clone();
-    with_application(editor, |app| {
-        app.enter(|editor, cx| {
-            editor.begin_crop();
-            editor.document.crop_edit_mut().unwrap().draft.size = [100, 100];
-            editor.begin_dust_cleanup();
-            assert!(matches!(editor.document.tool, Some(Tool::Dust(_))));
-            editor.begin_linear_mask(None);
-            assert!(matches!(editor.document.tool, Some(Tool::Mask(_))));
-            editor.begin_pick(Pick::Dmin, cx);
-            assert!(matches!(editor.document.tool, Some(Tool::Pick(_))));
-        });
-        app.pump();
-        app.read(|editor| assert_eq!(editor.active_pick(), Some(Pick::Dmin.display())));
-        app.enter(|editor, cx| {
-            editor.request_analysis(cx);
-            assert!(matches!(editor.document.tool, Some(Tool::Analyze(_))));
-            let reference = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/raw/bare-light.dng");
-            editor.begin_flat_edit(reference, None, cx);
-            assert!(matches!(editor.document.tool, Some(Tool::Flat(_))));
-            editor.begin_crop();
-            assert!(matches!(editor.document.tool, Some(Tool::Crop(_))));
-            assert_eq!(editor.document.project, before);
-            assert!(editor.history_label(history::Direction::Undo).is_none());
-        });
-        app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
-        app.read(|editor| {
-            assert!(matches!(editor.document.tool, Some(Tool::Crop(_))));
-            assert_eq!(editor.document.project, before);
-        });
-    });
-    sources.close_and_wait().unwrap();
+struct Probe {
+    dropped: Rc<Cell<usize>>,
+    actions: Rc<Cell<usize>>,
+    first_config: Rc<Cell<Option<usize>>>,
+    drawer: Option<presentation::ToolDrawer<'static>>,
+    activity: Option<TaskRequest>,
 }
-
-#[test]
-fn changing_input_from_review_retires_its_projection_on_success_and_failure() {
-    for fail in [false, true] {
-        let sources = source_loading::SourceLoader::new();
-        let mut editor = fixture(sources.clone());
-        editor.preferences.scopes_visible = true;
-        editor.scopes.visible = true;
-        with_application(editor, |app| {
-            app.enter(|editor, cx| {
-                let request = editor.analysis_request().unwrap();
-                editor.prepare_analysis_review(request, cx);
-            });
-            app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
-            let before = app.read(|editor| editor.document.project.clone());
-            app.enter(|editor, cx| {
-                editor.request_input(InputSettings::Digital, cx);
-                let target = editor
-                    .document
-                    .input_switch
-                    .take()
-                    .expect("stage-change confirmation");
-                if fail {
-                    editor.source_services = None;
-                }
-                editor.apply_input(target, cx);
-                assert!(editor.document.analysis_operation().is_none());
-                assert!(editor.active_pick().is_none());
-                assert!(editor.scopes.visible);
-            });
-            app.run_until(LIMIT, |editor| !editor.busy);
-            app.read(|editor| {
-                assert!(editor.active_pick().is_none());
-                assert!(editor.scopes.visible && editor.preferences.scopes_visible);
-                if fail {
-                    assert_eq!(editor.document.project, before);
-                    assert!(editor.status.contains("Document services unavailable"));
-                } else {
-                    assert_eq!(editor.document.input, InputSettings::Digital);
-                }
-            });
-        });
-        sources.close_and_wait().unwrap();
-    }
-}
-
-fn held_work<T: Send + 'static>(
-    services: Services,
-    output: T,
-    entered: mpsc::Sender<Weak<crate::scan::DevelopedSource>>,
-    release: mpsc::Receiver<()>,
-    returned: mpsc::Sender<()>,
-) -> testing::Work<T> {
-    Box::new(move |request, stopped| {
-        Box::pin(async move {
-            // Acquire the unviewed original through real native services. Only the
-            // numerical output is programmed; the CPU job owns its pixels through release.
-            let scan = services
-                .acquire(Arc::new(request), 1, stopped.clone())
-                .await
-                .map_err(|error| error.to_string())?
-                .expect("unviewed original");
-            services
-                .cpu(&stopped, move || {
-                    entered.send(Arc::downgrade(scan.source())).unwrap();
-                    release.recv_timeout(LIMIT).unwrap();
-                    drop(scan);
-                    returned.send(()).unwrap();
-                    Ok(output)
-                })
-                .await
-                .map_err(|error| error.to_string())
-        })
-    })
-}
-
-#[test]
-fn replacement_retires_running_preparation_and_fitting_while_their_physical_inputs_survive_cleanup()
-{
-    for fitting in [false, true] {
-        for replace in [false, true] {
-            let sources = source_loading::SourceLoader::new();
-            let editor = fixture(sources.clone());
-            with_application(editor, |app| {
-                app.enter(|editor, cx| {
-                    let request = editor.analysis_request().unwrap();
-                    editor.prepare_analysis_review(request, cx);
-                });
-                app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
-                let (entered, starts) = mpsc::channel();
-                let (release, resume) = mpsc::channel();
-                let (returned, returns) = mpsc::channel();
-                let (before, proposed) = app.enter(|editor, cx| {
-                    let reviewed = editor.document.analysis_review().unwrap().approved.clone();
-                    let services = Services::new(
-                        editor.source_services.as_ref().unwrap(),
-                        editor.source_provider().unwrap(),
-                        editor.document.exposures.clone(),
-                    );
-                    let before = editor.document.project.clone();
-                    if fitting {
-                        let mut document = editor.document.capture();
-                        document.project.roll.exposure += 0.75;
-                        document.project.analysis_regions = reviewed.entries;
-                        editor.validate_document_candidate(&document).unwrap();
-                        let proposed = document.project.clone();
-                        editor.document.analysis_fit_work = Some(held_work(
-                            services,
-                            Box::new(analysis::Outcome {
-                                document,
-                                frames: 2,
-                                support: editor.document.visit.canvas.ready.as_ref().unwrap().area,
-                            }),
-                            entered,
-                            resume,
-                            returned,
-                        ));
-                        editor.confirm_analysis_review(cx);
-                        (before, Some(proposed))
-                    } else {
-                        editor.finish_pick(cx);
-                        editor.document.analysis_preparation_work =
-                            Some(held_work(services, reviewed, entered, resume, returned));
-                        let request = editor.analysis_request().unwrap();
-                        editor.prepare_analysis_review(request, cx);
-                        (before, None)
-                    }
-                });
-                let pixels = RefCell::new(None);
-                let deadline = std::time::Instant::now() + LIMIT;
-                while pixels.borrow().is_none() {
-                    app.pump();
-                    if let Ok(source) = starts.try_recv() {
-                        *pixels.borrow_mut() = Some(source);
-                    }
-                    assert!(
-                        std::time::Instant::now() < deadline,
-                        "CPU input did not arrive"
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                let pixels = pixels.into_inner().unwrap();
-                if replace {
-                    app.update(Editor::begin_crop);
-                    app.pump();
-                    app.read(|editor| {
-                        assert!(matches!(editor.document.tool, Some(Tool::Crop(_))));
-                        assert!(!editor.busy);
-                        assert_eq!(editor.document.project, before);
-                    });
-                    assert!(
-                        pixels.upgrade().is_some(),
-                        "running CPU work must retain its native input"
-                    );
-                    assert!(matches!(returns.try_recv(), Err(mpsc::TryRecvError::Empty)));
-                }
-                release.send(()).unwrap();
-                let deadline = std::time::Instant::now() + LIMIT;
-                while pixels.upgrade().is_some() {
-                    app.pump();
-                    assert!(
-                        std::time::Instant::now() < deadline,
-                        "retired physical input was retained"
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                returns.recv_timeout(LIMIT).unwrap();
-                if replace {
-                    app.read(|editor| {
-                        assert!(matches!(editor.document.tool, Some(Tool::Crop(_))));
-                        assert_eq!(editor.document.project, before);
-                        assert!(editor.history_label(history::Direction::Undo).is_none());
-                    });
-                } else if let Some(proposed) = proposed {
-                    app.run_until(LIMIT, |editor| {
-                        editor.document.analysis_operation().is_none()
-                    });
-                    app.read(|editor| {
-                        assert_eq!(editor.document.project, proposed);
-                        assert!(editor.history_label(history::Direction::Undo).is_some());
-                    });
-                } else {
-                    app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
-                    app.read(|editor| assert_eq!(editor.document.project, before));
-                }
-            });
-            sources.close_and_wait().unwrap();
+impl Probe {
+    fn new(dropped: &Rc<Cell<usize>>, actions: &Rc<Cell<usize>>) -> Self {
+        Self {
+            dropped: dropped.clone(),
+            actions: actions.clone(),
+            first_config: Rc::new(Cell::new(None)),
+            drawer: None,
+            activity: None,
         }
     }
+}
+impl Drop for Probe {
+    fn drop(&mut self) {
+        self.dropped.set(self.dropped.get() + 1);
+    }
+}
+impl Tool for Probe {
+    fn presentation(&self) -> Presentation {
+        Presentation {
+            identity: presentation::ToolIdentity {
+                icon: icons::Icon::Crop,
+                title: "Probe",
+            },
+            drawer: self.drawer,
+            primary: None,
+            dismiss: "Done",
+            warning: None,
+            help: "",
+        }
+    }
+    fn configure<'a>(&'a mut self, _view: &mut ViewConfig<'a>) {
+        if self.first_config.get().is_none() {
+            self.first_config.set(Some(self.dropped.get()));
+        }
+    }
+    fn drawer(
+        &mut self,
+        ui: &mut egui::Ui,
+        reset: bool,
+        editor: &mut Editor,
+        _cx: &UiContext<'_, Editor>,
+    ) {
+        ui.label("Probe body");
+        if reset {
+            self.actions.set(self.actions.get() + 1);
+            editor.status = "Probe draft reset".into();
+        }
+    }
+    fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
+        self.activity
+    }
+    fn action(&mut self, _action: Action, editor: &mut Editor) {
+        self.actions.set(self.actions.get() + 1);
+        editor.end_tool();
+    }
+}
+
+#[test]
+fn host_draws_supplied_drawer_and_delivers_only_enabled_reset_intent() {
+    for enabled in [true, false] {
+        for reset in [None, Some(false), Some(true)] {
+            let actions = Rc::new(Cell::new(0));
+            let dropped = Rc::new(Cell::new(0));
+            let mut probe = Probe::new(&dropped, &actions);
+            probe.drawer = Some(presentation::ToolDrawer {
+                identity: presentation::ToolIdentity {
+                    icon: icons::Icon::Pick,
+                    title: "Reference bounds",
+                },
+                reset,
+                reset_help: "Reset reference bounds.",
+                reveal: false,
+            });
+            let mut editor = Editor::state();
+            assert!(editor.activate_tool(Placement::Photo, Box::new(probe)));
+            crate::application::test_support::with_application(editor, |app| {
+                let context = egui::Context::default();
+                context.enable_accesskit();
+                let render = |events| {
+                    app.enter(|editor, cx| {
+                        let mut output = context.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(
+                                    egui::Pos2::ZERO,
+                                    egui::vec2(300., 240.),
+                                )),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| {
+                                if !enabled {
+                                    ui.disable();
+                                }
+                                editor.hosted_drawer(ui, cx);
+                            },
+                        );
+                        output.textures_delta.clear();
+                        output
+                    })
+                };
+                render(vec![]);
+                let output = render(vec![]);
+                let nodes = &output
+                    .platform_output
+                    .accesskit_update
+                    .as_ref()
+                    .unwrap()
+                    .nodes;
+                assert!(
+                    nodes
+                        .iter()
+                        .any(|(_, node)| node.role() == egui::accesskit::Role::Label
+                            && node.label().or_else(|| node.value()) == Some("Reference bounds"))
+                );
+                assert!(
+                    nodes
+                        .iter()
+                        .any(|(_, node)| node.role() == egui::accesskit::Role::Label
+                            && node.label().or_else(|| node.value()) == Some("Probe body"))
+                );
+                let button = nodes
+                    .iter()
+                    .find(|(_, node)| node.label() == Some("Reset draft"));
+                assert_eq!(button.is_some(), reset.is_some());
+                if let Some((_, button)) = button {
+                    assert_eq!(button.is_disabled(), !enabled || reset != Some(true));
+                    let bounds = button.bounds().unwrap();
+                    let position = egui::pos2(
+                        ((bounds.x0 + bounds.x1) / 2.) as f32,
+                        ((bounds.y0 + bounds.y1) / 2.) as f32,
+                    );
+                    for pressed in [true, false] {
+                        render(vec![
+                            egui::Event::PointerMoved(position),
+                            egui::Event::PointerButton {
+                                pos: position,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ]);
+                    }
+                }
+                assert_eq!(actions.get(), usize::from(enabled && reset == Some(true)));
+                app.read(|editor| {
+                    assert!(
+                        editor.has_hosted_tool(),
+                        "reset intent does not end the interaction"
+                    );
+                    if enabled && reset == Some(true) {
+                        assert_eq!(editor.status, "Probe draft reset");
+                    }
+                });
+            });
+        }
+    }
+}
+
+struct Candidate(Crop);
+impl Tool for Candidate {
+    fn presentation(&self) -> Presentation {
+        Presentation {
+            identity: presentation::ToolIdentity {
+                icon: icons::Icon::Crop,
+                title: "Candidate",
+            },
+            drawer: None,
+            primary: Some("Accept"),
+            dismiss: "Discard",
+            warning: None,
+            help: "",
+        }
+    }
+    fn action(&mut self, action: Action, editor: &mut Editor) {
+        if matches!(action, Action::Dismiss) || editor.accept_crop(self.0).is_ok() {
+            editor.end_tool();
+        }
+    }
+}
+
+#[test]
+fn photo_geometry_edit_rejects_before_mutation_and_records_valid_acceptance() {
+    let mut editor = Editor::state();
+    super::super::tests::add_ready_fixture(&mut editor);
+    editor.sync_document();
+    let before = editor.document.state.project.clone();
+    let viewport = editor.document.visit.canvas.viewport;
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+    let invalid = Crop {
+        center: [-500., -500.],
+        size: [400, 300],
+        angle: 0.,
+    };
+    assert!(editor.activate_tool(Placement::Photo, Box::new(Candidate(invalid))));
+    editor.hosted_action(Action::Primary);
+    assert!(
+        editor.current_tool().is_some(),
+        "rejection leaves the interaction available"
+    );
+    assert!(editor.document.visit.crop.is_none());
+    assert_eq!(editor.document.visit.canvas.viewport, viewport);
+    assert_eq!(editor.document.state.project, before);
+    assert!(editor.history_label(history::Direction::Undo).is_none());
+    let valid = Crop {
+        size: [400, 300],
+        ..Crop::from_region(area)
+    };
+    assert!(editor.activate_tool(Placement::Photo, Box::new(Candidate(valid))));
+    editor.hosted_action(Action::Primary);
+    assert!(editor.current_tool().is_none());
+    assert_eq!(editor.document.visit.crop, Some(valid));
+    assert_eq!(
+        editor
+            .document
+            .state
+            .project
+            .source(editor.document.visit.current_source.unwrap())
+            .unwrap()
+            .crop,
+        Some(valid)
+    );
+    assert_eq!(editor.history_label(history::Direction::Undo), Some("Crop"));
+}
+
+#[test]
+fn document_and_photo_slots_follow_their_scopes_without_synthetic_actions() {
+    let mut editor = Editor::state();
+    let dropped = Rc::new(Cell::new(0));
+    let actions = Rc::new(Cell::new(0));
+    assert!(editor.activate_tool(
+        Placement::Document,
+        Box::new(Probe::new(&dropped, &actions))
+    ));
+    editor.replace_photo_scope(1);
+    assert!(editor.current_tool().is_some());
+    assert_eq!(dropped.get(), 0);
+
+    let photo = Probe::new(&dropped, &actions);
+    let configured = photo.first_config.clone();
+    assert_eq!(configured.get(), None);
+    assert!(editor.activate_tool(Placement::Photo, Box::new(photo)));
+    assert_eq!(dropped.get(), 1);
+    assert_eq!(configured.get(), Some(1));
+    editor.replace_photo_scope(2);
+    assert_eq!(dropped.get(), 2);
+    assert!(
+        editor.current_tool().is_none(),
+        "no retained document predecessor resumes"
+    );
+    assert_eq!(actions.get(), 0);
+
+    assert!(editor.activate_tool(
+        Placement::Document,
+        Box::new(Probe::new(&dropped, &actions))
+    ));
+    let captured = editor.document.capture();
+    editor.document = DocumentScope::from(document::Document::default());
+    assert_eq!(dropped.get(), 3);
+    assert!(editor.current_tool().is_none());
+    assert_eq!(actions.get(), 0);
+    drop(captured);
+}
+
+#[test]
+fn photo_departure_retires_only_its_hosted_activity_while_document_activity_survives() {
+    for placement in [Placement::Document, Placement::Photo] {
+        for executing in [false, true] {
+            for matching_activity in [false, true] {
+                let mut editor = Editor::state();
+                let dropped = Rc::new(Cell::new(0));
+                let actions = Rc::new(Cell::new(0));
+                let task = Task::Regions(73);
+                let mut probe = Probe::new(&dropped, &actions);
+                probe.activity = Some(task.request());
+                assert!(editor.activate_tool(placement, Box::new(probe)));
+                let foreground = if matching_activity {
+                    task
+                } else {
+                    Task::Save(73)
+                };
+                editor.tasks.begin(foreground);
+                editor.busy = true;
+                assert!(editor.tasks.is_current(foreground.request()));
+                let document_owned = matches!(placement, Placement::Document);
+                let activity_survives = document_owned || !matching_activity;
+                let depart = |editor: &mut Editor| {
+                    editor.replace_photo_scope(1);
+                    assert_eq!(
+                        editor.tasks.is_current(foreground.request()),
+                        activity_survives
+                    );
+                    assert_eq!(editor.busy, activity_survives);
+                };
+                if executing {
+                    editor
+                        .with_current_tool(|_, editor| depart(editor))
+                        .unwrap();
+                } else {
+                    depart(&mut editor);
+                }
+                assert_eq!(editor.has_hosted_tool(), document_owned);
+                assert_eq!(dropped.get(), usize::from(!document_owned));
+                assert_eq!(
+                    actions.get(),
+                    0,
+                    "scope departure must not synthesize an action"
+                );
+                editor.end_tool();
+                assert_eq!(dropped.get(), 1);
+                assert_eq!(
+                    editor.tasks.is_current(foreground.request()),
+                    !matching_activity
+                );
+                assert_eq!(editor.busy, !matching_activity);
+            }
+        }
+    }
+}
+
+#[test]
+fn legacy_and_hosted_installation_are_exclusive_in_both_directions() {
+    let mut editor = Editor::state();
+    let dropped = Rc::new(Cell::new(0));
+    let actions = Rc::new(Cell::new(0));
+    assert!(editor.activate_tool(Placement::Photo, Box::new(Probe::new(&dropped, &actions))));
+    editor
+        .document
+        .set_legacy_tool(legacy_tool::Tool::Pick(Vec::new()));
+    assert_eq!(dropped.get(), 1);
+    assert!(editor.current_tool().is_none());
+    assert!(matches!(
+        editor.document.tool.as_ref(),
+        Some(legacy_tool::Tool::Pick(_))
+    ));
+    assert!(editor.activate_tool(
+        Placement::Document,
+        Box::new(Probe::new(&dropped, &actions))
+    ));
+    assert!(editor.document.tool.is_none());
+    assert!(editor.current_tool().is_some());
+    assert_eq!(actions.get(), 0);
+    editor.hosted_action(Action::Dismiss);
+    assert_eq!(actions.get(), 1);
+    assert_eq!(dropped.get(), 2);
+    assert!(editor.current_tool().is_none());
+}
+
+#[test]
+fn rejected_admission_drops_candidate_without_configuring_or_replacing_the_owner() {
+    let mut editor = Editor::state();
+    let dropped = Rc::new(Cell::new(0));
+    let actions = Rc::new(Cell::new(0));
+    assert!(editor.activate_tool(
+        Placement::Document,
+        Box::new(Probe::new(&dropped, &actions))
+    ));
+    let candidate = Probe::new(&dropped, &actions);
+    let configured = candidate.first_config.clone();
+    editor.busy = true;
+    assert!(!editor.activate_tool(Placement::Photo, Box::new(candidate)));
+    assert_eq!(dropped.get(), 1);
+    assert_eq!(configured.get(), None);
+    assert!(editor.current_tool().is_some());
+    assert_eq!(actions.get(), 0);
+    editor.busy = false;
+    editor.hosted_action(Action::Dismiss);
+    assert_eq!(dropped.get(), 2);
+    assert_eq!(actions.get(), 1);
+}
+
+#[test]
+fn executing_tool_is_active_and_can_replace_or_end_current_without_resurrection() {
+    for origin in [Placement::Document, Placement::Photo] {
+        for destination in [Placement::Document, Placement::Photo] {
+            let mut editor = Editor::state();
+            let dropped = Rc::new(Cell::new(0));
+            let actions = Rc::new(Cell::new(0));
+            assert!(editor.activate_tool(origin, Box::new(Probe::new(&dropped, &actions))));
+            editor
+                .with_current_tool(|_, editor| {
+                    assert!(editor.has_hosted_tool());
+                    assert!(editor.current_tool().unwrap().is::<Probe>());
+                    assert!(editor.with_current_tool(|_, _| ()).is_none());
+                    assert!(
+                        editor.activate_tool(destination, Box::new(Probe::new(&dropped, &actions)))
+                    );
+                    assert_eq!(
+                        dropped.get(),
+                        0,
+                        "executing predecessor is still on the stack"
+                    );
+                    editor.end_tool();
+                    assert_eq!(dropped.get(), 1, "end targets the installed replacement");
+                    assert!(editor.current_tool().is_none());
+                })
+                .unwrap();
+            assert_eq!(dropped.get(), 2);
+            assert_eq!(
+                actions.get(),
+                0,
+                "replacement/end do not synthesize actions"
+            );
+            assert!(editor.current_tool().is_none());
+        }
+    }
+}
+
+#[test]
+fn scope_replacement_during_callback_cannot_restore_into_the_new_owner() {
+    for placement in [Placement::Document, Placement::Photo] {
+        let mut editor = Editor::state();
+        let dropped = Rc::new(Cell::new(0));
+        let actions = Rc::new(Cell::new(0));
+        assert!(editor.activate_tool(placement, Box::new(Probe::new(&dropped, &actions))));
+        editor
+            .with_current_tool(|_, editor| {
+                if matches!(placement, Placement::Photo) {
+                    editor.replace_photo_scope(42);
+                } else {
+                    editor.document = DocumentScope::from(document::Document::default());
+                }
+                assert!(editor.current_tool().is_none());
+                assert_eq!(dropped.get(), 0);
+            })
+            .unwrap();
+        assert!(editor.current_tool().is_none());
+        assert_eq!(dropped.get(), 1);
+        assert_eq!(actions.get(), 0);
+    }
+}
+
+#[test]
+fn ending_crop_does_not_borrow_shared_draft_or_retain_its_state() {
+    let mut editor = Editor::state();
+    super::super::tests::add_ready_fixture(&mut editor);
+    editor.begin_crop();
+    let state = editor.document.crop_state().unwrap();
+    let weak = Rc::downgrade(&state);
+    let mut draft = state.borrow_mut();
+    draft.draft.size = [300, 200];
+    editor.end_tool();
+    assert!(!editor.has_hosted_tool());
+    assert!(editor.document.visit.crop.is_none());
+    drop(draft);
+    drop(state);
+    assert!(
+        weak.upgrade().is_none(),
+        "no Editor field or task cycle retains the draft"
+    );
+}
+
+#[test]
+fn ordinary_photo_orientation_and_crop_acceptance_share_geometry_history() {
+    let mut editor = Editor::state();
+    super::super::tests::add_ready_fixture(&mut editor);
+    let before = editor.document.visit.photo_orientation;
+    editor.apply_photo_action(editing::PhotoAction::TurnRight);
+    assert_ne!(editor.document.visit.photo_orientation, before);
+    assert_eq!(
+        editor.history_label(history::Direction::Undo),
+        Some("Photo orientation")
+    );
+    let id = editor.document.visit.current_source.unwrap();
+    assert_eq!(
+        editor.document.project.source(id).unwrap().orientation,
+        editor.document.visit.photo_orientation
+    );
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+    let crop = Crop {
+        size: [300, 200],
+        ..Crop::from_region(area)
+    };
+    editor.accept_crop(crop).unwrap();
+    assert_eq!(editor.history_label(history::Direction::Undo), Some("Crop"));
+    assert_eq!(editor.document.project.source(id).unwrap().crop, Some(crop));
+    assert_eq!(editor.document.visit.crop, Some(crop));
+}
+
+#[test]
+#[should_panic(expected = "tool callback panic fixture")]
+fn tool_callback_panics_propagate_without_recovery() {
+    let mut editor = Editor::state();
+    let dropped = Rc::new(Cell::new(0));
+    let actions = Rc::new(Cell::new(0));
+    assert!(editor.activate_tool(Placement::Photo, Box::new(Probe::new(&dropped, &actions))));
+    editor.with_current_tool(|_, _| panic!("tool callback panic fixture"));
 }

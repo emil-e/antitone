@@ -519,7 +519,7 @@ fn rendering_target_selector_and_reset_retain_grade_and_draft_guards() {
     click_section_reset(&mut editor, &context, "Target");
     assert_eq!(editor.document.target, OutputTarget::Srgb);
     assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
-    editor.finish_crop(false);
+    editor.hosted_action(tool::Action::Dismiss);
     editor.tab = 1;
     let context = egui::Context::default();
     let photo = controls_frame(&mut editor, &context, 315., vec![]);

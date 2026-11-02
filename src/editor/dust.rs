@@ -993,7 +993,7 @@ impl Editor {
             && !panning
             && !self.busy
             && self.active_pick().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()
             && ui.is_enabled()

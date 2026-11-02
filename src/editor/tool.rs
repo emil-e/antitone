@@ -1,74 +1,204 @@
 use super::*;
+use crate::viewport::CanvasLayout;
+use std::any::{Any, TypeId};
 
 #[cfg(test)]
 mod tests;
 
-pub(super) struct Analyze {
-    operation: analysis_workflow::Operation,
-    review: Option<analysis_review::Review>,
+#[derive(Clone, Copy)]
+pub(super) enum Placement {
+    Document,
+    Photo,
+}
+#[derive(Clone, Copy)]
+pub(super) enum Action {
+    Primary,
+    Dismiss,
+}
+
+#[derive(Clone)]
+pub(super) struct Presentation {
+    pub identity: presentation::ToolIdentity<'static>,
+    pub drawer: Option<presentation::ToolDrawer<'static>>,
+    pub primary: Option<&'static str>,
+    pub dismiss: &'static str,
+    pub warning: Option<String>,
+    pub help: &'static str,
+}
+
+pub(super) struct ViewConfig<'a> {
+    pub viewport: &'a mut Viewport,
+    pub composition: Option<Composition>,
+    pub source_outside_frame: bool,
+    pub inset: f32,
+    pub constrain_pan: bool,
+    pub fit_once: Option<Coverage>,
+    pub primary_interaction: bool,
+    pub navigation_enabled: bool,
+}
+impl ViewConfig<'_> {
+    pub fn layout(&mut self, canvas: egui::Rect, pixels_per_point: f32) -> Option<CanvasLayout> {
+        let composition = self.composition?;
+        let inset = self
+            .inset
+            .min((canvas.width().min(canvas.height()) - 1.).max(0.) * 0.5);
+        let mut layout = self.viewport.layout_fitted(
+            canvas.shrink(inset),
+            composition,
+            pixels_per_point,
+            self.fit_once,
+            self.constrain_pan,
+        );
+        layout.canvas = canvas;
+        Some(layout)
+    }
+}
+
+pub(super) struct Canvas<'a> {
+    pub ui: &'a mut egui::Ui,
+    pub response: &'a egui::Response,
+    pub layout: CanvasLayout,
+}
+
+pub(super) trait Tool: Any {
+    fn presentation(&self) -> Presentation;
+    fn configure<'a>(&'a mut self, _view: &mut ViewConfig<'a>) {}
+    fn drawer(
+        &mut self,
+        _ui: &mut egui::Ui,
+        _reset: bool,
+        _editor: &mut Editor,
+        _cx: &UiContext<'_, Editor>,
+    ) {
+    }
+    fn canvas(&mut self, _canvas: &mut Canvas<'_>, _editor: &mut Editor) {}
+    fn action(&mut self, action: Action, editor: &mut Editor);
+    // Compatibility with the existing foreground activity owner; the operation
+    // remains responsible for its task and cancellation semantics.
+    fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
+        None
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct Info {
+    kind: TypeId,
+    presentation: Presentation,
+    pub activity: Option<TaskRequest>,
+}
+impl Info {
+    pub fn presentation(&self) -> Presentation {
+        self.presentation.clone()
+    }
+    pub fn is<T: Tool>(&self) -> bool {
+        self.kind == TypeId::of::<T>()
+    }
 }
 
 #[derive(Default)]
-pub(super) struct AutoCrop {
-    operation: auto_crop::Operation,
-    draft: Option<auto_crop::Draft>,
+pub(super) enum Slot {
+    #[default]
+    Empty,
+    Installed(Box<dyn Tool>),
+    Executing(Info),
 }
-
-/// One unfinished interaction; accepted data and view resources stay in their scopes.
-pub(super) enum Tool {
-    Crop(Box<CropEdit>),
-    Mask(Box<MaskEdit>),
-    Pick(Vec<async_executor::Task<()>>),
-    Analyze(Box<Analyze>),
-    AutoCrop(Box<AutoCrop>),
-    Flat(Box<FlatEdit>),
-    Dust(Box<dust::Cleanup>),
-}
-
-impl Editor {
-    pub(super) fn tool_activity(&self) -> Option<TaskRequest> {
-        match &self.document.tool {
-            Some(Tool::Analyze(action)) => match action.operation.phase {
-                analysis_workflow::Phase::Preparing(id) | analysis_workflow::Phase::Fitting(id) => {
-                    Some(TaskRequest::Analyze(id))
-                }
-                analysis_workflow::Phase::Regions => self
-                    .document
-                    .spatial_preparing
-                    .as_ref()
-                    .map(|work| TaskRequest::Regions(work.id)),
-                analysis_workflow::Phase::Review => None,
-            },
-            Some(Tool::AutoCrop(action)) if action.draft.is_none() => self
-                .document
-                .spatial_preparing
-                .as_ref()
-                .map(|work| TaskRequest::Regions(work.id)),
-            Some(Tool::Crop(edit)) if edit.auto_crop_task.is_some() => self
-                .document
-                .spatial_preparing
-                .as_ref()
-                .map(|work| TaskRequest::Regions(work.id)),
-            Some(Tool::Flat(edit)) => edit.activity,
-            Some(Tool::Pick(_)) => self.document.visit.picking.activity(),
+impl Slot {
+    fn occupied(&self) -> bool {
+        !matches!(self, Self::Empty)
+    }
+    pub(super) fn activity(&self, editor: &Editor) -> Option<TaskRequest> {
+        match self {
+            Self::Empty => None,
+            Self::Executing(info) => info.activity,
+            Self::Installed(tool) => tool.activity(editor),
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn installed(&self) -> Option<&dyn Tool> {
+        match self {
+            Self::Installed(tool) => Some(tool.as_ref()),
             _ => None,
         }
     }
-
-    pub(super) fn tool_interacting(&self) -> bool {
-        match &self.document.tool {
-            None => false,
-            Some(Tool::Pick(actions)) => {
-                self.active_pick().is_some() || actions.iter().any(|task| !task.is_finished())
-            }
-            _ => true,
+    #[cfg(test)]
+    pub(super) fn installed_mut(&mut self) -> Option<&mut dyn Tool> {
+        match self {
+            Self::Installed(tool) => Some(tool.as_mut()),
+            _ => None,
         }
     }
+    fn info(&self, editor: &Editor) -> Option<Info> {
+        match self {
+            Self::Empty => None,
+            Self::Executing(info) => Some(info.clone()),
+            Self::Installed(tool) => Some(Info {
+                kind: tool.as_ref().type_id(),
+                presentation: tool.presentation(),
+                activity: tool.activity(editor),
+            }),
+        }
+    }
+    fn is<T: Tool>(&self) -> bool {
+        match self {
+            Self::Empty => false,
+            Self::Executing(info) => info.is::<T>(),
+            Self::Installed(tool) => tool.as_ref().type_id() == TypeId::of::<T>(),
+        }
+    }
+}
 
+/// Legacy state can be inspected or retired, but installation shares the host's
+/// exclusive activation boundary rather than exposing a mutable Option.
+#[derive(Default)]
+pub(super) struct LegacySlot(Option<legacy_tool::Tool>);
+impl std::ops::Deref for LegacySlot {
+    type Target = Option<legacy_tool::Tool>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl LegacySlot {
+    pub fn as_mut(&mut self) -> Option<&mut legacy_tool::Tool> {
+        self.0.as_mut()
+    }
+    pub fn take(&mut self) -> Option<legacy_tool::Tool> {
+        self.0.take()
+    }
+    pub fn clear(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl DocumentScope {
+    fn hosted_slot_mut(&mut self, placement: Placement) -> &mut Slot {
+        match placement {
+            Placement::Document => &mut self.hosted_tool,
+            Placement::Photo => &mut self.visit.hosted_tool,
+        }
+    }
+    fn clear_hosted_tools(&mut self) {
+        self.hosted_tool = Slot::Empty;
+        self.visit.hosted_tool = Slot::Empty;
+    }
+    pub(super) fn set_legacy_tool(&mut self, tool: legacy_tool::Tool) {
+        self.clear_hosted_tools();
+        self.tool.0 = Some(tool);
+    }
+    pub(super) fn clear_crop_edit(&mut self) {
+        if self.visit.hosted_tool.is::<crop_editor::CropTool>() {
+            self.visit.hosted_tool = Slot::Empty;
+        }
+    }
+}
+
+impl Editor {
     pub(super) fn tool_start_available(&self) -> bool {
         (!self.busy || self.tool_activity().is_some())
             && (self.document_pending.is_none()
-                || matches!(self.document.tool, Some(Tool::Flat(_))))
+                || matches!(
+                    self.document.tool.as_ref(),
+                    Some(legacy_tool::Tool::Flat(_))
+                ))
             && !self.export_modal()
             && self.document.removal_pending.is_none()
             && self.transition.is_none()
@@ -85,18 +215,21 @@ impl Editor {
     }
 
     pub(super) fn cancel_active_tool(&mut self) {
+        if self.has_hosted_tool() {
+            self.retire_hosted_tool();
+            return;
+        }
         let activity = self.tool_activity();
-        match &self.document.tool {
-            Some(Tool::Crop(_)) => self.finish_crop(false),
-            Some(Tool::Mask(_)) => self.finish_mask(false),
-            Some(Tool::Pick(_)) => {
+        match self.document.tool.as_ref() {
+            Some(legacy_tool::Tool::Mask(_)) => self.finish_mask(false),
+            Some(legacy_tool::Tool::Pick(_)) => {
                 self.cancel_picker();
-                self.document.tool = None;
+                self.document.tool.clear();
             }
-            Some(Tool::Analyze(_)) => self.close_analysis(),
-            Some(Tool::AutoCrop(_)) => self.finish_auto_crop(false),
-            Some(Tool::Flat(_)) => self.finish_flat_edit(),
-            Some(Tool::Dust(_)) => self.finish_dust_cleanup(),
+            Some(legacy_tool::Tool::Analyze(_)) => self.close_analysis(),
+            Some(legacy_tool::Tool::AutoCrop(_)) => self.finish_auto_crop(false),
+            Some(legacy_tool::Tool::Flat(_)) => self.finish_flat_edit(),
+            Some(legacy_tool::Tool::Dust(_)) => self.finish_dust_cleanup(),
             None => {}
         }
         if let Some(activity) = activity
@@ -105,290 +238,158 @@ impl Editor {
             self.busy = self.document_pending.is_some();
         }
     }
-}
 
-impl DocumentScope {
-    pub fn crop_edit(&self) -> Option<&CropEdit> {
-        match &self.tool {
-            Some(Tool::Crop(value)) => Some(value),
-            _ => None,
+    pub(super) fn current_tool(&self) -> Option<Info> {
+        self.document
+            .hosted_tool
+            .info(self)
+            .or_else(|| self.document.visit.hosted_tool.info(self))
+    }
+    pub(super) fn has_hosted_tool(&self) -> bool {
+        self.document.hosted_tool.occupied() || self.document.visit.hosted_tool.occupied()
+    }
+    pub(super) fn hosted_tool_activity(&self) -> Option<TaskRequest> {
+        self.document
+            .hosted_tool
+            .activity(self)
+            .or_else(|| self.document.visit.hosted_tool.activity(self))
+    }
+    pub(super) fn cropping(&self) -> bool {
+        self.document.hosted_tool.is::<crop_editor::CropTool>()
+            || self
+                .document
+                .visit
+                .hosted_tool
+                .is::<crop_editor::CropTool>()
+    }
+    pub(super) fn retire_hosted_tool(&mut self) {
+        let activity = self.hosted_tool_activity();
+        self.document.clear_hosted_tools();
+        self.document.visit.canvas.last_layout = None;
+        self.invalidate_original();
+        if let Some(activity) = activity
+            && self.tasks.finish(activity)
+        {
+            self.busy = self.document_pending.is_some();
         }
     }
+    pub(super) fn end_tool(&mut self) {
+        self.cancel_active_tool();
+    }
 
-    pub fn crop_edit_mut(&mut self) -> Option<&mut CropEdit> {
-        match &mut self.tool {
-            Some(Tool::Crop(value)) => Some(value),
-            _ => None,
+    pub(super) fn activate_tool(&mut self, placement: Placement, mut tool: Box<dyn Tool>) -> bool {
+        if !self.prepare_tool() {
+            return false;
         }
-    }
-
-    pub fn set_crop_edit(&mut self, value: Option<CropEdit>) {
-        if let Some(value) = value {
-            self.tool = Some(Tool::Crop(Box::new(value)));
-        } else {
-            self.take_crop_edit();
+        {
+            let mut view = self.normal_tool_view(None);
+            tool.configure(&mut view);
         }
+        *self.document.hosted_slot_mut(placement) = Slot::Installed(tool);
+        self.invalidate_original();
+        true
     }
 
-    pub fn take_crop_edit(&mut self) -> Option<CropEdit> {
-        match self.tool.take() {
-            Some(Tool::Crop(value)) => Some(*value),
-            other => {
-                self.tool = other;
-                None
-            }
-        }
-    }
-
-    pub fn mask_edit(&self) -> Option<&MaskEdit> {
-        match &self.tool {
-            Some(Tool::Mask(value)) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn mask_edit_mut(&mut self) -> Option<&mut MaskEdit> {
-        match &mut self.tool {
-            Some(Tool::Mask(value)) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn set_mask_edit(&mut self, value: Option<MaskEdit>) {
-        if let Some(value) = value {
-            self.tool = Some(Tool::Mask(Box::new(value)));
-        } else {
-            self.take_mask_edit();
-        }
-    }
-
-    pub fn take_mask_edit(&mut self) -> Option<MaskEdit> {
-        match self.tool.take() {
-            Some(Tool::Mask(value)) => Some(*value),
-            other => {
-                self.tool = other;
-                None
-            }
-        }
-    }
-
-    pub fn flat_edit(&self) -> Option<&FlatEdit> {
-        match &self.tool {
-            Some(Tool::Flat(value)) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn flat_edit_mut(&mut self) -> Option<&mut FlatEdit> {
-        match &mut self.tool {
-            Some(Tool::Flat(value)) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn set_flat_edit(&mut self, value: Option<FlatEdit>) {
-        if let Some(value) = value {
-            self.tool = Some(Tool::Flat(Box::new(value)));
-        } else {
-            self.take_flat_edit();
-        }
-    }
-
-    pub fn take_flat_edit(&mut self) -> Option<FlatEdit> {
-        match self.tool.take() {
-            Some(Tool::Flat(value)) => Some(*value),
-            other => {
-                self.tool = other;
-                None
-            }
-        }
-    }
-
-    pub fn is_photo_bound(&self) -> bool {
-        matches!(
-            self.tool,
-            Some(Tool::Crop(_)) | Some(Tool::Mask(_)) | Some(Tool::Pick(_)) | Some(Tool::Dust(_))
-        )
-    }
-
-    pub fn analysis_operation(&self) -> Option<&analysis_workflow::Operation> {
-        match &self.tool {
-            Some(Tool::Analyze(tool)) => Some(&tool.operation),
-            _ => None,
-        }
-    }
-
-    pub fn analysis_operation_mut(&mut self) -> Option<&mut analysis_workflow::Operation> {
-        match &mut self.tool {
-            Some(Tool::Analyze(tool)) => Some(&mut tool.operation),
-            _ => None,
-        }
-    }
-
-    pub fn set_analysis_operation(&mut self, operation: Option<analysis_workflow::Operation>) {
-        match operation {
-            Some(operation) => {
-                self.tool = Some(Tool::Analyze(Box::new(Analyze {
-                    operation,
-                    review: None,
-                })));
-            }
-            None if matches!(self.tool, Some(Tool::Analyze(_))) => self.tool = None,
-            None => {}
-        }
-    }
-
-    pub fn analysis_review(&self) -> Option<&analysis_review::Review> {
-        match &self.tool {
-            Some(Tool::Analyze(tool)) => tool.review.as_ref(),
-            _ => None,
-        }
-    }
-
-    pub fn analysis_review_mut(&mut self) -> Option<&mut analysis_review::Review> {
-        match &mut self.tool {
-            Some(Tool::Analyze(tool)) => tool.review.as_mut(),
-            _ => None,
-        }
-    }
-
-    pub fn set_analysis_review(&mut self, review: Option<analysis_review::Review>) {
-        let Some(Tool::Analyze(tool)) = &mut self.tool else {
-            panic!("review belongs to the active Analyze action");
+    fn normal_tool_view(&mut self, composition: Option<Composition>) -> ViewConfig<'_> {
+        let composition = composition.or_else(|| {
+            self.document.visit.canvas.ready.as_ref().map(|ready| {
+                Composition::with_crop(
+                    ready.area,
+                    self.document.roll_orientation,
+                    self.document.visit.photo_orientation,
+                    self.document.visit.crop,
+                )
+                .expect("accepted photo composition")
+            })
+        });
+        let viewport = match self.document.tool.as_mut() {
+            Some(legacy_tool::Tool::Flat(flat)) => &mut flat.view.viewport,
+            _ => &mut self.document.visit.canvas.viewport,
         };
-        tool.review = review;
-    }
-
-    pub fn take_analysis_review(&mut self) -> Option<analysis_review::Review> {
-        match &mut self.tool {
-            Some(Tool::Analyze(tool)) => tool.review.take(),
-            _ => None,
+        ViewConfig {
+            viewport,
+            composition,
+            source_outside_frame: false,
+            inset: 0.,
+            constrain_pan: true,
+            fit_once: None,
+            primary_interaction: false,
+            navigation_enabled: true,
         }
     }
 
-    pub fn auto_crop_operation(&self) -> Option<&auto_crop::Operation> {
-        match &self.tool {
-            Some(Tool::AutoCrop(tool)) => Some(&tool.operation),
-            _ => None,
+    pub(super) fn with_tool_view<R>(
+        &mut self,
+        composition: Option<Composition>,
+        body: impl FnOnce(&mut ViewConfig<'_>) -> R,
+    ) -> R {
+        if self.fullscreen.is_some() || self.current_tool().is_none() {
+            return body(&mut self.normal_tool_view(composition));
         }
+        self.with_current_tool(|tool, editor| {
+            let mut view = editor.normal_tool_view(composition);
+            tool.configure(&mut view);
+            body(&mut view)
+        })
+        .expect("view capture cannot recursively invoke the executing tool")
     }
 
-    pub fn auto_crop_operation_mut(&mut self) -> Option<&mut auto_crop::Operation> {
-        match &mut self.tool {
-            Some(Tool::AutoCrop(tool)) => Some(&mut tool.operation),
-            _ => None,
-        }
-    }
-
-    pub fn set_auto_crop_operation(&mut self, operation: Option<auto_crop::Operation>) {
-        match operation {
-            Some(operation) => {
-                self.tool = Some(Tool::AutoCrop(Box::new(AutoCrop {
-                    operation,
-                    draft: None,
-                })));
-            }
-            None if matches!(self.tool, Some(Tool::AutoCrop(_))) => self.tool = None,
-            None => {}
-        }
-    }
-
-    pub fn auto_crop_edit(&self) -> Option<&auto_crop::Draft> {
-        match &self.tool {
-            Some(Tool::AutoCrop(tool)) => tool.draft.as_ref(),
-            _ => None,
-        }
-    }
-
-    pub fn auto_crop_edit_mut(&mut self) -> Option<&mut auto_crop::Draft> {
-        match &mut self.tool {
-            Some(Tool::AutoCrop(tool)) => tool.draft.as_mut(),
-            _ => None,
-        }
-    }
-
-    pub fn set_auto_crop_edit(&mut self, draft: Option<auto_crop::Draft>) {
-        match &mut self.tool {
-            Some(Tool::AutoCrop(tool)) => tool.draft = draft,
-            _ if draft.is_some() => {
-                self.tool = Some(Tool::AutoCrop(Box::new(AutoCrop {
-                    operation: Default::default(),
-                    draft,
-                })));
-            }
-            _ => {}
-        }
-    }
-
-    pub fn take_auto_crop_edit(&mut self) -> Option<auto_crop::Draft> {
-        match &mut self.tool {
-            Some(Tool::AutoCrop(tool)) => tool.draft.take(),
-            _ => None,
-        }
-    }
-
-    pub fn pick_actions_mut(&mut self) -> &mut Vec<async_executor::Task<()>> {
-        let Some(Tool::Pick(actions)) = &mut self.tool else {
-            panic!("picker actions belong to the active picker");
+    pub(super) fn with_current_tool<R>(
+        &mut self,
+        body: impl FnOnce(&mut dyn Tool, &mut Editor) -> R,
+    ) -> Option<R> {
+        let placement = if self.document.hosted_tool.occupied() {
+            Placement::Document
+        } else if self.document.visit.hosted_tool.occupied() {
+            Placement::Photo
+        } else {
+            return None;
         };
-        actions
-    }
-
-    pub fn begin_dust(&mut self) {
-        if !matches!(self.tool, Some(Tool::Dust(_))) {
-            self.tool = Some(Tool::Dust(Default::default()));
+        let info = self.current_tool()?;
+        let slot = self.document.hosted_slot_mut(placement);
+        if !matches!(slot, Slot::Installed(_)) {
+            return None;
         }
-    }
-
-    pub fn clear_dust(&mut self) {
-        if matches!(self.tool, Some(Tool::Dust(_))) {
-            self.tool = None;
+        let Slot::Installed(mut tool) = std::mem::replace(slot, Slot::Executing(info)) else {
+            unreachable!()
+        };
+        let result = body(tool.as_mut(), self);
+        let slot = self.document.hosted_slot_mut(placement);
+        if matches!(slot, Slot::Executing(_)) {
+            *slot = Slot::Installed(tool);
         }
+        Some(result)
     }
-
-    pub fn dust_mask_draft(&self) -> Option<&dust::MaskDraft> {
-        self.dust()?.mask_draft.as_ref()
+    pub(super) fn hosted_action(&mut self, action: Action) {
+        self.with_current_tool(|tool, editor| tool.action(action, editor));
     }
-
-    pub fn dust_mask_draft_mut(&mut self) -> Option<&mut dust::MaskDraft> {
-        self.dust_mut()?.mask_draft.as_mut()
+    pub(super) fn hosted_drawer(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        self.with_current_tool(|tool, editor| {
+            if let Some(drawer) = tool.presentation().drawer {
+                drawer.show(ui, |ui, reset| tool.drawer(ui, reset, editor, cx));
+            } else {
+                tool.drawer(ui, false, editor, cx);
+            }
+        });
     }
-
-    pub fn set_dust_mask_draft(&mut self, value: Option<dust::MaskDraft>) {
-        if let Some(tool) = self.dust_mut() {
-            tool.mask_draft = value;
-        }
-    }
-
-    pub fn dust_donor_draft(&self) -> Option<&dust::DonorDraft> {
-        self.dust()?.donor_draft.as_ref()
-    }
-
-    pub fn dust_donor_draft_mut(&mut self) -> Option<&mut dust::DonorDraft> {
-        self.dust_mut()?.donor_draft.as_mut()
-    }
-
-    pub fn set_dust_donor_draft(&mut self, value: Option<dust::DonorDraft>) {
-        if let Some(tool) = self.dust_mut() {
-            tool.donor_draft = value;
-        }
-    }
-
-    pub fn take_dust_donor_draft(&mut self) -> Option<dust::DonorDraft> {
-        self.dust_mut()?.donor_draft.take()
-    }
-
-    pub fn dust(&self) -> Option<&dust::Cleanup> {
-        match &self.tool {
-            Some(Tool::Dust(tool)) => Some(tool),
-            _ => None,
-        }
-    }
-
-    pub fn dust_mut(&mut self) -> Option<&mut dust::Cleanup> {
-        match &mut self.tool {
-            Some(Tool::Dust(tool)) => Some(tool),
-            _ => None,
-        }
+    pub(super) fn hosted_canvas(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        layout: CanvasLayout,
+        enabled: bool,
+    ) {
+        ui.add_enabled_ui(enabled, |ui| {
+            self.with_current_tool(|tool, editor| {
+                tool.canvas(
+                    &mut Canvas {
+                        ui,
+                        response,
+                        layout,
+                    },
+                    editor,
+                )
+            });
+        });
     }
 }

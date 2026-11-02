@@ -1581,7 +1581,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     assert!(!editor.document.dirty());
     editor.file_action(files::FileAction::Save, &UiContext::render_only());
     assert!(editor.document_pending.is_none());
-    editor.finish_crop(false);
+    editor.hosted_action(tool::Action::Dismiss);
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
     assert_eq!(editor.document.visit.crop, crop);
     editor.sync_document();
@@ -1589,7 +1589,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     assert!(!editor.document.dirty());
     editor.begin_crop();
     editor.document.crop_edit_mut().unwrap().draft = draft;
-    editor.finish_crop(true);
+    editor.hosted_action(tool::Action::Primary);
     editor.sync_document();
     assert_eq!(editor.document.visit.crop, Some(draft));
     assert_eq!(
@@ -1614,7 +1614,7 @@ fn crop_draft_cancel_and_apply_are_transactional_and_source_owned() {
     editor.begin_crop();
     editor.document.crop_edit_mut().unwrap().draft =
         Crop::from_region(editor.document.visit.canvas.ready.as_ref().unwrap().area);
-    editor.finish_crop(true);
+    editor.hosted_action(tool::Action::Primary);
     assert!(editor.document.visit.crop.is_none());
 }
 
@@ -1639,12 +1639,12 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     editor.begin_crop();
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
     editor.document.crop_edit_mut().unwrap().draft = crop.straightened(area, -0.19).unwrap();
-    editor.finish_crop(false);
+    editor.hosted_action(tool::Action::Dismiss);
     assert_eq!(editor.document.visit.crop, Some(crop));
     editor.begin_crop();
     let draft = crop.straightened(area, -0.19).unwrap();
     editor.document.crop_edit_mut().unwrap().draft = draft;
-    editor.finish_crop(true);
+    editor.hosted_action(tool::Action::Primary);
     assert_eq!(editor.document.visit.crop, Some(draft));
     editor.sync_document();
     assert_eq!(
@@ -2394,7 +2394,7 @@ fn contextual_crop_reset_preserves_orientation_grade_and_accepted_state_until_ap
     click_control(&mut editor, &context, "Reset draft");
     assert_eq!(editor.document.visit.crop, crop);
     assert_eq!(editor.document.visit.photo_orientation, orientation);
-    editor.finish_crop(true);
+    editor.hosted_action(tool::Action::Primary);
     assert_eq!(editor.document.visit.photo_orientation, orientation);
     assert!(editor.document.visit.crop.is_none());
     assert!(editor.document.roll_orientation.horizontal);
@@ -2883,7 +2883,7 @@ fn crop_draft_controls_expand_below_the_fixed_photo_tool_shelf() {
             "missing draft control {label}"
         );
     }
-    editor.finish_crop(false);
+    editor.hosted_action(tool::Action::Dismiss);
     assert!(
         controls_frame(&mut editor, &context, 315., vec![])
             .iter()

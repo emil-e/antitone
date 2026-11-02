@@ -2,10 +2,9 @@ use super::*;
 use crate::{auto_crop as framing, project::SourceDevelopment, scan_regions::PictureGeometry};
 mod operation;
 mod overlay;
-pub(super) use operation::Operation;
+pub(super) use operation::{Operation, propose_photo_crop};
 
 pub(super) enum Action {
-    Photo(SourceId),
     Batch {
         photos: Vec<SourceId>,
         scope: &'static str,
@@ -116,6 +115,22 @@ fn accepted(crop: Crop, active: Rect) -> Option<Crop> {
     (crop != Crop::from_region(active)).then_some(crop)
 }
 
+fn finish_photo_proposal(state: &mut CropEdit, proposal: Result<Crop, Error>) -> String {
+    match proposal {
+        Ok(crop) => {
+            state.install_proposal(crop);
+            state.auto_problem = None;
+            "Auto-crop proposed".into()
+        }
+        Err(error) => {
+            let problem = format!("Automatic crop unavailable: {}", reason(error));
+            let status = format!("Crop unchanged: {problem}");
+            state.auto_problem = Some(problem);
+            status
+        }
+    }
+}
+
 fn reason(error: Error) -> String {
     match error {
         Error::UnusableSample(s) => s.to_owned(),
@@ -144,7 +159,7 @@ impl Editor {
                 .is_none_or(|op| op.task.is_none() || op.apply.is_some())
             && self.fullscreen.is_none()
             && self.active_pick().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.flat_edit().is_none()
             && !self.document.dust().is_some()
             && self.auto_crop_valid()
@@ -321,31 +336,26 @@ impl Editor {
         })
     }
 
+    pub(super) fn photo_crop_proposal(&self, photo: SourceId) -> Result<Crop, Error> {
+        let entry = self.crop_proposal(photo)?;
+        Ok(entry
+            .draft
+            .unwrap_or(Crop::from_region(entry.development.active_area.into())))
+    }
+
+    #[cfg(test)]
     fn auto_crop_photo(&mut self, photo: SourceId) {
         if self.busy
             || self.fullscreen.is_some()
-            || self.document.crop_edit().is_none()
+            || !self.cropping()
             || self.document.visit.current_source != Some(photo)
         {
             return;
         }
         self.sync_document();
-        match self.crop_proposal(photo) {
-            Ok(entry) => {
-                self.initialize_crop_frame(
-                    entry
-                        .draft
-                        .unwrap_or(Crop::from_region(entry.development.active_area.into())),
-                );
-                self.document.crop_edit_mut().unwrap().auto_problem = None;
-                self.status = "Auto-crop proposed".into();
-            }
-            Err(error) => {
-                let problem = format!("Automatic crop unavailable: {}", reason(error));
-                self.status = format!("Crop unchanged: {problem}");
-                self.document.crop_edit_mut().unwrap().auto_problem = Some(problem);
-            }
-        }
+        let result = self.photo_crop_proposal(photo);
+        let status = finish_photo_proposal(&mut self.document.crop_edit_mut().unwrap(), result);
+        self.status = status;
     }
 
     pub(super) fn begin_auto_crop_review(&mut self, photos: Vec<SourceId>, scope: &'static str) {

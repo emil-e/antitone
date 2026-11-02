@@ -55,9 +55,6 @@ impl Editor {
         if self.document.analysis_review().is_some() {
             return Some((icons::Icon::Analyze, "Analyze"));
         }
-        if self.document.crop_edit().is_some() {
-            return Some((icons::Icon::Crop, "Crop"));
-        }
         if self.document.auto_crop_edit().is_some() {
             return Some((icons::Icon::Crop, "Auto-crop"));
         }
@@ -73,16 +70,14 @@ impl Editor {
         })
     }
 
-    pub(super) fn source_tool_warning(&self, id: SourceId) -> Option<&str> {
+    pub(super) fn source_tool_warning(&self, id: SourceId) -> Option<String> {
         if self.document.auto_crop_edit().is_some() {
-            return self.auto_crop_problem(id);
+            return self.auto_crop_problem(id).map(str::to_owned);
         }
-        if self.document.visit.current_source == Some(id)
-            && let Some(edit) = &self.document.crop_edit()
-        {
-            return edit.auto_problem.as_deref();
+        if self.document.visit.current_source == Some(id) && self.cropping() {
+            return self.current_tool()?.presentation().warning;
         }
-        self.review_warning(id)
+        self.review_warning(id).map(str::to_owned)
     }
 
     fn viewer_warning(&self) -> Option<String> {
@@ -90,8 +85,7 @@ impl Editor {
             .document
             .visit
             .current_source
-            .and_then(|id| self.source_tool_warning(id))
-            .map(str::to_owned);
+            .and_then(|id| self.source_tool_warning(id));
         if warning.is_none() {
             warning = self.auto_crop_batch_warning().map(str::to_owned);
         }
@@ -133,14 +127,22 @@ impl Editor {
 
         let mut zoom_action = None;
         let fullscreen = self.fullscreen.is_some();
-        let cropping = !fullscreen && self.document.crop_edit().is_some();
+        let hosted = (!fullscreen)
+            .then(|| self.current_tool().map(|tool| tool.presentation()))
+            .flatten();
+        let source_outside_frame = self.with_tool_view(None, |view| view.source_outside_frame);
         let masking = !fullscreen && self.document.mask_edit().is_some();
         let creating = !fullscreen && self.document.mask_edit().is_some_and(MaskEdit::creating);
         let dust_session =
             !fullscreen && self.document.dust().is_some() && !self.canvas_inspection();
-        let tool = (!fullscreen && !dust_session)
-            .then(|| self.viewer_tool())
-            .flatten();
+        let tool = hosted
+            .as_ref()
+            .map(|tool| (tool.identity.icon, tool.identity.title))
+            .or_else(|| {
+                (!fullscreen && !dust_session)
+                    .then(|| self.viewer_tool())
+                    .flatten()
+            });
         let session_group = dust_session.then_some(SessionToolGroup {
             identity: ToolIdentity {
                 icon: Icon::Dust,
@@ -183,11 +185,14 @@ impl Editor {
             apply_enabled: if self.document.auto_crop_edit().is_some() {
                 self.auto_crop_editable()
             } else {
-                navigating && review_ready && (cropping || self.pick_region().is_some())
+                navigating && review_ready && (hosted.is_some() || self.pick_region().is_some())
             },
         });
 
-        let warning = self.viewer_warning();
+        let warning = hosted
+            .as_ref()
+            .and_then(|tool| tool.warning.clone())
+            .or_else(|| self.viewer_warning());
         let look_error = self.look_rendering_error();
         let inspecting = navigating && calibrated && tool.is_none() && !dust_session && !masking;
         let bar = if fullscreen {
@@ -245,7 +250,8 @@ impl Editor {
                 let trailing_width = presentation::CONTROL_HEIGHT
                     + VIEWER_ITEM_GAP
                     + if let Some(group) = tool_group {
-                        if reviewing {
+                        if let Some(tool) = &hosted { group.width_actions(ui, tool.primary, tool.dismiss) }
+                        else if reviewing {
                             group.width_named(ui, apply_label)
                         } else {
                             group.width(ui)
@@ -272,8 +278,8 @@ impl Editor {
                     ui,
                     Icon::Fit,
                     navigating,
-                    if cropping { "Fit source" } else { "Fit" },
-                    if cropping {
+                    if source_outside_frame { "Fit source" } else { "Fit" },
+                    if source_outside_frame {
                         "Fit the full source (Z)."
                     } else {
                         "Fit the image (Z)."
@@ -281,14 +287,9 @@ impl Editor {
                 )
                 .clicked()
                 {
-                    self.active_canvas_mut().viewport.fit();
+                    self.with_tool_view(None, |view| view.viewport.fit());
                 }
-                let layout = if cropping {
-                    self.document.crop_edit().and_then(|edit| edit.layout)
-                } else {
-                    None
-                }
-                .or(self.active_canvas().last_layout.map(|(layout, _)| layout));
+                let layout = self.active_canvas().last_layout.map(|(layout, _)| layout);
                 let zoom = layout.map_or("—".into(), |layout| {
                     format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point())
                 });
@@ -461,17 +462,15 @@ impl Editor {
                             !fullscreen
                                 && self.tab == 1
                                 && !dust_session
-                                && !cropping
+                                && hosted.is_none()
                                 && self.active_pick().is_none()
                         }) {
                             ui.separator();
                             ui.small(help);
-                        } else if cropping {
+                        } else if let Some(tool) = &hosted {
                             ui.separator();
-                            ui.small(
-                                "Crop: drag inside to move the image, edges/corners to resize, outside to straighten.",
-                            );
-                            ui.small("Enter applies · Escape cancels");
+                            ui.small(tool.help);
+                            ui.small("Enter: primary action · Escape: dismiss");
                         } else if !fullscreen &&self.document.auto_crop_edit().is_some() {
                             ui.separator();
                             ui.small(
@@ -509,6 +508,12 @@ impl Editor {
                     });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(group) = tool_group {
+                        if let Some(tool) = &hosted {
+                            let actions = group.show_actions(ui, tool.primary, tool.dismiss, warning.as_deref()).inner;
+                            cancel = actions.dismiss.clicked();
+                            apply = actions.primary.is_some_and(|response| response.clicked());
+                            return;
+                        }
                         let actions = if warning.is_some() {
                             group.show_warned(ui, apply_label, warning.as_deref())
                         } else if reviewing {
@@ -540,21 +545,21 @@ impl Editor {
             self.finish_dust_cleanup();
             ui.ctx().request_repaint();
         } else if cancel {
-            if self.document.auto_crop_edit().is_some() {
+            if hosted.is_some() {
+                self.hosted_action(tool::Action::Dismiss);
+            } else if self.document.auto_crop_edit().is_some() {
                 self.finish_auto_crop(false);
             } else if masking {
                 self.finish_mask(false);
-            } else if cropping {
-                self.finish_crop(false);
             } else {
                 self.finish_pick(cx);
             }
             ui.ctx().request_repaint();
         } else if apply {
-            if self.document.auto_crop_edit().is_some() {
+            if hosted.is_some() {
+                self.hosted_action(tool::Action::Primary);
+            } else if self.document.auto_crop_edit().is_some() {
                 self.finish_auto_crop(true);
-            } else if cropping {
-                self.finish_crop(true);
             } else {
                 self.apply_pick(cx);
             }

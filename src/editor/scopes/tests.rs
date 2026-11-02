@@ -738,7 +738,7 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             gpu.status_processing(&image, &input, composed_frame, settings)
                 .is_none()
         );
-        editor.finish_crop(false);
+        editor.hosted_action(tool::Action::Dismiss);
         assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
         prepare(
             frame(&mut editor, egui::vec2(1100., 800.)),

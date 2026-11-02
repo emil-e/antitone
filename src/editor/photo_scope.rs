@@ -4,10 +4,11 @@ use super::{Editor, TaskRequest, WorkingView};
 mod tests;
 
 /// Visit-owned images, readiness, picker projection and repair evaluation.
-/// The document's active-tool owner retires photo-bound interactions on navigation.
+/// Hosted photo interactions end with the visit; legacy ones retire before replacement.
 #[derive(Default)]
 pub(super) struct PhotoScope {
     pub view: u64,
+    pub hosted_tool: super::tool::Slot,
     pub dust: super::dust::Interaction,
     pub working_view: WorkingView,
     pub canvas: super::canvas_view::CanvasView,
@@ -46,6 +47,7 @@ impl Editor {
         if self.document.is_photo_bound() {
             self.cancel_active_tool();
         }
+        let hosted_activity = self.document.visit.hosted_tool.activity(self);
         let activity = self.document.visit.activity();
         let layers = self.document.visit.adjustment_layers.selection_only();
         let working_view = self.document.visit.working_view.for_visit();
@@ -64,10 +66,10 @@ impl Editor {
         };
         // Temporary reference views retire gestures, not the selected layer's identity.
         self.document.visit.adjustment_layers = layers;
-        if let Some(activity) = activity
-            && self.tasks.finish(activity)
-        {
-            self.busy = false;
+        for activity in activity.into_iter().chain(hosted_activity) {
+            if self.tasks.finish(activity) {
+                self.busy = false;
+            }
         }
     }
 }

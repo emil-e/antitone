@@ -1,5 +1,85 @@
 use super::*;
 use crate::geometry::Flips;
+use std::{
+    any::Any,
+    cell::{Ref, RefMut},
+};
+
+impl DocumentScope {
+    pub(in crate::editor) fn crop_edit(&self) -> Option<Ref<'_, CropEdit>> {
+        let tool = self.visit.hosted_tool.installed()?;
+        let crop = (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>()?;
+        Some(crop.edit.as_ref()?.borrow())
+    }
+    pub(in crate::editor) fn crop_edit_mut(&mut self) -> Option<RefMut<'_, CropEdit>> {
+        let tool = self.visit.hosted_tool.installed()?;
+        let crop = (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>()?;
+        Some(crop.edit.as_ref()?.borrow_mut())
+    }
+    pub(in crate::editor) fn set_crop_edit(&mut self, edit: Option<CropEdit>) {
+        if let Some(edit) = edit {
+            self.tool.clear();
+            self.hosted_tool = tool::Slot::Empty;
+            self.visit.hosted_tool =
+                tool::Slot::Installed(Box::new(crop_editor::CropTool::from_edit(edit)));
+        } else {
+            self.clear_crop_edit();
+        }
+    }
+    pub(in crate::editor) fn crop_state(
+        &self,
+    ) -> Option<std::rc::Rc<std::cell::RefCell<CropEdit>>> {
+        let tool = self.visit.hosted_tool.installed()?;
+        (tool as &dyn Any)
+            .downcast_ref::<crop_editor::CropTool>()?
+            .edit
+            .clone()
+    }
+    pub(in crate::editor) fn crop_auto_crop_pending(&self) -> bool {
+        self.visit
+            .hosted_tool
+            .installed()
+            .and_then(|tool| (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>())
+            .is_some_and(crop_editor::CropTool::auto_crop_pending)
+    }
+    pub(in crate::editor) fn crop_viewport_mut(&mut self) -> Option<&mut Viewport> {
+        let tool = self.visit.hosted_tool.installed_mut()?;
+        Some(
+            &mut (tool as &mut dyn Any)
+                .downcast_mut::<crop_editor::CropTool>()?
+                .viewport,
+        )
+    }
+}
+
+impl CropTool {
+    fn auto_crop_pending(&self) -> bool {
+        self.auto_crop_task
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
+    }
+
+    fn from_edit(edit: CropEdit) -> Self {
+        Self {
+            edit: Some(Rc::new(RefCell::new(edit))),
+            ..Default::default()
+        }
+    }
+}
+
+pub(in crate::editor) fn request_auto_crop(
+    photo: SourceId,
+    editor: &mut Editor,
+    cx: &UiContext<'_, Editor>,
+) {
+    editor.with_current_tool(|tool, editor| {
+        let crop = (tool as &mut dyn std::any::Any)
+            .downcast_mut::<CropTool>()
+            .unwrap();
+        crop.request_auto_crop(editor, photo, cx);
+    });
+}
+
 const AREA: Rect = Rect {
     x: 12,
     y: 7,
@@ -12,6 +92,149 @@ const PATCH: Rect = Rect {
     width: 60,
     height: 40,
 };
+
+#[test]
+fn painting_uses_the_pass_frame_even_after_a_different_draft_has_been_staged() {
+    fn paint_pass(h: &mut Harness, layout: CanvasLayout) -> [egui::Pos2; 4] {
+        let mut output = h.context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(layout.canvas),
+                ..Default::default()
+            },
+            |ui| {
+                h.editor.with_current_tool(|tool, _| {
+                    (tool as &mut dyn std::any::Any)
+                        .downcast_mut::<CropTool>()
+                        .unwrap()
+                        .paint(ui, layout);
+                });
+            },
+        );
+        output.textures_delta.clear();
+        let rings: Vec<[egui::Pos2; 4]> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Mesh(mesh) = &shape.shape
+                    && mesh.vertices.len() == 8
+                    && mesh.indices.len() == 24
+                {
+                    Some(std::array::from_fn(|i| mesh.vertices[i].pos))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(
+            rings.len(),
+            1,
+            "fixture must discover the crop shade contour"
+        );
+        rings[0]
+    }
+    let corners = |layout: CanvasLayout| {
+        [
+            layout.image.min,
+            layout.image.right_top(),
+            layout.image.max,
+            layout.image.left_bottom(),
+        ]
+    };
+    let mut h = Harness::new(Default::default(), RollOrientation::default(), None);
+    let pass = h.frame(vec![]);
+    let next = Crop {
+        center: [73., 51.],
+        size: [40, 24],
+        angle: 0.17,
+    };
+    next.coverage().unwrap().bounds(AREA).unwrap();
+    h.editor
+        .document
+        .crop_edit_mut()
+        .unwrap()
+        .install_proposal(next);
+    assert_eq!(paint_pass(&mut h, pass), corners(pass));
+    let next_pass = h.frame(vec![]);
+    assert_ne!(
+        next_pass.image, pass.image,
+        "the next pass must adopt the staged frame"
+    );
+    assert_eq!(paint_pass(&mut h, next_pass), corners(next_pass));
+}
+
+#[test]
+fn configuration_seeds_the_draft_once_without_borrowing_normal_navigation_as_its_own() {
+    fn query(
+        tool: &mut CropTool,
+        viewport: &mut Viewport,
+        composition: Option<Composition>,
+    ) -> (Option<Composition>, Viewport) {
+        let mut view = tool::ViewConfig {
+            viewport,
+            composition,
+            source_outside_frame: false,
+            inset: 0.,
+            constrain_pan: true,
+            fit_once: None,
+            primary_interaction: false,
+            navigation_enabled: true,
+        };
+        tool::Tool::configure(tool, &mut view);
+        (view.composition, *view.viewport)
+    }
+    let base = Composition::with_crop(
+        AREA,
+        RollOrientation {
+            horizontal: true,
+            ..Default::default()
+        },
+        PhotoOrientation {
+            turns: crate::geometry::QuarterTurns::One,
+            ..Default::default()
+        },
+        Some(Crop::from_region(PATCH)),
+    )
+    .unwrap();
+    let mut normal = Viewport::default();
+    normal.zoom = Some(1.75);
+    let before = normal;
+    let mut tool = CropTool::default();
+    assert_eq!(query(&mut tool, &mut normal, None), (None, before));
+    assert!(tool.edit.is_none());
+    assert_eq!(query(&mut tool, &mut normal, Some(base)).0, Some(base));
+    let changed = Crop {
+        size: [42, 28],
+        ..base.crop()
+    };
+    tool.edit.as_ref().unwrap().borrow_mut().draft = changed;
+    tool.viewport.zoom = Some(2.5);
+    for _ in 0..3 {
+        let (composition, selected) = query(&mut tool, &mut normal, Some(base));
+        assert_eq!(composition.unwrap().crop(), changed);
+        assert_eq!(selected.zoom, Some(2.5));
+        assert_eq!(normal, before);
+    }
+}
+
+#[test]
+fn photo_scope_drop_discards_crop_navigation_without_copying_it_into_the_next_visit() {
+    let mut h = Harness::new(Default::default(), RollOrientation::default(), None);
+    h.editor.document.visit.canvas.viewport.zoom = Some(3.5);
+    let normal = h.editor.document.visit.canvas.viewport;
+    h.frame(vec![]);
+    assert_ne!(*h.editor.document.crop_viewport_mut().unwrap(), normal);
+    let project = h.editor.document.state.project.clone();
+    let status = h.editor.status.clone();
+    h.editor.replace_photo_scope(1);
+    assert!(h.editor.document.crop_edit().is_none());
+    assert_eq!(h.editor.document.visit.canvas.viewport, normal);
+    assert!(h.editor.document.visit.crop.is_none());
+    assert_eq!(h.editor.document.state.project, project);
+    assert_eq!(
+        h.editor.status, status,
+        "owner retirement must not simulate Dismiss"
+    );
+}
 
 #[test]
 fn outside_drag_straightens_about_crop_centre_through_reflections_and_turns() {
@@ -160,7 +383,7 @@ fn angle_control_reframing_keeps_magnification_and_screen_pivot() {
     )
     .unwrap();
     reframe_crop(
-        &mut h.editor.document.visit.canvas.viewport,
+        h.editor.document.crop_viewport_mut().unwrap(),
         before,
         next,
         1.,
@@ -434,6 +657,37 @@ fn move_and_resize_drags_keep_their_native_cursors_when_crossing_the_frame() {
 }
 
 #[test]
+fn release_ends_the_owned_crop_drag_even_when_canvas_input_becomes_disabled() {
+    let mut h = Harness::new(Default::default(), RollOrientation::default(), None);
+    let layout = h.frame(vec![]);
+    h.press(layout.image.max, true);
+    let end = layout.image.max - egui::vec2(25., 18.);
+    h.frame(vec![egui::Event::PointerMoved(end)]);
+    assert!(h.editor.document.crop_edit().unwrap().drag.is_some());
+    assert!(
+        !h.editor
+            .with_tool_view(None, |view| view.navigation_enabled)
+    );
+    h.enabled = false;
+    h.press(end, false);
+    assert!(h.editor.document.crop_edit().unwrap().drag.is_none());
+    assert!(
+        h.editor
+            .with_tool_view(None, |view| view.navigation_enabled)
+    );
+    h.enabled = true;
+    let layout = h.frame(vec![]);
+    h.press(layout.image.center(), true);
+    h.frame(vec![egui::Event::PointerMoved(
+        layout.image.center() + egui::vec2(10., 8.),
+    )]);
+    assert!(matches!(
+        h.editor.document.crop_edit().unwrap().drag,
+        Some(CropDrag::Move { .. })
+    ));
+}
+
+#[test]
 fn rotation_cursor_respects_disabled_popup_and_canvas_exit_at_both_scales() {
     for scale in [1., 2.] {
         let mut h = Harness::new(Default::default(), RollOrientation::default(), None);
@@ -517,13 +771,13 @@ impl Harness {
         };
         editor.document.set_crop_edit(Some(CropEdit {
             draft: Crop::from_region(PATCH),
-            viewport: Viewport::default(),
+            base: Composition::new(AREA, roll, editor.document.visit.photo_orientation).unwrap(),
             ratio,
             drag: None,
             layout: None,
             guides: true,
             auto_problem: None,
-            auto_crop_task: None,
+            refit: false,
             reveal_controls: false,
         }));
         Self {
@@ -565,23 +819,33 @@ impl Harness {
                             Some(self.editor.document.crop_edit().unwrap().draft),
                         )
                         .unwrap();
-                        let mut layout = self.editor.document.visit.canvas.viewport.layout_crop(
-                            canvas.shrink(20.),
-                            composition,
-                            ui.ctx().pixels_per_point(),
-                        );
+                        let mut layout = self
+                            .editor
+                            .document
+                            .crop_viewport_mut()
+                            .unwrap()
+                            .layout_crop(
+                                canvas.shrink(20.),
+                                composition,
+                                ui.ctx().pixels_per_point(),
+                            );
                         layout.canvas = canvas;
                         let input_allowed = self.editor.canvas_input_allowed(ui, canvas);
-                        let layout = if input_allowed {
-                            self.editor.crop_interaction(ui, &response, layout)
-                        } else {
-                            layout
-                        };
-                        self.editor.paint_crop(ui, layout);
-                        if input_allowed {
-                            self.editor.crop_rotation_cursor(ui, &response, layout);
-                        }
-                        result = Some(layout);
+                        self.editor.with_current_tool(|tool, editor| {
+                            let tool = (tool as &mut dyn std::any::Any)
+                                .downcast_mut::<CropTool>()
+                                .unwrap();
+                            let layout = ui
+                                .add_enabled_ui(input_allowed, |ui| {
+                                    tool.interact(ui, &response, layout, &mut editor.status)
+                                })
+                                .inner;
+                            tool.paint(ui, layout);
+                            if input_allowed {
+                                tool.rotation_cursor(ui, &response, layout);
+                            }
+                            result = Some(layout);
+                        });
                     });
             },
         );

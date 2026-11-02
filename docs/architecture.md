@@ -65,7 +65,7 @@ The [host](../src/platform/host.rs) owns the UI thread. [Application tasks](../s
 
 ### Scopes: nested, disposable UI state
 
-The [document](../src/editor/document_scope.rs), [photo visit](../src/editor/photo_scope.rs) and [grade](../src/editor/grade_scope.rs) own accepted state/retention, visit-bound interaction and effective-image demand respectively. The [tool owner](../src/editor/tool.rs) contains the unfinished interaction; replacement retires it without discarding accepted edits. Document-owned interactions can span photo visits. [Editor](editor.md#accepted-state-and-drafts) describes their actual admission and navigation behavior.
+The [document](../src/editor/document_scope.rs), [photo visit](../src/editor/photo_scope.rs) and [grade](../src/editor/grade_scope.rs) own accepted state/retention, visit-bound interaction and effective-image demand respectively. The [tool host](../src/editor/tool.rs) keeps unfinished interactions exclusive; replacement retires them without discarding accepted edits. Document-owned interactions can span photo visits. [Editor](editor.md#accepted-state-and-drafts) describes their actual admission and navigation behavior.
 
 ### Services and workers
 

@@ -416,6 +416,12 @@ impl Composition {
         self.crop
     }
 
+    /// Replace framing while preserving the source and exact orientation.
+    pub fn cropped(self, crop: Crop) -> Result<Self, Error> {
+        crop.region(self.area())?;
+        Ok(Self { crop, ..self })
+    }
+
     pub fn is_exact(self) -> bool {
         self.crop.angle == 0.
     }

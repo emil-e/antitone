@@ -10,38 +10,31 @@ pub(in crate::editor) struct Operation {
     pub apply: Option<oneshot::Sender<Draft>>,
 }
 
-impl Editor {
-    pub(in crate::editor) fn propose_photo_crop(
-        &mut self,
-        photo: SourceId,
-        cx: &UiContext<'_, Self>,
-    ) {
-        if self.busy
-            || self.document.crop_edit().is_none()
-            || self.document.visit.canvas.ready.is_none()
-            || self.document.visit.current_source != Some(photo)
-        {
+pub(in crate::editor) fn propose_photo_crop(
+    editor: &mut Editor,
+    photo: SourceId,
+    state: std::rc::Rc<std::cell::RefCell<CropEdit>>,
+    cx: &UiContext<'_, Editor>,
+) -> Option<async_executor::Task<()>> {
+    if editor.busy
+        || editor.document.visit.canvas.ready.is_none()
+        || editor.document.visit.current_source != Some(photo)
+    {
+        return None;
+    }
+    editor.sync_document();
+    let regions = editor.prepare_regions(cx)?;
+    cx.spawn(move |cx| async move {
+        if regions.await.is_none() {
             return;
         }
-        let Some(regions) = self.prepare_regions(cx) else {
-            return;
-        };
-        let task = cx.spawn(move |cx| async move {
-            let prepared = regions.await;
-            cx.update(|editor| {
-                editor
-                    .document
-                    .crop_edit_mut()
-                    .expect("live Crop action")
-                    .auto_crop_task = None;
-                if prepared.is_some() {
-                    editor.auto_crop_photo(photo);
-                }
-            });
-        });
-        self.document.crop_edit_mut().unwrap().auto_crop_task = task;
-    }
+        let result = cx.read(|editor| editor.photo_crop_proposal(photo));
+        let status = finish_photo_proposal(&mut state.borrow_mut(), result);
+        cx.update(|editor| editor.status = status);
+    })
+}
 
+impl Editor {
     pub(in crate::editor) fn review_crop_proposals(
         &mut self,
         photos: Vec<SourceId>,

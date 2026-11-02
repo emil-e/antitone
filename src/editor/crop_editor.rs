@@ -1,18 +1,42 @@
 use super::*;
 use crate::{geometry::FramePoint, viewport::CanvasLayout};
+use std::{cell::RefCell, rc::Rc};
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
+
+#[derive(Default)]
+pub(super) struct CropTool {
+    edit: Option<Rc<RefCell<CropEdit>>>,
+    viewport: Viewport,
+    auto_crop_task: Option<async_executor::Task<()>>,
+}
+
+impl CropTool {
+    fn request_auto_crop(
+        &mut self,
+        editor: &mut Editor,
+        photo: SourceId,
+        cx: &UiContext<'_, Editor>,
+    ) {
+        let Some(state) = self.edit.clone() else {
+            return;
+        };
+        if let Some(task) = auto_crop::propose_photo_crop(editor, photo, state, cx) {
+            self.auto_crop_task = Some(task);
+        }
+    }
+}
 
 pub(super) struct CropEdit {
     pub draft: Crop,
-    viewport: Viewport,
+    base: Composition,
     ratio: Option<f64>,
     drag: Option<CropDrag>,
     pub(super) layout: Option<CanvasLayout>,
     pub(super) guides: bool,
     pub(super) auto_problem: Option<String>,
-    pub(super) auto_crop_task: Option<async_executor::Task<()>>,
+    refit: bool,
     reveal_controls: bool,
 }
 
@@ -97,291 +121,36 @@ fn reframe_crop(
     viewport.reframe(layout, next, pixels_per_point);
 }
 
-pub(super) enum ToolAction {
-    TurnLeft,
-    TurnRight,
-    FlipHorizontal,
-    FlipVertical,
-    Crop,
-    Dust,
-}
-
 impl Editor {
     pub(super) fn begin_crop(&mut self) {
-        if !self.prepare_tool() {
-            return;
+        if self.document.visit.canvas.ready.is_some()
+            && self.activate_tool(tool::Placement::Photo, Box::<CropTool>::default())
+        {
+            self.status = "Crop draft; changes are not applied".into();
         }
-        let Some(area) = self
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .map(|ready| ready.area)
-        else {
-            return;
-        };
-        self.finish_adjustment_layer_interaction();
-        self.document.set_crop_edit(Some(CropEdit {
-            draft: self.document.visit.crop.unwrap_or(Crop::from_region(area)),
-            viewport: self.document.visit.canvas.viewport,
-            ratio: None,
-            drag: None,
-            layout: None,
-            guides: true,
-            auto_problem: None,
-            auto_crop_task: None,
-            reveal_controls: true,
-        }));
-        self.document.visit.canvas.viewport.fit();
-        self.document.visit.canvas.last_layout = None;
-        self.invalidate_original();
-        self.status = "Crop draft; changes are not applied".into();
     }
+}
 
-    pub(super) fn initialize_crop_frame(&mut self, crop: Crop) {
-        let edit = self
-            .document
-            .crop_edit_mut()
-            .expect("crop initialization retains its tool");
-        edit.draft = crop;
-        edit.ratio = None;
-        edit.layout = None;
-        self.document.visit.canvas.viewport.fit();
-        self.document.visit.canvas.last_layout = None;
-        self.invalidate_original();
+impl CropEdit {
+    pub(super) fn install_proposal(&mut self, crop: Crop) {
+        self.draft = crop;
+        self.ratio = None;
+        self.layout = None;
+        self.refit = true;
     }
+}
 
-    pub(super) fn finish_crop(&mut self, apply: bool) {
-        let Some(edit) = self.document.take_crop_edit() else {
-            return;
-        };
-        if apply {
-            let before = self.history_snapshot();
-            let active = self
-                .document
-                .visit
-                .canvas
-                .ready
-                .as_ref()
-                .expect("crop retains its source")
-                .area;
-            edit.draft
-                .region(active)
-                .expect("crop draft is constrained");
-            self.document.visit.crop =
-                (edit.draft != Crop::from_region(active)).then_some(edit.draft);
-            self.document.visit.canvas.viewport.fit();
-            self.status = "Crop applied".into();
-            self.record_edit(before, "Crop", self.document.visit.current_source);
-        } else {
-            self.document.visit.canvas.viewport = edit.viewport;
-            self.status = "Crop cancelled; composition unchanged".into();
-        }
-        self.document.visit.canvas.last_layout = None;
-        self.invalidate_original();
-    }
-
-    pub(super) fn photo_tool_shelf(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+impl CropTool {
+    fn controls(&mut self, ui: &mut egui::Ui, reset: bool, status: &mut String) {
         use icons::Icon;
-        use presentation::{ToolButton, ToolShelf};
-
-        let cropping = self.document.crop_edit().is_some();
-        let dusting = self.document.dust().is_some();
-        let auto_cropping = self.document.auto_crop_edit().is_some();
-        let tool_active = self.tool_interacting();
-        let ready = !self.busy && self.document.visit.canvas.ready.is_some();
-        let commands_enabled = ready && !tool_active && self.active_pick().is_none();
-        let tool_ready = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
-        let crop_enabled = cropping || auto_cropping || tool_ready;
-        let dust_enabled = dusting || tool_ready && self.document.input.ready();
-        let repairs_changed = self
-            .document
-            .visit
-            .current_source
-            .and_then(|source| self.dust_repairs(source))
-            .is_some_and(|set| !set.repairs().is_empty());
-        let mut action = None;
-
-        use ToolAction as Action;
-
-        ToolShelf::show(ui, |ui| {
-            for (candidate, button) in [
-                (
-                    Action::TurnLeft,
-                    ToolButton::command(
-                        Icon::TurnLeft,
-                        "Turn left",
-                        "Turn the displayed photo 90° left.",
-                    ),
-                ),
-                (
-                    Action::TurnRight,
-                    ToolButton::command(
-                        Icon::TurnRight,
-                        "Turn right",
-                        "Turn the displayed photo 90° right.",
-                    ),
-                ),
-                (
-                    Action::FlipHorizontal,
-                    ToolButton::command(
-                        Icon::FlipHorizontal,
-                        "Flip horizontal",
-                        "Flip the displayed photo left/right.",
-                    ),
-                ),
-                (
-                    Action::FlipVertical,
-                    ToolButton::command(
-                        Icon::FlipVertical,
-                        "Flip vertical",
-                        "Flip the displayed photo top/bottom.",
-                    ),
-                ),
-            ] {
-                if button.enabled(commands_enabled).show(ui).clicked() {
-                    action = Some(candidate);
-                }
-            }
-            ui.separator();
-            if ToolButton::tool(
-                Icon::Crop,
-                "Crop & straighten",
-                if cropping || auto_cropping {
-                    "Exit crop without applying the draft."
-                } else {
-                    "Edit this photo's crop and straighten."
-                },
-                cropping || auto_cropping,
-            )
-            .enabled(crop_enabled)
-            .changed(self.document.visit.crop.is_some())
-            .show(ui)
-            .clicked()
-            {
-                action = Some(Action::Crop);
-            }
-            if ToolButton::tool(
-                Icon::Dust,
-                "Dust repair",
-                if dusting {
-                    "Finish dust cleanup."
-                } else {
-                    "Open continuing dust cleanup for this photo."
-                },
-                dusting,
-            )
-            .enabled(dust_enabled)
-            .changed(repairs_changed)
-            .show(ui)
-            .clicked()
-            {
-                action = Some(Action::Dust);
-            }
-        });
-
-        if let Some(action) = action {
-            self.control_command(editing::Command::Photo(action), cx);
-        }
-    }
-
-    pub(super) fn apply_photo_tool_action(&mut self, action: ToolAction) {
-        let before = self.history_snapshot();
-        let orientation = self.document.visit.photo_orientation;
-        match action {
-            ToolAction::TurnLeft => self
-                .document
-                .visit
-                .photo_orientation
-                .turn_counterclockwise(),
-            ToolAction::TurnRight => self.document.visit.photo_orientation.turn_clockwise(),
-            ToolAction::FlipHorizontal => {
-                self.document.visit.photo_orientation.flips.horizontal ^= true
-            }
-            ToolAction::FlipVertical => {
-                self.document.visit.photo_orientation.flips.vertical ^= true
-            }
-            ToolAction::Crop => {
-                if self.document.auto_crop_edit().is_some() {
-                    self.finish_auto_crop(false);
-                } else if self.document.crop_edit().is_some() {
-                    self.cancel_active_tool();
-                } else {
-                    self.begin_crop();
-                }
-            }
-            ToolAction::Dust => {
-                if self.document.dust().is_some() {
-                    self.finish_dust_cleanup();
-                } else {
-                    self.begin_dust_cleanup();
-                }
-            }
-        }
-        if orientation != self.document.visit.photo_orientation {
-            self.document.visit.canvas.viewport.fit();
-        }
-        self.record_edit(
-            before,
-            "Photo orientation",
-            self.document.visit.current_source,
-        );
-    }
-
-    pub(super) fn crop_controls(&mut self, ui: &mut egui::Ui) {
-        if let Some(edit) = self.document.crop_edit_mut() {
-            if std::mem::take(&mut edit.reveal_controls) {
-                ui.scroll_to_cursor(Some(egui::Align::Min));
-            }
-            ui.add_enabled_ui(!self.busy, |ui| {
-                controls::active_tool(
-                    ui,
-                    icons::Icon::Crop,
-                    "Crop & straighten",
-                    Some(true),
-                    |ui, reset| {
-                        let photo = self.document.visit.current_source;
-                        if presentation::TextAction::new("Auto-crop")
-                            .enabled(photo.is_some() && self.document.visit.canvas.ready.is_some())
-                            .show(ui)
-                            .clicked()
-                        {
-                            self.document.auto_crop_requested = photo.map(auto_crop::Action::Photo);
-                        }
-                        self.crop_tool_controls(ui, reset);
-                    },
-                );
-            });
-        }
-    }
-
-    pub(super) fn crop_tool_controls(&mut self, ui: &mut egui::Ui, reset: bool) {
-        use icons::Icon;
-        let Some(tool::Tool::Crop(edit)) = &mut self.document.tool else {
-            panic!("crop controls require the active Crop tool");
+        let Some(state) = &self.edit else {
+            return;
         };
-        let area = self
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .expect("crop retains its source")
-            .area;
-        let full = Composition::new(
-            area,
-            self.document.roll_orientation,
-            self.document.visit.photo_orientation,
-        )
-        .unwrap();
-        let composition = Composition::with_crop(
-            area,
-            self.document.roll_orientation,
-            self.document.visit.photo_orientation,
-            Some(edit.draft),
-        )
-        .unwrap();
+        let mut edit = state.borrow_mut();
+        let viewport = &mut self.viewport;
+        let area = edit.base.area();
+        let full = edit.base.cropped(Crop::from_region(area)).unwrap();
+        let composition = edit.base.cropped(edit.draft).unwrap();
         let previous = edit.draft;
         let size = composition.size();
         let previous_ratio = edit.ratio;
@@ -492,26 +261,20 @@ impl Editor {
             };
             match edit.draft.straightened(area, angle) {
                 Ok(crop) => edit.draft = crop,
-                Err(error) => self.status = format!("Straighten rejected: {error}"),
+                Err(error) => *status = format!("Straighten rejected: {error}"),
             }
         }
         if reset {
             edit.draft = Crop::from_region(area);
             edit.ratio = None;
             edit.drag = None;
-            self.document.visit.canvas.viewport.fit();
+            viewport.fit();
         } else if edit.draft != previous {
             edit.drag = None;
             if let Some(layout) = edit.layout {
-                let next = Composition::with_crop(
-                    area,
-                    self.document.roll_orientation,
-                    self.document.visit.photo_orientation,
-                    Some(edit.draft),
-                )
-                .unwrap();
+                let next = edit.base.cropped(edit.draft).unwrap();
                 reframe_crop(
-                    &mut self.document.visit.canvas.viewport,
+                    viewport,
                     layout,
                     next,
                     ui.ctx().pixels_per_point(),
@@ -519,17 +282,30 @@ impl Editor {
                 );
             }
         }
+        if edit.draft != previous {
+            ui.ctx().request_repaint();
+        }
     }
 
-    pub(super) fn crop_interaction(
+    fn interact(
         &mut self,
         ui: &egui::Ui,
         response: &egui::Response,
         mut layout: CanvasLayout,
+        status: &mut String,
     ) -> CanvasLayout {
-        let Some(tool::Tool::Crop(edit)) = &mut self.document.tool else {
+        let Some(state) = &self.edit else {
             return layout;
         };
+        let mut edit = state.borrow_mut();
+        let viewport = &mut self.viewport;
+        // Disabled widgets may not receive drag_stopped; physical release still
+        // ends the owned gesture before gating new canvas interaction.
+        if response.drag_stopped_by(egui::PointerButton::Primary)
+            || !ui.input(|input| input.pointer.primary_down())
+        {
+            edit.drag = None;
+        }
         if !ui.is_enabled() {
             return layout;
         }
@@ -649,15 +425,7 @@ impl Editor {
                         Ok(crop) => {
                             edit.draft = crop;
                             let size = original.composition.size().map(|v| v as f32);
-                            let next = Composition::with_crop(
-                                original.composition.area(),
-                                self.document.roll_orientation,
-                                self.document.visit.photo_orientation,
-                                Some(crop),
-                            )
-                            .unwrap()
-                            .size()
-                            .map(|v| v as f32);
+                            let next = edit.base.cropped(crop).unwrap().size().map(|v| v as f32);
                             // Coverage may shrink, but the straighten pivot stays at the frame centre.
                             layout.image = egui::Rect::from_center_size(
                                 original.image.center(),
@@ -666,21 +434,13 @@ impl Editor {
                             );
                             layout.scale = original.scale;
                         }
-                        Err(error) => self.status = format!("Straighten rejected: {error}"),
+                        Err(error) => *status = format!("Straighten rejected: {error}"),
                     }
                 }
             }
-            layout.composition = Composition::with_crop(
-                layout.composition.area(),
-                self.document.roll_orientation,
-                self.document.visit.photo_orientation,
-                Some(edit.draft),
-            )
-            .unwrap();
+            layout.composition = edit.base.cropped(edit.draft).unwrap();
+            ui.ctx().request_repaint();
             layout.area = layout.composition.region();
-        }
-        if response.drag_stopped_by(egui::PointerButton::Primary) {
-            edit.drag = None;
         }
         if response.hovered() || response.dragged() {
             // On release, describe the next gesture at the updated frame.
@@ -713,27 +473,19 @@ impl Editor {
             ui.ctx().set_cursor_icon(cursor);
         }
         // The painted layout is the editing viewport: retain it, not a new Fit of the crop.
-        self.document.visit.canvas.viewport.reframe(
-            layout,
-            layout.composition,
-            ui.ctx().pixels_per_point(),
-        );
+        viewport.reframe(layout, layout.composition, ui.ctx().pixels_per_point());
         edit.layout = Some(layout);
         layout
     }
 
-    pub(super) fn crop_rotation_cursor(
-        &self,
-        ui: &egui::Ui,
-        response: &egui::Response,
-        layout: CanvasLayout,
-    ) {
+    fn rotation_cursor(&self, ui: &egui::Ui, response: &egui::Response, layout: CanvasLayout) {
         if !ui.is_enabled() || !response.enabled() {
             return;
         }
-        let Some(edit) = &self.document.crop_edit() else {
+        let Some(state) = &self.edit else {
             return;
         };
+        let edit = state.borrow();
         let position = match edit.drag {
             Some(CropDrag::Straighten {
                 layout: original, ..
@@ -757,19 +509,141 @@ impl Editor {
         ui.ctx().set_cursor_image(Some(image));
     }
 
-    pub(super) fn paint_crop(&self, ui: &egui::Ui, layout: CanvasLayout) {
-        paint_outline(
-            ui,
-            layout.canvas,
-            [
-                layout.image.min,
-                layout.image.right_top(),
-                layout.image.max,
-                layout.image.left_bottom(),
-            ],
-            self.document.crop_edit().is_some_and(|e| e.guides),
-            160,
+    fn paint(&self, ui: &egui::Ui, layout: CanvasLayout) {
+        let Some(state) = &self.edit else {
+            return;
+        };
+        let corners = [
+            layout.image.min,
+            layout.image.right_top(),
+            layout.image.max,
+            layout.image.left_bottom(),
+        ];
+        paint_outline(ui, layout.canvas, corners, state.borrow().guides, 160);
+    }
+}
+
+impl tool::Tool for CropTool {
+    fn presentation(&self) -> tool::Presentation {
+        tool::Presentation {
+            identity: presentation::ToolIdentity {
+                icon: icons::Icon::Crop,
+                title: "Crop",
+            },
+            drawer: Some(presentation::ToolDrawer {
+                identity: presentation::ToolIdentity {
+                    icon: icons::Icon::Crop,
+                    title: "Crop & straighten",
+                },
+                reset: Some(true),
+                reset_help: "Reset crop and angle.",
+                reveal: self
+                    .edit
+                    .as_ref()
+                    .is_some_and(|edit| edit.borrow().reveal_controls),
+            }),
+            primary: Some("Apply"),
+            dismiss: "Cancel",
+            warning: self
+                .edit
+                .as_ref()
+                .and_then(|edit| edit.borrow().auto_problem.clone()),
+            help: "Crop: drag inside to move the image, edges/corners to resize, outside to straighten.",
+        }
+    }
+    fn activity(&self, editor: &Editor) -> Option<TaskRequest> {
+        self.auto_crop_task
+            .as_ref()
+            .filter(|task| !task.is_finished())?;
+        editor
+            .document
+            .spatial_preparing
+            .as_ref()
+            .map(|work| TaskRequest::Regions(work.id))
+    }
+    fn configure<'a>(&'a mut self, view: &mut tool::ViewConfig<'a>) {
+        if let Some(base) = view.composition {
+            let edit = self.edit.get_or_insert_with(|| {
+                Rc::new(RefCell::new(CropEdit {
+                    draft: base.crop(),
+                    base,
+                    ratio: None,
+                    drag: None,
+                    layout: None,
+                    guides: true,
+                    auto_problem: None,
+                    refit: false,
+                    reveal_controls: true,
+                }))
+            });
+            edit.borrow_mut().base = base;
+        }
+        let Some(edit) = &self.edit else {
+            return;
+        };
+        let mut edit = edit.borrow_mut();
+        if std::mem::take(&mut edit.refit) {
+            self.viewport.fit();
+        }
+        view.composition = Some(edit.base.cropped(edit.draft).expect("valid Crop draft"));
+        view.viewport = &mut self.viewport;
+        view.source_outside_frame = true;
+        view.inset = 20.;
+        view.constrain_pan = false;
+        view.fit_once = Some(Coverage::rectangle(edit.base.area()));
+        view.primary_interaction = true;
+        view.navigation_enabled = edit.drag.is_none();
+    }
+    fn drawer(
+        &mut self,
+        ui: &mut egui::Ui,
+        reset: bool,
+        editor: &mut Editor,
+        cx: &UiContext<'_, Editor>,
+    ) {
+        let Some(state) = &self.edit else {
+            return;
+        };
+        state.borrow_mut().reveal_controls = false;
+        let propose = presentation::TextAction::new("Auto-crop")
+            .show(ui)
+            .clicked();
+        self.controls(ui, reset, &mut editor.status);
+        if propose && let Some(photo) = editor.document.visit.current_source {
+            self.request_auto_crop(editor, photo, cx);
+        }
+    }
+    fn canvas(&mut self, canvas: &mut tool::Canvas<'_>, editor: &mut Editor) {
+        let layout = self.interact(
+            canvas.ui,
+            canvas.response,
+            canvas.layout,
+            &mut editor.status,
         );
+        self.rotation_cursor(canvas.ui, canvas.response, layout);
+        // Match the image's frame snapshot; interaction has already staged the next view.
+        self.paint(canvas.ui, canvas.layout);
+    }
+    fn action(&mut self, action: tool::Action, editor: &mut Editor) {
+        match action {
+            tool::Action::Primary => {
+                let Some(edit) = &self.edit else {
+                    return;
+                };
+                let draft = edit.borrow().draft;
+                match editor.accept_crop(draft) {
+                    Ok(()) => {
+                        editor.status = "Crop applied".into();
+                        editor.end_tool();
+                    }
+                    Err(error) => editor.status = format!("Crop rejected: {error}"),
+                }
+            }
+            tool::Action::Dismiss => {
+                editor.status = "Crop cancelled; composition unchanged".into();
+                editor.end_tool();
+            }
+        }
     }
 }
 

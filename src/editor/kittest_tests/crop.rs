@@ -1,6 +1,8 @@
 use super::*;
 use glam::DMat3;
 
+mod stability;
+
 fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell<FloatCapture>) {
     harness.event(egui::Event::PointerGone);
     harness.step();
@@ -80,6 +82,188 @@ fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell
         checked >= 2,
         "fixture must expose multiple distinguishable patches, got {checked}"
     );
+}
+
+#[test]
+fn crop_owned_view_retires_without_accepting_drafts_or_overwriting_normal_navigation() {
+    editor_harness(|mut h, _| {
+        h.update(|editor| {
+            editor.document.input = crate::processing::InputSettings::Digital;
+            editor.sync_document();
+        });
+        h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
+        wait_for(&mut h, |editor| {
+            !editor.busy && editor.document.visit.canvas.ready.is_some()
+        });
+        stage(&mut h, "Photo");
+        for exit in ["Cancel", "Dust repair", "Escape while dragging"] {
+            h.get_by_label("patches.dng").click();
+            h.step();
+            wait_for(&mut h, |editor| {
+                !editor.busy && editor.document.visit.canvas.ready.is_some()
+            });
+            h.update(|editor| {
+                let (layout, density) = editor.active_canvas().last_layout.unwrap();
+                let viewport = &mut editor.document.visit.canvas.viewport;
+                viewport.zoom_at(
+                    layout,
+                    density,
+                    layout.scale * density * 2.,
+                    layout.canvas.center(),
+                );
+                let layout =
+                    viewport.layout_composition(layout.canvas, layout.composition, density);
+                viewport.pan(layout, density, egui::vec2(35., -20.));
+                editor.sync_document();
+            });
+            h.step();
+            let (normal, project, undo) = h.read(|editor| {
+                (
+                    editor.document.visit.canvas.viewport,
+                    editor.document.state.project.clone(),
+                    editor
+                        .history_label(super::super::history::Direction::Undo)
+                        .map(str::to_owned),
+                )
+            });
+            assert!(normal.zoom.is_some());
+            h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+                .click();
+            h.step();
+            wait_for(&mut h, |editor| {
+                editor
+                    .document
+                    .crop_edit()
+                    .is_some_and(|edit| edit.layout.is_some())
+            });
+            let initial = h.read(|editor| editor.document.crop_edit().unwrap().layout.unwrap());
+            let end = initial.image.min + egui::vec2(25., 18.);
+            if exit == "Escape while dragging" {
+                h.hover_at(initial.image.min);
+                h.event(egui::Event::PointerButton {
+                    pos: initial.image.min,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                h.step();
+                h.hover_at(end);
+                h.step();
+            } else {
+                drag(&mut h, initial.image.min, end);
+            }
+            h.read(|editor| {
+                assert_ne!(
+                    editor.document.crop_edit().unwrap().draft,
+                    initial.composition.crop()
+                );
+                assert_eq!(editor.document.visit.canvas.viewport, normal);
+            });
+            h.update(|editor| {
+                let selected = editor.with_tool_view(None, |view| *view.viewport);
+                assert_ne!(
+                    selected, normal,
+                    "fixture must distinguish temporary from normal view"
+                );
+            });
+            if exit == "Cancel" && std::env::var_os("ANTITONE_UI_CAPTURE").is_some() {
+                h.event(egui::Event::PointerGone);
+                h.step();
+                save_capture(&h.render().unwrap(), "crop-tool");
+            }
+            if exit == "Escape while dragging" {
+                h.key_press(egui::Key::Escape);
+                h.step();
+                h.hover_at(end + egui::vec2(55., 32.));
+            } else {
+                let control = h.get_by_label(exit);
+                assert!(!control.accesskit_node().is_disabled());
+                control.click();
+            }
+            h.step();
+            wait_for(&mut h, |editor| {
+                !editor.busy
+                    && editor.document.crop_edit().is_none()
+                    && editor.document.visit.canvas.ready.is_some()
+            });
+            h.read(|editor| {
+                assert_eq!(editor.document.state.project, project);
+                assert_eq!(
+                    editor
+                        .history_label(super::super::history::Direction::Undo)
+                        .map(str::to_owned),
+                    undo
+                );
+                assert_eq!(editor.document.visit.canvas.viewport, normal);
+                let (layout, _) = editor.active_canvas().last_layout.unwrap();
+                assert_eq!(
+                    layout.composition.crop(),
+                    Crop::from_region(layout.composition.area())
+                );
+            });
+            if exit == "Escape while dragging" {
+                h.event(egui::Event::PointerButton {
+                    pos: end + egui::vec2(55., 32.),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                h.step();
+                let center = h.read(|editor| {
+                    editor
+                        .active_canvas()
+                        .last_layout
+                        .unwrap()
+                        .0
+                        .canvas
+                        .center()
+                });
+                drag(&mut h, center, center + egui::vec2(20., 12.));
+                h.read(|editor| {
+                    assert_ne!(
+                        editor.document.visit.canvas.viewport, normal,
+                        "a fresh normal-view drag must still pan"
+                    )
+                });
+            } else if exit == "Dust repair" {
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Done")
+                    .click();
+                h.step();
+            }
+        }
+        // Positive control: acceptance is still a real edit with a working undo path.
+        h.get_by_label("patches.dng").click();
+        h.step();
+        wait_for(&mut h, |editor| {
+            !editor.busy && editor.document.visit.canvas.ready.is_some()
+        });
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
+            .click();
+        h.step();
+        wait_for(&mut h, |editor| {
+            editor
+                .document
+                .crop_edit()
+                .is_some_and(|edit| edit.layout.is_some())
+        });
+        let initial = h.read(|editor| editor.document.crop_edit().unwrap().layout.unwrap());
+        drag(
+            &mut h,
+            initial.image.min,
+            initial.image.min + egui::vec2(25., 18.),
+        );
+        let draft = h.read(|editor| editor.document.crop_edit().unwrap().draft);
+        h.get_by_label("Apply").click();
+        h.step();
+        h.read(|editor| {
+            assert_eq!(editor.document.visit.crop, Some(draft));
+            assert!(editor.document.crop_edit().is_none());
+        });
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        h.step();
+        wait_for(&mut h, |editor| !editor.busy);
+        h.read(|editor| assert!(editor.document.visit.crop.is_none()));
+    });
 }
 
 #[test]
@@ -365,22 +549,21 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
             harness.update(|editor| {
                 let layout = editor.document.crop_edit().unwrap().layout.unwrap();
                 let density = 1.;
-                editor.document.visit.canvas.viewport.zoom_at(
-                    layout,
-                    density,
-                    layout.scale * 1.8,
-                    layout.image.center(),
-                );
+                editor.with_tool_view(None, |view| {
+                    view.viewport.zoom_at(
+                        layout,
+                        density,
+                        layout.scale * 1.8,
+                        layout.image.center(),
+                    )
+                });
             });
             harness.step();
             harness.update(|editor| {
                 let layout = editor.document.crop_edit().unwrap().layout.unwrap();
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .viewport
-                    .pan(layout, 1., egui::vec2(65., -35.));
+                editor.with_tool_view(None, |view| {
+                    view.viewport.pan(layout, 1., egui::vec2(65., -35.))
+                });
             });
             harness.step();
             assert_crop_patch_pixels(&mut harness, &capture);

@@ -807,7 +807,7 @@ impl Editor {
         if self.busy
             && self.document_pending.is_none()
             && self.active_pick().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.flat_edit().is_none()
         {
             let mut mailbox = self.document.visit.working_view.mailbox.0.lock().unwrap();
@@ -857,7 +857,7 @@ impl Editor {
 
         if input.repairs.0.is_empty()
             && (self.active_pick().is_some()
-                || self.document.crop_edit().is_some()
+                || self.fullscreen.is_none() && self.cropping()
                 || self.document.flat_edit().is_some())
         {
             self.document.visit.working_view.clear();

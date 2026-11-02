@@ -90,10 +90,29 @@ impl Viewport {
         composition: Composition,
         pixels_per_point: f32,
     ) -> CanvasLayout {
-        if self.zoom.is_none() {
-            let corners = Coverage::rectangle(composition.area())
-                .corners()
-                .map(|p| composition.source_to_frame(p));
+        self.layout_fitted(
+            canvas,
+            composition,
+            pixels_per_point,
+            Some(Coverage::rectangle(composition.area())),
+            false,
+        )
+    }
+
+    /// An explicit fit region establishes magnification once per Fit request;
+    /// later composition changes retain that scale. Pan constraints are independent.
+    pub fn layout_fitted(
+        &mut self,
+        canvas: egui::Rect,
+        composition: Composition,
+        pixels_per_point: f32,
+        fit_once: Option<Coverage>,
+        constrain_pan: bool,
+    ) -> CanvasLayout {
+        if self.zoom.is_none()
+            && let Some(fit) = fit_once
+        {
+            let corners = fit.corners().map(|p| composition.source_to_frame(p));
             let min: [f64; 2] = std::array::from_fn(|i| {
                 corners.iter().map(|p| p.0[i]).fold(f64::INFINITY, f64::min)
             });
@@ -108,7 +127,9 @@ impl Viewport {
             self.zoom = Some(scale * pixels_per_point);
             self.center = Some(FramePoint(std::array::from_fn(|i| (min[i] + max[i]) * 0.5)));
         }
-        self.preserve_anchor = true;
+        if !constrain_pan {
+            self.preserve_anchor = true;
+        }
         self.layout_composition(canvas, composition, pixels_per_point)
     }
 

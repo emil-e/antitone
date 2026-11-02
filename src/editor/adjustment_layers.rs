@@ -205,7 +205,7 @@ impl Editor {
         !self.busy
             && self.document.input.ready()
             && self.active_pick().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.mask_edit().is_none()
@@ -454,7 +454,7 @@ impl Editor {
         self.tab == 1
             && !self.document.dust().is_some()
             && self.active_pick().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.mask_edit().is_none()

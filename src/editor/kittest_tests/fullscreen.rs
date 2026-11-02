@@ -178,7 +178,8 @@ fn fullscreen_shortcuts_respect_numeric_popup_and_tool_ownership() {
         let draft = tools::crop_draft(&mut harness);
         let project = harness.read(|editor| editor.document.state.project.clone());
         key(&mut harness, egui::Key::F);
-        harness.run();
+        // Normal fullscreen rendering acquires real GPU work, not virtual UI time.
+        harness.try_run_realtime().unwrap();
         reveal(&mut harness);
         harness.read(|editor| assert!(editor.fullscreen.is_some()));
         assert!(harness.query_by_label("Apply").is_none());
@@ -194,7 +195,7 @@ fn fullscreen_shortcuts_respect_numeric_popup_and_tool_ownership() {
         key(&mut harness, egui::Key::Escape);
         native(&mut harness, false);
         harness.update(|editor| editor.fullscreen_changed(false));
-        harness.run();
+        harness.try_run_realtime().unwrap();
         harness.read(|editor| assert!(editor.fullscreen.is_none()));
         harness.read(|editor| assert_eq!(editor.document.crop_edit().unwrap().draft, draft));
         harness.read(|editor| assert_eq!(editor.document.state.project, project));

@@ -301,7 +301,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 );
                 assert_eq!(editor.document.state.project, before);
                 editor.busy = false;
-                editor.finish_crop(false);
+                editor.hosted_action(tool::Action::Dismiss);
                 editor.document.set_flat_edit(None);
                 editor.document.visit.picking.display = None;
                 frame(editor, &context, vec![], cx);

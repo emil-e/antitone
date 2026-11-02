@@ -88,7 +88,7 @@ impl Editor {
             && !self.application_modal()
             && self.active_pick().is_none()
             && self.document.auto_crop_edit().is_none()
-            && self.document.crop_edit().is_none()
+            && !self.cropping()
             && self.document.mask_edit().is_none()
     }
 
@@ -290,7 +290,7 @@ impl Editor {
                 self.menus.panel = None;
                 self.menus.pending.push_front(Quit);
             }
-            Fit => self.active_canvas_mut().viewport.fit(),
+            Fit => self.with_tool_view(None, |view| view.viewport.fit()),
             Scopes => {
                 self.scopes.visible = !self.scopes.visible;
                 self.preferences.scopes_visible = self.scopes.visible;

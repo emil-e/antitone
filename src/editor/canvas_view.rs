@@ -29,8 +29,8 @@ impl super::Editor {
     }
 
     pub(super) fn active_canvas_mut(&mut self) -> &mut CanvasView {
-        match &mut self.document.tool {
-            Some(super::tool::Tool::Flat(flat)) => &mut flat.view,
+        match self.document.tool.as_mut() {
+            Some(super::legacy_tool::Tool::Flat(flat)) => &mut flat.view,
             _ => &mut self.document.visit.canvas,
         }
     }

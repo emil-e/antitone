@@ -1,0 +1,107 @@
+use super::*;
+
+impl Editor {
+    pub(super) fn photo_tool_shelf(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        use icons::Icon;
+        use presentation::{ToolButton, ToolShelf};
+
+        let cropping = self.cropping();
+        let dusting = self.document.dust().is_some();
+        let auto_cropping = self.document.auto_crop_edit().is_some();
+        let tool_active = self.tool_interacting();
+        let ready = !self.busy && self.document.visit.canvas.ready.is_some();
+        let commands_enabled = ready && !tool_active && self.active_pick().is_none();
+        let tool_ready = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
+        let crop_enabled = cropping || auto_cropping || tool_ready;
+        let dust_enabled = dusting || tool_ready && self.document.input.ready();
+        let repairs_changed = self
+            .document
+            .visit
+            .current_source
+            .and_then(|source| self.dust_repairs(source))
+            .is_some_and(|set| !set.repairs().is_empty());
+        let mut action = None;
+
+        use editing::PhotoAction as Action;
+
+        ToolShelf::show(ui, |ui| {
+            for (candidate, button) in [
+                (
+                    Action::TurnLeft,
+                    ToolButton::command(
+                        Icon::TurnLeft,
+                        "Turn left",
+                        "Turn the displayed photo 90° left.",
+                    ),
+                ),
+                (
+                    Action::TurnRight,
+                    ToolButton::command(
+                        Icon::TurnRight,
+                        "Turn right",
+                        "Turn the displayed photo 90° right.",
+                    ),
+                ),
+                (
+                    Action::FlipHorizontal,
+                    ToolButton::command(
+                        Icon::FlipHorizontal,
+                        "Flip horizontal",
+                        "Flip the displayed photo left/right.",
+                    ),
+                ),
+                (
+                    Action::FlipVertical,
+                    ToolButton::command(
+                        Icon::FlipVertical,
+                        "Flip vertical",
+                        "Flip the displayed photo top/bottom.",
+                    ),
+                ),
+            ] {
+                if button.enabled(commands_enabled).show(ui).clicked() {
+                    action = Some(candidate);
+                }
+            }
+            ui.separator();
+            if ToolButton::tool(
+                Icon::Crop,
+                "Crop & straighten",
+                if cropping || auto_cropping {
+                    "Exit crop without applying the draft."
+                } else {
+                    "Edit this photo's crop and straighten."
+                },
+                cropping || auto_cropping,
+            )
+            .enabled(crop_enabled)
+            .changed(self.document.visit.crop.is_some())
+            .show(ui)
+            .clicked()
+            {
+                action = Some(Action::Crop);
+            }
+            if ToolButton::tool(
+                Icon::Dust,
+                "Dust repair",
+                if dusting {
+                    "Finish dust cleanup."
+                } else {
+                    "Open continuing dust cleanup for this photo."
+                },
+                dusting,
+            )
+            .enabled(dust_enabled)
+            .changed(repairs_changed)
+            .show(ui)
+            .clicked()
+            {
+                action = Some(Action::Dust);
+            }
+        });
+
+        if let Some(action) = action {
+            self.control_command(editing::Command::Photo(action), cx);
+        }
+    }
+}

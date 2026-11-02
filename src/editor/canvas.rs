@@ -50,7 +50,7 @@ impl Editor {
         .expect("accepted source composition")
     }
 
-    pub(super) fn canvas_composition(
+    fn normal_canvas_composition(
         &self,
         area: Rect,
         active_pick: Option<picking::Display>,
@@ -60,10 +60,7 @@ impl Editor {
         {
             None
         } else {
-            self.document
-                .crop_edit()
-                .map(|edit| edit.draft)
-                .or(self.document.visit.crop)
+            self.document.visit.crop
         };
         if active_pick.is_some_and(|display| display.view == picking::View::Native) {
             Composition::new(
@@ -82,60 +79,43 @@ impl Editor {
         .expect("accepted crop belongs to the loaded source")
     }
 
+    pub(super) fn canvas_composition(
+        &mut self,
+        area: Rect,
+        active_pick: Option<picking::Display>,
+    ) -> Composition {
+        let normal = self.normal_canvas_composition(area, active_pick);
+        self.with_tool_view(Some(normal), |view| {
+            view.composition.expect("loaded canvas composition")
+        })
+    }
+
     fn canvas_layout(
         &mut self,
         canvas: egui::Rect,
         composition: Composition,
         pixels_per_point: f32,
         zoom_action: Option<f32>,
-        cropping: bool,
-    ) -> CanvasLayout {
-        let inset = 20_f32.min((canvas.width().min(canvas.height()) - 1.).max(0.) * 0.5);
-        let layout_canvas = if cropping {
-            canvas.shrink(inset)
-        } else {
-            canvas
-        };
-        let mut geometry = if cropping {
-            self.active_canvas_mut().viewport.layout_crop(
-                layout_canvas,
-                composition,
-                pixels_per_point,
-            )
-        } else {
-            self.active_canvas_mut().viewport.layout_composition(
-                layout_canvas,
-                composition,
-                pixels_per_point,
-            )
-        };
-        if let Some(zoom) = zoom_action {
-            self.active_canvas_mut().viewport.zoom_at(
-                geometry,
-                pixels_per_point,
-                if zoom > 0. {
-                    zoom
-                } else {
-                    geometry.scale * pixels_per_point * -zoom
-                },
-                canvas.center(),
-            );
-        }
-        geometry = if cropping {
-            self.active_canvas_mut().viewport.layout_crop(
-                layout_canvas,
-                composition,
-                pixels_per_point,
-            )
-        } else {
-            self.active_canvas_mut().viewport.layout_composition(
-                layout_canvas,
-                composition,
-                pixels_per_point,
-            )
-        };
-        geometry.canvas = canvas;
-        geometry
+    ) -> (CanvasLayout, bool) {
+        self.with_tool_view(Some(composition), |view| {
+            let mut layout = view
+                .layout(canvas, pixels_per_point)
+                .expect("canvas has a composition");
+            if let Some(zoom) = zoom_action {
+                view.viewport.zoom_at(
+                    layout,
+                    pixels_per_point,
+                    if zoom > 0. {
+                        zoom
+                    } else {
+                        layout.scale * pixels_per_point * -zoom
+                    },
+                    canvas.center(),
+                );
+                layout = view.layout(canvas, pixels_per_point).unwrap();
+            }
+            (layout, view.source_outside_frame)
+        })
     }
 
     fn canvas_navigation(
@@ -147,7 +127,7 @@ impl Editor {
         fullscreen: bool,
         cx: &UiContext<'_, Self>,
     ) -> (CanvasLayout, bool) {
-        let cropping = !fullscreen && self.document.crop_edit().is_some();
+        let hosted = !fullscreen && self.current_tool().is_some();
         let pixels_per_point = ui.ctx().pixels_per_point();
         if canvas_input && self.tab == 1 && !fullscreen {
             self.adjust_dust_brush_from_scroll(ui, geometry);
@@ -157,8 +137,10 @@ impl Editor {
         }
         let (geometry, panning) = if !canvas_input {
             (geometry, false)
-        } else if cropping {
-            (self.crop_interaction(ui, response, geometry), false)
+        } else if hosted {
+            self.with_tool_view(None, |view| {
+                navigation::navigate_view(view, ui, response, geometry)
+            })
         } else {
             let (claimed, cursor) = self.auto_crop_margin_interaction(ui, response, geometry);
             let result = if claimed {
@@ -172,15 +154,10 @@ impl Editor {
             result
         };
         self.dust_interaction(ui, response, geometry, canvas_input, panning, cx);
-        if cropping && canvas_input {
-            self.crop_rotation_cursor(ui, response, geometry);
-        }
         if !fullscreen && (self.document.mask_edit().is_some() || self.mask_handles_available()) {
             self.mask_interaction(ui, response, geometry, panning, canvas_input);
         }
-        if !cropping {
-            self.active_canvas_mut().last_layout = Some((geometry, pixels_per_point));
-        }
+        self.active_canvas_mut().last_layout = Some((geometry, pixels_per_point));
         (geometry, panning)
     }
 
@@ -235,7 +212,7 @@ impl Editor {
         geometry: CanvasLayout,
         proxy: crate::viewer::GpuProxy,
         pending: bool,
-        cropping: bool,
+        source_outside_frame: bool,
         cx: &UiContext<'_, Self>,
     ) -> Option<(egui::Rect, ImagePaint)> {
         let pixels_per_point = ui.ctx().pixels_per_point();
@@ -245,12 +222,12 @@ impl Editor {
         // The camera proxy covers the full source, not the crop's bounding region.
         let rect = geometry.image.intersect(canvas);
         // An editing frame may be offscreen at explicit zoom; no refinement raster is requested.
-        let physical_frame = if cropping {
+        let physical_frame = if source_outside_frame {
             preview_frame(composition, proxy.size(), true).ok()?
         } else {
             geometry.physical_frame_raster(pixels_per_point)
         };
-        let normal = !cropping
+        let normal = !source_outside_frame
             && active_pick.is_none()
             && self.document_pending.is_none()
             && self.document.flat_edit().is_none();
@@ -262,7 +239,7 @@ impl Editor {
                 frame: Some(physical_frame),
             })
         } else {
-            (!cropping).then(|| ViewRequest {
+            (!source_outside_frame).then(|| ViewRequest {
                 area: geometry.visible_area(),
                 output: if composition.is_exact() {
                     geometry.output_size(geometry.visible_area(), pixels_per_point)
@@ -288,7 +265,7 @@ impl Editor {
         {
             Some(OriginalPurpose::Reference)
         } else {
-            (!cropping
+            (!source_outside_frame
                 && !pending
                 && (active_pick.is_some() || self.document.flat_edit().is_some()))
             .then_some(OriginalPurpose::Tool)
@@ -327,8 +304,12 @@ impl Editor {
             self.request_original(&parameters, self.document.target, ui.ctx(), source, cx);
         }
         let full_rect = geometry.screen_region(composition.area());
-        let display_rect = if cropping { full_rect } else { geometry.image };
-        let draw = if cropping {
+        let display_rect = if source_outside_frame {
+            full_rect
+        } else {
+            geometry.image
+        };
+        let draw = if source_outside_frame {
             display_rect.intersect(canvas)
         } else if working {
             geometry.physical_draw(pixels_per_point)
@@ -336,7 +317,7 @@ impl Editor {
             rect
         };
         let rendered = rendered.filter(|rendered| {
-            !cropping
+            !source_outside_frame
                 || (rendered.spec.frame().composition == physical_frame.composition
                     && rendered.spec.frame().min == physical_frame.min
                     && rendered.spec.frame().max == physical_frame.max
@@ -356,7 +337,7 @@ impl Editor {
         let paint = if let Some(rendered) = tool.or(rendered) {
             self.active_canvas_mut().preview_rendered = None;
             proxy.release_output();
-            let mapping = if cropping {
+            let mapping = if source_outside_frame {
                 geometry.uv(draw, composition.area())
             } else {
                 rendered.mapping(if working {
@@ -371,9 +352,14 @@ impl Editor {
                 self.submissions.clone(),
                 ui.ctx().clone(),
             )
-        } else if let Some(paint) =
-            self.preview_paint(&proxy, geometry, &parameters, pending, ui.ctx())
-        {
+        } else if let Some(paint) = self.preview_paint(
+            &proxy,
+            geometry,
+            &parameters,
+            pending,
+            source_outside_frame,
+            ui.ctx(),
+        ) {
             paint
         } else {
             ui.label(
@@ -398,6 +384,7 @@ impl Editor {
         geometry: CanvasLayout,
         parameters: &ProcessingInput,
         placeholder: bool,
+        source_outside_frame: bool,
         context: &egui::Context,
     ) -> Option<ImagePaint> {
         // Sparse repairs need original-sample footprints. The shared acquisition worker supplies
@@ -413,8 +400,7 @@ impl Editor {
         let device = self.document.visit.working_view.device()?;
         let queue = self.document.visit.working_view.queue()?;
         let kernels = self.document.visit.working_view.kernels.get()?.clone();
-        let cropping = self.document.crop_edit().is_some();
-        let frame = preview_frame(geometry.composition, proxy.size(), cropping).ok()?;
+        let frame = preview_frame(geometry.composition, proxy.size(), source_outside_frame).ok()?;
         let composition = frame.composition;
         let field = self
             .document
@@ -445,13 +431,13 @@ impl Editor {
             }
             None => self.document.input,
         };
-        let display_rect = if cropping {
+        let display_rect = if source_outside_frame {
             geometry.screen_region(composition.area())
         } else {
             geometry.image
         };
         let draw = display_rect.intersect(geometry.canvas);
-        let mapping = if cropping {
+        let mapping = if source_outside_frame {
             geometry.uv(draw, composition.area())
         } else if draw == display_rect {
             crate::geometry::TextureMapping::IDENTITY
@@ -656,31 +642,37 @@ impl Editor {
                 .pending_preview
                 .as_ref()
                 .map(|preview| preview.composition)
-                .unwrap_or_else(|| self.canvas_composition(area, active_pick))
+                .unwrap_or_else(|| self.normal_canvas_composition(area, active_pick))
         } else {
-            self.canvas_composition(area, active_pick)
+            self.normal_canvas_composition(area, active_pick)
         };
-        let cropping = !fullscreen && self.document.crop_edit().is_some();
-        let geometry =
-            self.canvas_layout(canvas, composition, pixels_per_point, zoom_action, cropping);
+        let (geometry, source_outside_frame) =
+            self.canvas_layout(canvas, composition, pixels_per_point, zoom_action);
         let (geometry, panning) =
             self.canvas_navigation(ui, &response, geometry, canvas_input, fullscreen, cx);
-        let Some((draw, paint)) = self.canvas_image(ui, geometry, proxy, pending, cropping, cx)
-        else {
+        let image = self.canvas_image(ui, geometry, proxy, pending, source_outside_frame, cx);
+        let image_ready = image.is_some();
+        if let Some((draw, paint)) = image {
+            ui.painter()
+                .with_clip_rect(canvas)
+                .add(egui_wgpu::Callback::new_paint_callback(
+                    draw,
+                    SelectionPaint::new(
+                        paint,
+                        self.active_canvas().selection_timing.clone(),
+                        pending,
+                    ),
+                ));
+        } else if self.current_tool().is_none() {
             return;
-        };
-        ui.painter()
-            .with_clip_rect(canvas)
-            .add(egui_wgpu::Callback::new_paint_callback(
-                draw,
-                SelectionPaint::new(
-                    paint,
-                    self.active_canvas().selection_timing.clone(),
-                    pending,
-                ),
-            ));
-        if cropping {
-            self.paint_crop(ui, geometry);
+        }
+        if !fullscreen && self.current_tool().is_some() {
+            let owns_gesture = self.with_tool_view(None, |view| !view.navigation_enabled);
+            let interactive = canvas_input
+                && image_ready
+                && !panning
+                && (owns_gesture || !ui.input(|input| input.key_down(egui::Key::Space)));
+            self.hosted_canvas(ui, &response, geometry, interactive);
         } else {
             if self.auto_crop_artwork_visible(ui)
                 && let Some(q) = self.auto_crop_outline(geometry)

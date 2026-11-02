@@ -5,6 +5,7 @@ use crate::{
         Coverage, Pick,
         picking::measurement::testing,
         tests::{add_ready_fixture, fixture},
+        tool,
     },
 };
 use std::{
@@ -26,7 +27,7 @@ fn retiring_a_visit_discards_its_manual_crop_without_accepting_or_recording_it()
     let next = editor.request_id();
     editor.replace_photo_scope(next);
     assert!(editor.document.crop_edit().is_none());
-    editor.finish_crop(true);
+    editor.hosted_action(tool::Action::Primary);
     assert_eq!(editor.document.state.project, accepted);
     assert_eq!(
         editor.history_label(crate::editor::history::Direction::Undo),

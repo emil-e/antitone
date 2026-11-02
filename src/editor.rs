@@ -37,6 +37,7 @@ use document_scope::DocumentScope;
 mod editing;
 mod history;
 mod icons;
+mod legacy_tool;
 mod menu;
 mod preferences;
 mod presentation;
@@ -101,6 +102,7 @@ mod kittest_tests;
 mod memory;
 mod navigation;
 mod photo_scope;
+mod photo_ui;
 mod picking;
 mod save;
 mod source_workflow;
@@ -968,9 +970,10 @@ impl Editor {
         }
 
         let editable = !self.busy
+            && self.current_tool().is_none()
             && matches!(
-                self.document.tool,
-                None | Some(tool::Tool::Pick(_)) | Some(tool::Tool::Dust(_))
+                self.document.tool.as_ref(),
+                None | Some(legacy_tool::Tool::Pick(_)) | Some(legacy_tool::Tool::Dust(_))
             )
             && self.document.input.ready();
         let can_pick = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
@@ -1204,7 +1207,7 @@ impl Editor {
                     }
                 } else if self.tab == 1 {
                     ui.add_enabled_ui(!reviewing, |ui| {
-                        self.crop_controls(ui);
+                        ui.add_enabled_ui(!self.busy, |ui| self.hosted_drawer(ui, cx));
                         self.dust_controls(ui, cx);
                     });
                     if self.adjustment_layer_controls(ui, cx, editable, can_pick) {
@@ -1214,7 +1217,7 @@ impl Editor {
                     if self.document.input.capabilities().film_emulation {
                         let allowed = !self.busy
                             && !reviewing
-                            && self.document.crop_edit().is_none()
+                            && !self.cropping()
                             && self.document.auto_crop_edit().is_none()
                             && self.document.flat_edit().is_none()
                             && self.document.mask_edit().is_none();
@@ -1243,7 +1246,7 @@ impl Editor {
                     self.look_controls(ui, cx);
                     ui.add_enabled_ui(
                         !reviewing
-                            && self.document.crop_edit().is_none()
+                            && !self.cropping()
                             && self.document.auto_crop_edit().is_none()
                             && self.document.flat_edit().is_none()
                             && self.document.mask_edit().is_none(),

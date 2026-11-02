@@ -1,6 +1,72 @@
 use super::*;
 use crate::viewport::CanvasLayout;
 
+pub(super) fn navigate_view(
+    view: &mut tool::ViewConfig<'_>,
+    ui: &egui::Ui,
+    response: &egui::Response,
+    mut layout: CanvasLayout,
+) -> (CanvasLayout, bool) {
+    if !ui.is_enabled() || !view.navigation_enabled {
+        return (layout, false);
+    }
+    let ppp = ui.ctx().pixels_per_point();
+    let (zoom, translation, touch, pointer, space) = ui.input(|input| {
+        (
+            input.zoom_delta(),
+            input.translation_delta(),
+            input.multi_touch(),
+            input.pointer.hover_pos(),
+            input.key_down(egui::Key::Space),
+        )
+    });
+    let inside =
+        response.hovered() || touch.is_some_and(|touch| layout.canvas.contains(touch.center_pos));
+    if inside {
+        if zoom != 1.
+            && let Some(anchor) = touch
+                .map(|t| t.center_pos - t.translation_delta)
+                .or(pointer)
+        {
+            view.viewport
+                .zoom_at(layout, ppp, layout.scale * ppp * zoom, anchor);
+            layout = view.layout(layout.canvas, ppp).unwrap();
+        }
+        if translation != egui::Vec2::ZERO && view.viewport.zoom.is_some() {
+            view.viewport.pan(layout, ppp, translation);
+            layout = view.layout(layout.canvas, ppp).unwrap();
+        }
+    }
+    let can_pan = !view.constrain_pan
+        || layout.image.width() > layout.canvas.width()
+        || layout.image.height() > layout.canvas.height();
+    let panning = response.dragged_by(egui::PointerButton::Middle)
+        || response.dragged_by(egui::PointerButton::Primary)
+            && (space || !view.primary_interaction && view.viewport.zoom.is_some() && can_pan);
+    if panning && can_pan {
+        view.viewport.pan(layout, ppp, response.drag_delta());
+        layout = view.layout(layout.canvas, ppp).unwrap();
+    }
+    if !view.primary_interaction
+        && !space
+        && response.clicked_by(egui::PointerButton::Primary)
+        && let Some(point) = response
+            .interact_pointer_pos()
+            .filter(|p| layout.image.contains(*p))
+    {
+        if view.viewport.zoom.is_none() {
+            view.viewport.zoom_at(layout, ppp, 1., point);
+        } else {
+            view.viewport.fit();
+        }
+        layout = view.layout(layout.canvas, ppp).unwrap();
+    }
+    if panning {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    (layout, panning)
+}
+
 impl Editor {
     pub(super) fn navigate(
         &mut self,

@@ -1,6 +1,7 @@
 use super::*;
 mod margin;
 mod overlay;
+mod photo;
 use crate::{
     project::SourceAnalysis,
     scan_regions::{Areas, PictureGeometry},
