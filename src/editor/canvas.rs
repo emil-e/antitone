@@ -1,8 +1,154 @@
 use super::*;
 use crate::viewport::CanvasLayout;
 
+mod source_view;
 #[cfg(test)]
 mod tests;
+pub(super) use source_view::SourceView;
+
+#[derive(Default)]
+pub(super) struct Frame {
+    pub layout: Option<(CanvasLayout, f32)>,
+    pub displayed: Option<canvas_view::Displayed>,
+}
+
+pub(super) struct Viewer<'a> {
+    pub ui: &'a mut egui::Ui,
+    zoom: Option<f32>,
+    fullscreen: bool,
+}
+
+impl Viewer<'_> {
+    pub fn show<T: tool::Tool + ?Sized>(
+        &mut self,
+        tool: &mut T,
+        editor: &mut Editor,
+        cx: &UiContext<'_, Editor>,
+        controls: impl FnOnce(&mut Editor, &mut egui::Ui, bool),
+        paint: impl FnOnce(
+            &mut T,
+            &mut Surface<'_>,
+            &mut Editor,
+            &UiContext<'_, Editor>,
+        ) -> Option<CanvasLayout>,
+    ) -> Option<CanvasLayout> {
+        let bar = editor.viewer_bar(self.ui, controls);
+        self.fullscreen |= bar.fullscreen;
+        if bar.fit {
+            tool.viewport(editor).fit();
+        }
+        if let Some(action) = bar.action {
+            tool.action(action, editor, cx);
+        }
+        if !editor.has_hosted_tool() {
+            let fullscreen = editor.fullscreen.is_some();
+            presentation::viewer_surface(self.ui, fullscreen, |ui| {
+                editor.viewer_canvas(ui, bar.zoom.or(self.zoom), fullscreen, cx)
+            });
+            return None;
+        }
+        let zoom = bar.zoom.or(self.zoom);
+        let fullscreen = editor.fullscreen.is_some();
+        editor.canvas_frame = Frame::default();
+        presentation::viewer_surface(self.ui, fullscreen, |ui| {
+            let size = ui
+                .available_rect_before_wrap()
+                .intersect(ui.clip_rect())
+                .size()
+                .max(egui::vec2(1., 1.));
+            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+            let selected = editor.selected_view().map(|(area, proxy, pending)| {
+                (
+                    editor.normal_canvas_composition(area, editor.legacy_pick()),
+                    proxy,
+                    pending,
+                )
+            });
+            let enabled = editor.canvas_input_allowed(ui, rect);
+            let layout = ui
+                .add_enabled_ui(enabled, |ui| {
+                    paint(
+                        tool,
+                        &mut Surface {
+                            ui,
+                            response: &response,
+                            zoom_action: zoom,
+                            selected,
+                        },
+                        editor,
+                        cx,
+                    )
+                })
+                .inner;
+            if let Some(layout) = layout {
+                editor.canvas_frame.layout = Some((layout, ui.ctx().pixels_per_point()));
+                editor.paint_canvas_selection(ui, layout, fullscreen);
+            } else if let Some(task) = editor.tasks.view() {
+                task.viewer(ui, rect);
+            }
+            layout
+        })
+    }
+}
+
+/// A canvas surface; its owner chooses which image to compose on it.
+pub(super) struct Surface<'a> {
+    pub ui: &'a mut egui::Ui,
+    pub response: &'a egui::Response,
+    pub zoom_action: Option<f32>,
+    selected: Option<(Composition, crate::viewer::GpuProxy, bool)>,
+}
+
+impl Surface<'_> {
+    pub fn selected(&mut self) -> Option<Canvas<'_>> {
+        let (composition, proxy, pending) = self.selected.clone()?;
+        Some(Canvas {
+            ui: self.ui,
+            response: self.response,
+            composition,
+            zoom_action: self.zoom_action,
+            proxy,
+            pending,
+        })
+    }
+
+    pub fn image(
+        &mut self,
+        composition: Composition,
+        proxy: crate::viewer::GpuProxy,
+    ) -> Canvas<'_> {
+        Canvas {
+            ui: self.ui,
+            response: self.response,
+            composition,
+            zoom_action: self.zoom_action,
+            proxy,
+            pending: false,
+        }
+    }
+
+    pub fn photograph(
+        &mut self,
+        editor: &mut Editor,
+        cx: &UiContext<'_, Editor>,
+    ) -> Option<CanvasLayout> {
+        let mut image = self.selected()?;
+        let ppp = image.ui.ctx().pixels_per_point();
+        let layout = editor.canvas_layout(
+            image.response.rect,
+            image.composition,
+            ppp,
+            image.zoom_action,
+        );
+        let (layout, _) = editor.canvas_navigation(image.ui, image.response, layout, true, true);
+        if editor.document.visit.picker.display().is_some() {
+            image.paint_sample(editor, layout, editor.canvas_inspection(), cx);
+        } else {
+            image.paint_image(editor, layout, false, cx);
+        }
+        Some(layout)
+    }
+}
 
 /// Photographic endpoint requested by a canvas consumer.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -97,6 +243,7 @@ impl Canvas<'_> {
         image: ImageMode,
         cx: &UiContext<'_, Editor>,
     ) -> bool {
+        editor.document.visit.canvas.last_layout = Some((layout, self.ui.ctx().pixels_per_point()));
         if let Some((draw, paint)) =
             editor.canvas_image(self.ui, layout, self.proxy.clone(), self.pending, image, cx)
         {
@@ -142,33 +289,68 @@ fn preview_frame(
 }
 
 impl Editor {
-    pub(super) fn hosted_canvas(
+    pub(super) fn show_viewer(
+        &mut self,
+        ui: &mut egui::Ui,
+        menu_zoom: Option<f32>,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if self.has_hosted_tool() {
+            let mut viewer = Viewer {
+                ui,
+                zoom: menu_zoom,
+                fullscreen: false,
+            };
+            self.with_current_tool(|tool, editor| tool.canvas(&mut viewer, editor, cx));
+            if viewer.fullscreen {
+                self.toggle_fullscreen(viewer.ui.ctx());
+            }
+        } else {
+            let bar = self.viewer_bar(ui, Editor::photograph_controls);
+            if bar.fit {
+                self.document.visit.canvas.viewport.fit();
+            }
+            if let Some(action) = bar.action {
+                match action {
+                    tool::Action::Primary => self.apply_pick(cx),
+                    tool::Action::Dismiss if self.masking() => self.finish_mask(false),
+                    tool::Action::Dismiss => self.finish_pick(cx),
+                }
+            }
+            if bar.fullscreen {
+                self.toggle_fullscreen(ui.ctx());
+            }
+            let fullscreen = self.fullscreen.is_some();
+            presentation::viewer_surface(ui, fullscreen, |ui| {
+                self.viewer_canvas(ui, bar.zoom.or(menu_zoom), fullscreen, cx)
+            });
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn hosted_viewer(
         &mut self,
         ui: &mut egui::Ui,
         response: &egui::Response,
-        composition: Composition,
         zoom_action: Option<f32>,
         enabled: bool,
         cx: &UiContext<'_, Self>,
     ) -> Option<CanvasLayout> {
-        let (_, proxy, pending) = self.selected_view()?;
-        ui.add_enabled_ui(enabled, |ui| {
-            self.with_current_tool(|tool, editor| {
-                tool.canvas(
-                    &mut Canvas {
-                        ui,
-                        response,
-                        composition,
-                        zoom_action,
-                        proxy,
-                        pending,
-                    },
-                    editor,
-                    cx,
-                )
-            })
-        })
-        .inner
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(response.rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        if !enabled || !ui.is_enabled() {
+            child.disable();
+        }
+        let mut viewer = Viewer {
+            ui: &mut child,
+            zoom: zoom_action,
+            fullscreen: false,
+        };
+        self.with_current_tool(|tool, editor| tool.canvas(&mut viewer, editor, cx))
+            .flatten()
     }
 
     /// The accepted source framing before any active crop draft, picker or review override.
@@ -290,9 +472,7 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) -> Option<ProcessingInput> {
         let inspection = image.inspection(self.canvas_inspection());
-        let bypass_look = image.is_sample()
-            || self.document.flat_edit().is_some()
-            || self.document.analysis_review().is_some();
+        let bypass_look = image.is_sample() || self.document.analysis_review().is_some();
         let mut recipe = None;
         let mut parameters = if inspection {
             let source_parameters = self.source_parameters(self.source_exposure);
@@ -333,7 +513,7 @@ impl Editor {
                 }
             }
         };
-        if !inspection && self.document.flat_edit().is_none() {
+        if !inspection {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust(signature, cx);
             }
@@ -368,10 +548,7 @@ impl Editor {
         } else {
             geometry.physical_frame_raster(pixels_per_point)
         };
-        let normal = !source_outside_frame
-            && !image.is_sample()
-            && self.document_pending.is_none()
-            && self.document.flat_edit().is_none();
+        let normal = !source_outside_frame && !image.is_sample() && self.document_pending.is_none();
         let working = normal && self.document.visit.working_view.enabled();
         let view = if working {
             Some(ViewRequest {
@@ -409,22 +586,19 @@ impl Editor {
         let purpose = if normal && !inspection && self.document.visit.working_view.compare {
             Some(OriginalPurpose::Reference)
         } else {
-            (!source_outside_frame
-                && !pending
-                && (image.is_sample() || self.document.flat_edit().is_some()))
-            .then_some(OriginalPurpose::Tool)
+            (!source_outside_frame && !pending && image.is_sample())
+                .then_some(OriginalPurpose::Tool)
         };
         self.observe_original(
             purpose,
-            self.canvas_source_context()
-                .map(|source| original_view::Demand {
-                    capture,
-                    repairs: parameters.repairs.clone(),
-                    target: self.document.target,
-                    view,
-                    composition,
-                    source,
-                }),
+            self.source_context().map(|source| original_view::Demand {
+                capture,
+                repairs: parameters.repairs.clone(),
+                target: self.document.target,
+                view,
+                composition,
+                source,
+            }),
         );
         let reference_allowed = if working {
             self.admit_view_reference(physical_frame)
@@ -516,7 +690,7 @@ impl Editor {
             );
             return None;
         };
-        self.active_canvas_mut().displayed =
+        self.canvas_frame.displayed =
             paint
                 .displayed()
                 .map(|(view, mapping)| canvas_view::Displayed {
@@ -681,12 +855,7 @@ impl Editor {
         fullscreen: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        let identity = if self.document.flat_edit().is_some() {
-            "flat-reference"
-        } else {
-            "working-photo"
-        };
-        ui.push_id(identity, |ui| {
+        ui.push_id("viewer-canvas", |ui| {
             self.canvas_contents(ui, zoom_action, fullscreen, cx)
         });
     }
@@ -698,14 +867,30 @@ impl Editor {
         fullscreen: bool,
         cx: &UiContext<'_, Self>,
     ) {
-        self.active_canvas_mut().displayed = None;
+        self.canvas_frame = Frame::default();
         let available = ui
             .available_rect_before_wrap()
             .intersect(ui.clip_rect())
             .size()
             .max(egui::vec2(1., 1.));
         let (canvas, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
-        let Some((area, proxy, pending)) = self.selected_view() else {
+        let selected = self.selected_view();
+        let pixels_per_point = ui.ctx().pixels_per_point();
+        let canvas_input = self.canvas_input_allowed(ui, canvas);
+        let active_pick = self.legacy_pick();
+        let composition = selected.as_ref().map(|(area, _, pending)| {
+            if *pending {
+                self.document
+                    .visit
+                    .pending_preview
+                    .as_ref()
+                    .map(|preview| preview.composition)
+                    .unwrap_or_else(|| self.normal_canvas_composition(*area, active_pick))
+            } else {
+                self.normal_canvas_composition(*area, active_pick)
+            }
+        });
+        let Some((_, proxy, pending)) = selected else {
             if let Some(view) = self.tasks.view() {
                 view.viewer(ui, canvas);
             } else {
@@ -723,30 +908,11 @@ impl Editor {
             }
             return;
         };
-        let pixels_per_point = ui.ctx().pixels_per_point();
-        let canvas_input = self.canvas_input_allowed(ui, canvas);
-        let active_pick = self.legacy_pick();
-        let composition = if pending {
-            self.document
-                .visit
-                .pending_preview
-                .as_ref()
-                .map(|preview| preview.composition)
-                .unwrap_or_else(|| self.normal_canvas_composition(area, active_pick))
-        } else {
-            self.normal_canvas_composition(area, active_pick)
-        };
-        if !fullscreen && self.current_tool().is_some() {
-            let geometry = self
-                .hosted_canvas(ui, &response, composition, zoom_action, canvas_input, cx)
-                .expect("canvas callback owns the selected image and tool");
-            self.active_canvas_mut().last_layout = Some((geometry, pixels_per_point));
-            self.paint_canvas_selection(ui, geometry, fullscreen);
-            return;
-        }
+        let composition = composition.expect("selected image composition");
         let geometry = self.canvas_layout(canvas, composition, pixels_per_point, zoom_action);
         let (geometry, panning) =
             self.canvas_navigation(ui, &response, geometry, canvas_input, fullscreen);
+        self.canvas_frame.layout = Some((geometry, pixels_per_point));
         let image_mode = if active_pick.is_some()
             || fullscreen && self.document.visit.picker.display().is_some()
         {

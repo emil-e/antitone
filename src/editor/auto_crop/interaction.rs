@@ -73,7 +73,7 @@ impl AutoCropTool {
 }
 
 impl tool::Tool for AutoCropTool {
-    fn composition(&mut self, normal: Composition) -> Composition {
+    fn composition(&self, normal: Composition) -> Composition {
         if self.review.borrow().is_some() {
             normal
                 .cropped(Crop::from_region(normal.area()))
@@ -93,7 +93,6 @@ impl tool::Tool for AutoCropTool {
                 .or_else(|| draft.warning(editor).map(str::to_owned))
         });
         tool::Presentation {
-            show_viewer: review.is_some(),
             identity: presentation::ToolIdentity {
                 icon: icons::Icon::Crop,
                 title: "Auto-crop",
@@ -111,7 +110,7 @@ impl tool::Tool for AutoCropTool {
     }
 
     fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
-        if self.review.borrow().is_some() {
+        if editor.fullscreen.is_none() && self.review.borrow().is_some() {
             self.review_viewport(editor)
         } else {
             &mut editor.document.visit.canvas.viewport
@@ -154,54 +153,66 @@ impl tool::Tool for AutoCropTool {
 
     fn canvas(
         &mut self,
-        canvas: &mut canvas::Canvas<'_>,
+        viewer: &mut canvas::Viewer<'_>,
         editor: &mut Editor,
         cx: &UiContext<'_, Editor>,
-    ) -> CanvasLayout {
-        let reviewing = self.review.borrow().is_some();
-        let composition = self.composition(canvas.composition);
-        let rect = canvas.response.rect;
-        let ppp = canvas.ui.ctx().pixels_per_point();
-        let relayout =
-            |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
-        let layout = canvas.layout(self.viewport(editor), relayout);
-        let (claimed, cursor) = self
-            .review
-            .borrow_mut()
-            .as_mut()
-            .map_or((false, None), |draft| {
-                draft.margin_interaction(editor, canvas.ui, canvas.response, layout)
-            });
-        let mut response = canvas.response.clone();
-        if reviewing {
-            navigation::consume_primary(&mut response);
-        }
-        let layout = if claimed {
-            layout
-        } else {
-            navigation::navigate_view(
-                self.viewport(editor),
-                canvas.ui,
-                &response,
-                layout,
-                relayout,
-            )
-            .0
-        };
-        if let Some(cursor) = cursor {
-            canvas.ui.ctx().set_cursor_icon(cursor);
-        }
-        canvas.paint_image(editor, layout, false, cx);
-        if let Some(draft) = self.review.borrow().as_ref()
-            && draft.artwork_visible(editor, canvas.ui)
-            && let Some(outline) = draft.outline(editor, layout)
-        {
-            crop_editor::paint_outline(canvas.ui, layout.canvas, outline, false, 64);
-        }
-        layout
+    ) -> Option<CanvasLayout> {
+        viewer.show(
+            self,
+            editor,
+            cx,
+            Editor::photograph_controls,
+            |tool, surface, editor, cx| {
+                if editor.fullscreen.is_some() {
+                    return surface.photograph(editor, cx);
+                }
+                let mut canvas = surface.selected()?;
+                let reviewing = tool.review.borrow().is_some();
+                let composition = tool.composition(canvas.composition);
+                let rect = canvas.response.rect;
+                let ppp = canvas.ui.ctx().pixels_per_point();
+                let relayout =
+                    |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
+                let layout = canvas.layout(tool.viewport(editor), relayout);
+                let (claimed, cursor) = tool
+                    .review
+                    .borrow_mut()
+                    .as_mut()
+                    .map_or((false, None), |draft| {
+                        draft.margin_interaction(editor, canvas.ui, canvas.response, layout)
+                    });
+                let mut response = canvas.response.clone();
+                if reviewing {
+                    navigation::consume_primary(&mut response);
+                }
+                let layout = if claimed {
+                    layout
+                } else {
+                    navigation::navigate_view(
+                        tool.viewport(editor),
+                        canvas.ui,
+                        &response,
+                        layout,
+                        relayout,
+                    )
+                    .0
+                };
+                if let Some(cursor) = cursor {
+                    canvas.ui.ctx().set_cursor_icon(cursor);
+                }
+                canvas.paint_image(editor, layout, false, cx);
+                if let Some(draft) = tool.review.borrow().as_ref()
+                    && draft.artwork_visible(editor, canvas.ui)
+                    && let Some(outline) = draft.outline(editor, layout)
+                {
+                    crop_editor::paint_outline(canvas.ui, layout.canvas, outline, false, 64);
+                }
+                Some(layout)
+            },
+        )
     }
 
-    fn action(&mut self, action: tool::Action, editor: &mut Editor) {
+    fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         match action {
             tool::Action::Primary if !editor.busy && editor.fullscreen.is_none() => {
                 let Some(snapshot) = self.review.borrow().clone() else {

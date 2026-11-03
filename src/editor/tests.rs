@@ -882,9 +882,9 @@ impl Editor {
 
     pub(super) fn test_pick(&self) -> Option<picking::Display> {
         self.document
-            .visit
-            .picker
-            .display()
+            .flat_edit()
+            .map(|_| flat::DISPLAY)
+            .or_else(|| self.document.visit.picker.display())
             .or_else(|| self.legacy_pick())
     }
 
@@ -893,6 +893,9 @@ impl Editor {
     }
 
     pub(super) fn test_pick_region(&self) -> Option<Coverage> {
+        if let Some(state) = self.document.flat_edit() {
+            return state.region;
+        }
         if self.test_picker_active() {
             self.document.visit.picker.region()
         } else {
@@ -901,6 +904,10 @@ impl Editor {
     }
 
     pub(super) fn set_test_pick_region(&mut self, region: Option<Coverage>) {
+        if let Some(mut state) = self.document.flat_edit_mut() {
+            state.region = region;
+            return;
+        }
         if self.test_picker_active() {
             self.document.visit.picker.set_region(region);
         } else {
@@ -932,14 +939,13 @@ pub(super) fn paused_reference_fixture(
     reference: Ready,
     region: Option<Rect>,
 ) {
+    let mut view = super::canvas::SourceView::default();
+    view.ready = Some(reference);
     editor.document.set_flat_edit(Some(FlatEdit {
-        view: super::canvas_view::CanvasView {
-            ready: Some(reference),
-            ..Default::default()
-        },
+        services: editor.source_services.clone(),
+        view,
         region: region.map(Coverage::rectangle),
         task: None,
-        selection: None,
         activity: None,
     }));
 }

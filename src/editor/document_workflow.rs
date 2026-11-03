@@ -162,7 +162,6 @@ impl Editor {
             Ok(prepared) => {
                 let input_changed = self.document.input.is_negative()
                     != prepared.document.project.input.is_negative();
-                self.document.set_flat_edit(None);
 
                 if self.reset_repairs_pending {
                     self.document.dust = dust::State::default();
@@ -296,7 +295,6 @@ impl Editor {
                 if self.document.visit.source.pending() {
                     self.document.visit.return_notice = Some(self.status.clone());
                 }
-                self.finish_flat_edit();
                 self.source_epoch
                     .store(self.id, std::sync::atomic::Ordering::Relaxed);
                 if let Some(kind) = failure_kind {

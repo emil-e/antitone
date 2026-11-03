@@ -12,7 +12,6 @@ pub(super) struct Analyze {
 pub(super) enum Tool {
     Mask(Box<MaskEdit>),
     Analyze(Box<Analyze>),
-    Flat(Box<FlatEdit>),
 }
 
 impl Editor {
@@ -32,7 +31,6 @@ impl Editor {
                     .map(|work| TaskRequest::Regions(work.id)),
                 analysis_workflow::Phase::Review => None,
             },
-            Some(Tool::Flat(edit)) => edit.activity,
             _ => None,
         }
     }
@@ -71,40 +69,6 @@ impl DocumentScope {
     pub fn take_mask_edit(&mut self) -> Option<MaskEdit> {
         match self.tool.take() {
             Some(Tool::Mask(value)) => Some(*value),
-            other => {
-                if let Some(other) = other {
-                    self.set_legacy_tool(other);
-                }
-                None
-            }
-        }
-    }
-
-    pub fn flat_edit(&self) -> Option<&FlatEdit> {
-        match self.tool.as_ref() {
-            Some(Tool::Flat(value)) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn flat_edit_mut(&mut self) -> Option<&mut FlatEdit> {
-        match self.tool.as_mut() {
-            Some(Tool::Flat(value)) => Some(value),
-            _ => None,
-        }
-    }
-
-    pub fn set_flat_edit(&mut self, value: Option<FlatEdit>) {
-        if let Some(value) = value {
-            self.set_legacy_tool(Tool::Flat(Box::new(value)));
-        } else {
-            self.take_flat_edit();
-        }
-    }
-
-    pub fn take_flat_edit(&mut self) -> Option<FlatEdit> {
-        match self.tool.take() {
-            Some(Tool::Flat(value)) => Some(*value),
             other => {
                 if let Some(other) = other {
                     self.set_legacy_tool(other);

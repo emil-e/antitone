@@ -30,7 +30,12 @@ fn frame_with_modifiers(
             ..Default::default()
         },
         |ui| {
-            editor.filmstrip(ui, cx);
+            if editor
+                .with_current_tool(|tool, editor| tool.filmstrip(ui, editor, cx))
+                .is_none()
+            {
+                editor.filmstrip(ui, cx);
+            }
             let _ = ui.button("Following");
         },
     );
@@ -266,10 +271,10 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                     "flat" => editor
                         .document
                         .set_flat_edit(Some(crate::editor::flat::FlatEdit {
+                            services: None,
                             view: Default::default(),
                             region: None,
                             task: None,
-                            selection: None,
                             activity: None,
                         })),
                     _ => unreachable!(),

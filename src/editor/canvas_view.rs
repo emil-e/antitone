@@ -20,7 +20,6 @@ pub(super) struct CanvasView {
     pub ready: Option<Ready>,
     pub viewport: Viewport,
     pub last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
-    pub displayed: Option<Displayed>,
     pub pick_drag: Option<PickDrag>,
     pub preview_rendered: Option<Preview>,
     pub selection_timing: Option<Arc<super::SelectionTiming>>,
@@ -29,31 +28,25 @@ pub(super) struct CanvasView {
 
 impl super::Editor {
     pub(super) fn active_canvas(&self) -> &CanvasView {
-        self.document
-            .flat_edit()
-            .map_or(&self.document.visit.canvas, |flat| &flat.view)
+        &self.document.visit.canvas
     }
 
     pub(super) fn active_canvas_mut(&mut self) -> &mut CanvasView {
-        match self.document.tool.as_mut() {
-            Some(super::legacy_tool::Tool::Flat(flat)) => &mut flat.view,
-            _ => &mut self.document.visit.canvas,
-        }
+        &mut self.document.visit.canvas
     }
 
     pub(super) fn canvas_inspection(&self) -> bool {
-        self.document.flat_edit().is_some()
-            || if self.fullscreen.is_some() {
-                self.document.source
-            } else {
-                self.document
-                    .visit
-                    .picker
-                    .display()
-                    .or_else(|| self.legacy_pick())
-                    .map_or(self.document.source, |display| {
-                        display.view != super::picking::View::Working
-                    })
-            }
+        if self.fullscreen.is_some() && self.document.visit.hosted_tool.occupied() {
+            self.document.source
+        } else {
+            self.document
+                .visit
+                .picker
+                .display()
+                .or_else(|| self.legacy_pick())
+                .map_or(self.document.source, |display| {
+                    display.view != super::picking::View::Working
+                })
+        }
     }
 }

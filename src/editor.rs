@@ -77,7 +77,9 @@ mod analysis_workflow;
 mod dust;
 mod flat;
 mod spatial;
-use flat::{Correction, FlatEdit};
+use flat::Correction;
+#[cfg(test)]
+use flat::FlatEdit;
 mod auto_crop;
 mod crop_editor;
 use crop_editor::CropEdit;
@@ -231,6 +233,7 @@ pub struct Editor {
     scopes: Scopes,
     reset_repairs_pending: bool,
     fullscreen: Option<FullscreenView>,
+    canvas_frame: canvas::Frame,
     // Running physical work outlives logical cancellation.
     id: u64,
     busy: bool,
@@ -351,6 +354,7 @@ impl Editor {
             scopes: Scopes::default(),
             reset_repairs_pending: false,
             fullscreen: None,
+            canvas_frame: Default::default(),
             started: false,
             menus: menu::Menus::default(),
             id: 0,
@@ -865,7 +869,6 @@ impl Editor {
     pub(super) fn begin_document_operation(&mut self, replacement: bool) -> u64 {
         self.document.write = save::State::default();
         self.candidate_operation = document_workflow::State::default();
-        self.finish_flat_edit();
         self.retire_look_selection();
         if self.dusting() {
             self.end_tool();
@@ -1212,10 +1215,7 @@ impl Editor {
                     }
                 } else {
                     if self.document.input.capabilities().grain {
-                        let allowed = !self.busy
-                            && !reviewing
-                            && self.document.flat_edit().is_none()
-                            && !self.masking();
+                        let allowed = !self.busy && !reviewing && !self.masking();
                         ui.add_enabled_ui(allowed, |ui| {
                             presentation::section(
                                 ui,
@@ -1239,57 +1239,54 @@ impl Editor {
                         });
                     }
                     self.look_controls(ui, cx);
-                    ui.add_enabled_ui(
-                        !reviewing && self.document.flat_edit().is_none() && !self.masking(),
-                        |ui| {
-                            let changed = self.document.target != OutputTarget::DisplayP3;
-                            let (_, action) = presentation::section(
-                                ui,
-                                "rendering-target",
-                                "Target",
-                                SectionHeader {
-                                    summary: if self.document.target == OutputTarget::DisplayP3 {
-                                        "Display P3 · 100 nit"
+                    ui.add_enabled_ui(!reviewing && !self.masking(), |ui| {
+                        let changed = self.document.target != OutputTarget::DisplayP3;
+                        let (_, action) = presentation::section(
+                            ui,
+                            "rendering-target",
+                            "Target",
+                            SectionHeader {
+                                summary: if self.document.target == OutputTarget::DisplayP3 {
+                                    "Display P3 · 100 nit"
+                                } else {
+                                    "sRGB · 100 nit"
+                                },
+                                changed,
+                                reset: Some(changed),
+                                tool: None,
+                                default_open: Some(true),
+                            },
+                            |ui| {
+                                presentation::inspector_dropdown(
+                                    ui,
+                                    "rendering-target",
+                                    "Target",
+                                    if self.document.target == OutputTarget::DisplayP3 {
+                                        "Display P3"
                                     } else {
-                                        "sRGB · 100 nit"
+                                        "sRGB"
                                     },
-                                    changed,
-                                    reset: Some(changed),
-                                    tool: None,
-                                    default_open: Some(true),
-                                },
-                                |ui| {
-                                    presentation::inspector_dropdown(
-                                        ui,
-                                        "rendering-target",
-                                        "Target",
-                                        if self.document.target == OutputTarget::DisplayP3 {
-                                            "Display P3"
-                                        } else {
-                                            "sRGB"
-                                        },
-                                        |ui| {
-                                            ui.selectable_value(
-                                                &mut self.document.target,
-                                                OutputTarget::DisplayP3,
-                                                "Display P3",
-                                            );
-                                            ui.selectable_value(
-                                                &mut self.document.target,
-                                                OutputTarget::Srgb,
-                                                "sRGB",
-                                            );
-                                        },
-                                    )
-                                    .response
-                                    .on_hover_text("Output colour space, not the monitor profile.");
-                                },
-                            );
-                            if action.reset && !controls::defer_reset(ui, controls::Reset::Target) {
-                                self.document.target = OutputTarget::DisplayP3;
-                            }
-                        },
-                    );
+                                    |ui| {
+                                        ui.selectable_value(
+                                            &mut self.document.target,
+                                            OutputTarget::DisplayP3,
+                                            "Display P3",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.document.target,
+                                            OutputTarget::Srgb,
+                                            "sRGB",
+                                        );
+                                    },
+                                )
+                                .response
+                                .on_hover_text("Output colour space, not the monitor profile.");
+                            },
+                        );
+                        if action.reset && !controls::defer_reset(ui, controls::Reset::Target) {
+                            self.document.target = OutputTarget::DisplayP3;
+                        }
+                    });
                 }
             });
 
@@ -1430,11 +1427,7 @@ impl Editor {
             Some(crate::platform::menu::Action::ZoomOut) => Some(-1. / 1.25),
             _ => None,
         };
-        let zoom_action = self.viewer_bar(ui, cx).or(menu_zoom);
-        let fullscreen = self.fullscreen.is_some();
-        presentation::viewer_surface(ui, fullscreen, |ui| {
-            self.viewer_canvas(ui, zoom_action, fullscreen, cx);
-        });
+        self.show_viewer(ui, menu_zoom, cx);
         let text_focused = ui.ctx().text_edit_focused();
         ui.ctx()
             .data_mut(|data| data.insert_temp(ui.id().with("editor-text-focus"), text_focused));

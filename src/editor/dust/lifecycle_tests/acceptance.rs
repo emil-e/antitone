@@ -785,10 +785,24 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
             super::super::super::tests::paused_reference_fixture(e, reference, None);
         });
         let (working_revision, reference_revision) = app.read(|e| {
-            assert!(e.canvas_source_context().unwrap().correction.is_none());
+            assert!(
+                e.document
+                    .flat_edit()
+                    .unwrap()
+                    .view
+                    .source()
+                    .unwrap()
+                    .correction
+                    .is_none()
+            );
             (
                 e.document.visit.canvas.grade.original.continuation(),
-                e.active_canvas().grade.original.continuation(),
+                e.document
+                    .flat_edit()
+                    .unwrap()
+                    .view
+                    .test_original()
+                    .continuation(),
             )
         });
         drop(hold);
@@ -799,7 +813,12 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
         });
         app.read(|e| {
             assert_eq!(
-                e.active_canvas().grade.original.continuation(),
+                e.document
+                    .flat_edit()
+                    .unwrap()
+                    .view
+                    .test_original()
+                    .continuation(),
                 reference_revision
             );
             assert_ne!(

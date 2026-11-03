@@ -76,7 +76,7 @@ impl Editor {
             return;
         }
         let started = std::time::Instant::now();
-        let selecting_photo = persistent && !self.picking() && self.document.flat_edit().is_none();
+        let selecting_photo = persistent && !self.picking();
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.selection_timing = None;
@@ -151,7 +151,6 @@ impl Editor {
         self.document.visit.source.task = Some(task);
         if selecting_photo
             && !self.picking()
-            && self.document.flat_edit().is_none()
             && let Some(source) = self.document.visit.current_source
         {
             let composition = self

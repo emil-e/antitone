@@ -2,10 +2,8 @@ use super::worker;
 use crate::{
     application::UiContext,
     cancellation::Cancellation,
-    editor::{Editor, FailureKind, document_services::PreparationServices, source},
-    raw::Rect,
+    editor::{Editor, FailureKind, source},
 };
-use futures_channel::oneshot;
 
 #[cfg(test)]
 mod tests;
@@ -13,7 +11,7 @@ mod tests;
 pub(super) fn setup<'scope>(
     request: source::Request,
     services: Option<source::Services>,
-    receive: oneshot::Receiver<(u64, Rect)>,
+    owner: std::rc::Weak<std::cell::RefCell<super::FlatEdit>>,
     cx: &UiContext<'scope, Editor>,
 ) -> Option<async_executor::Task<()>> {
     let cancelled = Cancellation::default();
@@ -27,6 +25,7 @@ pub(super) fn setup<'scope>(
             worker::preview(services.clone(), request, cancelled.clone()).await
         }
         .await;
+        let Some(owner) = owner.upgrade() else { return };
         let reference = match reference {
             Ok(reference) => reference,
             Err(error) => {
@@ -35,7 +34,7 @@ pub(super) fn setup<'scope>(
             }
         };
         cx.update(|editor| {
-            let edit = editor.document.flat_edit_mut().expect("live Flat setup");
+            let mut edit = owner.borrow_mut();
             edit.region = edit
                 .region
                 .or(reference.region.map(super::Coverage::rectangle));
@@ -47,48 +46,65 @@ pub(super) fn setup<'scope>(
                 editor.busy = false;
             }
             editor.resolve_failure(FailureKind::FlatReference);
-            editor.status = if editor.legacy_pick_region().is_some() {
+            editor.status = if edit.region.is_some() {
                 "Proposed illuminated rectangle: adjust edges, then Apply."
             } else {
                 "Illuminated area is ambiguous; draw a rectangle around the usable light."
             }
             .into();
         });
+    })
+}
 
-        // Apply's document transaction key need not match reference preparation's.
-        let Ok((id, region)) = receive.await else {
-            return;
-        };
-        let input = cx.read(|editor| worker::CorrectionInput {
-            sources: editor.source_provider(),
-            region,
-            document: editor.document.capture(),
-            selected: editor.document.visit.current_source,
-            source: source::Context {
-                source: reference.ready.developed.clone(),
-                reference: reference.ready.reference.clone(),
-                correction: None,
-            },
-            record: reference.ready.record.clone(),
-            correction: editor.document.correction.clone(),
-        });
+pub(super) fn correct(
+    editor: &mut Editor,
+    input: super::CorrectionInput,
+    cx: &UiContext<'_, Editor>,
+) {
+    let before = editor.document.state.project.clone();
+    editor.retire_pick_actions();
+    editor.end_tool();
+    editor.cancel_spatial();
+    editor.finish_gamma_edit();
+    editor.control_commands.clear();
+    let id = editor.begin_document_operation(false);
+    editor.history_pending = Some(crate::editor::history::Pending::Edit {
+        before: Box::new(before),
+        label: "Correction",
+        photo: None,
+    });
+    editor.document_failure = Some(FailureKind::FlatCorrection);
+    editor.tasks.begin(crate::editor::Task::Correction(id));
+    let services = input.services.clone();
+    let cancelled = Cancellation::default();
+    let retire = cancelled.cancel_on_drop();
+    let Some(task) = cx.spawn(move |cx| async move {
+        let _retire = retire;
         let result = async {
+            let services = services.ok_or_else(|| "Correction services unavailable".to_owned())?;
             let request = worker::estimate(input, cancelled.clone()).await?;
-            PreparationServices(services.expect("reference preparation used source services"))
+            crate::editor::document_services::PreparationServices(services)
                 .prepare(request, cancelled, |_, _| {})
                 .await
         }
         .await;
         cx.update(|editor| {
-            editor.document_prepared(id, result.map(Box::new));
-            editor.acquire_working(&cx);
+            if editor.document_pending == Some(id) {
+                editor.document.flat_correction = None;
+                editor.document_prepared(id, result.map(Box::new));
+                editor.acquire_working(&cx);
+            }
         });
-    })
+    }) else {
+        editor.document_prepared(id, Err("Application stopped".into()));
+        return;
+    };
+    editor.document.flat_correction = Some(task);
 }
 
 fn fail(cx: &UiContext<'_, Editor>, kind: FailureKind, error: String) {
     cx.update(|editor| {
-        editor.finish_flat_edit();
+        editor.end_tool();
         editor.status = error.clone();
         editor.report_failure(kind, error);
     });

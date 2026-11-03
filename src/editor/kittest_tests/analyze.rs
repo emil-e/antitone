@@ -51,7 +51,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
         assert!(view.spec.is_inspection());
         assert!(Arc::ptr_eq(
             &view,
-            &editor.active_canvas().displayed.as_ref().unwrap().view
+            &editor.canvas_frame.displayed.as_ref().unwrap().view
         ));
     });
     if harness.read(|editor| editor.document.analysis_review().unwrap().replaces_photos) {

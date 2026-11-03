@@ -7,7 +7,8 @@ use crate::{
 };
 use std::sync::Arc;
 
-pub(super) struct CorrectionInput {
+pub(in crate::editor) struct CorrectionInput {
+    pub services: Option<source::Services>,
     pub region: Rect,
     pub sources: Option<Arc<dyn crate::source::SourceProvider>>,
     pub document: Document,
@@ -50,6 +51,21 @@ impl CorrectionInput {
     }
 }
 
+pub(super) async fn estimate(
+    input: CorrectionInput,
+    cancelled: Cancellation,
+) -> Result<document_services::Request, String> {
+    crate::background::run(move |_| {
+        if cancelled.is_cancelled() {
+            return Err(Error::UnusableSample("correction retired"));
+        }
+        input.estimate()
+    })
+    .await
+    .map_err(|_| "Reference estimation worker panicked".to_owned())?
+    .map_err(|error| error.to_string())
+}
+
 pub(super) async fn preview(
     services: source::Services,
     request: source::Request,
@@ -75,22 +91,4 @@ pub(super) async fn preview(
     .await
     .map_err(|_| "Reference support worker panicked".to_owned())?
     .map_err(|error: Error| error.to_string())
-}
-
-pub(super) async fn estimate(
-    mut input: CorrectionInput,
-    cancelled: Cancellation,
-) -> Result<document_services::Request, String> {
-    let sources = input.sources.take();
-    let mut result = crate::background::run(move |_| {
-        if cancelled.is_cancelled() {
-            return Err(Error::UnusableSample("reference retired"));
-        }
-        input.estimate()
-    })
-    .await
-    .map_err(|_| "Reference estimation worker panicked".to_owned())?
-    .map_err(|error| error.to_string())?;
-    result.sources = sources;
-    Ok(result)
 }

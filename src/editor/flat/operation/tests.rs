@@ -88,7 +88,16 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert!(e.test_pick_region().is_some());
-            assert!(e.canvas_source_context().unwrap().correction.is_none());
+            assert!(
+                e.document
+                    .flat_edit()
+                    .unwrap()
+                    .view
+                    .source()
+                    .unwrap()
+                    .correction
+                    .is_none()
+            );
             assert_eq!(e.document.visit.view, visit);
         });
         apply(app);
@@ -146,7 +155,54 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
 }
 
 #[test]
-fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_operation() {
+fn accepted_correction_outlives_tool_dismissal_before_and_after_its_first_poll() {
+    for poll in [false, true] {
+        let scheduler = source_loading::SourceLoader::new();
+        with_application(editor(scheduler.clone()), |app| {
+            import(app);
+            begin(app, "bare-light.dng");
+            wait(app);
+            let before = app.read(|editor| editor.document.project.clone());
+            let hold = crate::background::testing::pause();
+            apply(app);
+            let request = app.read(|editor| {
+                assert!(
+                    editor.document.flat_edit().is_none(),
+                    "Apply ends selection synchronously"
+                );
+                assert!(editor.busy);
+                assert_eq!(editor.document.project, before);
+                assert!(editor.document.correction.is_none());
+                editor.document_pending.unwrap()
+            });
+            if poll {
+                app.pump();
+            }
+            app.update(Editor::finish_flat_edit);
+            app.read(|editor| {
+                assert_eq!(editor.document_pending, Some(request));
+                assert!(editor.busy);
+                assert_eq!(editor.document.project, before);
+            });
+            drop(hold);
+            wait(app);
+            app.read(|editor| {
+                assert!(editor.document.correction.is_some(), "{}", editor.status);
+                assert!(editor.document.flat_edit().is_none());
+                assert_eq!(editor.document.project.order, before.order);
+                assert_eq!(editor.document.project.dmin(), before.dmin());
+                assert_eq!(
+                    editor.history_label(crate::editor::history::Direction::Undo),
+                    Some("Correction")
+                );
+            });
+        });
+        scheduler.close_and_wait().unwrap();
+    }
+}
+
+#[test]
+fn retiring_preparation_or_replacing_accepted_work_cannot_publish_into_a_successor_document() {
     for accept in [false, true] {
         let scheduler = source_loading::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
@@ -161,22 +217,25 @@ fn retiring_queued_reference_stages_restores_context_and_cannot_finish_a_newer_o
             } else {
                 begin(app, "bare-light.dng");
             }
-            let old = app.read(|e| e.id);
+            let old_document = app.read(|e| e.document_pending);
+            assert_eq!(old_document.is_some(), accept);
             app.pump();
             app.update(Editor::finish_flat_edit);
             app.pump();
             app.read(|e| {
                 assert_eq!(e.document.state.project, before);
-                assert!(!e.busy && e.document_pending.is_none());
+                assert_eq!(e.busy, accept);
+                assert_eq!(e.document_pending.is_some(), accept);
                 assert!(e.document.flat_edit().is_none());
             });
             app.enter(|e, cx| {
                 e.start_document(crate::editor::Preparation::New, cx);
             });
             let operation = app.read(|e| e.document_pending);
-            app.update(|e| {
-                e.document_prepared(old, Err("retired".into()));
-            });
+            if let Some(old) = old_document {
+                assert_ne!(Some(old), operation);
+                app.update(|e| e.document_prepared(old, Err("retired".into())));
+            }
             app.read(|e| assert_eq!(e.document_pending, operation));
             drop(hold);
             wait(app);
@@ -287,7 +346,7 @@ fn departed_reference_waiter_can_join_running_unpack_without_stale_publication()
         release.send(()).unwrap();
         wait(app);
         app.read(|e| {
-            assert!(e.active_canvas().ready.is_some());
+            assert!(e.document.flat_edit().unwrap().view.ready.is_some());
             assert!(e.document.visit.canvas.ready.is_none());
             assert!(e.document.state.project.flat_field().is_none());
         });
@@ -323,7 +382,7 @@ fn reference_session_keeps_its_prepared_input_when_the_display_visit_retires() {
 }
 
 #[test]
-fn ending_setup_after_apply_finishes_its_commit_activity_after_a_visit_change() {
+fn accepted_correction_completes_after_the_display_visit_retires() {
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         import(app);
@@ -351,28 +410,34 @@ fn ending_setup_after_apply_finishes_its_commit_activity_after_a_visit_change() 
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed
             ))
         });
-        app.enter(|e, cx| {
+        let hold = crate::background::testing::pause();
+        apply(app);
+        let accepted_request = app.read(|e| e.document_pending.expect("accepted document request"));
+        app.pump();
+        app.update(|e| {
             e.id = e.request_id();
             e.source_epoch.store(e.id, Ordering::Relaxed);
             e.replace_photo_scope(e.id);
-            e.apply_flat_edit(cx);
-            assert!(e.document_pending.is_some() && e.busy);
             e.finish_flat_edit();
+            assert_eq!(e.document_pending, Some(accepted_request));
+            assert!(e.busy && !e.has_hosted_tool());
+            assert_eq!(e.document.project, before);
         });
-        app.pump();
+        drop(hold);
+        wait(app);
         app.read(|e| {
             assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
             assert!(!e.busy && e.tasks.view().is_none());
-            assert_eq!(e.document.state.project, before);
+            assert!(e.document.correction.is_some(), "{}", e.status);
+            assert_eq!(e.document.state.project.order, before.order);
+            assert_eq!(e.document.state.project.dmin(), before.dmin());
             assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert_eq!(e.document.source, source);
-            assert!(e.document.visit.canvas.ready.is_none());
+            assert_eq!(
+                e.history_label(crate::editor::history::Direction::Undo),
+                Some("Correction")
+            );
         });
-        begin(app, "bare-light.dng");
-        wait(app);
-        apply(app);
-        wait(app);
-        app.read(|e| assert!(e.document.correction.is_some(), "{}", e.status));
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -430,7 +495,15 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
         begin(app, "bare-light.dng");
         wait(app);
         app.update(|e| {
-            let area = e.active_canvas().ready.as_ref().unwrap().area;
+            let area = e
+                .document
+                .flat_edit()
+                .unwrap()
+                .view
+                .ready
+                .as_ref()
+                .unwrap()
+                .area;
             e.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
                 crate::raw::Rect {
                     x: area.x,
@@ -457,6 +530,86 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
                 e.history_label(crate::editor::history::Direction::Undo)
                     .is_none()
             );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn failed_replacement_preserves_the_previous_correction_and_adds_no_history_entry() {
+    let scheduler = source_loading::SourceLoader::new();
+    with_application(editor(scheduler.clone()), |app| {
+        let original = app.read(|editor| editor.document.project.clone());
+        begin(app, "bare-light.dng");
+        wait(app);
+        apply(app);
+        wait(app);
+        let (accepted, correction) = app.read(|editor| {
+            (
+                editor.document.project.clone(),
+                editor.document.correction.clone().unwrap(),
+            )
+        });
+        begin(app, "bare-light.dng");
+        wait(app);
+        app.update(|editor| {
+            let area = editor
+                .document
+                .flat_edit()
+                .unwrap()
+                .view
+                .ready
+                .as_ref()
+                .unwrap()
+                .area;
+            editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
+                crate::raw::Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: 2,
+                    height: 2,
+                },
+            )));
+        });
+        apply(app);
+        app.read(|editor| {
+            assert!(!editor.has_hosted_tool() && editor.document_pending.is_some());
+            assert_eq!(editor.document.project, accepted);
+            assert!(Arc::ptr_eq(
+                editor.document.correction.as_ref().unwrap(),
+                &correction
+            ));
+        });
+        wait(app);
+        app.read(|editor| {
+            assert_eq!(
+                editor.failure.as_ref().unwrap().kind,
+                FailureKind::FlatCorrection
+            );
+            assert_eq!(editor.document.project, accepted);
+            assert!(Arc::ptr_eq(
+                editor.document.correction.as_ref().unwrap(),
+                &correction
+            ));
+        });
+        let context = egui::Context::default();
+        frame(app, &context, vec![]);
+        frame(app, &context, key(egui::Key::Escape));
+        app.read(|editor| {
+            assert!(
+                editor.failure.is_none(),
+                "acknowledge the rejected replacement before Undo"
+            )
+        });
+        app.enter(|editor, cx| editor.restore_history(crate::editor::history::Direction::Undo, cx));
+        assert!(
+            app.read(|editor| editor.document_pending.is_some()),
+            "Undo must actually start"
+        );
+        wait(app);
+        app.read(|editor| {
+            assert_eq!(editor.document.project, original);
+            assert!(editor.document.correction.is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -517,8 +670,8 @@ fn ending_setup_while_waiting_for_support_leaves_the_working_view_and_allows_a_n
         begin(app, "bare-light.dng");
         wait(app);
         app.update(|e| {
-            let edit = e.document.flat_edit_mut().unwrap();
-            assert!(!edit.task.as_ref().unwrap().is_finished());
+            assert!(e.document.flat_edit().unwrap().view.ready.is_some());
+            assert!(!e.busy && e.document_pending.is_none());
             e.finish_flat_edit();
         });
         app.pump();
@@ -560,7 +713,7 @@ fn retired_setup_cleanup_does_not_end_a_new_reference_interaction() {
                 .flat_edit()
                 .expect("replacement setup remains active");
             assert!(edit.view.ready.is_some());
-            assert!(!edit.task.as_ref().unwrap().is_finished());
+            assert!(!e.busy && e.document_pending.is_none());
             assert!(e.test_pick_region().is_some());
             assert_eq!(e.document.state.project, before);
         });
@@ -600,14 +753,22 @@ fn correction_uses_the_prepared_reference_even_if_its_file_disappears_before_app
 }
 
 #[test]
-fn apply_captures_support_before_the_awaiting_setup_resumes() {
+fn apply_captures_support_before_the_document_operation_runs() {
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         import(app);
         begin(app, "bare-light.dng");
         wait(app);
         let chosen = app.enter(|e, cx| {
-            let area = e.active_canvas().ready.as_ref().unwrap().area;
+            let area = e
+                .document
+                .flat_edit()
+                .unwrap()
+                .view
+                .ready
+                .as_ref()
+                .unwrap()
+                .area;
             let chosen = e.test_pick_region().unwrap().exact_rectangle(area).unwrap();
             e.apply_flat_edit(cx);
             let later = crate::raw::Rect {
@@ -782,7 +943,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             }
             app.read(|e| {
                 assert!(e.busy && e.document_pending.is_some());
-                assert!(e.document.flat_edit().unwrap().task.is_some());
+                assert!(!e.has_hosted_tool() && e.document.flat_edit().is_none());
                 assert_eq!(e.document.state.project, before);
             });
             let busy = frame(app, &context, vec![])
@@ -790,19 +951,18 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 .accesskit_update
                 .unwrap()
                 .nodes;
-            for label in ["Cancel", "Apply"] {
-                assert!(
-                    busy.iter()
-                        .find(|(_, node)| node.label() == Some(label))
-                        .unwrap()
-                        .1
-                        .is_disabled()
-                );
-            }
+            assert!(
+                !busy
+                    .iter()
+                    .any(|(_, node)| node.role() == egui::accesskit::Role::Button
+                        && matches!(node.label(), Some("Cancel" | "Apply"))),
+                "accepted work has no remaining tool actions"
+            );
             frame(app, &context, key(egui::Key::Escape));
-            assert!(app.read(|e| e.document.flat_edit().is_some() && e.busy));
-            // The first executor turn after Apply completes all service stages
-            // and the return transaction without invoking UI or a starter list.
+            assert!(app.read(|e| e.document.flat_edit().is_none()
+                && e.busy
+                && e.document_pending.is_some()));
+            // The document operation completes without another UI frame.
             wait(app);
             app.read(|e| {
                 assert!(e.document.correction.is_some(), "{}", e.status);
@@ -848,7 +1008,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
 }
 
 #[test]
-fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
+fn unpolled_preparation_can_be_retired_and_closed_execution_rejects_new_work() {
     for accept in [false, true] {
         let scheduler = source_loading::SourceLoader::new();
         with_application(editor(scheduler.clone()), |app| {
@@ -862,9 +1022,21 @@ fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
             } else {
                 begin(app, "bare-light.dng");
             }
-            assert!(app.read(|e| e.document.flat_edit().unwrap().task.is_some()));
-            app.update(Editor::finish_flat_edit);
-            app.pump();
+            if accept {
+                assert!(
+                    app.read(|e| e.document.flat_edit().is_none() && e.document_pending.is_some())
+                );
+                app.enter(|e, cx| {
+                    e.start_document(
+                        crate::editor::Preparation::Open(path("missing.antitone")),
+                        cx,
+                    )
+                });
+            } else {
+                assert!(app.read(|e| e.document.flat_edit().unwrap().task.is_some()));
+                app.update(Editor::finish_flat_edit);
+            }
+            wait(app);
             app.read(|e| {
                 assert!(
                     e.document.flat_edit().is_none() && !e.busy && e.document_pending.is_none()
@@ -894,6 +1066,7 @@ fn unpolled_reference_stages_and_closed_execution_never_publish_a_correction() {
                         FailureKind::FlatReference
                     }
                 );
+                assert_eq!(e.status, "Application stopped");
             });
         });
         scheduler.close_and_wait().unwrap();

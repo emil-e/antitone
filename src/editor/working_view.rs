@@ -952,9 +952,6 @@ impl Editor {
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
-        if self.document.flat_edit().is_some() {
-            return Ok(None);
-        }
         let inspection = image.inspection(self.canvas_inspection());
         let previous = self.document.visit.working_view.displayed.take();
         if self
@@ -971,12 +968,7 @@ impl Editor {
             return Ok(None);
         }
 
-        if self.busy
-            && self.document_pending.is_none()
-            && !image.is_sample()
-            && !self.cropping()
-            && self.document.flat_edit().is_none()
-        {
+        if self.busy && self.document_pending.is_none() && !image.is_sample() && !self.cropping() {
             let mut mailbox = self.document.visit.working_view.mailbox.0.lock().unwrap();
             mailbox.demand = None;
             drop(mailbox);
@@ -1016,9 +1008,7 @@ impl Editor {
         }
 
         if input.repairs.0.is_empty()
-            && (image.is_sample()
-                || self.fullscreen.is_none() && self.cropping()
-                || self.document.flat_edit().is_some())
+            && (image.is_sample() || self.fullscreen.is_none() && self.cropping())
         {
             self.document.visit.working_view.clear();
             return Ok(None);

@@ -1062,10 +1062,24 @@ impl Editor {
         self.filmstrip_preview(ui, Preview::default(), cx);
     }
 
+    pub(super) fn filmstrip_readonly(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        self.filmstrip_presentation(ui, Preview::default(), false, cx);
+    }
+
     pub(super) fn filmstrip_preview(
         &mut self,
         ui: &mut egui::Ui,
         preview: Preview,
+        cx: &UiContext<'_, Self>,
+    ) {
+        self.filmstrip_presentation(ui, preview, true, cx);
+    }
+
+    fn filmstrip_presentation(
+        &mut self,
+        ui: &mut egui::Ui,
+        preview: Preview,
+        interactive: bool,
         cx: &UiContext<'_, Self>,
     ) {
         self.document.thumbnails.preview = preview;
@@ -1078,18 +1092,18 @@ impl Editor {
                 Some(memory::PressureWatch::new(ui.ctx().clone()));
         }
         self.document.thumbnails.update_memory();
-        self.filmstrip_with_budgets(ui, self.document.thumbnails.budgets, cx);
+        self.filmstrip_with_budgets(ui, self.document.thumbnails.budgets, interactive, cx);
     }
 
     fn filmstrip_with_budgets(
         &mut self,
         ui: &mut egui::Ui,
         budgets: memory::CacheBudgets,
+        interactive: bool,
         cx: &UiContext<'_, Self>,
     ) {
         if self.document.visit.canvas.ready.is_none()
             && self.document.visit.pending_preview.is_none()
-            && self.document.flat_edit().is_none()
         {
             self.document.thumbnails.release_selected();
         }
@@ -1115,8 +1129,8 @@ impl Editor {
             && self.document_pending.is_none()
             && !self.picking();
         let reviewing = self.document.analysis_review().is_some() && !self.analysis_fitting();
-        let selection_enabled = (!self.busy || selected_loading || reviewing)
-            && self.document.flat_edit().is_none()
+        let selection_enabled = interactive
+            && (!self.busy || selected_loading || reviewing)
             && !self.cropping()
             && !self.masking()
             && (!self.picking() || reviewing)

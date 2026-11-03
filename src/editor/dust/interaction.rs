@@ -1,9 +1,8 @@
 use super::*;
 
 impl tool::Tool for DustTool {
-    fn presentation(&self, editor: &Editor) -> tool::Presentation {
+    fn presentation(&self, _editor: &Editor) -> tool::Presentation {
         tool::Presentation {
-            show_viewer: !editor.canvas_inspection(),
             identity: presentation::ToolIdentity {
                 icon: icons::Icon::Dust,
                 title: "Dust cleanup",
@@ -107,52 +106,67 @@ impl tool::Tool for DustTool {
 
     fn canvas(
         &mut self,
-        canvas: &mut canvas::Canvas<'_>,
+        viewer: &mut canvas::Viewer<'_>,
         editor: &mut Editor,
         cx: &UiContext<'_, Editor>,
-    ) -> crate::viewport::CanvasLayout {
-        let rect = canvas.response.rect;
-        let composition = canvas.composition;
-        let ppp = canvas.ui.ctx().pixels_per_point();
-        let relayout =
-            |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
-        let layout = canvas.layout(&mut editor.active_canvas_mut().viewport, relayout);
-        if canvas.ui.is_enabled() && editor.tab == 1 {
-            self.adjust_dust_brush_from_scroll(editor, canvas.ui, layout);
-        }
-        let mut response = canvas.response.clone();
-        if editor.tab == 1 {
-            navigation::consume_primary(&mut response);
-        }
-        let (layout, panning) = navigation::navigate_view(
-            &mut editor.active_canvas_mut().viewport,
-            canvas.ui,
-            &response,
-            layout,
-            relayout,
-        );
-        canvas.ui.add_enabled_ui(!panning, |ui| {
-            self.dust_interaction(editor, ui, canvas.response, layout, cx);
-        });
-        let ready = canvas.paint_image(editor, layout, false, cx);
-        self.paint_dust(editor, canvas.ui, layout);
-        if canvas.ui.is_enabled() && ready && !panning && editor.tab == 1 && !editor.document.source
-        {
-            let (point, modifying, space) = canvas.ui.input(|input| {
-                (
-                    input.pointer.hover_pos(),
-                    input.modifiers.alt || input.modifiers.shift,
-                    input.key_down(egui::Key::Space),
-                )
-            });
-            if !space && point.is_some_and(|point| layout.image.contains(point)) {
-                canvas
-                    .ui
-                    .ctx()
-                    .set_cursor_icon(self.dust_canvas_cursor(editor, layout, point, modifying));
-            }
-        }
-        layout
+    ) -> Option<crate::viewport::CanvasLayout> {
+        viewer.show(
+            self,
+            editor,
+            cx,
+            Editor::photograph_controls,
+            |tool, surface, editor, cx| {
+                if editor.fullscreen.is_some() {
+                    return surface.photograph(editor, cx);
+                }
+                let mut canvas = surface.selected()?;
+                let rect = canvas.response.rect;
+                let composition = canvas.composition;
+                let ppp = canvas.ui.ctx().pixels_per_point();
+                let relayout =
+                    |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
+                let layout = canvas.layout(&mut editor.active_canvas_mut().viewport, relayout);
+                if canvas.ui.is_enabled() && editor.tab == 1 {
+                    tool.adjust_dust_brush_from_scroll(editor, canvas.ui, layout);
+                }
+                let mut response = canvas.response.clone();
+                if editor.tab == 1 {
+                    navigation::consume_primary(&mut response);
+                }
+                let (layout, panning) = navigation::navigate_view(
+                    &mut editor.active_canvas_mut().viewport,
+                    canvas.ui,
+                    &response,
+                    layout,
+                    relayout,
+                );
+                canvas.ui.add_enabled_ui(!panning, |ui| {
+                    tool.dust_interaction(editor, ui, canvas.response, layout, cx);
+                });
+                let ready = canvas.paint_image(editor, layout, false, cx);
+                tool.paint_dust(editor, canvas.ui, layout);
+                if canvas.ui.is_enabled()
+                    && ready
+                    && !panning
+                    && editor.tab == 1
+                    && !editor.document.source
+                {
+                    let (point, modifying, space) = canvas.ui.input(|input| {
+                        (
+                            input.pointer.hover_pos(),
+                            input.modifiers.alt || input.modifiers.shift,
+                            input.key_down(egui::Key::Space),
+                        )
+                    });
+                    if !space && point.is_some_and(|point| layout.image.contains(point)) {
+                        canvas.ui.ctx().set_cursor_icon(
+                            tool.dust_canvas_cursor(editor, layout, point, modifying),
+                        );
+                    }
+                }
+                Some(layout)
+            },
+        )
     }
 
     fn shortcuts(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
@@ -168,7 +182,7 @@ impl tool::Tool for DustTool {
         }
     }
 
-    fn action(&mut self, action: tool::Action, editor: &mut Editor) {
+    fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         if matches!(action, tool::Action::Dismiss) && !editor.busy {
             if !self.interaction.searches.borrow().is_empty() {
                 editor.status = "Unfinished Dust strokes discarded".into();

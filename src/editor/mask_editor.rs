@@ -349,7 +349,6 @@ impl Editor {
             && self.document.input.ready()
             && !self.document.source
             && !self.picking()
-            && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()
             && !self.document.visit.adjustment_layers.confirming()
             && self.fullscreen.is_none()

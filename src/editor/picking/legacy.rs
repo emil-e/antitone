@@ -7,7 +7,7 @@ struct PickView {
     anchored: Viewport,
 }
 
-/// Region and view state for Analyze; Flat retains its reference region.
+/// Region and view state for Analyze.
 #[derive(Default)]
 pub(in crate::editor) struct Session {
     pub display: Option<Display>,
@@ -17,27 +17,15 @@ pub(in crate::editor) struct Session {
 
 impl Editor {
     pub(in crate::editor) fn legacy_pick(&self) -> Option<Display> {
-        if self.document.flat_edit().is_some() {
-            Some(flat::DISPLAY)
-        } else {
-            self.document.visit.picking.display
-        }
+        self.document.visit.picking.display
     }
 
     pub(in crate::editor) fn legacy_pick_region(&self) -> Option<Coverage> {
-        if let Some(reference) = self.document.flat_edit() {
-            reference.region
-        } else {
-            self.document.visit.picking.region
-        }
+        self.document.visit.picking.region
     }
 
     pub(in crate::editor) fn set_legacy_pick_region(&mut self, region: Option<Coverage>) {
-        if let Some(reference) = self.document.flat_edit_mut() {
-            reference.region = region;
-        } else {
-            self.document.visit.picking.region = region;
-        }
+        self.document.visit.picking.region = region;
     }
 
     pub(in crate::editor) fn cancel_legacy_picker(&mut self) {

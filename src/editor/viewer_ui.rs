@@ -4,6 +4,13 @@ pub(super) fn surface() -> egui::Color32 {
     egui::Color32::from_gray(16)
 }
 
+pub(super) struct BarResponse {
+    pub zoom: Option<f32>,
+    pub fit: bool,
+    pub fullscreen: bool,
+    pub action: Option<tool::Action>,
+}
+
 impl Editor {
     pub(super) fn source_parameters(&self, exposure: f64) -> Result<ProcessingParameters, Error> {
         if let Some(ready) = &self.active_canvas().ready {
@@ -35,7 +42,7 @@ impl Editor {
         self.source_preview_parameters(self.document.source_preview(source), exposure)
     }
 
-    fn source_preview_parameters(
+    pub(super) fn source_preview_parameters(
         &self,
         preview: crate::raw::SourcePreview,
         exposure: f64,
@@ -109,19 +116,17 @@ impl Editor {
     pub(super) fn viewer_bar(
         &mut self,
         ui: &mut egui::Ui,
-        cx: &UiContext<'_, Self>,
-    ) -> Option<f32> {
+        controls: impl FnOnce(&mut Editor, &mut egui::Ui, bool),
+    ) -> BarResponse {
         use icons::Icon;
         use presentation::{TextAction, ToolGroup, ToolIdentity, VIEWER_ITEM_GAP};
 
         let mut zoom_action = None;
+        let mut fit = false;
+        let mut toggle_fullscreen = false;
         let fullscreen = self.fullscreen.is_some();
         let hosted = (!fullscreen)
-            .then(|| {
-                self.current_tool()
-                    .map(|tool| tool.presentation())
-                    .filter(|tool| tool.show_viewer)
-            })
+            .then(|| self.current_tool().map(|tool| tool.presentation()))
             .flatten();
         let fit_label = hosted.as_ref().map_or("Fit", |tool| tool.fit_label);
         let masking = !fullscreen && self.masking();
@@ -139,12 +144,11 @@ impl Editor {
         let mut cancel = false;
         let mut apply = false;
         let calibrated = self.document.input.ready();
-        if !calibrated && self.document.flat_edit().is_none() {
+        if !calibrated {
             self.document.source = true;
         }
 
-        let navigating =
-            self.active_canvas().ready.is_some() && !self.busy && !self.mask_dragging();
+        let navigating = self.canvas_frame.layout.is_some() && !self.busy && !self.mask_dragging();
         let reviewing = self.document.analysis_review().is_some();
         let apply_label = if reviewing { "Analyze roll" } else { "Apply" };
         let review_ready = self.document.analysis_review().is_none_or(|review| {
@@ -154,10 +158,17 @@ impl Editor {
                 .iter()
                 .all(|entry| entry.areas.ready())
         });
+        let cancellable_tool_work = hosted.is_some()
+            && self
+                .hosted_tool_activity()
+                .is_some_and(|request| self.tasks.is_current(request))
+            && self.tasks.view().is_some_and(|task| task.cancel.is_some());
         let tool_group = tool.map(|(icon, title)| ToolGroup {
             identity: ToolIdentity { icon, title },
             busy: self.busy,
-            cancel_enabled: !self.busy || reviewing && !self.analysis_fitting(),
+            cancel_enabled: !self.busy
+                || cancellable_tool_work
+                || reviewing && !self.analysis_fitting(),
             apply_enabled: hosted.as_ref().map_or_else(
                 || navigating && review_ready && self.legacy_pick_region().is_some(),
                 |tool| !self.busy && tool.primary.is_some_and(|primary| primary.enabled),
@@ -169,9 +180,9 @@ impl Editor {
             .and_then(|tool| tool.warning.clone())
             .or_else(|| self.viewer_warning());
         let look_error = self.look_rendering_error();
-        let normal_controls =
-            tool.is_none() || hosted.is_some() && self.document.visit.picker.display().is_none();
-        let inspecting = navigating && calibrated && tool.is_none() && !masking;
+        let painted_source = self.canvas_frame.displayed.as_ref().is_some_and(|painted| {
+            matches!(&painted.view.capture, working_view::Capture::Primitive(input) if input.grade().is_none())
+        });
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
         } else {
@@ -194,9 +205,9 @@ impl Editor {
                 };
                 let quality = if self.document.visit.pending_preview.is_some() {
                     " · Cached preview"
-                } else if self.canvas_inspection() || self.active_canvas().ready.is_none() {
+                } else if painted_source || self.canvas_inspection() || self.active_canvas().ready.is_none() {
                     ""
-                } else if self.document.visit.working_view.enabled() && normal_controls {
+                } else if self.document.visit.working_view.enabled() {
                     if look_error.is_some() {
                         " · Look unavailable"
                     } else if self.document.visit.working_view.error.is_some() {
@@ -243,9 +254,7 @@ impl Editor {
                             .size()
                             .x
                     };
-                let source_controls = usize::from(normal_controls)
-                    + usize::from(self.canvas_inspection()
-                        || normal_controls && self.document.visit.working_view.enabled());
+                let source_controls = 2;
                 // Fit, zoom steps and fullscreen, plus the readout, separator and current view controls.
                 let navigation_icons = 4 + source_controls;
                 let navigation_width = 50.
@@ -262,9 +271,9 @@ impl Editor {
                 )
                 .clicked()
                 {
-                    self.with_tool_viewport(Viewport::fit);
+                    fit = true;
                 }
-                let layout = self.active_canvas().last_layout.map(|(layout, _)| layout);
+                let layout = self.canvas_frame.layout.map(|(layout, _)| layout);
                 let zoom = layout.map_or("—".into(), |layout| {
                     format!("{:.0}%", 100. * layout.scale * ui.ctx().pixels_per_point())
                 });
@@ -306,95 +315,11 @@ impl Editor {
                 )
                 .clicked()
                 {
-                    self.toggle_fullscreen(ui.ctx());
+                    toggle_fullscreen = true;
                 }
                 ui.separator();
-                if normal_controls {
-                    ui.add_enabled_ui(inspecting, |ui| {
-                        icons::toggle(
-                            ui,
-                            Icon::Source,
-                            &mut self.document.source,
-                            "View source",
-                            if calibrated {
-                                "Switch between the positive grade and developed source."
-                            } else {
-                                "Measure Dmin and Dmax before viewing a positive grade."
-                            },
-                        );
-                    });
-                }
-                if !self.canvas_inspection() && normal_controls && self.document.visit.working_view.enabled() {
-                    ui.add_enabled_ui(inspecting, |ui| {
-                        icons::toggle(
-                            ui,
-                            Icon::Inspection,
-                            &mut self.document.visit.working_view.compare,
-                            "Original-resolution reference",
-                            "Compare with original-resolution processing; export is unchanged.",
-                        );
-                    });
-                }
-                let inspection_id = ui.make_persistent_id("source-inspection-popup");
-                if self.canvas_inspection() {
-                    let exposure = format!("Source {:+.2} EV", self.source_exposure);
-                    let inspection = icons::button(
-                        ui,
-                        Icon::Inspection,
-                        navigating,
-                        "Source inspection",
-                        "Adjust source-preview white balance and brightness.",
-                    );
-                    egui::Popup::from_toggle_button_response(&inspection)
-                        .id(inspection_id)
-                        .layout(egui::Layout::top_down(egui::Align::Min))
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| {
-                            ui.set_width(240.);
-                            ui.label(egui::RichText::new("Source inspection").strong());
-                            ui.add_enabled_ui(navigating, |ui| {
-                                if self.document.input.is_negative() {
-                                    use crate::raw::SourceWhiteBalance;
-                                    presentation::labelled_row(ui, "Viewing WB", None, |ui, _| {
-                                        ui.selectable_value(
-                                            &mut self.source_white_balance,
-                                            SourceWhiteBalance::AsShot,
-                                            "As shot",
-                                        );
-                                        ui.selectable_value(
-                                            &mut self.source_white_balance,
-                                            SourceWhiteBalance::Daylight,
-                                            "Daylight",
-                                        );
-                                    });
-                                }
-                                controls::parameter(
-                                    ui,
-                                    controls::Parameter::Exposure,
-                                    &mut self.source_exposure,
-                                );
-                            });
-                            ui.small("Canvas and source thumbnails · not saved");
-                        });
-                    let readout = presentation::instrument_readout(
-                        &exposure,
-                        egui::TextStyle::Small.resolve(ui.style()).size,
-                    );
-                    let exposure_width = egui::WidgetText::from(readout.clone())
-                        .into_galley(
-                            ui,
-                            Some(egui::TextWrapMode::Extend),
-                            f32::INFINITY,
-                            egui::TextStyle::Small,
-                        )
-                        .size()
-                        .x;
-                    if ui.available_width() >= trailing_width + exposure_width + 40. {
-                        ui.label(readout);
-                    }
-                } else {
-                    egui::Popup::close_id(ui.ctx(), inspection_id);
-                }
+                let controls_width = (ui.available_width() - trailing_width - presentation::CONTROL_HEIGHT - 2. * VIEWER_ITEM_GAP).max(0.);
+                ui.allocate_ui(egui::vec2(controls_width, presentation::CONTROL_HEIGHT), |ui| controls(self, ui, navigating));
                 if let Some(error) = &look_error {
                     ui.colored_label(egui::Color32::LIGHT_RED, "Look rendering failed");
                     if TextAction::new("Details").toolbar(60.).name("Look rendering details").show(ui).clicked() {
@@ -489,24 +414,111 @@ impl Editor {
             });
         });
 
-        if cancel {
-            if hosted.is_some() {
-                self.hosted_action(tool::Action::Dismiss);
-            } else if masking {
-                self.finish_mask(false);
-            } else {
-                self.finish_pick(cx);
-            }
-            ui.ctx().request_repaint();
+        let action = if cancel {
+            Some(tool::Action::Dismiss)
         } else if apply {
-            if hosted.is_some() {
-                self.hosted_action(tool::Action::Primary);
-            } else {
-                self.apply_pick(cx);
-            }
-            ui.ctx().request_repaint();
+            Some(tool::Action::Primary)
+        } else {
+            None
+        };
+        BarResponse {
+            zoom: zoom_action,
+            fit,
+            fullscreen: toggle_fullscreen,
+            action,
         }
-        zoom_action
+    }
+
+    pub(super) fn photograph_controls(&mut self, ui: &mut egui::Ui, navigating: bool) {
+        let normal = self.legacy_pick().is_none();
+        let inspecting = navigating
+            && self.document.input.ready()
+            && (!self.has_hosted_tool() || self.fullscreen.is_some())
+            && !self.masking();
+        if normal {
+            ui.add_enabled_ui(inspecting, |ui| {
+                icons::toggle(
+                    ui,
+                    icons::Icon::Source,
+                    &mut self.document.source,
+                    "View source",
+                    "Switch between the positive grade and developed source.",
+                );
+            });
+        }
+        if !self.canvas_inspection() && normal && self.document.visit.working_view.enabled() {
+            ui.add_enabled_ui(inspecting, |ui| {
+                icons::toggle(
+                    ui,
+                    icons::Icon::Inspection,
+                    &mut self.document.visit.working_view.compare,
+                    "Original-resolution reference",
+                    "Compare with original-resolution processing; export is unchanged.",
+                );
+            });
+        }
+        if self.canvas_inspection() {
+            self.source_controls(ui, navigating);
+        }
+    }
+
+    pub(super) fn source_controls(&mut self, ui: &mut egui::Ui, navigating: bool) {
+        let inspection_id = ui.make_persistent_id("source-inspection-popup");
+        let exposure = format!("Source {:+.2} EV", self.source_exposure);
+        let inspection = icons::button(
+            ui,
+            icons::Icon::Inspection,
+            navigating,
+            "Source inspection",
+            "Adjust source-preview white balance and brightness.",
+        );
+        egui::Popup::from_toggle_button_response(&inspection)
+            .id(inspection_id)
+            .layout(egui::Layout::top_down(egui::Align::Min))
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_width(240.);
+                ui.label(egui::RichText::new("Source inspection").strong());
+                ui.add_enabled_ui(navigating, |ui| {
+                    if self.document.input.is_negative() {
+                        use crate::raw::SourceWhiteBalance;
+                        presentation::labelled_row(ui, "Viewing WB", None, |ui, _| {
+                            ui.selectable_value(
+                                &mut self.source_white_balance,
+                                SourceWhiteBalance::AsShot,
+                                "As shot",
+                            );
+                            ui.selectable_value(
+                                &mut self.source_white_balance,
+                                SourceWhiteBalance::Daylight,
+                                "Daylight",
+                            );
+                        });
+                    }
+                    controls::parameter(
+                        ui,
+                        controls::Parameter::Exposure,
+                        &mut self.source_exposure,
+                    );
+                });
+                ui.small("Canvas and source thumbnails · not saved");
+            });
+        let readout = presentation::instrument_readout(
+            &exposure,
+            egui::TextStyle::Small.resolve(ui.style()).size,
+        );
+        let width = ui
+            .painter()
+            .layout_no_wrap(
+                exposure,
+                egui::TextStyle::Small.resolve(ui.style()),
+                ui.visuals().text_color(),
+            )
+            .size()
+            .x;
+        if ui.available_width() >= width {
+            ui.label(readout);
+        }
     }
 
     pub(super) fn canvas_input_allowed(&self, ui: &egui::Ui, canvas: egui::Rect) -> bool {
