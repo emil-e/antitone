@@ -99,7 +99,26 @@
     "curve_identification": "cyan stroke (CMYK0.547/0/0.176/0) labelled 2 in the upper characteristic graph, including separate toe and shoulder stroke fragments52\u201362; centerline clipped to the plot rectangle; not adjacent green1 or red3"
   },
   "reconstruction": {
-    "family": "tabulated",
+    "family": "monotone-cubic-bspline",
+    "intervals": 12,
+    "control_values": [
+      0.0000027233115492533964,
+      0.004421300351598238,
+      0.004421300351598238,
+      0.11522655561818786,
+      0.43284327470341033,
+      0.72395515409383,
+      1.4051773113763222,
+      2.03857663887465,
+      2.0398763749050137,
+      2.07132707656561,
+      2.07132707656561,
+      2.07132707656561,
+      2.07132707656561,
+      2.07132707656561,
+      2.081697303921569
+    ],
+    "method": "Least-squares clamped uniform cubic B-spline fitted to the retained samples with nondecreasing controls and fixed endpoints; limited complexity within the recorded density-reading allowance. Samples retain the graph trace, not interpolation knots.",
     "samples": [
       [
         0.0,

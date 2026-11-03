@@ -1,17 +1,17 @@
 {
   "upstream_revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
   "inputs": {
-    "scripts/spektrafilm/monochrome.py": "25813d344a5ee3fc496a99da965f183504c9bcc0f70e07c0960635c0d1964e3c",
+    "scripts/spektrafilm/monochrome.py": "b6d8e18bbdbdb1965bbb99a7fb11195651abb751a62c940e483351a4220f58d3",
     "scripts/spektrafilm/build.py": "b1af10b6c42c70cc088d4dced4d2136ff242dd46f40ccfd6fc7fd55f8558422c",
     "scripts/spektrafilm/requirements.lock": "e1182ee0eb7b0aeb29fa75a4b11ec33ba776570f60cebba10bd74cbd2d1841f8",
     "assets/papers/fomabrom-variant-glossy-filter-2/source.json": "ba3f73d627f1c9fa548e3ce79e7065b2468b99db6d41659dbfaaa51f944192a6",
     "assets/papers/fomaspeed-variant-glossy-filter-2/source.json": "e76c3d90a36c27e2753580efdd8e6dcbed94bdbd5cf75759c098633f82d46f12",
-    "assets/papers/ilford-multigrade-fb-classic-filter-2/source.json": "ec5a7f3f22bd9dc8f3c1e4de5171ac13cfcdf8d4c49d1ce76c2f6f72e14fe3b6",
+    "assets/papers/ilford-multigrade-fb-classic-filter-2/source.json": "68d3d4e58d66fce790c20f70491890ac76449e39defd82421a998761858a4324",
     "assets/papers/ilford-multigrade-rc-deluxe-filter-2/source.json": "b808bc1a4bfe5c68f974207537b94e4afd8fa5318e16bdfb11ed09552deb1116",
     "assets/negatives/ilford-delta-100-id11-8m30s/source.json": "bebc5e1dded16105070778a5b37f39a0c8c6f65bbd1913d9f0f0802f276af0a6",
-    "assets/negatives/ilford-delta-400-id11-8m-24c/source.json": "334970ff695e5f6a923f92ec5af5bd800b7274d0012de2bc41af6176f01b9ca8",
+    "assets/negatives/ilford-delta-400-id11-8m-24c/source.json": "40c7d7355c04c116dc567bbb73487860c85510e277d63d3c2bad1f22a067be7d",
     "assets/negatives/ilford-fp4-plus-ilfotec-hc-8m/source.json": "810380b35afad0b58b7726bcb4a572a60612be7e90943e5d6f912fefe3d9c89a",
-    "assets/negatives/ilford-hp5-plus-ilfotec-hc-6m30s/source.json": "7be29ca7375a69f0cc34939f6d9bb2f014b9610ca6735dc54810da59c4a1d122",
+    "assets/negatives/ilford-hp5-plus-ilfotec-hc-6m30s/source.json": "0b8981468f6a6e79104cc6da92c3e57a5a874a617098ab016740551bbfff80d9",
     "assets/negatives/kodak-tmax-100-d76-7m30s/source.json": "cc9fa26643ce284a286ed78603e9ee24c2ed41bc7ed645331b03847e3adc8373",
     "assets/negatives/kodak-tmax-400-d76-8m/source.json": "638b5c199300bc906b4e344d34bb43a094007fc3a6761fc0a6ec948d4bba1f59",
     "assets/negatives/kodak-trix-400-d76-8m/source.json": "df8a70dee2f57f683e38628ad9bf9d825adc916fc3a019982926e424a8d454f2",
@@ -187,12 +187,12 @@
     "max_density_errors": {
       "foma_fomabrom_variant_glossy_filter_2": 2.220446049250313e-16,
       "foma_fomaspeed_variant_glossy_filter_2": 4.440892098500626e-16,
-      "ilford_multigrade_fb_classic_filter_2": 4.440892098500626e-16,
+      "ilford_multigrade_fb_classic_filter_2": 2.705331129115862e-06,
       "ilford_multigrade_rc_deluxe_filter_2": 4.292286168050552e-06,
       "ilford_delta_100_id11_8m30s": 2.220446049250313e-16,
-      "ilford_delta_400_id11_8m_24c": 4.440892098500626e-16,
+      "ilford_delta_400_id11_8m_24c": 3.146932257003243e-07,
       "ilford_fp4_plus_ilfotec_hc_8m": 2.220446049250313e-16,
-      "ilford_hp5_plus_ilfotec_hc_6m30s": 4.440892098500626e-16,
+      "ilford_hp5_plus_ilfotec_hc_6m30s": 3.643110015882911e-07,
       "kodak_tmax_100_d76_7m30s": 4.440892098500626e-16,
       "kodak_tmax_400_d76_8m": 4.440892098500626e-16,
       "kodak_trix_400_d76_8m": 4.440892098500626e-16
@@ -210,7 +210,7 @@
     },
     "ilford_multigrade_fb_classic_filter_2": {
       "constraints": 257,
-      "max_density_outside_ink_interval": 0
+      "max_density_outside_ink_interval": 0.019500482284460663
     },
     "ilford_multigrade_rc_deluxe_filter_2": {
       "constraints": 476,
@@ -222,7 +222,7 @@
     },
     "ilford_delta_400_id11_8m_24c": {
       "constraints": 377,
-      "max_density_outside_ink_interval": 0
+      "max_density_outside_ink_interval": 0.010238583470520535
     },
     "ilford_fp4_plus_ilfotec_hc_8m": {
       "constraints": 257,
@@ -230,7 +230,7 @@
     },
     "ilford_hp5_plus_ilfotec_hc_6m30s": {
       "constraints": 257,
-      "max_density_outside_ink_interval": 0
+      "max_density_outside_ink_interval": 0.009610411573483635
     },
     "kodak_tmax_100_d76_7m30s": {
       "constraints": 257,
@@ -246,9 +246,9 @@
     }
   },
   "outputs": {
-    "components.json.z": "d58175f150d2b790784beff834f528358f51f1051fa7f1e6128496d294791d38",
+    "components.json.z": "37e095a05c3e7719a9688410523c56487220f48edaf436ae4bc24f2ade032d8d",
     "spectral.f32.z": "7c538f1b8ec36deb4bced3ae68d33aec57fa2bb2d0512c93a16a701f97fb1c73",
     "index.json": "1916036a5e06acd92a2926129937abd16c499281d7e18ed4be1278c7cde3a76d",
-    "conformance.json.z": "ba0efe86bbd43f9daf7c9ae9a54d5e5607e9d6903ed00356554c5e17e11c2096"
+    "conformance.json.z": "946520673552ed0463ed95977735b3213afcce6be9efb7d3c9e61162fd26aa5f"
   }
 }

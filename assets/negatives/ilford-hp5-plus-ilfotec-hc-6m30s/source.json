@@ -126,7 +126,20 @@
     "curation": "threshold128, trace thick connected ink after excluding grid; monotone density reconstruction within ink/reading allowance"
   },
   "reconstruction": {
-    "family": "tabulated",
+    "family": "monotone-cubic-bspline",
+    "intervals": 6,
+    "control_values": [
+      0.17777777777777776,
+      0.17777777777777776,
+      0.17777777777777776,
+      0.3455161556154758,
+      0.8529444758699279,
+      1.2704354717826174,
+      1.7154157953605558,
+      2.0164846165268293,
+      2.1404405381944445
+    ],
+    "method": "Least-squares clamped uniform cubic B-spline fitted to the retained samples with nondecreasing controls and fixed endpoints; limited complexity within the recorded density-reading allowance. Samples retain the graph trace, not interpolation knots.",
     "samples": [
       [
         0.03333333333333333,

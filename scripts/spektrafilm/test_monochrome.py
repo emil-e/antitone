@@ -37,6 +37,9 @@ class Monochrome(unittest.TestCase):
                 if reconstruction["family"] == "tabulated":
                     for row in reconstruction["samples"]:
                         row[1] += 0.1
+                elif reconstruction["family"] == "monotone-cubic-bspline":
+                    controls = reconstruction["control_values"]
+                    controls[1:-1] = [min(controls[-1], v + 0.1) for v in controls[1:-1]]
                 else:
                     reconstruction["parameters"][0][1] *= 1.2
                 with self.assertRaisesRegex(ValueError, "outside retained graph-reading allowance"):
@@ -65,6 +68,49 @@ class Monochrome(unittest.TestCase):
             }
             for i in range(2049):
                 self.assertEqual(monochrome.source_density(source, -1 + i / 1024), density)
+
+    def test_cubic_spline_matches_bezier_polynomial_and_clamps_endpoints(self):
+        reconstruction = {"intervals": 1, "control_values": [0.0, 0.2, 0.3, 2.0]}
+        domain = [-2.0, 3.0]
+        for t in [0.0, 0.125, 0.5, 0.75, 1.0]:
+            expected = 3 * (1 - t) ** 2 * t * 0.2 + 3 * (1 - t) * t**2 * 0.3 + t**3 * 2
+            self.assertAlmostEqual(
+                monochrome.spline_density(reconstruction, domain, -2 + 5 * t), expected
+            )
+        self.assertEqual(monochrome.spline_density(reconstruction, domain, -100), 0.0)
+        self.assertEqual(monochrome.spline_density(reconstruction, domain, 100), 2.0)
+        # Interior knot values from the cubic basis weights, independent of de Boor.
+        joined = {"intervals": 3, "control_values": [0.0, 0.0, 0.5, 1.0, 1.0, 2.0]}
+        for t, expected in [(1 / 3, 11 / 24), (0.5, 47 / 64), (2 / 3, 11 / 12)]:
+            self.assertAlmostEqual(monochrome.spline_density(joined, [0, 1], t), expected)
+        for density in [0.17777777777777776, 1.869047619047619]:
+            flat = {"intervals": 6, "control_values": [density] * 9}
+            for i in range(2049):
+                self.assertEqual(monochrome.spline_density(flat, [0, 1], i / 2048), density)
+
+    def test_invalid_spline_controls_domains_and_trace_departures_are_rejected(self):
+        source = next(
+            json.loads(p.read_text())
+            for p in monochrome.SOURCES
+            if json.loads(p.read_text())["reconstruction"]["family"] == "monotone-cubic-bspline"
+        )
+        for field, value in [
+            ("intervals", 0),
+            ("intervals", 1.5),
+            ("control_values", [0.0] * 4),
+            ("control_values", [float("nan")] * len(source["reconstruction"]["control_values"])),
+            ("control_values", list(reversed(source["reconstruction"]["control_values"]))),
+        ]:
+            with self.subTest(field=field, value=value):
+                changed = copy.deepcopy(source)
+                changed["reconstruction"][field] = value
+                with self.assertRaisesRegex(ValueError, "invalid monotone characteristic spline"):
+                    monochrome.audit_source(changed)
+        changed = copy.deepcopy(source)
+        changed["material"]["log_exposure_range"][0] = float("nan")
+        with self.assertRaisesRegex(ValueError, "invalid monotone characteristic spline"):
+            monochrome.audit_source(changed)
+        monochrome.audit_source(source)
 
     def test_linear_and_log_sensitivity_are_distinct_and_no_source_spd_is_invented(self):
         linear = {

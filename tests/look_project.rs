@@ -51,6 +51,57 @@ fn independent_embedded_slots_survive_save_as_without_catalogue_or_source_files(
 }
 
 #[test]
+fn current_material_labels_do_not_rebake_a_saved_129_cube_with_a_retired_generator() {
+    use antitone::looks::{authoring, monochrome};
+    use std::sync::atomic::AtomicBool;
+
+    // Deliberately authored numeric data, not a golden result of the current
+    // generator: the embedded payload is authoritative even for known labels.
+    let mut nodes = Vec::with_capacity(129_usize.pow(3));
+    for b in 0..129 {
+        for g in 0..129 {
+            for r in 0..129 {
+                nodes.push([r, g, b].map(|v| 0.125 + v as f32 / 256.));
+            }
+        }
+    }
+    let paper = monochrome::Paper::default();
+    let negative = monochrome::Negative::from_id("ilford_hp5_plus_ilfotec_hc_6m30s").unwrap();
+    let selection = monochrome::Selection {
+        negative: Some(negative),
+        paper,
+    };
+    let mut origin = selection.origin();
+    let LookOrigin::Photochemical { generator, .. } = &mut origin else {
+        unreachable!()
+    };
+    *generator = "retired-generator".into();
+    let saved = Arc::new(
+        LookAsset::new(
+            selection.name(),
+            origin,
+            Arc::new(Lut3D::new(129, [-0.5; 3], [1.0386752; 3], nodes).unwrap()),
+        )
+        .unwrap(),
+    );
+    let fresh = monochrome::Model::new(selection)
+        .bake(authoring::DEFAULT_GRID, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(fresh.lut().size(), 65);
+    assert_ne!(fresh.lut().id(), saved.lut().id());
+    let mut project = Project::default();
+    project.output.film_and_paper = Some(saved.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("accepted.antitone");
+    project.save(&path, Save::New).unwrap();
+    let restored = Project::load(&path).unwrap().output.film_and_paper.unwrap();
+    assert_eq!(restored, saved);
+    assert_eq!(restored.lut().size(), 129);
+    assert_eq!(restored.lut().nodes(), saved.lut().nodes());
+    assert_eq!(restored.lut().domain(), saved.lut().domain());
+}
+
+#[test]
 fn malformed_embedded_assets_in_either_slot_are_rejected_at_their_actual_fields() {
     let mut project = Project::default();
     project.output.lut = Some(lut(LookOrigin::Imported));
