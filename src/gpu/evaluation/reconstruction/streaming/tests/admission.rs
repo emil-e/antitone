@@ -64,7 +64,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         )
         .unwrap();
     let mut actual = Vec::new();
-    context
+    let stats = context
         .read(
             &queue,
             &Default::default(),
@@ -81,6 +81,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
     let reads = reads.lock().unwrap();
     assert!(reads.len() > 1, "exercise streamed contributions");
+    assert!(stats.scratch_bytes <= BUDGET, "{stats:?}");
     for region in reads.iter() {
         let cells = u64::from(region.width) * u64::from(region.height);
         // Input/output rasters, declared payload, one bit per source cell, parent result,
@@ -89,6 +90,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         assert!(
             live <= BUDGET,
             "{region:?}: at least {live} live scratch bytes"
+        );
+        assert!(
+            stats.scratch_bytes >= live,
+            "{stats:?}: omitted live storage"
         );
     }
     assert_eq!(

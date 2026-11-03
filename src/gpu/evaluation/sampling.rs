@@ -33,13 +33,16 @@ pub trait SampleProduction: Send + Sync {
         false
     }
 
-    /// Related roots may share upstream traversal; false leaves each root to ordinary production.
-    fn produce_many(&self, _outputs: &[(&Arc<ImageNode>, Production<'_>)]) -> Result<bool, Error> {
-        Ok(false)
+    /// Related roots may share upstream traversal; None leaves each root to ordinary production.
+    fn produce_many(
+        &self,
+        _outputs: &[(&Arc<ImageNode>, Production<'_>)],
+    ) -> Result<Option<Stats>, Error> {
+        Ok(None)
     }
 
     /// Writes the complete requested output. Cancellation is an error.
-    fn produce(&self, worker: &Production<'_>, input: &Arc<ImageNode>) -> Result<(), Error>;
+    fn produce(&self, worker: &Production<'_>, input: &Arc<ImageNode>) -> Result<Stats, Error>;
 }
 
 pub trait SampleConsumer: Send + Sync {

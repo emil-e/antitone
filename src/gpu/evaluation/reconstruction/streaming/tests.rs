@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 mod admission;
 mod coverage;
+mod stats;
 
 struct Pixels {
     domain: Domain,

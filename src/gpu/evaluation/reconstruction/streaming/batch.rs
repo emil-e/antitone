@@ -2,34 +2,34 @@ use super::*;
 
 pub(in crate::gpu::evaluation::reconstruction) fn produce(
     outputs: &[(&Arc<ImageNode>, Production<'_>)],
-) -> Result<bool, Error> {
+) -> Result<Option<Stats>, Error> {
     let Some((first, _)) = outputs.first() else {
-        return Ok(false);
+        return Ok(None);
     };
     let Some(input) = first.input.as_ref() else {
-        return Ok(false);
+        return Ok(None);
     };
     let mut operations = Vec::new();
     for (image, worker) in outputs {
         let Some(operation) =
             (image.operation.as_ref() as &dyn std::any::Any).downcast_ref::<Reconstruction>()
         else {
-            return Ok(false);
+            return Ok(None);
         };
         let Some(upstream) = image.input.as_ref() else {
-            return Ok(false);
+            return Ok(None);
         };
         if !(Arc::ptr_eq(input, upstream)
             || input.identity().is_some() && input.identity() == upstream.identity())
             || worker.budget.tile[0] < worker.layout.region.width
             || worker.budget.tile[1] < worker.layout.region.height
         {
-            return Ok(false);
+            return Ok(None);
         }
         operations.push(operation);
     }
     if outputs.len() < 2 {
-        return Ok(false);
+        return Ok(None);
     }
     let mut plans = Vec::new();
     let mut resident = true;
@@ -52,9 +52,10 @@ pub(in crate::gpu::evaluation::reconstruction) fn produce(
         }
     }
     let mut executor = outputs[0].1.executor();
+    let mut stats = Stats::default();
     if resident {
         for ((_, worker), plan) in outputs.iter().zip(plans) {
-            worker.deliver(&mut executor, plan)?;
+            stats.include(worker.deliver(&mut executor, plan)?, 0);
         }
     } else {
         drop(plans);
@@ -63,9 +64,9 @@ pub(in crate::gpu::evaluation::reconstruction) fn produce(
             .zip(outputs)
             .map(|(op, (_, worker))| (*op, worker, worker.layout.region))
             .collect();
-        stream(&targets, input, &mut executor)?;
+        stats.include(stream(&targets, input, &mut executor)?, 0);
     }
-    Ok(true)
+    Ok(Some(stats))
 }
 
 struct Reduction<'a, 'b> {
@@ -113,7 +114,7 @@ pub(super) fn stream(
     outputs: &[(&Reconstruction, &Production<'_>, Rect)],
     input: &Arc<ImageNode>,
     executor: &mut Executor,
-) -> Result<(), Error> {
+) -> Result<Stats, Error> {
     let worker = outputs[0].1;
     let device = worker.context.device();
     let limits = device.limits();
@@ -166,7 +167,14 @@ pub(super) fn stream(
     let height = (source_cells / u64::from(width))
         .min(128)
         .min(u64::from(demand.height)) as u32;
+    let mut stats = Stats {
+        buffer_allocations: 2 * outputs.len(),
+        scratch_bytes: scratch,
+        ..Default::default()
+    };
     let buffer = |bytes| {
+        #[cfg(all(test, feature = "editor"))]
+        crate::gpu::test_support::evaluation_buffer_created(bytes);
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("required reconstruction reduction"),
             size: bytes,
@@ -183,7 +191,7 @@ pub(super) fn stream(
             Executor::admit(&limits, &finish)?;
             let means = buffer(u64::from(region.width) * u64::from(region.height) * 16);
             let flags = buffer(u64::from(region.width) * u64::from(region.height) * 4);
-            worker.submit_work(clear, &[&means, &flags])?;
+            stats.include(worker.submit_work(clear, &[&means, &flags])?, scratch);
             (worker.progress)();
             Ok(Reduction {
                 operation,
@@ -280,24 +288,29 @@ pub(super) fn stream(
                     continue;
                 }
                 plan.scratch_budget = allowance;
-                worker
+                let mut sinks = Stats::default();
+                let mut live_sinks = 0;
+                let mut source_stats = worker
                     .run_sink(executor, &plan, |encoder, source, pixels| {
                         debug_assert_eq!(source.region, part);
                         for (target, mut plan) in accumulations.drain(..) {
                             plan.scratch_budget = plan.peak_scratch_bytes;
-                            target
-                                .worker
-                                .executor()
-                                .prepare(device, plan)?
-                                .encode_work(
-                                    device,
-                                    encoder,
-                                    &[pixels, &target.means, &target.flags],
-                                )?;
+                            let recorded = target.worker.executor().prepare(device, plan)?;
+                            let mut encoded = recorded.encode_work(
+                                device,
+                                encoder,
+                                &[pixels, &target.means, &target.flags],
+                            )?;
+                            encoded.include(recorded.preparation.clone(), 0);
+                            let bytes = encoded.scratch_bytes;
+                            sinks.include(encoded, live_sinks);
+                            live_sinks += bytes;
                         }
                         Ok(())
                     })?
                     .ok_or(Error::Cancelled)?;
+                source_stats.include(sinks, executor.pool_bytes());
+                stats.include(source_stats, scratch);
                 (worker.progress)();
             }
         }
@@ -305,10 +318,13 @@ pub(super) fn stream(
     // Source scratch is no longer live during the separately admitted final readouts.
     *executor = worker.executor();
     for target in targets {
-        target.worker.submit_work(
-            target.finish,
-            &[&target.means, &target.flags, target.worker.pixels],
-        )?;
+        stats.include(
+            target.worker.submit_work(
+                target.finish,
+                &[&target.means, &target.flags, target.worker.pixels],
+            )?,
+            scratch,
+        );
     }
-    Ok(())
+    Ok(stats)
 }

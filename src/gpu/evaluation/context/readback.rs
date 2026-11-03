@@ -117,13 +117,7 @@ impl Context {
             buffer.unmap();
             result?;
 
-            total.submissions += stats.submissions;
-            total.source_cells += stats.source_cells;
-            total.buffer_allocations += stats.buffer_allocations;
-            total.texture_allocations += stats.texture_allocations;
-            total.initializations += stats.initializations;
-            total.encoded_device_peak = total.encoded_device_peak.max(stats.encoded_device_peak);
-            total.scratch_bytes = total.scratch_bytes.max(stats.scratch_bytes);
+            total.include(stats, 0);
         }
 
         Ok((!cancelled()).then_some(total))

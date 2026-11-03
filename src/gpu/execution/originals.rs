@@ -293,10 +293,10 @@ pub(crate) struct Stats {
     pub readback_bytes: u64,
     pub peak_unit_payload: u64,
     pub scratch_buffer_allocations: u64,
-    pub source_layout_changes: u64,
+    pub planned_source_layout_changes: u64,
     pub look_payload_bytes: u64,
     pub retained_repair_payload_bytes: u64,
-    pub peak_repair_upload_bytes: u64,
+    pub peak_planned_repair_upload_bytes: u64,
     pub rgb16_payload_bytes: u64,
 }
 
@@ -516,11 +516,11 @@ pub(crate) fn execute(
                 for work in plan.tiles.iter().flat_map(|t| &t.fragment.work) {
                     if let evaluation::Work::Upload { output, .. } = work {
                         if previous_source_size != Some(output.size()) {
-                            stats.source_layout_changes += 1;
+                            stats.planned_source_layout_changes += 1;
                             previous_source_size = Some(output.size());
                         }
-                        stats.peak_repair_upload_bytes = stats
-                            .peak_repair_upload_bytes
+                        stats.peak_planned_repair_upload_bytes = stats
+                            .peak_planned_repair_upload_bytes
                             .max(repairs.upload_scratch_bytes(output.region.source()?));
                     }
                 }
@@ -538,10 +538,11 @@ pub(crate) fn execute(
                         }
                     })
                     .sum::<u64>();
-                // Explicit bounded payloads; immutable resources and driver overhead are separate.
+                // Conservative payload bound: CPU source uploads follow the largest read, not
+                // cumulative traversal. Immutable resources and driver overhead are separate.
                 stats.peak_unit_payload = stats.peak_unit_payload.max(
                     _executed.scratch_bytes
-                        + _executed.source_cells * 16
+                        + _executed.peak_source_cells * 16
                         + u64::from(TILE[0])
                             * u64::from(TILE[1])
                             * (16 + if reconstruction.rgb16.is_some() { 8 } else { 0 })
@@ -571,7 +572,7 @@ pub(crate) fn execute(
             probe.stats.report();
         }
         println!(
-            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} unit_payload_upper_bound_bytes={} job_look_payload_bytes={} scratch_buffer_allocations={} retained_repair_payload_bytes={} peak_repair_upload_bytes={} job_rgb16_payload_bytes={}",
+            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} unit_payload_upper_bound_bytes={} job_look_payload_bytes={} scratch_buffer_allocations={} retained_repair_payload_bytes={} peak_planned_repair_upload_bytes={} job_rgb16_payload_bytes={}",
             stats.source_pixels,
             stats.destination_pixels,
             stats.submissions,
@@ -580,7 +581,7 @@ pub(crate) fn execute(
             stats.look_payload_bytes,
             stats.scratch_buffer_allocations,
             stats.retained_repair_payload_bytes,
-            stats.peak_repair_upload_bytes,
+            stats.peak_planned_repair_upload_bytes,
             stats.rgb16_payload_bytes
         );
     }

@@ -10,8 +10,9 @@ impl Reconstruction {
         &self,
         worker: &Production<'_>,
         input: &Arc<ImageNode>,
-    ) -> Result<(), Error> {
+    ) -> Result<Stats, Error> {
         let requested = worker.layout.region;
+        let mut stats = Stats::default();
         let mut executor = worker.executor();
         for y in (requested.y..requested.bottom()).step_by(worker.budget.tile[1] as usize) {
             for x in (requested.x..requested.right()).step_by(worker.budget.tile[0] as usize) {
@@ -28,23 +29,23 @@ impl Reconstruction {
                 // Resident input also needs bounded loops: unit weights stop advancing at 2^24.
                 if self.requires_reduction() {
                     executor = worker.executor();
-                    self.stream(worker, input, region, &mut executor)?;
+                    stats.include(self.stream(worker, input, region, &mut executor)?, 0);
                     continue;
                 }
                 let plan = self.plan(worker, input, region)?;
                 if plan.peak_scratch_bytes <= worker.budget.scratch_bytes
                     && Executor::admit(&worker.context.device().limits(), &plan).is_ok()
                 {
-                    worker.deliver(&mut executor, plan)?;
+                    stats.include(worker.deliver(&mut executor, plan)?, 0);
                 } else {
                     // No pixel acquisition/allocation has occurred while testing the whole demand.
                     drop(plan);
                     executor = worker.executor();
-                    self.stream(worker, input, region, &mut executor)?;
+                    stats.include(self.stream(worker, input, region, &mut executor)?, 0);
                 }
             }
         }
-        Ok(())
+        Ok(stats)
     }
 
     fn stream(
@@ -53,7 +54,7 @@ impl Reconstruction {
         input: &Arc<ImageNode>,
         output: Rect,
         executor: &mut Executor,
-    ) -> Result<(), Error> {
+    ) -> Result<Stats, Error> {
         batch::stream(&[(self, worker, output)], input, executor)
     }
 
