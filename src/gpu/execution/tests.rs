@@ -97,52 +97,6 @@ fn submit_reconstruction(
 }
 
 #[test]
-fn unit_admission_rejects_support_before_source_sized_preparation() {
-    use crate::pixel_pipeline::{PixelPipeline, PixelStage};
-    let composition = Composition::new(
-        [0, 0, 100000, 100000].into(),
-        Default::default(),
-        Default::default(),
-    )
-    .unwrap();
-    let small = PixelPipeline {
-        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-            sigma: 2.,
-        })],
-    };
-    let budget = WorkBudget { source_pixels: 500 };
-    // The clean unit needs 17x17 originals; its eight-cell stage dependency needs 25x25.
-    admit_source(composition, [0; 2], [16; 2], &Default::default(), budget).unwrap();
-    assert!(matches!(
-        admit_source(composition, [0; 2], [16; 2], &small, budget),
-        Err(Error::InvalidParameter(
-            "processing unit exceeds source work budget"
-        ))
-    ));
-    // This geometry alone is cheap to plan but its source-cell count exceeds u32.
-    // Exercise admission without constructing that mask or acquiring those originals.
-    let huge = PixelPipeline {
-        stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-            sigma: 20000.,
-        })],
-    };
-    assert!(matches!(
-        admit_source(
-            composition,
-            [0; 2],
-            [16; 2],
-            &huge,
-            WorkBudget {
-                source_pixels: u64::MAX
-            }
-        ),
-        Err(Error::InvalidParameter(
-            "processing unit exceeds source work budget"
-        ))
-    ));
-}
-
-#[test]
 fn delivered_memory_blocks_reject_gpu_failures_before_any_codec_and_allow_reuse_after_errors() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let composition =

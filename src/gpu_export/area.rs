@@ -1,7 +1,7 @@
 //! File-export adapter for codec-independent original-sample execution.
 use super::*;
 use crate::{
-    gpu::execution::{self, SampleEncoding, WorkBudget},
+    gpu::execution::{self, SampleEncoding},
     rendering::OutputReference,
 };
 
@@ -42,7 +42,6 @@ pub(super) fn write(
             output,
             luts: request.luts,
             encoding,
-            budget: WorkBudget::for_device(device),
         },
         |render, complete| encode_with_checked(composition, format, destination, render, complete),
         check,

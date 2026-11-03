@@ -11,7 +11,7 @@ pub(crate) use originals::Unit;
 #[cfg(feature = "raw")]
 pub(crate) use originals::{Stats, TILE, execute};
 #[cfg(feature = "raw")]
-pub(crate) use request::{OutputBlock, Request, SampleEncoding, WorkBudget};
+pub(crate) use request::{OutputBlock, Request, SampleEncoding};
 
 #[cfg(feature = "editor")]
 pub(crate) mod footprints;

@@ -942,6 +942,67 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
 }
 
 #[test]
+fn irreducible_neighbourhoods_reject_before_source_io_on_the_authored_graph() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Unreadable(Arc<AtomicUsize>);
+    impl Source for Unreadable {
+        fn domain(&self) -> Domain {
+            Domain {
+                bounds: Some(Rect::new([0; 2], [100_000; 2])),
+                grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+                meaning: Meaning::Graded,
+            }
+        }
+        fn read(&self, _: Rect) -> Result<Vec<[f32; 4]>, Error> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Err(Error::Gpu("unexpected source IO".into()))
+        }
+    }
+
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let reads = Arc::new(AtomicUsize::new(0));
+    for (sigma, expected) in [
+        (100., "reconstruction neighbourhood exceeds working storage"),
+        (20_000., "evaluation raster exceeds GPU cell addressing"),
+    ] {
+        let input = super::super::super::operators::gaussian(
+            source(Arc::new(Unreadable(reads.clone()))),
+            sigma,
+        )
+        .unwrap();
+        let domain = Domain {
+            bounds: Some(Rect::new([50_000; 2], [16; 2])),
+            ..input.domain
+        };
+        let root = reconstruct_complete(input, domain).unwrap();
+        let evaluation = context
+            .request(
+                root,
+                Region {
+                    bounds: domain.finite().unwrap(),
+                    grid: domain.grid,
+                },
+                Budget {
+                    tile: [16; 2],
+                    scratch_bytes: 64 << 10,
+                },
+            )
+            .unwrap();
+        let result = context.read(
+            &queue,
+            &Default::default(),
+            &evaluation,
+            || false,
+            |_, _| panic!("inadmissible neighbourhood delivered"),
+        );
+        assert!(matches!(result, Err(Error::InvalidParameter(message)) if message == expected));
+        assert_eq!(reads.load(Ordering::Relaxed), 0);
+    }
+}
+
+#[test]
 fn insufficient_reduction_storage_rejects_before_acquiring_source_pixels() {
     let (input, reads) = fixture([128, 64], vec![[1.; 4]; 128 * 64]);
     let map = Mapping {

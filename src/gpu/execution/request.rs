@@ -46,34 +46,6 @@ impl OutputBlock {
     }
 }
 
-/// Maximum original-cell work in one submission. Output units are bounded separately.
-#[derive(Clone, Copy)]
-pub(crate) struct WorkBudget {
-    pub source_pixels: u64,
-}
-
-impl WorkBudget {
-    pub(super) fn require_source(&self, size: [u32; 2]) -> Result<(), Error> {
-        let count = u64::from(size[0]) * u64::from(size[1]);
-        if count > self.source_pixels || count > u64::from(u32::MAX) {
-            return Err(Error::InvalidParameter(
-                "processing unit exceeds source work budget",
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn for_device(device: &wgpu::Device) -> Self {
-        let limits = device.limits();
-        Self {
-            source_pixels: limits
-                .max_buffer_size
-                .min(limits.max_storage_buffer_binding_size)
-                / 16,
-        }
-    }
-}
-
 /// Source/photographic intent and raster demand. Publication rights stay with the consumer.
 pub(crate) struct Request<'a> {
     pub scan: &'a Scan,
@@ -87,5 +59,4 @@ pub(crate) struct Request<'a> {
     pub output: OutputReference,
     pub luts: crate::looks::LutChain,
     pub encoding: SampleEncoding,
-    pub budget: WorkBudget,
 }

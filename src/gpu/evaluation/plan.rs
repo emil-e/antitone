@@ -290,6 +290,11 @@ fn evaluate_region(
     planning: Planning<'_>,
 ) -> Result<PlannedImage, Error> {
     let Planning { policy, scope, .. } = planning;
+    if region.width.checked_mul(region.height).is_none() {
+        return Err(Error::InvalidParameter(
+            "evaluation raster exceeds GPU cell addressing",
+        ));
+    }
     let checkpoint = (fragment.resources.len(), fragment.work.len());
     if !node.domain.contains_region(region) {
         return Err(Error::InvalidParameter(

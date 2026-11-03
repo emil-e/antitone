@@ -1,6 +1,6 @@
 //! Codec-independent bounded original-sample execution and destination-only readback.
 
-use super::{OutputBlock, Request, SampleEncoding, WorkBudget};
+use super::{OutputBlock, Request, SampleEncoding};
 use crate::gpu::{ProcessingInput, SubmissionGate, evaluation, rgb16};
 use crate::{
     Error,
@@ -32,6 +32,7 @@ pub(crate) type Complete<'a> = dyn FnMut() -> Result<(), Error> + 'a;
 
 #[cfg(test)]
 use crate::{acquisition::ValidOutput, geometry::SourceRegion};
+#[cfg(test)]
 use crate::{
     acquisition::{Plan, Request as AcquisitionRequest, Sampling, SourceRead, SourceSupport},
     geometry::FramePoint,
@@ -46,42 +47,6 @@ mod film_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "intent_tests.rs"]
 mod intent_tests;
-
-// Geometry and admission precede all source-sized preparation, including coverage masks.
-fn admit_source(
-    composition: Composition,
-    origin: [u32; 2],
-    extent: [u32; 2],
-    pipeline: &crate::pixel_pipeline::PixelPipeline,
-    budget: WorkBudget,
-) -> Result<Plan, Error> {
-    if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
-        return Err(Error::InvalidParameter(
-            "invalid processing destination unit",
-        ));
-    }
-    let raster = FrameRaster::new(
-        composition,
-        FramePoint(origin.map(f64::from)),
-        FramePoint(std::array::from_fn(|i| {
-            f64::from(origin[i]) + f64::from(extent[i])
-        })),
-        extent,
-    )?;
-    // The source adapter receives the planned read; it does not propagate stage margins.
-    let plan = Plan::new(AcquisitionRequest {
-        output: raster,
-        stages: pipeline,
-        sampling: Sampling::Originals {
-            reconstruction: SourceSupport([1; 2]),
-        },
-    })?;
-    let SourceRead::Originals(bounds) = plan.source_read() else {
-        unreachable!("original-sample processing plan")
-    };
-    budget.require_source([bounds.width, bounds.height])?;
-    Ok(plan)
-}
 
 #[cfg(test)]
 mod unit_fixture;
@@ -420,12 +385,6 @@ pub(crate) fn execute(
         meaning: original.domain().meaning,
     };
     let root = evaluation::reconstruct_complete(original, domain)?;
-    let budget = WorkBudget {
-        source_pixels: request
-            .budget
-            .source_pixels
-            .min(WorkBudget::for_device(device).source_pixels),
-    };
     let mut executor = renderer.evaluation.executor();
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
@@ -461,7 +420,6 @@ pub(crate) fn execute(
                     "invalid processing destination unit",
                 ));
             }
-            admit_source(request.composition, origin, extent, pipeline, budget)?;
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             let timing = std::cell::RefCell::new(timestamps.borrow_mut());
             let plan = timed!(

@@ -110,7 +110,6 @@ fn native_output_resources() {
                         output,
                         luts: (None).into(),
                         encoding,
-                        budget: execution::WorkBudget::for_device(&device),
                     },
                     |render, complete| {
                         let size = composition.size();

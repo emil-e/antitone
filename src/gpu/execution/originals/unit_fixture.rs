@@ -33,15 +33,26 @@ impl Unit {
         extent: [u32; 2],
         pipeline: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<(Self, Plan), Error> {
-        let plan = admit_source(
+        if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
+            return Err(Error::InvalidParameter(
+                "invalid processing destination unit",
+            ));
+        }
+        let output = FrameRaster::new(
             composition,
-            origin,
+            FramePoint(origin.map(f64::from)),
+            FramePoint(std::array::from_fn(|i| {
+                f64::from(origin[i]) + f64::from(extent[i])
+            })),
             extent,
-            pipeline,
-            WorkBudget {
-                source_pixels: u64::MAX,
-            },
         )?;
+        let plan = Plan::new(AcquisitionRequest {
+            output,
+            stages: pipeline,
+            sampling: Sampling::Originals {
+                reconstruction: SourceSupport([1; 2]),
+            },
+        })?;
         Ok((Self::from_plan(&plan, origin)?, plan))
     }
 
