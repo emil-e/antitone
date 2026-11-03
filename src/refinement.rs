@@ -6,11 +6,11 @@ use crate::{
     scan::Scan,
     viewer::GpuImage,
 };
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn refine(
     renderer: &Arc<crate::renderer::GpuRenderer>,
@@ -22,8 +22,27 @@ pub fn refine(
     (generation, expected): (&AtomicU64, u64),
     view: ViewRequest,
 ) -> Result<Option<Arc<GpuImage>>, Error> {
+    refine_cancellable(
+        renderer,
+        device,
+        (queue, submissions),
+        (scan, field),
+        parameters,
+        (target, view),
+        || generation.load(Ordering::Relaxed) != expected,
+    )
+}
+
+pub(crate) fn refine_cancellable(
+    renderer: &Arc<crate::renderer::GpuRenderer>,
+    device: &wgpu::Device,
+    (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
+    (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
+    parameters: impl Into<ProcessingInput>,
+    (target, view): (OutputTarget, ViewRequest),
+    cancelled: impl Fn() -> bool,
+) -> Result<Option<Arc<GpuImage>>, Error> {
     let input = parameters.into();
-    let cancelled = || generation.load(Ordering::Relaxed) != expected;
     if cancelled() {
         return Ok(None);
     }
@@ -34,7 +53,7 @@ pub fn refine(
         target,
         demand: view,
     };
-    request.validate()?;
+    let root = request.definition(device, renderer)?;
     let output = pollster::block_on(GpuImage::new_rendered_shared(
         renderer,
         device,
@@ -46,7 +65,8 @@ pub fn refine(
         renderer,
         device,
         (queue, submissions),
-        request,
+        root,
+        input.look().is_some(),
         &output.linear,
         cancelled,
     )?

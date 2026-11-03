@@ -51,7 +51,7 @@ fn positive_ready(editor: &Editor) -> bool {
                         .unwrap_or_default(),
                 )
                 .unwrap();
-                view.processing == expected.signature()
+                view.processing() == expected.clone()
                     && view.target == editor.document.target
                     && !view.in_flight()
                     && matches!(view.image.look_result(), Some(Ok(())))
@@ -407,14 +407,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
             harness.step();
             paint_until(&mut harness, |editor| {
                 assert!(
-                    editor
-                        .document
-                        .visit
-                        .canvas
-                        .grade
-                        .original
-                        .refinement_error
-                        .is_none(),
+                    !editor.document.visit.canvas.grade.original.failed(),
                     "{}",
                     editor.status
                 );
@@ -429,10 +422,10 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                         .canvas
                         .grade
                         .original
-                        .settled
+                        .settled()
                         .as_ref()
                         .unwrap()
-                        .2
+                        .1
                         .look_result(),
                     Some(Ok(()))
                 ))
@@ -482,7 +475,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                     .working_view
                     .displayed
                     .as_ref()
-                    .is_some_and(|view| view.processing.look_id().is_none() && !view.in_flight())
+                    .is_some_and(|view| view.processing().look_id().is_none() && !view.in_flight())
         });
         harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {
@@ -1087,14 +1080,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         harness.step();
         paint_until(&mut harness, |editor| {
             assert!(
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .refinement_error
-                    .is_none(),
+                !editor.document.visit.canvas.grade.original.failed(),
                 "{}",
                 editor.status
             );
@@ -1104,16 +1090,16 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
                 .canvas
                 .grade
                 .original
-                .signature
+                .wanted
                 .as_ref()
-                .is_some_and(|signature| signature.0.look_id().is_none())
+                .is_some_and(|demand| demand.capture.look_id().is_none())
                 && editor
                     .document
                     .visit
                     .canvas
                     .grade
                     .original
-                    .settled
+                    .settled()
                     .is_some()
         });
         harness.read(|editor| assert!(editor.look_rendering_error().is_none()));

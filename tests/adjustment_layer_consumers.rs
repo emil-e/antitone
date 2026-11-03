@@ -79,7 +79,7 @@ fn layers() -> Vec<AdjustmentLayer> {
 fn input(device: &wgpu::Device, cal: Calibration, layers: Vec<AdjustmentLayer>) -> ProcessingInput {
     Arc::new(
         ProcessingInput::new(
-            device,
+            &device.limits(),
             cal,
             RollSettings::default(),
             AdjustmentLayerSnapshot::new(
@@ -265,8 +265,8 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
         let accepted = input(&device, calibration(), layers());
         let duplicate = input(&device, calibration(), layers());
         assert_eq!(
-            accepted.signature(),
-            duplicate.signature(),
+            accepted.clone(),
+            duplicate.clone(),
             "allocation identity is not processing identity"
         );
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -311,7 +311,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             },
         ] {
             let proposed = input(&device, calibration(), changed);
-            assert_ne!(accepted.signature(), proposed.signature());
+            assert_ne!(accepted.clone(), proposed.clone());
             assert!(
                 image
                     .prepare_processing(&device, &mut encoder, &proposed)
@@ -326,8 +326,8 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
         let mut changed_calibration = calibration();
         changed_calibration.dmin.x *= 0.9;
         assert_ne!(
-            accepted.signature(),
-            input(&device, changed_calibration, layers()).signature()
+            accepted.clone(),
+            input(&device, changed_calibration, layers()).clone()
         );
         for (roll, photo, area) in [
             (
@@ -358,7 +358,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
         ] {
             let changed: ProcessingInput = Arc::new(
                 ProcessingInput::new(
-                    &device,
+                    &device.limits(),
                     calibration(),
                     roll,
                     AdjustmentLayerSnapshot::new(
@@ -375,7 +375,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
                 .unwrap(),
             )
             .into();
-            assert_ne!(accepted.signature(), changed.signature());
+            assert_ne!(accepted.clone(), changed.clone());
         }
         let second = self::image(
             &renderer,
@@ -410,7 +410,7 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
         );
         let wrong_basis: ProcessingInput = Arc::new(
             ProcessingInput::new(
-                &device,
+                &device.limits(),
                 calibration(),
                 RollSettings::default(),
                 AdjustmentLayerSnapshot::new(

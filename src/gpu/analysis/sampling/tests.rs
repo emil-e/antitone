@@ -78,8 +78,8 @@ fn gathered_camera_work_is_bounded_by_selected_cells_not_their_enclosing_raster(
         .request(
             image.clone(),
             evaluation::Region {
-                bounds: image.domain.bounds,
-                grid: image.domain.grid,
+                bounds: image.domain().finite().unwrap(),
+                grid: image.domain().grid,
             },
             BUDGET,
         )

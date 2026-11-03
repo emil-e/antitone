@@ -1,6 +1,6 @@
 //! Purpose-bound original-sample reconstruction, independent of normal working-view acceptance.
 use super::*;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, Weak};
 #[cfg(test)]
 mod tests;
 
@@ -9,166 +9,205 @@ pub(super) enum OriginalPurpose {
     Reference,
     Tool,
 }
-pub(super) struct Request {
-    pub revision: u64,
-    pub generation: Arc<AtomicU64>,
-    pub input: ProcessingInput,
+
+#[derive(Clone, PartialEq)]
+pub(super) struct Demand {
+    pub capture: working_view::Capture,
+    pub repairs: crate::gpu::repairs::Snapshot,
     pub target: OutputTarget,
-    pub view: ViewRequest,
+    pub view: Option<ViewRequest>,
+    pub composition: Composition,
     pub source: source::Context,
 }
 
-pub(super) type Signature = (
-    ProcessingSignature,
-    OutputTarget,
-    Option<ViewRequest>,
-    Composition,
-);
-
-pub(super) struct OriginalView {
-    pub generation: Arc<AtomicU64>,
-    pub signature: Option<Signature>,
-    purpose: Option<OriginalPurpose>,
-    pub settled: Option<(u64, ViewRequest, Arc<GpuImage>)>,
-    rendered: Option<Arc<crate::gpu::view::RenderedView>>,
-    pub refining: Option<(u64, ViewRequest)>,
-    pub last_edit: std::time::Instant,
-    pub refinement_error: Option<u64>,
-}
-
-impl Default for OriginalView {
-    fn default() -> Self {
-        Self::new(Arc::default())
-    }
-}
-
-impl Drop for OriginalView {
-    fn drop(&mut self) {
-        self.generation.fetch_add(1, Ordering::Relaxed);
-    }
-}
-
-impl OriginalView {
-    pub fn new(generation: Arc<AtomicU64>) -> Self {
+#[cfg(test)]
+impl Demand {
+    pub fn fixture(
+        input: ProcessingInput,
+        target: OutputTarget,
+        view: Option<ViewRequest>,
+        composition: Composition,
+        source: source::Context,
+    ) -> Self {
         Self {
-            generation,
-            signature: None,
-            purpose: None,
-            settled: None,
-            rendered: None,
-            refining: None,
-            last_edit: std::time::Instant::now(),
-            refinement_error: None,
+            repairs: input.repairs.clone(),
+            capture: working_view::Capture::Primitive(input),
+            target,
+            view,
+            composition,
+            source,
         }
     }
+}
 
-    pub fn revision(&self) -> u64 {
-        self.generation.load(Ordering::Relaxed)
+pub(super) struct Request {
+    pub demand: Arc<Demand>,
+    completion: Completion,
+}
+
+enum Progress {
+    Waiting,
+    Running(ViewRequest),
+    Ready(ViewRequest, Arc<GpuImage>),
+    Failed,
+}
+
+#[derive(Clone)]
+pub(super) struct Completion(Weak<Mutex<Progress>>);
+impl std::fmt::Debug for Completion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("OriginalCompletion")
+            .field(&self.0.as_ptr())
+            .finish()
     }
+}
+impl PartialEq for Completion {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0)
+    }
+}
+impl Eq for Completion {}
+impl Completion {
+    pub fn receive(&self, result: Result<Option<Arc<GpuImage>>, String>) -> Option<String> {
+        let state = self.0.upgrade()?;
+        let mut state = state.lock().unwrap();
+        let Progress::Running(view) = &*state else {
+            return None;
+        };
+        let view = *view;
+        match result {
+            Ok(Some(image)) => *state = Progress::Ready(view, image),
+            Ok(None) => *state = Progress::Waiting,
+            Err(error) => {
+                *state = Progress::Failed;
+                return Some(format!("Original view failed: {error}"));
+            }
+        }
+        None
+    }
+    pub fn belongs_to(&self, owner: &OriginalView) -> bool {
+        self.0.ptr_eq(&Arc::downgrade(&owner.progress))
+    }
+}
+impl Request {
+    #[cfg(test)]
+    pub fn completion(&self) -> Completion {
+        self.completion.clone()
+    }
+    pub fn begin(&self) -> Option<Completion> {
+        let state = self.completion.0.upgrade()?;
+        let mut state = state.lock().unwrap();
+        if !matches!(*state, Progress::Waiting) {
+            return None;
+        }
+        *state = Progress::Running(self.demand.view?);
+        Some(self.completion.clone())
+    }
+}
 
+pub(super) struct OriginalView {
+    pub wanted: Option<Arc<Demand>>,
+    purpose: Option<OriginalPurpose>,
+    progress: Arc<Mutex<Progress>>,
+    pub task: Option<async_executor::Task<()>>,
+    rendered: Option<Arc<crate::gpu::view::RenderedView>>,
+    pub last_edit: std::time::Instant,
+}
+impl Default for OriginalView {
+    fn default() -> Self {
+        Self {
+            wanted: None,
+            purpose: None,
+            progress: Arc::new(Mutex::new(Progress::Waiting)),
+            task: None,
+            rendered: None,
+            last_edit: std::time::Instant::now(),
+        }
+    }
+}
+impl OriginalView {
+    #[cfg(test)]
+    pub fn continuation(&self) -> Completion {
+        Completion(Arc::downgrade(&self.progress))
+    }
+    #[cfg(test)]
+    pub fn start_fixture(&self, view: ViewRequest) -> Completion {
+        *self.progress.lock().unwrap() = Progress::Running(view);
+        self.continuation()
+    }
+    #[cfg(test)]
+    pub fn settle_fixture(&self, view: ViewRequest, image: Arc<GpuImage>) {
+        self.start_fixture(view).receive(Ok(Some(image)));
+    }
+    pub fn settled(&self) -> Option<(ViewRequest, Arc<GpuImage>)> {
+        match &*self.progress.lock().unwrap() {
+            Progress::Ready(view, image) => Some((*view, image.clone())),
+            _ => None,
+        }
+    }
+    pub fn refining(&self) -> bool {
+        matches!(*self.progress.lock().unwrap(), Progress::Running(_))
+    }
+    pub fn failed(&self) -> bool {
+        matches!(*self.progress.lock().unwrap(), Progress::Failed)
+    }
+    fn retire_pending(&mut self) {
+        self.task = None;
+        self.progress = Arc::new(Mutex::new(Progress::Waiting));
+    }
     pub fn invalidate(&mut self) {
-        self.generation.fetch_add(1, Ordering::Relaxed);
-        self.signature = None;
+        self.retire_pending();
+        self.wanted = None;
         self.purpose = None;
-        self.settled = None;
         self.rendered = None;
-        self.refinement_error = None;
-        self.refining = None;
-        // Physical admission belongs to the running service, not this logical demand.
     }
-
     pub fn discard(&mut self) {
-        if self.signature.is_some() || self.settled.is_some() {
+        if self.wanted.is_some() || self.settled().is_some() || self.refining() {
             self.invalidate();
         } else {
             self.cancel_pending();
         }
     }
-
     pub fn cancel_pending(&mut self) {
-        if self
-            .refining
-            .is_some_and(|(revision, _)| revision == self.revision())
-        {
-            let revision = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
-            if let Some((accepted, _, _)) = &mut self.settled {
-                *accepted = revision;
-            }
+        self.task = None;
+        if self.refining() {
+            self.retire_pending();
         }
-        self.refining = None;
     }
-
-    pub fn observe(&mut self, purpose: OriginalPurpose, signature: Signature) {
-        if self.purpose != Some(purpose) || self.signature.as_ref() != Some(&signature) {
+    pub fn observe(&mut self, purpose: OriginalPurpose, demand: Demand) {
+        if self.purpose != Some(purpose) || self.wanted.as_deref() != Some(&demand) {
             self.invalidate();
             self.purpose = Some(purpose);
-            self.signature = Some(signature);
+            self.wanted = Some(Arc::new(demand));
             self.last_edit = std::time::Instant::now();
         }
     }
-
     pub fn leave(&mut self) {
         if self.purpose == Some(OriginalPurpose::Tool)
-            || (self.purpose.is_some() && self.settled.is_none())
+            || (self.purpose.is_some() && self.settled().is_none())
         {
             self.invalidate();
         } else {
             self.cancel_pending();
         }
     }
-
     pub fn idle(&self) -> bool {
-        self.refining.is_none()
-            && (self.signature.is_none()
-                || self.settled.is_some()
-                || self.refinement_error == Some(self.revision()))
+        !self.refining()
+            && (self.wanted.is_none() || self.settled().is_some() || self.failed())
             && self.last_edit.elapsed() >= Duration::from_millis(250)
     }
-
-    pub fn request(
-        &self,
-        input: &ProcessingInput,
-        target: OutputTarget,
-        source: source::Context,
-    ) -> Option<Request> {
-        let view = self.signature.as_ref()?.2?;
-        let revision = self.revision();
-        if self.refining.is_some()
-            || self.settled.is_some()
-            || self.refinement_error == Some(revision)
+    pub fn request(&self) -> Option<Request> {
+        let demand = self.wanted.as_ref()?;
+        demand.view?;
+        if !matches!(*self.progress.lock().unwrap(), Progress::Waiting)
             || self.last_edit.elapsed() < Duration::from_millis(250)
         {
             return None;
         }
         Some(Request {
-            revision,
-            generation: self.generation.clone(),
-            input: input.clone(),
-            target,
-            view,
-            source,
+            demand: demand.clone(),
+            completion: Completion(Arc::downgrade(&self.progress)),
         })
-    }
-
-    pub fn receive(
-        &mut self,
-        revision: u64,
-        result: Result<Option<Arc<GpuImage>>, String>,
-    ) -> Option<String> {
-        let (_, view) = self.refining.filter(|(running, _)| *running == revision)?;
-        self.refining = None;
-        if self.revision() != revision {
-            return None;
-        }
-        match result {
-            Ok(Some(image)) => self.settled = Some((revision, view, image)),
-            Ok(None) => {}
-            Err(error) => {
-                self.refinement_error = Some(revision);
-                return Some(format!("Original view failed: {error}"));
-            }
-        }
-        None
     }
 }
 
@@ -177,35 +216,22 @@ impl Editor {
     pub(super) fn original_rendered(
         &mut self,
         purpose: OriginalPurpose,
-        input: &ProcessingInput,
-        matrix: glam::DMat3,
     ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
         use crate::{
             frame_raster::FrameRaster,
-            gpu::view::{RenderedView, ViewSourceSpec},
+            gpu::view::{RenderedView, SourceRequest},
         };
-        let Some((revision, view, image)) = self.active_canvas().grade.original.settled.as_ref()
-        else {
+        let owner = &self.active_canvas().grade.original;
+        let Some((view, image)) = owner.settled() else {
             return Ok(None);
         };
-        if self.active_canvas().grade.original.purpose != Some(purpose)
-            || *revision != self.active_canvas().grade.original.revision()
-            || self
-                .active_canvas()
-                .grade
-                .original
-                .signature
-                .as_ref()
-                .is_none_or(|signature| {
-                    signature.0 != input.signature()
-                        || signature.1 != self.document.target
-                        || signature.2 != Some(*view)
-                })
-        {
+        if owner.purpose != Some(purpose) {
             return Ok(None);
         }
-        // A rectangular tool request is sampled in native axes, even when the canvas has
-        // quarter-turns or reflections. A straightened request already carries its affine frame.
+        let Some(wanted) = owner.wanted.clone() else {
+            return Ok(None);
+        };
+        // Rectangular tools sample native axes; an affine request carries its own grid.
         let frame = match view.frame {
             Some(frame) => frame,
             None => {
@@ -216,53 +242,32 @@ impl Editor {
                 frame
             }
         };
-        let field = if self.document.flat_edit().is_some() {
-            None
-        } else {
-            self.document
-                .correction
-                .as_ref()
-                .map(|correction| correction.settings.map.clone())
-        };
-        let Some(ready) = self.active_canvas().ready.as_ref() else {
-            return Ok(None);
-        };
-        let identity = crate::gpu::execution::source::Identity::camera(ready.developed.identity());
+        let limits = self
+            .document
+            .visit
+            .working_view
+            .device()
+            .map(|device| device.limits())
+            .unwrap_or_default();
+        let input = wanted.capture.processing(&limits, &wanted.repairs)?;
+        let identity =
+            crate::gpu::execution::source::Identity::camera(wanted.source.source.identity());
         let spec = if input.grade().is_none() {
-            ViewSourceSpec::inspection(self.id, frame, matrix, field)?
+            SourceRequest::inspection(frame)?
         } else {
-            let settings = match self.document.input.calibration() {
-                Some(base) => self
-                    .document
-                    .input
-                    .with_calibration(self.processing_calibration(base)?),
-                None => self.document.input,
-            };
-            let source = self.document.state.project.source(
-                self.document
-                    .visit
-                    .current_source
-                    .ok_or(Error::UnusableSample("original source unavailable"))?,
-            )?;
-            ViewSourceSpec::new(
-                self.id,
-                frame,
-                settings,
-                self.document.positive_matrix(source, settings)?,
-                field,
-            )?
+            SourceRequest::for_processing(frame, &input)?
         }
         .with_identity(identity)
-        .with_repairs(input.repairs.clone())
-        .with_pipeline(input.pixel_pipeline()?)?;
-        if let Some(rendered) = &self.active_canvas().grade.original.rendered
-            && Arc::ptr_eq(&rendered.image, image)
-            && rendered.matches(&spec, &input.signature(), self.document.target)
+        .with_repairs(wanted.repairs.clone());
+        if let Some(rendered) = &owner.rendered
+            && Arc::ptr_eq(&rendered.image, &image)
+            && rendered.capture == wanted.capture
+            && rendered.target == wanted.target
+            && rendered.spec.frame() == frame
         {
             return Ok(Some(rendered.clone()));
         }
-        let rendered =
-            RenderedView::reference(image.clone(), spec, input.signature(), self.document.target);
+        let rendered = RenderedView::reference(image, spec, wanted.capture.clone(), wanted.target);
         self.active_canvas_mut().grade.original.rendered = Some(rendered.clone());
         Ok(Some(rendered))
     }

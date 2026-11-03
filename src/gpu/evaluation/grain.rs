@@ -1,7 +1,7 @@
 //! Grain's effect implementation; the execution engine only sees declared work.
 
+use super::CellRegion as Rect;
 use super::*;
-use crate::geometry::SourceRegion as Rect;
 
 pub(crate) fn grain(
     input: Arc<ImageNode>,
@@ -22,12 +22,17 @@ fn raster(image: PlannedImage) -> crate::gpu::raster::Raster {
     image.domain.grid.raster(image.region)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct GrainOperation {
     model: crate::grain::GrainParameters,
     seed: u64,
 }
 
 impl Operation for GrainOperation {
+    fn identity(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new(*self))
+    }
+
     fn input(&self, r: Rect) -> Result<Option<Rect>, Error> {
         Ok(Some(r))
     }

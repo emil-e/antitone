@@ -5,7 +5,6 @@ use crate::{
     gpu::{GpuFlatField, ProcessingInput, SubmissionGate, evaluation},
     renderer::GpuRenderer,
     rendering::{OutputReference, OutputTarget},
-    resample::AreaAverage,
     scan::Scan,
 };
 use std::sync::Arc;
@@ -30,6 +29,51 @@ pub(crate) struct Request<'a> {
 }
 
 impl Request<'_> {
+    pub fn definition(
+        self,
+        device: &wgpu::Device,
+        renderer: &GpuRenderer,
+    ) -> Result<Arc<evaluation::ImageNode>, Error> {
+        self.validate()?;
+        let Self {
+            scan,
+            field,
+            input,
+            target,
+            demand,
+        } = self;
+        let root = evaluation::original_chain(
+            device,
+            renderer,
+            scan,
+            field,
+            input,
+            OutputReference::DisplayReferred(target),
+            &input.pixel_pipeline(),
+        )?;
+        let mut grid = if let Some(frame) = demand.frame {
+            evaluation::Grid::from_frame(frame)
+        } else {
+            evaluation::Grid::axis_aligned(
+                [f64::from(demand.area.x), f64::from(demand.area.y)],
+                [
+                    f64::from(demand.area.width) / f64::from(demand.output[0]),
+                    f64::from(demand.area.height) / f64::from(demand.output[1]),
+                ],
+            )
+        };
+        grid.coverage = 8;
+        let domain = evaluation::Domain {
+            bounds: Some(crate::gpu::evaluation::CellRegion::new(
+                [0, 0],
+                demand.output,
+            )),
+            grid,
+            meaning: root.domain().meaning,
+        };
+        evaluation::reconstruct(root, domain)
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         self.scan.validate_area(self.demand.area)?;
         if self.scan.flat_field() != self.field.as_ref().map(|field| field.field()) {
@@ -56,61 +100,48 @@ pub(crate) fn execute(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
     (queue, gate): (&wgpu::Queue, &SubmissionGate),
-    request: Request<'_>,
+    root: Arc<evaluation::ImageNode>,
+    check_look: bool,
     output: &wgpu::Texture,
     cancelled: impl Fn() -> bool,
 ) -> Result<Option<Completed>, Error> {
     if cancelled() {
         return Ok(None);
     }
-    request.validate()?;
-    let Request {
-        scan,
-        field,
-        input,
-        target,
-        demand,
-    } = request;
-    if output.width() != demand.output[0] || output.height() != demand.output[1] {
+    let domain = root.domain();
+    let grid = domain.grid;
+    let bounds = domain.finite()?;
+    let size = [bounds.width, bounds.height];
+    if domain.meaning != evaluation::Meaning::Display || grid.coverage == 0 {
+        return Err(Error::InvalidParameter(
+            "regional output requires covered display pixels",
+        ));
+    }
+    if output.width() != size[0]
+        || output.height() != size[1]
+        || output.format() != wgpu::TextureFormat::Rgba32Float
+        || !output.usage().contains(wgpu::TextureUsages::COPY_DST)
+    {
         return Err(Error::InvalidParameter(
             "regional output differs from demand",
         ));
     }
     let started = std::time::Instant::now();
-    let root = evaluation::original_chain(
-        device,
-        renderer,
-        scan,
-        field,
-        input,
-        OutputReference::DisplayReferred(target),
-        &input.pixel_pipeline()?,
-    )?;
     let tile_size = [512, 128];
-    let region = evaluation::Region {
-        bounds: demand.area,
-        grid: root.domain.grid,
+    let budget = evaluation::Budget {
+        tile: tile_size,
+        scratch_bytes: (32 << 20).min(device.limits().max_buffer_size),
     };
-    let evaluation = renderer.evaluation.request(
-        root,
-        region,
-        evaluation::Budget {
-            tile: tile_size,
-            scratch_bytes: (32 << 20).min(device.limits().max_buffer_size),
-        },
-    )?;
-    let average = if let Some(frame) = demand.frame {
-        AreaAverage::new_affine_shared(device, renderer.average.clone(), frame)?
-    } else {
-        AreaAverage::new_shared(
-            device,
-            renderer.average.clone(),
-            [demand.area.width, demand.area.height],
-            demand.output,
-        )?
-    };
+    let pixels = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bounded reconstructed reference pixels"),
+        size: u64::from(tile_size[0]) * u64::from(tile_size[1]) * 16,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
     let tile = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("valid original output for affine reconstruction"),
+        label: Some("bounded reference output transfer"),
         size: wgpu::Extent3d {
             width: tile_size[0],
             height: tile_size[1],
@@ -120,49 +151,88 @@ pub(crate) fn execute(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba32Float,
-        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    let mut executor = renderer.evaluation.executor();
-    for plan in evaluation.plans() {
-        if cancelled() {
-            return Ok(None);
-        }
-        let plan = plan?;
-        let region = plan.region;
-        let origin = [region.x - demand.area.x, region.y - demand.area.y];
-        let windows = average.windows(&tile, origin);
-        let mut windows = windows.into_iter();
-        let Some(first) = windows.next() else {
-            continue;
-        };
-        let completed = executor.run_sink(
-            device,
-            queue,
-            gate,
-            &plan,
-            &cancelled,
-            |encoder, image, pixels| {
-                evaluation::acquire::copy_sized(
-                    &renderer.evaluation,
-                    encoder,
-                    pixels,
-                    image.size(),
-                    &tile,
-                )?;
-                average.accumulate_window(device, encoder, &tile, origin, first)?;
-                Ok(())
-            },
-        )?;
-        if completed.is_none() {
-            return Ok(None);
-        }
-        for window in windows {
+    let scope = renderer.evaluation.materializations();
+    for y in (0..size[1]).step_by(tile_size[1] as usize) {
+        for x in (0..size[0]).step_by(tile_size[0] as usize) {
+            if cancelled() {
+                return Ok(None);
+            }
+            let region: crate::geometry::SourceRegion = [
+                x,
+                y,
+                tile_size[0].min(size[0] - x),
+                tile_size[1].min(size[1] - y),
+            ]
+            .into();
+            let cells = evaluation::CellRegion::new(
+                [
+                    i32::try_from(i64::from(bounds.x) + i64::from(x)).map_err(|_| {
+                        Error::InvalidParameter("regional output exceeds cell coordinates")
+                    })?,
+                    i32::try_from(i64::from(bounds.y) + i64::from(y)).map_err(|_| {
+                        Error::InvalidParameter("regional output exceeds cell coordinates")
+                    })?,
+                ],
+                [region.width, region.height],
+            )
+            .validate()?;
+            let request = renderer.evaluation.request(
+                root.clone(),
+                evaluation::Region {
+                    bounds: cells,
+                    grid,
+                },
+                budget,
+            )?;
+            let worker = evaluation::Production {
+                context: &renderer.evaluation,
+                queue,
+                gate,
+                scope: &scope,
+                budget,
+                layout: evaluation::ImageLayout {
+                    domain,
+                    region: cells,
+                    format: evaluation::ImageFormat::Rgba32Float,
+                    backing: evaluation::ImageBacking::Buffer,
+                },
+                pixels: &pixels,
+                cancelled: &cancelled,
+                progress: &|| {},
+            };
+            match worker.produce(&request) {
+                Ok(()) => {}
+                Err(Error::Cancelled) => return Ok(None),
+                Err(error) => return Err(error),
+            }
             if cancelled() {
                 return Ok(None);
             }
             let mut encoder = device.create_command_encoder(&Default::default());
-            average.accumulate_window(device, &mut encoder, &tile, origin, window)?;
+            evaluation::acquire::present_sized(
+                &renderer.evaluation,
+                &mut encoder,
+                &pixels,
+                [region.width, region.height],
+                &tile,
+            )?;
+            encoder.copy_texture_to_texture(
+                tile.as_image_copy(),
+                wgpu::TexelCopyTextureInfo {
+                    texture: output,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x, y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: region.width,
+                    height: region.height,
+                    depth_or_array_layers: 1,
+                },
+            );
             if renderer
                 .evaluation
                 .submit(queue, gate, encoder, &cancelled)?
@@ -175,33 +245,28 @@ pub(crate) fn execute(
     if cancelled() {
         return Ok(None);
     }
-    let mut encoder = device.create_command_encoder(&Default::default());
-    average.finish(device, &mut encoder, output)?;
-    let look_check = input
-        .look()
-        .map(|_| renderer.check_look_image(device, &mut encoder, output));
-    if renderer
-        .evaluation
-        .submit_with(queue, gate, encoder, &cancelled, || {
-            if let Some(check) = &look_check {
-                check.begin(|| {});
-            }
-        })?
-        .is_none()
-    {
-        return Ok(None);
-    }
-    if let Some(check) = &look_check {
+    let look_check = if check_look {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let check = renderer.check_look_image(device, &mut encoder, output);
+        if renderer
+            .evaluation
+            .submit_with(queue, gate, encoder, &cancelled, || check.begin(|| {}))?
+            .is_none()
+        {
+            return Ok(None);
+        }
         check
             .result()
             .ok_or_else(|| Error::Gpu("look validation did not complete".into()))??;
-    }
+        Some(check)
+    } else {
+        None
+    };
     if cancelled() {
         return Ok(None);
     }
     log::debug!(
-        source_width=demand.area.width,source_height=demand.area.height,
-        output_width=demand.output[0],output_height=demand.output[1],target:?,
+        output_width=size[0],output_height=size[1],
         seconds=started.elapsed().as_secs_f64();"settled_preview"
     );
     Ok(Some(Completed { look_check }))

@@ -112,9 +112,9 @@ fn unit_admission_rejects_support_before_source_sized_preparation() {
     };
     let budget = WorkBudget { source_pixels: 500 };
     // The clean unit needs 17x17 originals; its eight-cell stage dependency needs 25x25.
-    Unit::plan(composition, [0; 2], [16; 2], &Default::default(), budget).unwrap();
+    admit_source(composition, [0; 2], [16; 2], &Default::default(), budget).unwrap();
     assert!(matches!(
-        Unit::plan(composition, [0; 2], [16; 2], &small, budget),
+        admit_source(composition, [0; 2], [16; 2], &small, budget),
         Err(Error::InvalidParameter(
             "processing unit exceeds source work budget"
         ))
@@ -127,7 +127,7 @@ fn unit_admission_rejects_support_before_source_sized_preparation() {
         })],
     };
     assert!(matches!(
-        Unit::plan(
+        admit_source(
             composition,
             [0; 2],
             [16; 2],
@@ -262,7 +262,12 @@ fn local_area_preserves_constants_ranges_impulses_and_ramps_against_f64_at_origi
                     assert!(
                         actual
                             .iter()
-                            .all(|p| p[..3] == [value; 3] && (p[3] - 1.).abs() < 0.0001)
+                            .all(|p| p[..3] == [value; 3] && (p[3] - 1.).abs() < 0.0001),
+                        "base={base:?} angle={angle} origin={origin:?} value={value} first_bad={:?}",
+                        actual
+                            .iter()
+                            .enumerate()
+                            .find(|(_, p)| p[..3] != [value; 3] || (p[3] - 1.).abs() >= 0.0001)
                     );
                 }
                 let impulse = raster
@@ -338,7 +343,7 @@ fn native_area_checks_only_contributing_samples_and_rejects_invalid_ap1_or_look_
         &unit,
         |p| {
             if p == required {
-                [0., 0., 0., -1.]
+                [0., 0., 0., -2.]
             } else {
                 valid(p)
             }

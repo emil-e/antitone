@@ -1,21 +1,19 @@
 use super::*;
 
 pub(crate) struct CameraFixture {
-    resources: CameraResources,
     context: Context,
 }
 
 impl CameraFixture {
     pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
         Ok(Self {
-            resources: CameraResources::new(device)?,
             context: Context::new(device, Default::default()),
         })
     }
 
     #[cfg(feature = "render")]
-    pub fn with_context(resources: CameraResources, context: Context) -> Self {
-        Self { resources, context }
+    pub fn with_context(context: Context) -> Self {
+        Self { context }
     }
 
     fn raster(source: &ProcessingSource) -> crate::gpu::raster::Raster {
@@ -26,7 +24,7 @@ impl CameraFixture {
         }
     }
 
-    /// Exercise the actual fused camera component with packed primitive-test constants.
+    /// Exercise the photographic operations with packed primitive-test constants.
     /// Whole-photograph tests use captured interpretation/grading through encode_grade instead.
     pub fn encode(
         &self,
@@ -38,7 +36,10 @@ impl CameraFixture {
     ) {
         let raster = Self::raster(source);
         let domain = Domain {
-            bounds: [0, 0, raster.size()[0], raster.size()[1]].into(),
+            bounds: Some(crate::gpu::evaluation::CellRegion::new(
+                [0, 0],
+                raster.size(),
+            )),
             grid: Grid::from_raster(raster),
             meaning: Meaning::CameraCodes,
         };
@@ -47,34 +48,23 @@ impl CameraFixture {
             None,
             ResidentCamera {
                 domain,
-                bytes: source.byte_len(),
+                pixels: source.input.clone(),
+                continuous: source.continuous,
             },
         );
         let captured = Captured::new(
-            device,
-            &self.resources,
             CameraInput {
                 matrix: source.camera_to_ap1,
-                matrix_buffer: Some(source.matrix.clone()),
                 field: source.flat_field.clone(),
                 continuous: source.continuous,
                 mapping: Mapping::Resident(source.geometry),
             },
-            None,
-            Some(parameters),
+            Interpretation::Packed(parameters),
         )
         .unwrap();
-        let image = ImageNode::new(
-            Domain {
-                meaning: Meaning::Neutral,
-                ..domain
-            },
-            Some(camera),
-            Camera {
-                captured,
-                output: Output::Neutral,
-            },
-        );
+        let image = Assembly::captured(captured)
+            .prefix(camera, Boundary::Codes, Boundary::Neutral)
+            .unwrap();
         self.record(device, encoder, source, output, image).unwrap();
     }
 
@@ -87,10 +77,9 @@ impl CameraFixture {
         output: &wgpu::Buffer,
         input: &ProcessingInput,
     ) -> Result<(), Error> {
-        let stages = input.pixel_pipeline()?;
+        let stages = input.pixel_pipeline();
         let image = Photograph::from_resident_with_stages(
-            device,
-            &self.resources,
+            &device.limits(),
             source,
             input,
             Self::raster(source),
@@ -112,16 +101,19 @@ impl CameraFixture {
         let plan = self.context.request(
             image.clone(),
             Region {
-                bounds: image.domain.bounds,
+                bounds: image.domain.finite().unwrap(),
                 grid: image.domain.grid,
             },
             Budget {
-                tile: [image.domain.bounds.width, image.domain.bounds.height],
+                tile: [
+                    image.domain.finite().unwrap().width,
+                    image.domain.finite().unwrap().height,
+                ],
                 scratch_bytes: device.limits().max_buffer_size.saturating_mul(4),
             },
         )?;
         self.context
-            .record(plan, vec![])?
+            .record(plan, self.context.test_materializations(true), Vec::new())?
             .encode_into(device, encoder, &source.input, output)
     }
 }

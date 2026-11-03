@@ -1,6 +1,6 @@
+use super::CellRegion as Rect;
 use super::tests::{fixture, make_plan};
 use super::*;
-use crate::geometry::SourceRegion as Rect;
 
 #[test]
 fn comparison_helpers_reject_nan_metadata_and_truncated_output() {
@@ -36,7 +36,7 @@ fn scratch_pool_obeys_a_smaller_subsequent_budget() {
     let region = Rect {
         width: 1,
         height: 1,
-        ..node.domain.bounds
+        ..node.domain.finite().unwrap()
     };
     let small = Plan::new(
         node,
@@ -66,7 +66,7 @@ fn dispatch_grid_limits_are_admitted_without_source_acquisition() {
     impl Source for NeverRead {
         fn domain(&self) -> Domain {
             Domain {
-                bounds: [0, 0, 2048, 2048].into(),
+                bounds: Some([0, 0, 2048, 2048].into()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
                 meaning: Meaning::Neutral,
             }
@@ -92,7 +92,7 @@ fn identity(p: vec4f, xy: vec2f) -> vec4f {
     );
     let plan = Plan::new(
         node.clone(),
-        node.domain.bounds,
+        node.domain.finite().unwrap(),
         Budget {
             tile: [2048, 2048],
             scratch_bytes: 256 << 20,
@@ -148,20 +148,20 @@ fn reconstruction_uses_actual_constant_edges_and_handles_nonunit_near_integer_gr
         }
 
         fn read(&self, r: Rect) -> Result<Vec<[f32; 4]>, Error> {
-            assert!(self.0.bounds.contains_region(r));
+            assert!(self.0.contains_region(r));
             Ok(vec![[1., -0.25, 3., 0.]; (r.width * r.height) as usize])
         }
     }
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     for (origin, pitch) in [([0., 0.], [1., 1.]), ([11.1, 17.3], [0.3, 0.7])] {
         let source_domain = Domain {
-            bounds: [0, 0, 7, 5].into(),
+            bounds: Some([0, 0, 7, 5].into()),
             grid: Grid::axis_aligned(origin, pitch),
             meaning: Meaning::Neutral,
         };
         for offset in [-20., -0.5, 0., 6.5, 20.] {
             let output = Domain {
-                bounds: [0, 0, 7, 5].into(),
+                bounds: Some([0, 0, 7, 5].into()),
                 grid: Grid::axis_aligned(
                     [origin[0] + offset * pitch[0], origin[1] - 0.5 * pitch[1]],
                     pitch,
@@ -194,10 +194,10 @@ fn conservative_reconstruction_demand_preserves_nonconstant_nonunit_grid_samples
         }
 
         fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
-            assert!(self.0.bounds.contains_region(region));
-            Ok((region.y..region.y + region.height)
+            assert!(self.0.contains_region(region));
+            Ok((region.y..region.bottom())
                 .flat_map(|y| {
-                    (region.x..region.x + region.width).map(move |x| {
+                    (region.x..region.right()).map(move |x| {
                         [
                             (x % 7) as f32 * 0.3 - 0.2,
                             (y % 5) as f32 * 0.4,
@@ -211,13 +211,13 @@ fn conservative_reconstruction_demand_preserves_nonconstant_nonunit_grid_samples
     }
     let (device, queue, _renderer) = crate::gpu::test_support::render_context();
     let domain = Domain {
-        bounds: [11, 17, 17, 13].into(),
+        bounds: Some([11, 17, 17, 13].into()),
         grid: super::Grid::axis_aligned([11.1, 17.3], [0.3, 0.7]),
         meaning: Meaning::Neutral,
     };
     let data = Grid(domain);
     let samples = data
-        .read(domain.bounds)
+        .read(domain.finite().unwrap())
         .unwrap()
         .iter()
         .map(|p| glam::DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64))

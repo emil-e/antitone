@@ -37,7 +37,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     })
                     .unwrap();
                 let parameters = antitone::gpu::ProcessingInput::new(
-                    &device,
+                    &device.limits(),
                     calibration,
                     RollSettings::default(),
                     antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -160,7 +160,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     ])
                     .and_then(|snapshot| {
                         antitone::gpu::ProcessingInput::new(
-                            &device,
+                            &device.limits(),
                             calibration,
                             RollSettings::default(),
                             snapshot,

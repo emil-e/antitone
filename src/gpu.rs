@@ -25,8 +25,10 @@ pub use flat::{GpuFlatField, SourceGeometry};
 mod grading;
 pub use grading::Grading;
 mod input_program;
-pub use input_program::{GpuInputProgram, InputSignature};
-mod photograph;
+pub use input_program::GpuInputProgram;
+#[cfg(feature = "editor")]
+pub(crate) use input_program::SourceInterpretation;
+pub(crate) mod photograph;
 
 pub(crate) mod grain;
 pub(crate) mod image_mtf;
@@ -39,7 +41,7 @@ pub(crate) mod pixel_pipeline;
 pub(crate) mod raster;
 
 mod input;
-pub use input::{ProcessingInput, ProcessingSignature};
+pub use input::ProcessingInput;
 mod submission;
 #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
 pub(crate) mod timestamp_ledger;
@@ -385,7 +387,6 @@ pub(crate) mod repairs;
 
 pub struct ProcessingSource {
     input: wgpu::Buffer,
-    matrix: wgpu::Buffer,
     pixels: u32,
     camera_to_ap1: DMat3,
     geometry: Option<SourceGeometry>,
@@ -395,27 +396,22 @@ pub struct ProcessingSource {
 
 impl ProcessingSource {
     #[cfg(feature = "editor")]
-    pub(crate) fn with_matrix(
-        self: &Arc<Self>,
-        device: &wgpu::Device,
-        matrix: DMat3,
-    ) -> Result<Arc<Self>, Error> {
+    #[cfg(test)]
+    pub(crate) fn camera_matrix(&self) -> DMat3 {
+        self.camera_to_ap1
+    }
+
+    pub(crate) fn with_matrix(self: &Arc<Self>, matrix: DMat3) -> Result<Arc<Self>, Error> {
         if self.camera_to_ap1 == matrix {
             return Ok(self.clone());
         }
         validate_camera_matrix(matrix)?;
-        let mut packed = CameraMatrix::new(matrix)?;
+        CameraMatrix::new(matrix)?;
         if self.continuous {
             CameraMatrix::new(matrix * crate::processing::MAX_SOURCE_GAIN)?;
         }
-        packed.columns[0].w = if self.continuous { 1. } else { 0. };
         Ok(Arc::new(Self {
             input: self.input.clone(),
-            matrix: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("normalized camera-to-AP1 source transform"),
-                contents: bytemuck::bytes_of(&packed),
-                usage: wgpu::BufferUsages::UNIFORM,
-            }),
             pixels: self.pixels,
             camera_to_ap1: matrix,
             geometry: self.geometry,
@@ -451,9 +447,13 @@ impl ProcessingSource {
     }
 
     fn validate_continuous(pixels: &[[f32; 4]]) -> Result<(), Error> {
-        if pixels.iter().flatten().any(|v| {
-            !v.is_finite() || !(0. ..=crate::processing::MAX_CAMERA_SOURCE_CODE).contains(v)
-        }) {
+        // A full reduction keeps valid-source checks vectorizable; finite bounds reject NaN/Inf too.
+        let valid = pixels.iter().fold(true, |valid, pixel| {
+            pixel.iter().fold(valid, |valid, &value| {
+                valid & (0. ..=crate::processing::MAX_CAMERA_SOURCE_CODE).contains(&value)
+            })
+        });
+        if !valid {
             return Err(Error::Gpu(
                 "continuous camera samples exceed the supported code domain".into(),
             ));
@@ -478,22 +478,15 @@ impl ProcessingSource {
         }
         validate_camera_matrix(matrix)?;
         let camera_to_ap1 = matrix;
-        let mut matrix = CameraMatrix::new(matrix)?;
+        CameraMatrix::new(matrix)?;
         if continuous {
             CameraMatrix::new(camera_to_ap1 * crate::processing::MAX_SOURCE_GAIN)?;
         }
-        // xyz remain colour coefficients; w tags the storage format read by source_codes.
-        matrix.columns[0].w = if continuous { 1. } else { 0. };
         Ok(Self {
             input: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("camera source samples"),
                 contents: bytes,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            }),
-            matrix: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("camera to AP1 post-inversion constants"),
-                contents: bytemuck::bytes_of(&matrix),
-                usage: wgpu::BufferUsages::UNIFORM,
             }),
             pixels: count,
             camera_to_ap1,
@@ -567,8 +560,6 @@ impl ProcessingSource {
         self.geometry
     }
 }
-
-pub use photograph::CameraResources;
 
 /// Retained GPU resource bytes where the platform can report them; not total process memory.
 #[cfg(any(test, feature = "ui"))]

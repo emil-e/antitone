@@ -1,6 +1,7 @@
 //! Halation supplies its own finite-neighbour work; common execution owns scratch lifetimes.
+use super::CellRegion as Rect;
 use super::*;
-use crate::{geometry::SourceRegion as Rect, halation::HalationParameters};
+use crate::halation::HalationParameters;
 
 pub(crate) fn halation(
     input: Arc<ImageNode>,
@@ -31,17 +32,21 @@ pub(crate) fn halation(
     ))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Halation {
     domain: Domain,
     parameters: HalationParameters,
 }
 impl Operation for Halation {
+    fn identity(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new(*self))
+    }
+
     fn input(&self, output: Rect) -> Result<Option<Rect>, Error> {
-        Ok(Some(
-            self.parameters
-                .support(self.domain.grid.pitch)
-                .expand(output, self.domain.bounds),
-        ))
+        Ok(Some(output.expanded(
+            self.parameters.support(self.domain.grid.pitch).0,
+            self.domain.bounds,
+        )?))
     }
 
     fn lower(
@@ -66,8 +71,8 @@ impl Operation for Halation {
                 output.region.height,
             ],
             [
-                output.region.x - input.region.x,
-                output.region.y - input.region.y,
+                (output.region.x - input.region.x) as u32,
+                (output.region.y - input.region.y) as u32,
                 support[0],
                 support[1],
             ],

@@ -1,6 +1,4 @@
-#[cfg(feature = "ui")]
-use crate::resample::AveragePipelines;
-use crate::{Error, gpu::CameraResources, rendering::OutputTarget};
+use crate::{Error, rendering::OutputTarget};
 use std::{borrow::Cow, sync::Arc};
 use wgpu::util::DeviceExt;
 
@@ -57,6 +55,7 @@ fn main(@location(0) uv: vec2f) -> @location(0) vec4f {
 pub(crate) struct RendererCache {
     renderer: std::sync::OnceLock<Result<Arc<GpuRenderer>, Error>>,
     submissions: crate::gpu::SubmissionGate,
+    retention_budget: std::sync::Mutex<Option<u64>>,
 }
 
 #[cfg(feature = "editor")]
@@ -65,6 +64,15 @@ impl RendererCache {
         Self {
             submissions,
             ..Default::default()
+        }
+    }
+
+    pub(crate) fn set_retention_budget(&self, bytes: u64) {
+        let bytes = bytes.min(crate::gpu::evaluation::CachePolicy::default().generated_bytes);
+        let mut budget = self.retention_budget.lock().unwrap();
+        *budget = Some(bytes);
+        if let Some(Ok(renderer)) = self.renderer.get() {
+            renderer.evaluation.set_retention_limit(bytes);
         }
     }
 
@@ -98,25 +106,42 @@ impl RendererCache {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<Arc<GpuRenderer>, Error> {
-        self.renderer
+        let renderer = self
+            .renderer
             .get_or_init(|| {
-                pollster::block_on(GpuRenderer::new_with_submissions(
+                let mut policy = crate::gpu::evaluation::CachePolicy::default();
+                if let Some(bytes) = *self.retention_budget.lock().unwrap() {
+                    policy.generated_bytes = bytes;
+                }
+                pollster::block_on(GpuRenderer::new_with_cache_policy(
                     device,
                     queue,
                     self.submissions.clone(),
+                    policy,
                 ))
             })
-            .clone()
+            .clone()?;
+        // Serialize the final application with settings changes, including during initialization.
+        if let Some(bytes) = *self.retention_budget.lock().unwrap() {
+            renderer.evaluation.set_retention_limit(bytes);
+        }
+        Ok(renderer)
     }
 }
 
 pub(crate) struct RenderBinding {
-    source: wgpu::Buffer,
+    source: crate::gpu::evaluation::SuppliedImage,
     reference: crate::gpu::evaluation::Reference,
     recorded: crate::gpu::evaluation::Recorded,
+    destination: wgpu::Texture,
+    validation: Option<Arc<crate::gpu::look::Validation>>,
 }
 
 impl RenderBinding {
+    pub(crate) fn look_id(&self) -> Option<crate::looks::LookId> {
+        self.reference.look().map(|look| look.id())
+    }
+
     pub(crate) fn reference_bytes(&self) -> u64 {
         self.reference.look().map_or(0, |look| look.byte_len()) + self.recorded.byte_len()
     }
@@ -131,19 +156,12 @@ impl RenderBinding {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<Option<Arc<crate::gpu::look::Check>>, Error> {
-        let check = self
-            .reference
-            .look()
-            .map(|_| crate::gpu::look::Check::new(device));
-        let mut inputs = vec![&self.source];
-        if let Some(check) = &check {
-            inputs.push(check.status());
-        }
-        self.recorded.encode_work(device, encoder, &inputs)?;
-        if let Some(check) = &check {
-            check.encode_readback(encoder);
-        }
-        Ok(check)
+        self.recorded
+            .encode_work(device, encoder, &[self.source.pixels()])?;
+        Ok(self
+            .validation
+            .as_ref()
+            .map(|validation| validation.check_rendered(device, encoder, &self.destination)))
     }
 }
 
@@ -158,8 +176,9 @@ pub(crate) struct TargetResources {
 /// Shared processing/rendering infrastructure for foreground images, thumbnails and refinement.
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
-    pub(crate) camera: CameraResources,
     pub(crate) submissions: crate::gpu::SubmissionGate,
+    #[cfg(feature = "raw")]
+    _pressure: crate::sys::MemoryPressureWatch,
     #[cfg(all(
         test,
         any(feature = "editor", all(feature = "raw", feature = "render"))
@@ -170,14 +189,12 @@ pub struct GpuRenderer {
     targets: [TargetResources; 2],
     #[cfg(feature = "render")]
     pub(crate) evaluation: crate::gpu::evaluation::Context,
-    look_validation: crate::gpu::look::Validation,
+    look_validation: Arc<crate::gpu::look::Validation>,
     #[cfg(test)]
     look_uploads: std::sync::atomic::AtomicU64,
     look_cache: std::sync::Mutex<
         std::collections::HashMap<crate::looks::LookId, std::sync::Weak<crate::gpu::look::Lut>>,
     >,
-    #[cfg(feature = "ui")]
-    pub(crate) average: Arc<AveragePipelines>,
 }
 
 impl GpuRenderer {
@@ -204,16 +221,15 @@ impl GpuRenderer {
         submissions: crate::gpu::SubmissionGate,
         policy: crate::gpu::evaluation::CachePolicy,
     ) -> Result<Arc<Self>, Error> {
-        let camera = CameraResources::new(device)?;
         let evaluation = crate::gpu::evaluation::Context::new(device, policy);
-        #[cfg(feature = "ui")]
-        let average = Arc::new(AveragePipelines::with_context(device, evaluation.clone()).await?);
+        #[cfg(feature = "raw")]
+        let pressure = evaluation.materializations().watch_pressure();
         #[cfg(all(
             test,
             any(feature = "editor", all(feature = "raw", feature = "render"))
         ))]
-        let repairs = crate::gpu::repairs::Kernels::new(device, &camera).await?;
-        let look_validation = crate::gpu::look::Validation::new(device).await?;
+        let repairs = crate::gpu::repairs::Kernels::new(device).await?;
+        let look_validation = Arc::new(crate::gpu::look::Validation::new(device).await?);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image fullscreen triangle"),
@@ -230,10 +246,11 @@ impl GpuRenderer {
         }
         crate::gpu::evaluation::Reference::prewarm(&evaluation)?;
         #[cfg(feature = "editor")]
-        crate::gpu::evaluation::Recipe::prewarm_filtered(device, &evaluation)?;
+        crate::gpu::evaluation::Photograph::prewarm_filtered(device, &evaluation)?;
         let renderer = Arc::new(Self {
-            camera,
             submissions,
+            #[cfg(feature = "raw")]
+            _pressure: pressure,
             #[cfg(all(
                 test,
                 any(feature = "editor", all(feature = "raw", feature = "render"))
@@ -248,11 +265,9 @@ impl GpuRenderer {
             #[cfg(test)]
             look_uploads: std::sync::atomic::AtomicU64::new(0),
             look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
-            #[cfg(feature = "ui")]
-            average,
         });
         #[cfg(feature = "ui")]
-        crate::gpu::evaluation::Recipe::prewarm_resident(device, &renderer)?;
+        crate::gpu::evaluation::Photograph::prewarm_resident(device, &renderer)?;
         Ok(renderer)
     }
 
@@ -294,61 +309,49 @@ impl GpuRenderer {
     pub(crate) fn render_binding(
         &self,
         device: &wgpu::Device,
-        source: &wgpu::Buffer,
-        dimensions: [u32; 4],
+        source: crate::gpu::evaluation::SuppliedImage,
         target: OutputTarget,
         look: Option<&Arc<crate::looks::LookAsset>>,
         destination: &wgpu::Texture,
     ) -> Result<RenderBinding, Error> {
-        use crate::gpu::evaluation::{
-            Budget, Domain, Grid, Meaning, Reference, Region, borrowed_input,
-        };
+        use crate::gpu::evaluation::{Budget, ImageFormat, Reference, Region};
         self.evaluation.require_device(device)?;
-        let count = dimensions[0]
-            .checked_mul(dimensions[1])
-            .filter(|n| *n > 0)
-            .ok_or(Error::InvalidParameter("invalid rendered dimensions"))?;
-        if source.size() < u64::from(count) * 16
-            || !source.usage().contains(wgpu::BufferUsages::STORAGE)
-        {
+        let domain = source.definition().domain();
+        let region = source.layout().region;
+        if source.layout().format != ImageFormat::Rgba32Float {
             return Err(Error::InvalidParameter("invalid rendered source storage"));
         }
-        let domain = Domain {
-            bounds: crate::geometry::SourceRegion {
-                x: 0,
-                y: 0,
-                width: dimensions[0],
-                height: dimensions[1],
-            },
-            grid: Grid {
-                coverage: dimensions[2],
-                ..Grid::axis_aligned([0.; 2], [1.; 2])
-            },
-            meaning: Meaning::Graded,
-        };
         let reference = Reference::capture(
             device,
             self,
             crate::rendering::OutputReference::DisplayReferred(target),
             look,
         )?;
-        let image = reference.presentation(borrowed_input(domain), self, destination)?;
+        let image =
+            reference.presentation(source.definition().clone(), self, destination, region)?;
         let evaluation = self.evaluation.request(
             image,
             Region {
-                bounds: domain.bounds,
+                bounds: region,
                 grid: domain.grid,
             },
             Budget {
-                tile: [dimensions[0], dimensions[1]],
+                tile: [region.width, region.height],
                 scratch_bytes: device.limits().max_buffer_size,
             },
         )?;
-        let recorded = self.evaluation.record(evaluation, vec![])?;
+        let recorded = self.evaluation.record(
+            evaluation,
+            self.evaluation.materializations(),
+            vec![source.clone()],
+        )?;
+        let validation = reference.look().map(|_| self.look_validation.clone());
         Ok(RenderBinding {
-            source: source.clone(),
+            source,
             reference,
             recorded,
+            destination: destination.clone(),
+            validation,
         })
     }
 

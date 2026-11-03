@@ -212,7 +212,7 @@ impl Editor {
                         " · Look unavailable"
                     } else if self.document.visit.working_view.error.is_some() {
                         " · View unavailable"
-                    } else if self.document.visit.working_view.compare && self.active_canvas().grade.original.refinement_error == Some(self.active_canvas().grade.original.revision()) {
+                    } else if self.document.visit.working_view.compare && self.active_canvas().grade.original.failed() {
                         " · Reference unavailable"
                     } else if self.document.visit.working_view.compare && self.document.visit.working_view.reference_ready() {
                         " · Original reference"
@@ -223,9 +223,9 @@ impl Editor {
                     } else {
                         ""
                     }
-                } else if self.active_canvas().grade.original.refining.is_some() {
+                } else if self.active_canvas().grade.original.refining() {
                     " · Refining"
-                } else if self.active_canvas().grade.original.settled.is_none() {
+                } else if self.active_canvas().grade.original.settled().is_none() {
                     " · Approximate"
                 } else {
                     ""

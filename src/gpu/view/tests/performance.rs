@@ -72,7 +72,7 @@ fn cost_and_retirement(with_underlay: bool) {
             native()
         );
         let start = Instant::now();
-        let spec = ViewSourceSpec::new(1, frame, cal, scan.camera_to_ap1, field).unwrap();
+        let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1, field).unwrap();
         let specs = if with_underlay {
             vec![spec.clone(), spec.underlay().unwrap()]
         } else {
@@ -163,9 +163,7 @@ fn cost_and_retirement(with_underlay: bool) {
                 };
                 let start = Instant::now();
                 let make = |s: Arc<ViewSource>, old: Option<&Arc<RenderedView>>| {
-                    if let Some(old) =
-                        old.filter(|r| r.matches(&s.spec, &input.signature(), target))
-                    {
+                    if let Some(old) = old.filter(|r| r.matches(&s.spec, &input.clone(), target)) {
                         return old.clone();
                     }
                     RenderedView::new(&device, s, &input, target, old).unwrap()

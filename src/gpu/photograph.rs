@@ -10,49 +10,39 @@ use crate::{
 };
 use glam::{DMat3, DVec3};
 
-/// Shared camera-component resources. Image assembly and common evaluation own execution.
-#[derive(Clone)]
-pub struct CameraResources {
-    pub(super) identity: wgpu::Buffer,
-    pub(super) empty_adjustment_layers: wgpu::Buffer,
-    pub(super) empty_adjustment_layer_context: wgpu::Buffer,
+/// The exact module text the pipelines compile, exposed for device-free validation.
+pub(crate) fn module_shader() -> String {
+    [
+        kernel_shader(),
+        include_str!("../shaders/footprint.wgsl").to_owned(),
+        include_str!("../shaders/repairs.wgsl").to_owned(),
+    ]
+    .join("\n")
 }
 
-impl CameraResources {
-    pub fn new(device: &wgpu::Device) -> Result<Self, Error> {
-        Ok(Self {
-            identity: super::flat::identity_nodes(device),
-            empty_adjustment_layers: super::grading::empty_buffer(device),
-            empty_adjustment_layer_context: super::grading::context_buffer(device, 0, [0; 4])?,
-        })
-    }
+/// One implementation serves the viewport, export and analysis: the near-base ratio response
+/// and the f32 colour operators.
+pub(crate) fn kernel_shader() -> String {
+    [
+        pixel_shader(),
+        include_str!("../shaders/processing_dispatch.wgsl").to_owned(),
+    ]
+    .join("\n")
+}
 
-    /// The exact module text the pipelines compile, exposed for device-free validation.
-    pub(crate) fn module_shader() -> String {
-        [
-            Self::kernel_shader(),
-            include_str!("../shaders/footprint.wgsl").to_owned(),
-            include_str!("../shaders/repairs.wgsl").to_owned(),
-        ]
-        .join("\n")
-    }
-
-    /// One implementation serves the viewport, export and analysis: the near-base ratio response
-    /// and the f32 colour operators.
-    pub(crate) fn kernel_shader() -> String {
-        let common = [
-            include_str!("../shaders/camera_conversion.wgsl"),
-            include_str!("../shaders/flat_field.wgsl"),
-            include_str!("../shaders/film_response.wgsl"),
-            include_str!("../shaders/film_inversion_export.wgsl"),
-            include_str!("../shaders/photographic.wgsl"),
-            include_str!("../shaders/adjustment_layers.wgsl"),
-            include_str!("../shaders/photographic_colour.wgsl"),
-            include_str!("../shaders/photographic_export.wgsl"),
-        ]
-        .join("\n");
-        [common.as_str(), include_str!("../shaders/processing.wgsl")].join("\n")
-    }
+pub(crate) fn pixel_shader() -> String {
+    let common = [
+        include_str!("../shaders/camera_conversion.wgsl"),
+        include_str!("../shaders/flat_field.wgsl"),
+        include_str!("../shaders/film_response.wgsl"),
+        include_str!("../shaders/film_inversion_export.wgsl"),
+        include_str!("../shaders/photographic.wgsl"),
+        include_str!("../shaders/adjustment_layers.wgsl"),
+        include_str!("../shaders/photographic_colour.wgsl"),
+        include_str!("../shaders/photographic_export.wgsl"),
+    ]
+    .join("\n");
+    [common.as_str(), include_str!("../shaders/processing.wgsl")].join("\n")
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -75,20 +65,6 @@ pub(crate) enum Component {
     Roll,
     Layers,
     Effects(PixelPipeline),
-}
-
-impl Component {
-    pub(crate) fn camera_run(&self) -> bool {
-        matches!(
-            self,
-            Self::Camera
-                | Self::Interpretation
-                | Self::Working
-                | Self::Repairs
-                | Self::Roll
-                | Self::Layers
-        ) || matches!(self, Self::Effects(effects) if effects.is_empty())
-    }
 }
 
 pub(crate) struct Step {
@@ -153,8 +129,9 @@ pub(crate) fn prepare(
             }
             Component::Interpretation => {}
             Component::Working => {
-                // This component owns the canonical folded camera implementation, including
-                // exposure before inversion's representability boundary.
+                // Interpretation and working conversion execute before Roll exposure.
+                // Admit that boundary independently of the legacy combined parameter block.
+                ProcessingParameters::interpret(input, RollSettings::default(), matrix)?;
                 let (parameters, peak) = ProcessingParameters::interpret_with_neutral_bound(
                     input,
                     roll,

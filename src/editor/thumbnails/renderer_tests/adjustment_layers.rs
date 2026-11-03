@@ -270,7 +270,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                 .unwrap();
                 let tick = Instant::now();
                 let grade = match ProcessingInput::new(
-                    &device,
+                    &device.limits(),
                     calibration,
                     roll,
                     snapshot.clone(),

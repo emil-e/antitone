@@ -165,8 +165,7 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
                 },
             )],
         };
-        let prepared =
-            crate::gpu::pixel_pipeline::Prepared::new(&device, &plan, raster, None).unwrap();
+        let prepared = crate::gpu::pixel_pipeline::Prepared::new(&device, &plan, raster).unwrap();
         for value in [1e-30_f32, 0.18, 2_f32.powi(80)] {
             let values = vec![[value, -value, 0., 0.]; 256];
             let pixels = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

@@ -85,7 +85,8 @@ fn photographic_reference_initialization() {
         };
         let zero = render(proxy.matrix);
         let initialized = render(
-            crate::scan::positive_matrix(&InputSettings::Digital, proxy.matrix, Some(reference))
+            InputSettings::Digital
+                .positive_matrix(proxy.matrix, Some(reference.ev()))
                 .unwrap(),
         );
         let camera_preview = preview.srgb().unwrap();

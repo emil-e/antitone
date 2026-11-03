@@ -151,16 +151,13 @@ fn frame(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Cont
 }
 
 #[test]
-fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
+fn captured_grades_follow_processing_not_names_allocator_or_view_state() {
     pollster::block_on(async {
         let (mut editor, _, _) = fixture().await;
         let id = editor.document.visit.current_source.unwrap();
         let first = positive(&editor);
         let unchanged = positive(&editor);
-        assert!(std::ptr::eq(
-            first.grade().unwrap(),
-            unchanged.grade().unwrap()
-        ));
+        assert_eq!(first.clone(), unchanged.clone());
         let layers = editor
             .document
             .project
@@ -175,10 +172,7 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
         editor.document.visit.canvas.viewport.zoom = Some(3.);
         editor.document.target = OutputTarget::Srgb;
         let renamed = positive(&editor);
-        assert!(std::ptr::eq(
-            first.grade().unwrap(),
-            renamed.grade().unwrap()
-        ));
+        assert_eq!(first.clone(), renamed.clone());
         let old_snapshot = first.grade().unwrap().snapshot().clone();
         editor
             .document
@@ -191,7 +185,7 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
             .layers
             .reverse();
         let reordered = positive(&editor);
-        assert_ne!(first.signature(), reordered.signature());
+        assert_ne!(first.clone(), reordered.clone());
         assert_eq!(first.grade().unwrap().snapshot(), &old_snapshot);
         editor.document.visit.adjustment_layer_settings.exposure = 1.;
         let graded = positive(&editor);
@@ -206,17 +200,13 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
                 .photo,
             editor.document.visit.adjustment_layer_settings
         );
-        assert_ne!(reordered.signature(), graded.signature());
+        assert_ne!(reordered.clone(), graded.clone());
         editor.document.roll.wb = crate::color::Balance {
             warmth: 0.017,
             tint: -0.013,
         };
         let roll_graded = positive(&editor);
-        assert_ne!(graded.signature(), roll_graded.signature());
-        assert!(!std::ptr::eq(
-            graded.grade().unwrap(),
-            roll_graded.grade().unwrap()
-        ));
+        assert_ne!(graded.clone(), roll_graded.clone());
         assert_eq!(
             graded.grade().unwrap().snapshot(),
             roll_graded.grade().unwrap().snapshot()
@@ -232,8 +222,6 @@ fn cached_grades_follow_processing_not_names_allocator_or_view_state() {
             .image(editor.document.target)
             .unwrap()
             .source_revision();
-        editor.document.grades.retain(&[]);
-        assert!(editor.document.grades.entries.borrow().is_empty());
         assert_eq!(first.grade().unwrap().snapshot(), &old_snapshot);
         assert_eq!(
             editor
@@ -363,7 +351,7 @@ fn developed_floors_are_source_specific_in_editor_preparation_and_offscreen_admi
 }
 
 #[test]
-fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources() {
+fn correction_changes_captured_processing_without_mutating_earlier_stacks() {
     pollster::block_on(async {
         let (mut editor, device, _) = fixture().await;
         let first = positive(&editor);
@@ -388,13 +376,13 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             )));
         editor.document.correction = Correction::prepare(&device, &candidate, None).unwrap();
         let corrected = positive(&editor);
-        assert_ne!(first.signature(), corrected.signature());
+        assert_ne!(first.clone(), corrected.clone());
         let calibration = field
             .processing_calibration(editor.calibration().unwrap())
             .unwrap();
         let expected = ProcessingInput::from(Arc::new(
             crate::gpu::ProcessingInput::new(
-                &device,
+                &device.limits(),
                 calibration,
                 editor.document.roll,
                 first.grade().unwrap().snapshot().clone(),
@@ -418,12 +406,9 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
             bytemuck::bytes_of(&global),
             "layer controls must not leak into upstream Roll/input parameters"
         );
-        assert!(std::ptr::eq(
-            corrected.grade().unwrap(),
-            positive(&editor).grade().unwrap()
-        ));
+        assert_eq!(corrected.clone(), positive(&editor).clone());
         editor.document.correction = None;
-        assert_eq!(positive(&editor).signature(), first.signature());
+        assert_eq!(positive(&editor).clone(), first.clone());
         editor
             .document
             .project
@@ -437,7 +422,6 @@ fn correction_changes_grade_preparation_but_empty_stacks_release_local_resources
         let empty = positive(&editor);
         assert!(empty.grade().is_some());
         assert_eq!(empty.grade().unwrap().snapshot().layers().len(), 0);
-        assert!(!editor.document.grades.entries.borrow().is_empty());
         assert_eq!(
             first.grade().unwrap().snapshot().layers().len(),
             2,
@@ -489,7 +473,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
             editor.dmax(),
             editor.document.state.project.clone(),
         );
-        let generation = editor.document.visit.canvas.grade.original.revision();
+        let generation = editor.document.visit.canvas.grade.original.continuation();
         assert!(
             editor
                 .validate_processing(
@@ -525,13 +509,10 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
             before
         );
         assert_eq!(
-            editor.document.visit.canvas.grade.original.revision(),
+            editor.document.visit.canvas.grade.original.continuation(),
             generation
         );
-        assert!(std::ptr::eq(
-            accepted.grade().unwrap(),
-            positive(&editor).grade().unwrap()
-        ));
+        assert_eq!(accepted.clone(), positive(&editor).clone());
         let proposed_cal = Calibration {
             dmin: editor.calibration().unwrap().dmin * 1.1,
             ..editor.calibration().unwrap()
@@ -545,11 +526,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
                 )
                 .is_err()
         );
-        assert_eq!(
-            editor.document.grades.entries.borrow().len(),
-            1,
-            "validation does not allocate/cache offscreen GPU grades"
-        );
+        assert_eq!(accepted.clone(), positive(&editor).clone());
     });
 }
 
@@ -564,7 +541,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         frame(&mut editor, &context);
         let accepted = positive(&editor);
         let (_, scope, _) = editor.scope_input().unwrap();
-        assert_eq!(scope.signature(), accepted.signature());
+        assert_eq!(scope.clone(), accepted.clone());
         editor.document.visit.canvas.grade.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
         let request = editor
@@ -573,18 +550,23 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
             .canvas
             .grade
             .original
-            .request(
-                &accepted,
-                editor.document.target,
-                editor.source_context().unwrap(),
-            )
+            .request()
             .unwrap();
-        editor.document.visit.canvas.grade.original.refining =
-            Some((request.revision, request.view));
-        assert_eq!(request.target, editor.document.target);
-        let retired_generation = request.generation.clone();
-        let (revision, captured, view) = (request.revision, request.input, request.view);
-        assert_eq!(captured.signature(), accepted.signature());
+        let retired = request.begin().unwrap();
+        assert_eq!(request.demand.target, editor.document.target);
+        assert!(matches!(
+            request.demand.capture,
+            working_view::Capture::Photograph(_)
+        ));
+        let (captured, view) = (
+            request
+                .demand
+                .capture
+                .processing(&device.limits(), &request.demand.repairs)
+                .unwrap(),
+            request.demand.view.unwrap(),
+        );
+        assert_eq!(captured.clone(), accepted.clone());
         editor
             .document
             .project
@@ -597,29 +579,25 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
             .adjustment
             .invert = true;
         frame(&mut editor, &context);
-        assert_ne!(positive(&editor).signature(), captured.signature());
-        assert!(!Arc::ptr_eq(
-            &editor.document.visit.canvas.grade.original.generation,
-            &retired_generation
-        ));
-        assert!(retired_generation.load(std::sync::atomic::Ordering::Relaxed) > revision);
+        assert_ne!(positive(&editor).clone(), captured.clone());
+        assert_ne!(
+            editor.document.visit.canvas.grade.original.continuation(),
+            retired
+        );
         let (_, scope, _) = editor.scope_input().unwrap();
-        assert_eq!(scope.signature(), positive(&editor).signature());
-        editor.original_result(
-            revision,
-            Ok(Some(
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .ready
-                    .as_ref()
-                    .unwrap()
-                    .proxy
-                    .image(editor.document.target)
-                    .unwrap(),
-            )),
-        );
+        assert_eq!(scope.clone(), positive(&editor).clone());
+        retired.receive(Ok(Some(
+            editor
+                .document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .unwrap()
+                .proxy
+                .image(editor.document.target)
+                .unwrap(),
+        )));
         assert!(
             editor
                 .document
@@ -627,22 +605,13 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
                 .canvas
                 .grade
                 .original
-                .settled
+                .settled()
                 .is_none()
         );
-        assert!(
-            editor
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .refining
-                .is_none()
-        );
+        assert!(!editor.document.visit.canvas.grade.original.refining());
         assert_eq!(
-            captured.signature(),
-            accepted.signature(),
+            captured.clone(),
+            accepted.clone(),
             "worker resources are immutable after edits"
         );
         editor.document.source = true;
@@ -650,28 +619,19 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         assert!(editor.scope_input().is_err());
         frame(&mut editor, &context);
         assert!(
-            editor
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .signature
-                .is_none(),
+            editor.document.visit.canvas.grade.original.wanted.is_none(),
             "source inspection never requests photographic comparison"
         );
         assert!(view.area.width > 0);
     });
 }
 
-fn tracked_grade(editor: &Editor, id: SourceId) -> (std::sync::Weak<crate::gpu::Grading>, u64) {
-    let entries = editor.document.grades.entries.borrow();
-    let input = &entries.iter().find(|entry| entry.id == id).unwrap().grade;
+fn tracked_grade(input: &ProcessingInput) -> (std::sync::Weak<crate::gpu::Grading>, u64) {
     let grading = input.grade_shared().unwrap();
     (Arc::downgrade(grading), grading.byte_len())
 }
 
-fn live_grade_buffers(grades: &[(std::sync::Weak<crate::gpu::Grading>, u64)]) -> (usize, u64) {
+fn live_grade_snapshots(grades: &[(std::sync::Weak<crate::gpu::Grading>, u64)]) -> (usize, u64) {
     grades
         .iter()
         .filter(|(grade, _)| grade.strong_count() != 0)
@@ -681,16 +641,15 @@ fn live_grade_buffers(grades: &[(std::sync::Weak<crate::gpu::Grading>, u64)]) ->
 }
 
 #[test]
-fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
+fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history() {
     use crate::gpu_scopes::{GpuScopes, ScopePaint};
     use egui_wgpu::CallbackTrait;
     use std::time::Instant;
     pollster::block_on(async {
         let (mut editor, device, queue) = fixture().await;
         editor.document.visit.working_view.compare = true;
-        let id = editor.document.visit.current_source.unwrap();
         let accepted = positive(&editor);
-        let mut tracked = vec![tracked_grade(&editor, id)];
+        let mut tracked = vec![tracked_grade(&accepted)];
         let bytes = tracked[0].1;
         let proxy = editor
             .document
@@ -750,8 +709,8 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
             let frame = layout.physical_frame_raster(1.);
             editor.document.visit.canvas.grade.original.observe(
                 OriginalPurpose::Reference,
-                (
-                    positive(editor).signature(),
+                original_view::Demand::fixture(
+                    positive(editor).clone(),
                     editor.document.target,
                     Some(ViewRequest {
                         area: frame.bounds().unwrap(),
@@ -759,6 +718,7 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
                         frame: Some(frame),
                     }),
                     layout.composition,
+                    editor.source_context().unwrap(),
                 ),
             );
         };
@@ -773,16 +733,20 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
             .canvas
             .grade
             .original
-            .request(
-                &positive(&editor),
-                editor.document.target,
-                editor.source_context().unwrap(),
-            )
+            .request()
             .unwrap();
+        let held_grade = tracked_grade(
+            &held
+                .demand
+                .capture
+                .processing(&device.limits(), &held.demand.repairs)
+                .unwrap(),
+        )
+        .0;
+        let mut requested_grades = vec![(held_grade.clone(), bytes)];
         for i in 1..=40 {
             editor.document.visit.adjustment_layer_settings.exposure = f64::from(i) / 100.;
             observe(&mut editor);
-            tracked.push(tracked_grade(&editor, id));
             editor.document.visit.canvas.grade.original.last_edit =
                 Instant::now() - Duration::from_secs(1);
             let latest = editor
@@ -791,17 +755,28 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
                 .canvas
                 .grade
                 .original
-                .request(
-                    &positive(&editor),
-                    editor.document.target,
-                    editor.source_context().unwrap(),
-                )
+                .request()
                 .unwrap();
-            assert_eq!(latest.input.signature(), positive(&editor).signature());
+            let latest_input = latest
+                .demand
+                .capture
+                .processing(&device.limits(), &latest.demand.repairs)
+                .unwrap();
+            assert_eq!(latest_input, positive(&editor));
+            let latest_grade = tracked_grade(&latest_input).0;
+            requested_grades.push((latest_grade.clone(), bytes));
+            drop(latest_input);
+            assert!(held_grade.upgrade().is_some());
+            assert_eq!(live_grade_snapshots(&tracked), (1, bytes));
+            drop(latest);
+            assert!(
+                latest_grade.upgrade().is_some(),
+                "the current request remains an independent consumer"
+            );
             assert_eq!(
-                live_grade_buffers(&tracked),
+                live_grade_snapshots(&requested_grades),
                 (2, 2 * bytes),
-                "only the held grade and latest version remain Arc-owned"
+                "only held work and current demand retain requested mathematical inputs"
             );
         }
         let newest = editor
@@ -810,14 +785,17 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
             .canvas
             .grade
             .original
-            .request(
-                &positive(&editor),
-                editor.document.target,
-                editor.source_context().unwrap(),
-            )
+            .request()
             .unwrap();
-        assert!(newest.revision > held.revision);
-        editor.original_result(held.revision, Ok(None));
+        tracked.push(tracked_grade(
+            &newest
+                .demand
+                .capture
+                .processing(&device.limits(), &newest.demand.repairs)
+                .unwrap(),
+        ));
+        assert_ne!(newest.completion(), held.completion());
+        assert!(held.completion().receive(Ok(None)).is_none());
         assert!(
             editor
                 .document
@@ -825,22 +803,22 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
                 .canvas
                 .grade
                 .original
-                .settled
+                .settled()
                 .is_none()
         );
         drop(held);
+        assert!(held_grade.upgrade().is_none());
 
-        editor.document.grades.clear();
-        editor.document.visit.canvas.grade.original.signature = None;
+        editor.document.visit.canvas.grade.original.wanted = None;
         editor.document.visit.canvas.grade = Default::default();
-        assert_eq!(live_grade_buffers(&tracked), (2, 2 * bytes));
+        assert_eq!(live_grade_snapshots(&tracked), (2, 2 * bytes));
         drop(newest);
-        assert_eq!(live_grade_buffers(&tracked), (1, bytes));
+        assert_eq!(live_grade_snapshots(&tracked), (1, bytes));
         drop(image_paint);
         drop(scope_paint);
         gpu.invalidate();
         assert_eq!(
-            live_grade_buffers(&tracked),
+            live_grade_snapshots(&tracked),
             (1, bytes),
             "image preparation independently retains the old signature"
         );
@@ -849,15 +827,15 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
         images[0]
             .prepare_processing(&device, &mut encoder, &inspection)
             .unwrap();
-        assert_eq!(live_grade_buffers(&tracked), (1, bytes));
+        assert_eq!(live_grade_snapshots(&tracked), (1, bytes));
         images[1]
             .prepare_processing(&device, &mut encoder, &inspection)
             .unwrap();
-        assert_eq!(live_grade_buffers(&tracked), (0, 0));
+        assert_eq!(live_grade_snapshots(&tracked), (0, 0));
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         println!(
-            "local_grade_retention edits=40 pending_original_demand=1 peak_arc_owned_grade_bytes={} released_arc_owned_grade_bytes={} excludes=driver_cpu_snapshot_image_storage",
+            "local_grade_retention edits=40 pending_original_demand=1 peak_arc_owned_grade_bytes={} released_arc_owned_grade_bytes={} excludes=GPU_and_other_snapshot_storage",
             2 * bytes,
             2 * bytes
         );
@@ -865,7 +843,7 @@ fn captured_original_input_keeps_its_grade_alive_across_newer_ui_edits() {
 }
 
 #[test]
-fn selected_visible_grade_eviction_releases_unreferenced_roll_resources() {
+fn preparing_other_photos_does_not_retain_unreferenced_grade_snapshots() {
     pollster::block_on(async {
         let (editor, _, _) = fixture().await;
         let calibration = editor.calibration().unwrap();
@@ -887,49 +865,40 @@ fn selected_visible_grade_eviction_releases_unreferenced_roll_resources() {
                     editor.document.visit.adjustment_layer_settings,
                 )
                 .unwrap();
-            tracked.push(tracked_grade(&editor, source.id));
+            tracked.push(tracked_grade(&input));
             if i == 35 {
                 held = Some(input);
             }
         }
         let bytes = tracked[0].1;
-        assert_eq!(live_grade_buffers(&tracked), (36, 36 * bytes));
-        editor
-            .document
-            .grades
-            .retain(&[SourceId(0), SourceId(1), SourceId(2)]);
-        assert_eq!(editor.document.grades.entries.borrow().len(), 3);
-        assert_eq!(live_grade_buffers(&tracked), (4, 4 * bytes));
-        drop(held);
-        assert_eq!(live_grade_buffers(&tracked), (3, 3 * bytes));
-        editor.document.grades.clear();
-        assert_eq!(live_grade_buffers(&tracked), (0, 0));
-        println!(
-            "local_grade_retention sources=36 retained_selected_visible=3 peak_arc_owned_grade_bytes={} excludes=driver_cpu_snapshot_image_storage",
-            36 * bytes
+        assert_eq!(
+            live_grade_snapshots(&tracked),
+            (1, bytes),
+            "only the explicitly held photograph owns its snapshot"
         );
+        drop(held);
+        assert_eq!(live_grade_snapshots(&tracked), (0, 0));
     });
 }
 
 #[test]
-fn replacing_a_document_releases_its_grade_retention_and_keeps_device_infrastructure() {
+fn document_replacement_keeps_active_inputs_and_device_infrastructure_not_hidden_grades() {
     pollster::block_on(async {
         let (mut editor, _, _) = fixture().await;
-        drop(positive(&editor));
-        let grade = Arc::downgrade(&editor.document.grades.entries.borrow()[0].grade);
-        assert!(grade.upgrade().is_some());
+        let input = positive(&editor);
+        let grade = tracked_grade(&input).0;
         editor.sync_document();
         let captured = editor.document.capture();
         let id = editor.document.visit.current_source;
         editor.document = editor.document.replacement(captured);
         assert!(
-            grade.upgrade().is_none(),
-            "per-source grade retention survived document retirement"
+            grade.upgrade().is_some(),
+            "an active consumer owns its captured input independently"
         );
-        assert!(editor.document.grades.entries.borrow().is_empty());
-        assert!(editor.document.grades.device.is_some());
+        assert!(editor.document.visit.working_view.device().is_some());
+        drop(input);
+        assert!(grade.upgrade().is_none());
         editor.document.visit.current_source = id;
-        drop(positive(&editor));
-        assert_eq!(editor.document.grades.entries.borrow().len(), 1);
+        assert!(positive(&editor).grade().is_some());
     });
 }

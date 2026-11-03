@@ -1,7 +1,7 @@
 //! Evaluation demand and schedule declared resource lifetimes, without operation-specific dispatch.
 
+use super::CellRegion as Rect;
 use super::*;
-use crate::geometry::SourceRegion as Rect;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Policy {
@@ -25,17 +25,21 @@ pub struct Tile {
 }
 
 /// Captured, lazy traversal. Only one tile's physical plan is retained during execution.
+#[derive(Clone)]
 pub struct Job {
     root: Arc<ImageNode>,
     region: Rect,
     budget: Budget,
     policy: Policy,
+    materializations: Option<Materializations>,
+    supplied: Arc<[SuppliedImage]>,
+    limits: Option<wgpu::Limits>,
 }
 
 impl Job {
     pub fn new(root: Arc<ImageNode>, region: Rect, budget: Budget) -> Result<Self, Error> {
         region.validate()?;
-        if budget.tile.contains(&0) || !root.domain.bounds.contains_region(region) {
+        if budget.tile.contains(&0) || !root.domain.contains_region(region) {
             return Err(Error::InvalidParameter("invalid evaluation job demand"));
         }
 
@@ -44,7 +48,26 @@ impl Job {
             region,
             budget,
             policy: Policy::Materialized,
+            materializations: None,
+            supplied: Arc::from([]),
+            limits: None,
         })
+    }
+
+    pub(super) fn with_limits(mut self, limits: wgpu::Limits) -> Self {
+        self.limits = Some(limits);
+        self
+    }
+
+    pub(super) fn image(&self) -> &Arc<ImageNode> {
+        &self.root
+    }
+    pub(super) fn budget(&self) -> Budget {
+        self.budget
+    }
+
+    pub(super) fn region(&self) -> Rect {
+        self.region
     }
 
     pub fn with_policy(mut self, policy: Policy) -> Self {
@@ -52,22 +75,40 @@ impl Job {
         self
     }
 
+    pub(super) fn with_materializations(mut self, scope: Materializations) -> Self {
+        self.materializations = Some(scope);
+        self
+    }
+
+    pub(super) fn with_supplied(mut self, supplied: Arc<[SuppliedImage]>) -> Self {
+        self.supplied = supplied;
+        self
+    }
+
     pub fn plans(&self) -> impl Iterator<Item = Result<Plan, Error>> + '_ {
         let area = self.region;
 
-        (area.y..area.y + area.height)
+        (area.y..area.bottom())
             .step_by(self.budget.tile[1] as usize)
             .flat_map(move |y| {
-                (area.x..area.x + area.width)
+                (area.x..area.right())
                     .step_by(self.budget.tile[0] as usize)
                     .map(move |x| {
                         let r = Rect {
                             x,
                             y,
-                            width: self.budget.tile[0].min(area.x + area.width - x),
-                            height: self.budget.tile[1].min(area.y + area.height - y),
+                            width: self.budget.tile[0].min((area.right() - x) as u32),
+                            height: self.budget.tile[1].min((area.bottom() - y) as u32),
                         };
-                        Plan::with_policy(self.root.clone(), r, self.budget, self.policy)
+                        Plan::with_materializations(
+                            self.root.clone(),
+                            r,
+                            self.budget,
+                            self.policy,
+                            self.materializations.as_ref(),
+                            &self.supplied,
+                            self.limits.as_ref(),
+                        )
                     })
             })
     }
@@ -88,7 +129,7 @@ impl Plan {
         budget: u64,
     ) -> Result<Self, Error> {
         result.region.validate()?;
-        if !result.domain.bounds.contains_region(result.region) {
+        if !result.domain.contains_region(result.region) {
             return Err(Error::InvalidParameter(
                 "work result outside declared domain",
             ));
@@ -117,31 +158,55 @@ impl Plan {
         Self::with_policy(root, region, budget, Policy::Materialized)
     }
 
+    #[cfg(test)]
     pub fn with_policy(
         root: Arc<ImageNode>,
         region: Rect,
         budget: Budget,
         policy: Policy,
     ) -> Result<Self, Error> {
+        Self::with_materializations(root, region, budget, policy, None, &[], None)
+    }
+
+    fn with_materializations(
+        root: Arc<ImageNode>,
+        region: Rect,
+        budget: Budget,
+        policy: Policy,
+        scope: Option<&Materializations>,
+        supplied: &[SuppliedImage],
+        limits: Option<&wgpu::Limits>,
+    ) -> Result<Self, Error> {
         region.validate()?;
-        if budget.tile.contains(&0) || !root.domain.bounds.contains_region(region) {
+        if budget.tile.contains(&0) || !root.domain.contains_region(region) {
             return Err(Error::InvalidParameter("invalid evaluation demand"));
         }
 
         let mut tiles = Vec::new();
         let mut peak_scratch_bytes = 0;
 
-        for y in (region.y..region.y + region.height).step_by(budget.tile[1] as usize) {
-            for x in (region.x..region.x + region.width).step_by(budget.tile[0] as usize) {
+        for y in (region.y..region.bottom()).step_by(budget.tile[1] as usize) {
+            for x in (region.x..region.right()).step_by(budget.tile[0] as usize) {
                 let region = Rect {
                     x,
                     y,
-                    width: budget.tile[0].min(region.x + region.width - x),
-                    height: budget.tile[1].min(region.y + region.height - y),
+                    width: budget.tile[0].min((region.right() - x) as u32),
+                    height: budget.tile[1].min((region.bottom() - y) as u32),
                 };
 
                 let mut fragment = Fragment::default();
-                let result = evaluate_region(&root, region, &mut fragment, policy)?;
+                let result = evaluate_region(
+                    &root,
+                    region,
+                    &mut fragment,
+                    Planning {
+                        policy,
+                        scope,
+                        supplied,
+                        scratch_bytes: budget.scratch_bytes,
+                        limits,
+                    },
+                )?;
                 let tile = schedule(fragment, result)?;
 
                 let bytes = tile.slots.iter().map(Storage::bytes).sum();
@@ -165,24 +230,99 @@ impl Plan {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Planning<'a> {
+    pub policy: Policy,
+    pub scope: Option<&'a Materializations>,
+    pub supplied: &'a [SuppliedImage],
+    pub scratch_bytes: u64,
+    pub limits: Option<&'a wgpu::Limits>,
+}
+
+impl Planning<'_> {
+    fn fits(self, fragment: &Fragment, result: PlannedImage) -> Result<bool, Error> {
+        let tile = schedule(fragment.clone(), result)?;
+        if tile.slots.iter().map(Storage::bytes).sum::<u64>() > self.scratch_bytes {
+            return Ok(false);
+        }
+        Ok(self.limits.is_none_or(|limits| {
+            tile.slots.iter().all(|storage| match storage {
+                Storage::Buffer(bytes) | Storage::Retained { bytes, .. } => {
+                    *bytes <= limits.max_buffer_size
+                        && *bytes <= limits.max_storage_buffer_binding_size
+                }
+                Storage::Texture(size) => {
+                    size.iter().all(|v| *v <= limits.max_texture_dimension_2d)
+                }
+                _ => true,
+            })
+        }))
+    }
+}
+
+pub(super) fn probe(
+    root: &Arc<ImageNode>,
+    region: Rect,
+    budget: Budget,
+    scope: &Materializations,
+    limits: &wgpu::Limits,
+) -> Result<Plan, Error> {
+    let mut fragment = Fragment::default();
+    let result = evaluate_region(
+        root,
+        region,
+        &mut fragment,
+        Planning {
+            policy: Policy::Composed,
+            scope: Some(scope),
+            supplied: &[],
+            scratch_bytes: budget.scratch_bytes,
+            limits: Some(limits),
+        },
+    )?;
+    Plan::from_work(fragment, result, u64::MAX)
+}
+
 fn evaluate_region(
     node: &Arc<ImageNode>,
     region: Rect,
     fragment: &mut Fragment,
-    policy: Policy,
+    planning: Planning<'_>,
 ) -> Result<PlannedImage, Error> {
-    if !node.domain.bounds.contains_region(region) {
+    let Planning { policy, scope, .. } = planning;
+    let checkpoint = (fragment.resources.len(), fragment.work.len());
+    if !node.domain.contains_region(region) {
         return Err(Error::InvalidParameter(
             "evaluation dependency outside declared domain",
         ));
     }
 
-    if policy == Policy::Composed {
-        if let Some(implementation) = &node.implementation {
-            return evaluate_region(implementation, region, fragment, policy);
+    if let Some(stored) = Stored::find(scope, planning.supplied, node, region)? {
+        if let Some(image) = stored.raster(fragment, node.domain, region) {
+            return Ok(image);
         }
+        let output = fragment.image(node.domain, region);
+        stored.sample(fragment).materialize(fragment, output)?;
+        return Ok(output);
+    }
+
+    if node
+        .operation
+        .sample_consumer()
+        .and_then(|consumer| consumer.production())
+        .is_some_and(|production| production.requires_worker())
+    {
+        let output = fragment.image(node.domain, region);
+        fragment.work.push(Work::Produce {
+            image: node.clone(),
+            output,
+        });
+        return Ok(output);
+    }
+
+    if policy == Policy::Composed {
         if node.operation.sample_producer().is_some() {
-            let sample = sample_region(node, region, fragment, policy)?;
+            let sample = sample_region(node, region, fragment, planning)?;
             let output = fragment.image(node.domain, region);
             sample.materialize(fragment, output)?;
             return Ok(output);
@@ -196,60 +336,32 @@ fn evaluate_region(
                 .operation
                 .input(region)?
                 .ok_or(Error::InvalidParameter("sampling consumer has no demand"))?;
-            let sample = sample_region(upstream, demand, fragment, policy)?;
+            let sample = sample_region(upstream, demand, fragment, planning)?;
             let output = fragment.image(node.domain, region);
             consumer.emit(fragment, sample, output)?;
+            if consumer.production().is_some() && !planning.fits(fragment, output)? {
+                fragment.resources.truncate(checkpoint.0);
+                fragment.work.truncate(checkpoint.1);
+                let output = fragment.image(node.domain, region);
+                fragment.work.push(Work::Produce {
+                    image: node.clone(),
+                    output,
+                });
+                return Ok(output);
+            }
             return Ok(output);
         }
     }
 
-    if let Some(function) = node.operation.pointwise() {
-        let mut functions = vec![function];
-        let mut cursor = node.clone();
-        loop {
-            let mut upstream = cursor
-                .input
-                .as_ref()
-                .ok_or(Error::InvalidParameter("pointwise node has no input"))?
-                .clone();
-            if policy == Policy::Composed {
-                while let Some(implementation) = &upstream.implementation {
-                    upstream = implementation.clone();
-                }
-            }
-            if !cursor.domain.same_grid(upstream.domain)
-                || cursor.operation.input(region)? != Some(region)
-            {
-                return Err(Error::InvalidParameter(
-                    "pointwise contract changes the grid",
-                ));
-            }
-            let Some(next) = upstream.operation.pointwise() else {
-                break;
-            };
-            // A common module gives shared slots one ABI; resource identity must also agree.
-            if next.bindings.iter().any(|(slot, value)| {
-                functions.iter().any(|f| {
-                    f.bindings
-                        .iter()
-                        .any(|(s, v)| s == slot && (f.code != next.code || v != value))
-                })
-            }) {
-                break;
-            }
-            functions.push(next);
-            cursor = upstream.clone();
-        }
-        let input_node = cursor.input.as_ref().unwrap();
-        let input = evaluate_region(input_node, region, fragment, policy)?;
+    if node.operation.pointwise().is_some() {
+        let sample = sample_region(node, region, fragment, planning)?;
         let output = fragment.image(node.domain, region);
-        functions.reverse();
-        lower_map(fragment, input, output, functions)?;
+        sample.materialize(fragment, output)?;
         return Ok(output);
     }
 
     let mut input = match (&node.input, node.operation.input(region)?) {
-        (Some(input), Some(demand)) => Some(evaluate_region(input, demand, fragment, policy)?),
+        (Some(input), Some(demand)) => Some(evaluate_region(input, demand, fragment, planning)?),
         (None, None) => None,
         _ => {
             return Err(Error::InvalidParameter(
@@ -272,7 +384,7 @@ fn evaluate_region(
             Storage::Input {
                 writable: false,
                 ..
-            }
+            } | Storage::ResidentBuffer(_)
         ) {
             let copy = fragment.image(input.domain, input.region);
             lower_map(
@@ -310,42 +422,76 @@ fn evaluation_own_input(p: vec4f, position: vec2f) -> vec4f {
     Ok(output)
 }
 
-fn sample_region(
+pub(super) fn sample_region(
     node: &Arc<ImageNode>,
     region: Rect,
     fragment: &mut Fragment,
-    policy: Policy,
+    planning: Planning<'_>,
 ) -> Result<Sampled, Error> {
-    if !node.domain.bounds.contains_region(region) {
+    let Planning { policy, scope, .. } = planning;
+    if !node.domain.contains_region(region) {
         return Err(Error::InvalidParameter(
             "sample demand outside declared domain",
         ));
     }
-    if policy == Policy::Composed
-        && let Some(implementation) = &node.implementation
-    {
-        return sample_region(implementation, region, fragment, policy);
+    if let Some(stored) = Stored::find(scope, planning.supplied, node, region)? {
+        return Ok(stored.sample(fragment));
+    }
+    if let Some(function) = node.operation.pointwise() {
+        let mut functions = vec![function];
+        let mut cursor = node.clone();
+        let upstream = loop {
+            let upstream = cursor
+                .input
+                .as_ref()
+                .ok_or(Error::InvalidParameter("pointwise node has no input"))?
+                .clone();
+            if !cursor.domain.same_grid(upstream.domain)
+                || !upstream.domain.contains_region(region)
+                || cursor.operation.input(region)? != Some(region)
+            {
+                return Err(Error::InvalidParameter(
+                    "pointwise contract changes the grid",
+                ));
+            }
+            if Stored::find(scope, planning.supplied, &upstream, region)?.is_some() {
+                break upstream;
+            }
+            let Some(next) = upstream.operation.pointwise() else {
+                break upstream;
+            };
+            functions.push(next);
+            cursor = upstream;
+        };
+        functions.reverse();
+        let input = if policy == Policy::Composed {
+            sample_region(&upstream, region, fragment, planning)?
+        } else {
+            let raster = evaluate_region(&upstream, region, fragment, planning)?;
+            Sampled::raster(fragment, raster)
+        };
+        return input.map(fragment, node.domain, region, functions);
     }
     if let Some(producer) = node.operation.sample_producer() {
-        let upstream = node
-            .input
-            .as_ref()
-            .ok_or(Error::InvalidParameter("sample producer has no input"))?;
-        let demand = node
-            .operation
-            .input(region)?
-            .ok_or(Error::InvalidParameter("sample producer has no demand"))?;
-        let input = match producer.access() {
-            Access::Raster => {
-                SampleInput::Raster(evaluate_region(upstream, demand, fragment, policy)?)
-            }
-            Access::Callable => {
-                SampleInput::Callable(sample_region(upstream, demand, fragment, policy)?)
+        let input = match (node.input.as_ref(), node.operation.input(region)?) {
+            (Some(upstream), Some(demand)) => Some(match producer.access() {
+                Access::Raster => {
+                    SampleInput::Raster(evaluate_region(upstream, demand, fragment, planning)?)
+                }
+                Access::Callable => {
+                    SampleInput::Callable(sample_region(upstream, demand, fragment, planning)?)
+                }
+            }),
+            (None, None) => None,
+            _ => {
+                return Err(Error::InvalidParameter(
+                    "sample input differs from image definition",
+                ));
             }
         };
         producer.emit(fragment, input, node.domain, region)
     } else {
-        let input = evaluate_region(node, region, fragment, policy)?;
+        let input = evaluate_region(node, region, fragment, planning)?;
         Ok(Sampled::raster(fragment, input))
     }
 }
@@ -356,87 +502,20 @@ fn lower_map(
     output: PlannedImage,
     functions: Vec<Function>,
 ) -> Result<(), Error> {
-    let mut code = String::new();
-    let mut modules: Vec<Arc<str>> = Vec::new();
-    let mut bindings = vec![
-        (20, Binding::Read(input.resource)),
-        (21, Binding::Write(output.resource)),
-    ];
-    let origin = output.domain.point([
-        f64::from(output.region.x) + 0.5,
-        f64::from(output.region.y) + 0.5,
-    ]);
-    let geometry = [
-        [
-            output.region.width as f32,
-            output.region.height as f32,
-            0.,
-            0.,
-        ],
-        [origin[0] as f32, origin[1] as f32, 0., 0.],
-        [
-            output.domain.grid.axes[0][0] as f32,
-            output.domain.grid.axes[0][1] as f32,
-            output.domain.grid.axes[1][0] as f32,
-            output.domain.grid.axes[1][1] as f32,
-        ],
-    ];
-    bindings.push((22, fragment.uniform(&geometry)));
-    let mut calls = String::new();
-    let mut captured: Vec<(u32, FunctionBinding)> = vec![];
-    for function in functions {
-        if function.bindings.iter().any(|(slot, _)| *slot >= 20) {
-            return Err(Error::InvalidParameter("function collides with map ABI"));
-        }
-        if !modules.contains(&function.code) {
-            code.push_str(&function.code);
-            code.push('\n');
-            modules.push(function.code);
-        }
-        calls.push_str(&format!("pixel = {}(pixel, position);\n", function.symbol));
-        for (slot, value) in function.bindings {
-            if let Some((_, bound)) = captured.iter().find(|(s, _)| *s == slot) {
-                if bound != &value {
-                    return Err(Error::InvalidParameter(
-                        "composed functions bind different resources to one slot",
-                    ));
-                }
-            } else {
-                bindings.push((slot, value.lower(fragment)));
-                captured.push((slot, value));
-            }
-        }
-    }
-    code.push_str(&format!(
-        r#"
-@group(0) @binding(20) var<storage, read> evaluation_input: array<vec4f>;
-@group(0) @binding(21) var<storage, read_write> evaluation_output: array<vec4f>;
-struct EvaluationGeometry {{
-    size: vec4f,
-    mapping: vec4f,
-    axes: vec4f
-}}
-@group(0) @binding(22) var<uniform> evaluation_geometry: EvaluationGeometry;
-@compute @workgroup_size(64)
-fn evaluation_main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {{
-    let index = id.x + id.y * groups.x * 64u;
-    let size = vec2u(evaluation_geometry.size.xy);
-    if index >= size.x * size.y {{
-        return;
-    }}
-    let xy = vec2f(f32(index % size.x), f32(index / size.x));
-    let position = evaluation_geometry.mapping.xy + xy.x * evaluation_geometry.axes.xy + xy.y * evaluation_geometry.axes.zw;
-    var pixel = evaluation_input[index];
-    {calls}
-    evaluation_output[index] = pixel;
-}}
-"#
-    ));
-    fragment.compute(code, "evaluation_main", bindings, output.cells());
-    Ok(())
+    Sampled::raster(fragment, input)
+        .map(fragment, output.domain, output.region, functions)?
+        .materialize(fragment, output)
 }
 
-fn schedule(fragment: Fragment, result: PlannedImage) -> Result<Tile, Error> {
+fn schedule(mut fragment: Fragment, mut result: PlannedImage) -> Result<Tile, Error> {
+    if matches!(
+        fragment.resources[result.resource.0],
+        Storage::ResidentBuffer(_)
+    ) {
+        let output = fragment.image(result.domain, result.region);
+        Sampled::raster(&mut fragment, result).materialize(&mut fragment, output)?;
+        result = output;
+    }
     let end = fragment.work.len();
     let mut initialized = fragment
         .resources
@@ -444,13 +523,20 @@ fn schedule(fragment: Fragment, result: PlannedImage) -> Result<Tile, Error> {
         .map(|r| {
             matches!(
                 r,
-                Storage::Uniform(_) | Storage::Data(_) | Storage::Input { .. }
+                Storage::Uniform(_)
+                    | Storage::Data(_)
+                    | Storage::Input { .. }
+                    | Storage::ResidentBuffer(_)
             )
         })
         .collect::<Vec<_>>();
     let mut uploads = 0;
     for work in &fragment.work {
         let bindings = match work {
+            Work::Produce { output, .. } => {
+                initialized[output.resource.0] = true;
+                continue;
+            }
             Work::Upload { output, .. } => {
                 uploads += 1;
                 initialized[output.resource.0] = true;
@@ -474,7 +560,7 @@ fn schedule(fragment: Fragment, result: PlannedImage) -> Result<Tile, Error> {
                     Storage::Input {
                         writable: false,
                         ..
-                    }
+                    } | Storage::ResidentBuffer(_)
                 ) {
                     return Err(Error::InvalidParameter(
                         "fragment writes a read-only resident input",

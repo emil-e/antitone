@@ -56,7 +56,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
         let frame = rotated_frame([1., 1.]);
         let input = ProcessingInput::from(Arc::new(
             ProcessingInput::new(
-                &device,
+                &device.limits(),
                 InputSettings::Digital,
                 Default::default(),
                 AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -65,17 +65,24 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
             )
             .unwrap(),
         ))
-        .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
-            enabled: true,
-            size: 0.1,
-            image_sigma: 0.1,
-            amount: 0.,
-            colour: 0.5,
-        })
-        .with_frame_size(frame.composition.crop().size);
-        let spec = ViewSourceSpec::new(17, frame, InputSettings::Digital, DMat3::IDENTITY, None)
+        .with_pixel_pipeline(
+            crate::pixel_pipeline::PixelPipeline::emulation(
+                crate::film_emulation::FilmEmulationSettings {
+                    enabled: true,
+                    size: 0.1,
+                    image_sigma: 0.1,
+                    amount: 0.,
+                    colour: 0.5,
+                },
+                Default::default(),
+                frame.composition.crop().size,
+                0,
+            )
+            .unwrap(),
+        );
+        let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
             .unwrap()
-            .with_pipeline(input.pixel_pipeline().unwrap())
+            .with_pipeline(input.pixel_pipeline())
             .unwrap();
         assert_eq!(spec.plan.output_offset(), Some([8, 8]));
         let size = spec.input_frame().unwrap().output;
@@ -84,16 +91,16 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
         let values: Vec<[f32; 4]> = (0..size[0] * size[1])
             .map(|i| [if i % size[0] == 0 { 16. } else { -0.03 }, 0.18, 1.8, 8.])
             .collect();
-        let source = Arc::new(ViewSource {
+        let source = Arc::new(ViewSource::from_neutral_samples(
             spec,
             renderer,
             kernels,
-            pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("rotated finite-dependency oracle"),
                 contents: bytemuck::cast_slice(&values),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             }),
-        });
+        ));
         let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None).unwrap();
         view.ensure_submitted(
             &device,

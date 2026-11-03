@@ -209,9 +209,12 @@ impl PixelPipeline {
         mut input: Arc<crate::gpu::evaluation::ImageNode>,
     ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
         for stage in &self.stages {
-            let domain = input.domain;
+            let domain = input.domain();
             input = stage.compose(input)?;
-            if !domain.same_grid(input.domain) || domain.meaning != input.domain.meaning {
+            if domain.bounds != input.domain().bounds
+                || !domain.same_grid(input.domain())
+                || domain.meaning != input.domain().meaning
+            {
                 return Err(Error::InvalidParameter(
                     "effect changes its declared grid or sample meaning",
                 ));

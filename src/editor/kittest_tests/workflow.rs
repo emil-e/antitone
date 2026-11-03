@@ -173,11 +173,7 @@ pub(super) fn calibrated_workflow<R>(
 
 pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
     wait_for(harness, |e| {
-        assert!(
-            e.active_canvas().grade.original.refinement_error.is_none(),
-            "{}",
-            e.status
-        );
+        assert!(!e.active_canvas().grade.original.failed(), "{}", e.status);
         if e.document.flat_edit().is_none() && e.document.visit.working_view.revision().is_some() {
             let expected = if e.document.source {
                 e.source_parameters(e.source_exposure)
@@ -197,7 +193,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                     .displayed
                     .as_ref()
                     .is_some_and(|view| {
-                        view.processing == expected.signature()
+                        view.processing() == expected.clone()
                             && view.target == e.document.target
                             && (!e.document.visit.working_view.compare
                                 || e.document.source
@@ -207,17 +203,10 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
             e.active_canvas()
                 .grade
                 .original
-                .signature
+                .wanted
                 .as_ref()
-                .is_some_and(|s| s.1 == e.document.target)
-                && e.active_canvas()
-                    .grade
-                    .original
-                    .settled
-                    .as_ref()
-                    .is_some_and(|(revision, _, _)| {
-                        *revision == e.active_canvas().grade.original.revision()
-                    })
+                .is_some_and(|demand| demand.target == e.document.target)
+                && e.active_canvas().grade.original.settled().is_some()
         }
     });
 }
@@ -321,16 +310,10 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
                     }
                 }
                 harness.read(|editor| {
-                    assert!(
-                        editor
-                            .document
-                            .visit
-                            .canvas
-                            .grade
-                            .original
-                            .signature
-                            .is_none()
-                    )
+                    assert!(editor.document.visit.canvas.grade.original.wanted.is_none())
+                });
+                harness.read(|editor| {
+                    assert!(!editor.document.visit.canvas.grade.original.refining())
                 });
                 harness.read(|editor| {
                     assert!(
@@ -340,19 +323,7 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
                             .canvas
                             .grade
                             .original
-                            .refining
-                            .is_none()
-                    )
-                });
-                harness.read(|editor| {
-                    assert!(
-                        editor
-                            .document
-                            .visit
-                            .canvas
-                            .grade
-                            .original
-                            .settled
+                            .settled()
                             .is_none()
                     )
                 });
@@ -694,7 +665,7 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                     .as_ref()
                     .unwrap();
                 assert!(displayed.same_source_as(&initial));
-                assert_eq!(displayed.processing, input.signature());
+                assert_eq!(displayed.processing(), input.clone());
                 assert_eq!(
                     editor
                         .document
@@ -803,8 +774,14 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                         .output_retained()
                 );
                 assert_eq!(
-                    &current.processing,
-                    editor.document.visit.working_view.processing().unwrap()
+                    &current.processing(),
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .processing()
+                        .as_ref()
+                        .unwrap()
                 );
             });
         }
@@ -842,8 +819,14 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                     "dragging must not switch detail levels"
                 );
                 assert_eq!(
-                    &view.processing,
-                    editor.document.visit.working_view.processing().unwrap()
+                    &view.processing(),
+                    editor
+                        .document
+                        .visit
+                        .working_view
+                        .processing()
+                        .as_ref()
+                        .unwrap()
                 );
                 assert!(
                     !editor
@@ -916,14 +899,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
         wait_settled(&mut harness);
         harness.read(|editor| {
             assert!(
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .signature
-                    .is_none(),
+                editor.document.visit.canvas.grade.original.wanted.is_none(),
                 "normal grading does not prepare hidden original work"
             )
         });
@@ -952,10 +928,10 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                     .canvas
                     .grade
                     .original
-                    .settled
+                    .settled()
                     .as_ref()
                     .unwrap()
-                    .2
+                    .1
             ))
         });
         assert!(reference.spec == srgb.spec);
@@ -1030,7 +1006,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                     .canvas
                     .grade
                     .original
-                    .settled
+                    .settled()
                     .is_none()
             )
         });

@@ -2,7 +2,7 @@ use crate::{
     Error,
     frame_raster::FrameRaster,
     geometry::TextureMapping,
-    gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
+    gpu::{ProcessingInput, ProcessingParameters},
     scopes::{BINS, Basis, Counts, PLANE_LEN, Plot, Settings},
     viewer::GpuImage,
 };
@@ -22,10 +22,10 @@ struct Parameters {
 #[derive(Clone)]
 struct Key {
     #[cfg(feature = "editor")]
-    rendered_source: Option<crate::gpu::view::ViewSourceSpec>,
+    rendered_source: Option<crate::gpu::view::SourceRequest>,
     image: Weak<GpuImage>,
     source_revision: u64,
-    processing: ProcessingSignature,
+    processing: Option<ProcessingInput>,
     settings: Settings,
     frame: FrameRaster,
 }
@@ -49,7 +49,7 @@ impl Key {
             rendered_source: None,
             image: Arc::downgrade(image),
             source_revision: image.source_revision(),
-            processing: input.signature(),
+            processing: Some(input.clone()),
             settings: accumulation_settings(settings),
             frame,
         }
@@ -65,7 +65,7 @@ impl Key {
             rendered_source: Some(view.spec.clone()),
             image: Arc::downgrade(&view.image),
             source_revision: 0,
-            processing: view.processing.clone(),
+            processing: None,
             settings: accumulation_settings(settings),
             frame,
         }
@@ -84,7 +84,7 @@ impl Key {
             self.image.ptr_eq(&request.image) && self.source_revision == request.source_revision;
         #[cfg(feature = "editor")]
         let same_source = match (&self.rendered_source, &request.rendered_source) {
-            (Some(a), Some(b)) => a.authority == b.authority && a.same_source(b),
+            (Some(a), Some(b)) => a.same_source(b),
             (None, None) => same_source,
             _ => false,
         };

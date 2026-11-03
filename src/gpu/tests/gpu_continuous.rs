@@ -113,7 +113,7 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
         let parameters =
             ProcessingParameters::positive(calibration, roll, DMat3::IDENTITY).unwrap();
         let grade = antitone::gpu::ProcessingInput::new(
-            &device,
+            &device.limits(),
             calibration,
             roll,
             antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![

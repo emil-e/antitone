@@ -25,7 +25,7 @@ fn record(
     queue: &wgpu::Queue,
     renderer: &crate::renderer::GpuRenderer,
     root: Arc<ImageNode>,
-    region: SourceRegion,
+    region: CellRegion,
     input: &wgpu::Buffer,
 ) -> (Vec<[f32; 4]>, usize) {
     let plan = Plan::with_policy(
@@ -45,7 +45,7 @@ fn record(
         .filter(|work| matches!(work, Work::Compute { .. }))
         .count();
     let recorded = Executor::with_programs(renderer.evaluation.programs.clone())
-        .prepare(device, plan, vec![])
+        .prepare(device, plan)
         .unwrap();
     let destination = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("requested photographic region"),
@@ -68,10 +68,45 @@ fn record(
 }
 
 #[test]
+fn photographic_constants_and_layer_queries_can_be_captured_without_a_device() {
+    let area = SourceRegion::from([11, 17, 8, 6]);
+    let layer = AdjustmentLayer::global(AdjustmentLayerSettings {
+        exposure: 0.5,
+        ..Default::default()
+    });
+    let input = crate::gpu::ProcessingInput::new(
+        &wgpu::Limits::default(),
+        crate::processing::InputSettings::Digital,
+        RollSettings::default(),
+        AdjustmentLayerSnapshot::new(vec![layer]).unwrap(),
+        glam::DMat3::IDENTITY,
+        area,
+    )
+    .unwrap();
+    let source = borrowed_input(Domain {
+        bounds: Some(area.try_into().unwrap()),
+        grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+        meaning: Meaning::Neutral,
+    });
+    let grade = input.grade().unwrap().compose(source.clone()).unwrap();
+    let weights = Grading::weight_image(source, layer).unwrap();
+    for node in [grade, weights] {
+        let function = node.operation.pointwise().unwrap();
+        assert!(
+            function.bindings.iter().all(|(_, binding)| matches!(
+                binding,
+                FunctionBinding::Uniform(_) | FunctionBinding::Storage(_)
+            )),
+            "logical operations capture data, not allocated GPU buffers"
+        );
+    }
+}
+
+#[test]
 fn a_borrowed_source_can_deliver_a_whole_or_partial_region_without_processing() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let domain = Domain {
-        bounds: [11, 17, 8, 5].into(),
+        bounds: Some([11, 17, 8, 5].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Neutral,
     };
@@ -79,7 +114,7 @@ fn a_borrowed_source_can_deliver_a_whole_or_partial_region_without_processing() 
         .map(|i| [i as f32 * 0.1 - 0.4, i as f32, 1.5, 0.])
         .collect();
     let input = buffer(&device, &pixels);
-    for region in [domain.bounds, SourceRegion::from([13, 18, 3, 2])] {
+    for region in [domain.finite().unwrap(), CellRegion::from([13, 18, 3, 2])] {
         let (actual, _) = record(
             &device,
             &queue,
@@ -88,11 +123,9 @@ fn a_borrowed_source_can_deliver_a_whole_or_partial_region_without_processing() 
             region,
             &input,
         );
-        let expected: Vec<_> = (region.y..region.y + region.height)
+        let expected: Vec<_> = (region.y..region.bottom())
             .flat_map(|y| {
-                (region.x..region.x + region.width).map(move |x| {
-                    (x - domain.bounds.x + (y - domain.bounds.y) * domain.bounds.width) as usize
-                })
+                (region.x..region.right()).map(move |x| domain.finite().unwrap().index([x, y]))
             })
             .map(|i| pixels[i])
             .collect();
@@ -105,7 +138,7 @@ fn a_borrowed_source_can_deliver_a_whole_or_partial_region_without_processing() 
 fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_source() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let domain = Domain {
-        bounds: [0, 0, 9, 7].into(),
+        bounds: Some([0, 0, 9, 7].into()),
         grid: Grid {
             origin: [51., 73.],
             axes: [[1.2, 0.3], [-0.2, 1.1]],
@@ -135,7 +168,7 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
         })
     };
     let snapshot = AdjustmentLayerSnapshot::new(vec![global, local]).unwrap();
-    let gpu_grade = Grading::new(&device, roll, snapshot, area).unwrap();
+    let gpu_grade = Grading::new(&device.limits(), roll, snapshot, area).unwrap();
     let grading = gpu_grade.for_grid(domain.grid.coverage);
     let pixels: Vec<_> = (0..63)
         .map(|i| {
@@ -152,18 +185,17 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
     let root = borrowed_input(domain);
     let roll_image = grading.roll(root.clone()).unwrap();
     let full_image = grading.compose(root).unwrap();
-    assert_eq!(
-        grading.operation_bytes(),
-        0,
-        "logical image handles do not allocate unused photographic uniforms"
+    let roll_function = roll_image.operation.pointwise().unwrap();
+    assert!(
+        roll_function
+            .bindings
+            .iter()
+            .all(|(_, binding)| matches!(binding, FunctionBinding::Uniform(_))),
+        "Roll constants stay captured data until GPU planning"
     );
-    let region: SourceRegion = [2, 1, 5, 4].into();
+    let region: CellRegion = [2, 1, 5, 4].into();
     let (roll_pixels, roll_work) = record(&device, &queue, &renderer, roll_image, region, &source);
     let (full_pixels, full_work) = record(&device, &queue, &renderer, full_image, region, &source);
-    assert!(
-        grading.operation_bytes() > 0,
-        "planned photographic functions own their captured uniforms"
-    );
     assert_eq!(
         full_work, roll_work,
         "compatible Roll and layer functions do not require another traversal"
@@ -176,9 +208,9 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
     let mut effect = 0_f64;
     let mut signed_and_hdr = [false; 2];
     for (i, (prefix, complete)) in roll_pixels.iter().zip(&full_pixels).enumerate() {
-        let x = region.x + i as u32 % region.width;
-        let y = region.y + i as u32 / region.width;
-        let input = pixels[(y * domain.bounds.width + x) as usize];
+        let x = region.x + (i as u32 % region.width) as i32;
+        let y = region.y + (i as u32 / region.width) as i32;
+        let input = pixels[domain.finite().unwrap().index([x, y])];
         if input[3] as u32 & 8 == 0 {
             assert_eq!(*prefix, [0.; 4]);
             assert_eq!(*complete, [0.; 4]);
@@ -215,10 +247,10 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
 }
 
 #[test]
-fn shared_slots_fuse_only_for_the_same_module_and_the_same_captured_resource() {
+fn private_module_slots_preserve_each_captured_resource_when_fused() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let domain = Domain {
-        bounds: [0, 0, 3, 2].into(),
+        bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Graded,
     };
@@ -279,7 +311,14 @@ fn add_other(p: vec4f, pos: vec2f) -> vec4f {
                 bindings: vec![(0, Shared::Buffer(resource.clone()).into())],
             },
         );
-        let (actual, count) = record(&device, &queue, &renderer, root, domain.bounds, &input);
+        let (actual, count) = record(
+            &device,
+            &queue,
+            &renderer,
+            root,
+            domain.finite().unwrap(),
+            &input,
+        );
         for (actual, source) in actual.iter().zip(pixels) {
             for c in 0..3 {
                 assert!((actual[c] - (source[c] * 2. + bias)).abs() < 1e-6);
@@ -289,7 +328,7 @@ fn add_other(p: vec4f, pos: vec2f) -> vec4f {
     }
     assert_eq!(
         work,
-        [1, 2, 2],
-        "sharing a slot requires both the same captured resource and the same module ABI"
+        [1, 1, 1],
+        "linking private module slots does not require an intermediate image"
     );
 }

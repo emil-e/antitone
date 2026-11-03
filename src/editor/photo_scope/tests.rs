@@ -234,6 +234,88 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
 }
 
 #[test]
+fn successful_source_revisit_cannot_restore_departed_measurement_results() {
+    let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    let hold = crate::background::testing::pause();
+    with_application(editor, |app| {
+        app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
+        app.pump();
+        app.enter(|editor, access| {
+            editor.set_pick_region(Some(Coverage::rectangle(
+                editor.document.visit.canvas.ready.as_ref().unwrap().area,
+            )));
+            editor.apply_pick(access);
+        });
+        app.pump();
+        app.read(|editor| {
+            assert!(
+                editor.measurement_pending(),
+                "control: an actual measurement must be waiting before departure"
+            )
+        });
+        app.update(Editor::sync_document);
+        let (view, path, project) = app.read(|editor| {
+            (
+                editor.document.visit.view,
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap()
+                    .path
+                    .clone(),
+                editor.document.state.project.clone(),
+            )
+        });
+        app.enter(|editor, cx| editor.load("next.dng".into(), cx));
+        assert!(app.read(|e| e.document.visit.source.pending()));
+        app.enter(|editor, cx| editor.load(path.clone(), cx));
+        assert!(app.read(|e| e.document.visit.source.pending()));
+        app.pump();
+        app.read(|editor| {
+            assert_ne!(editor.document.visit.view, view);
+            assert!(!editor.measurement_pending());
+            assert_eq!(editor.document.state.project, project);
+            // A cache hit can finish before the paused measurement pool is released.
+            assert_eq!(editor.busy, editor.document.visit.source.pending());
+            if !editor.document.visit.source.pending() {
+                let ready = editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap_or_else(|| {
+                        panic!("revisit did not produce a source: {}", editor.status)
+                    });
+                assert_eq!(ready.path, path);
+            }
+        });
+        drop(hold);
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.document.visit.source.pending()
+        });
+        app.read(|editor| {
+            assert_eq!(
+                editor
+                    .document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("revisit failed: {}", editor.status))
+                    .path,
+                path
+            );
+            assert!(!editor.measurement_pending());
+            assert_eq!(editor.document.state.project, project);
+        });
+    });
+}
+
+#[test]
 fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs_early() {
     let mut editor = crate::editor::tests::with_document_services(fixture());
     add_ready_fixture(&mut editor);

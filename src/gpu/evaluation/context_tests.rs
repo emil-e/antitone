@@ -1,5 +1,5 @@
+use super::CellRegion as SourceRegion;
 use super::*;
-use crate::geometry::SourceRegion;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Pixels {
@@ -50,7 +50,7 @@ impl Operation for Field {
             bytes: u64::from(output.cells()) * 16,
         });
         let r = output.region;
-        let geometry = f.uniform(&[r.x, r.y, r.width, self.seed]);
+        let geometry = f.uniform(&[r.x as u32, r.y as u32, r.width, self.seed]);
         f.compute(
             r#"
 @group(0) @binding(0)
@@ -109,7 +109,7 @@ fn apply(@builtin(global_invocation_id) id: vec3u) {
 
 fn domain() -> Domain {
     Domain {
-        bounds: [11, 17, 9, 7].into(),
+        bounds: Some([11, 17, 9, 7].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Graded,
     }
@@ -141,9 +141,9 @@ fn request(context: &Context, image: Arc<ImageNode>, bounds: SourceRegion) -> Ev
 }
 
 fn expected(region: SourceRegion) -> Vec<[f32; 4]> {
-    (region.y..region.y + region.height)
+    (region.y..region.bottom())
         .flat_map(|y| {
-            (region.x..region.x + region.width).map(move |x| {
+            (region.x..region.right()).map(move |x| {
                 let v = 1. + ((x + 3 * y + 7) % 5) as f32 * 0.0625;
                 [-0.25 * v, 0.4 * v, 2. * v, 3.]
             })
@@ -255,20 +255,21 @@ fn generated_retention_is_bounded_independently_of_scratch_and_cache_off_preserv
             );
         }
         drop(executor);
+        context.materializations().clear();
         assert_eq!(
             context.retained_bytes(),
             0,
-            "dropping work releases its optional budget ownership"
+            "optional ownership belongs to the materialization scope, not the last program"
         );
     }
 }
 
 #[test]
-fn record_only_cache_off_regenerates_and_budgeted_preparations_share_only_admitted_values() {
+fn recorded_generated_values_reuse_the_scope_without_program_history() {
     use wgpu::util::DeviceExt;
-    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let d = domain();
-    let bytes = u64::from(d.bounds.width * d.bounds.height) * 16;
+    let bytes = u64::from(d.finite().unwrap().width * d.finite().unwrap().height) * 16;
     let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&vec![[-0.25f32, 0.4, 2., 3.]; (bytes / 16) as usize]),
@@ -289,78 +290,110 @@ fn record_only_cache_off_regenerates_and_budgeted_preparations_share_only_admitt
                 generated_bytes: limit,
             },
         );
+        let scope = context.test_materializations(true);
         let image = ImageNode::new(d, Some(resident::borrowed_input(d)), Field { seed: 7 });
         let first = context
-            .record(request(&context, image.clone(), d.bounds), vec![])
+            .record(
+                request(&context, image.clone(), d.finite().unwrap()),
+                scope.clone(),
+                Vec::new(),
+            )
             .unwrap();
         let reserved = first.cached::<FieldKey>().cloned();
         assert_eq!(reserved.is_some(), limit > 0);
         if let Some(field) = &reserved {
             assert!(
                 !field.ready(),
-                "prepared but unsubmitted data is not initialized"
+                "unsubmitted initializers cannot satisfy a lookup"
             );
-            assert_eq!(field.pixels.size(), context.retained_bytes());
         }
-        let second = context
+        let mut encoder = device.create_command_encoder(&Default::default());
+        first
+            .encode_into(&device, &mut encoder, &input, &output)
+            .unwrap();
+        queue.submit([encoder.finish()]);
+        first.submitted();
+        assert_eq!(
+            execute::read(&device, &queue, &output),
+            expected(d.finite().unwrap())
+        );
+        let next = context
             .record(
-                request(&context, image.clone(), d.bounds),
-                first.resources(),
+                request(&context, image, d.finite().unwrap()),
+                scope.clone(),
+                Vec::new(),
             )
             .unwrap();
         if let Some(field) = &reserved {
-            assert!(Arc::ptr_eq(field, second.cached::<FieldKey>().unwrap()));
+            let reused = next.cached::<FieldKey>().unwrap();
+            assert_eq!(
+                field.pixels, reused.pixels,
+                "sharing is by image value, not a previous-program parameter"
+            );
+            assert!(reused.ready());
         }
-        let competing = context
-            .record(request(&context, image.clone(), d.bounds), vec![])
+        let mut encoder = device.create_command_encoder(&Default::default());
+        next.encode_into(&device, &mut encoder, &input, &output)
             .unwrap();
-        assert!(
-            competing.cached::<FieldKey>().is_none(),
-            "simultaneously owned optional values cannot exceed the context budget"
+        queue.submit([encoder.finish()]);
+        next.submitted();
+        assert_eq!(
+            execute::read(&device, &queue, &output),
+            expected(d.finite().unwrap())
         );
-        assert!(context.retained_bytes() <= limit);
-        for prepared in [&first, &second, &competing] {
-            for _ in 0..2 {
-                let mut encoder = device.create_command_encoder(&Default::default());
-                prepared
-                    .encode_into(&device, &mut encoder, &input, &output)
-                    .unwrap();
-                queue.submit([encoder.finish()]);
-                prepared.submitted();
-                assert_eq!(execute::read(&device, &queue, &output), expected(d.bounds));
-            }
-        }
+        let foreign = Context::new(&device, CachePolicy { generated_bytes: 0 });
+        let foreign_image = ImageNode::new(d, Some(resident::borrowed_input(d)), Field { seed: 7 });
+        assert!(
+            foreign
+                .record(
+                    request(&foreign, foreign_image, d.finite().unwrap()),
+                    scope.clone(),
+                    Vec::new()
+                )
+                .is_err()
+        );
+        scope.clear();
+        assert_eq!(
+            context.retained_bytes(),
+            0,
+            "cache ownership ends independently of active generated-buffer handles"
+        );
         if let Some(field) = &reserved {
             assert!(field.ready());
         }
-        let foreign_context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-        let foreign = foreign_context
-            .record(
-                request(&foreign_context, image, d.bounds),
-                first.resources(),
-            )
-            .unwrap();
-        assert!(
-            foreign.cached::<FieldKey>().is_none(),
-            "a previous preparation cannot bypass a different context's disabled cache"
-        );
-        assert_eq!(foreign_context.retained_bytes(), 0);
-        let changed = ImageNode::new(d, Some(resident::borrowed_input(d)), Field { seed: 8 });
-        let replaced = context
-            .record(request(&context, changed, d.bounds), first.resources())
-            .unwrap();
-        assert!(
-            replaced.resources().is_empty(),
-            "an active replacement must not pin its obsolete variant when the retention budget is exhausted"
-        );
-        drop((first, second, competing, reserved));
+        drop((first, next, reserved, scope));
         assert_eq!(context.retained_bytes(), 0);
     }
 }
 
 #[test]
+fn abandoning_an_unsubmitted_generated_value_releases_its_reservation() {
+    let (device, _, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(
+        &device,
+        CachePolicy {
+            generated_bytes: 4096,
+        },
+    );
+    let scope = context.test_materializations(true);
+    let d = domain();
+    let root = ImageNode::new(d, Some(resident::borrowed_input(d)), Field { seed: 7 });
+    let work = context
+        .record(
+            request(&context, root, d.finite().unwrap()),
+            scope.clone(),
+            Vec::new(),
+        )
+        .unwrap();
+    assert!(context.retained_bytes() > 0);
+    drop(work);
+    assert_eq!(context.retained_bytes(), 0);
+    assert!(scope.is_empty());
+}
+
+#[test]
 fn retention_reservations_are_atomic_and_do_not_overflow() {
-    let retention = cache::Retention::new(32);
+    let retention = cache::Allowance::new(32);
     let admitted = std::sync::Barrier::new(9);
     let release = std::sync::Barrier::new(9);
     std::thread::scope(|scope| {
@@ -380,7 +413,7 @@ fn retention_reservations_are_atomic_and_do_not_overflow() {
         release.wait();
     });
     assert_eq!(retention.bytes(), 0);
-    let huge = cache::Retention::new(u64::MAX);
+    let huge = cache::Allowance::new(u64::MAX);
     let lease = huge.acquire(u64::MAX).unwrap();
     assert!(huge.acquire(1).is_none());
     drop(lease);

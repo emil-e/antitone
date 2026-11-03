@@ -13,10 +13,18 @@ fn main(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) group
         return;
     }
     let pixel = working[index];
-    if pixel.w < 0.0
-        || any((bitcast<vec3u>(pixel.rgb) & vec3u(0x7f800000u)) == vec3u(0x7f800000u)) {
+    if pixel.w < 0.0 {
         output[index] = vec4f(0.0, 0.0, 0.0, -1.0);
         return;
     }
-    output[index] = textureLoad(image, vec2i(i32(index % size.x), i32(index / size.x)), 0);
+    if size.z != 0u && (u32(pixel.w) & 8u) == 0u {
+        output[index] = vec4f(0.0);
+        return;
+    }
+    if any((bitcast<vec3u>(pixel.rgb) & vec3u(0x7f800000u)) == vec3u(0x7f800000u)) {
+        output[index] = vec4f(0.0, 0.0, 0.0, -1.0);
+        return;
+    }
+    let rendered = textureLoad(image, vec2i(i32(index % size.x), i32(index / size.x)), 0);
+    output[index] = vec4f(rendered.rgb, pixel.w);
 }

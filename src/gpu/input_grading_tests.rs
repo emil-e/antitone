@@ -66,7 +66,7 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
                 ..Default::default()
             })])
             .unwrap();
-        let grade = Arc::new(Grading::new(&device, roll, layers, area).unwrap());
+        let grade = Arc::new(Grading::new(&device.limits(), roll, layers, area).unwrap());
         let negative = InputSettings::from(NegativeInput {
             calibration: Calibration {
                 dmin: DVec3::splat(0.8),
@@ -120,9 +120,13 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
                     let program = GpuInputProgram::new(input, matrix).unwrap();
                     let mut source = program.source_continuous(&device, &pixels).unwrap();
                     source.set_geometry(geometry).unwrap();
-                    let pipeline =
-                        ProcessingInput::compose(&device, program, grade.clone(), source_area)
-                            .unwrap();
+                    let pipeline = ProcessingInput::compose(
+                        &device.limits(),
+                        program,
+                        grade.clone(),
+                        source_area,
+                    )
+                    .unwrap();
                     let mut encoder = device.create_command_encoder(&Default::default());
                     kernel
                         .encode_grade(&device, &mut encoder, &source, &output, &pipeline)

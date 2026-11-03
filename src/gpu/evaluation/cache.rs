@@ -29,10 +29,6 @@ impl RetainedKey {
         }
     }
 
-    pub(crate) fn same_type(&self, other: &Self) -> bool {
-        self.value.as_ref().type_id() == other.value.as_ref().type_id()
-    }
-
     pub fn get<T: Any>(&self) -> Option<&T> {
         (self.value.as_ref() as &dyn Any).downcast_ref()
     }
@@ -52,15 +48,15 @@ impl PartialEq for RetainedKey {
 }
 
 #[derive(Clone)]
-pub(crate) struct Retention(Arc<RetentionState>);
+pub(crate) struct Allowance(Arc<AllowanceState>);
 
-struct RetentionState {
-    limit: u64,
+struct AllowanceState {
+    limit: std::sync::atomic::AtomicU64,
     bytes: std::sync::atomic::AtomicU64,
 }
 
 pub(crate) struct Lease {
-    owner: Arc<RetentionState>,
+    owner: Arc<AllowanceState>,
     bytes: u64,
 }
 
@@ -70,22 +66,27 @@ impl Drop for Lease {
     }
 }
 
-impl Default for Retention {
+impl Default for Allowance {
     fn default() -> Self {
         Self::new(super::CachePolicy::default().generated_bytes)
     }
 }
 
-impl Retention {
+impl Allowance {
     pub fn new(limit: u64) -> Self {
-        Self(Arc::new(RetentionState {
-            limit,
+        Self(Arc::new(AllowanceState {
+            limit: limit.into(),
             bytes: 0.into(),
         }))
     }
 
     pub fn limit(&self) -> u64 {
-        self.0.limit
+        self.0.limit.load(Ordering::Acquire)
+    }
+
+    #[cfg(feature = "editor")]
+    pub(super) fn set_limit(&self, limit: u64) {
+        self.0.limit.store(limit, Ordering::Release);
     }
 
     pub fn bytes(&self) -> u64 {
@@ -96,7 +97,7 @@ impl Retention {
         self.0
             .bytes
             .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(bytes).filter(|next| *next <= self.0.limit)
+                used.checked_add(bytes).filter(|next| *next <= self.limit())
             })
             .ok()?;
         Some(Lease {
@@ -109,38 +110,49 @@ impl Retention {
 pub(crate) struct RetainedBuffer {
     pub key: RetainedKey,
     pub pixels: wgpu::Buffer,
+    image: Arc<super::GpuImage>,
     ready: AtomicBool,
-    lease: Option<Lease>,
+    admitted: bool,
+    publication: std::sync::Mutex<Option<super::materializations::Publication>>,
 }
-
 impl RetainedBuffer {
-    pub fn new(device: &wgpu::Device, key: RetainedKey, bytes: u64, lease: Option<Lease>) -> Self {
+    pub(super) fn pending(
+        key: RetainedKey,
+        image: Arc<super::GpuImage>,
+        publication: Option<super::materializations::Publication>,
+    ) -> Self {
         Self {
             key,
-            pixels: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("evaluation retained generated value"),
-                size: bytes,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            pixels: image
+                .as_buffer()
+                .expect("generated values use buffer storage")
+                .clone(),
+            image,
             ready: AtomicBool::new(false),
-            lease,
+            admitted: publication.is_some(),
+            publication: std::sync::Mutex::new(publication),
         }
     }
-
+    pub(super) fn reused(key: RetainedKey, image: Arc<super::GpuImage>) -> Self {
+        Self {
+            key,
+            pixels: image
+                .as_buffer()
+                .expect("generated values use buffer storage")
+                .clone(),
+            image,
+            ready: AtomicBool::new(true),
+            admitted: true,
+            publication: std::sync::Mutex::new(None),
+        }
+    }
     pub fn ready(&self) -> bool {
-        self.lease.is_some() && self.ready.load(Ordering::Acquire)
+        self.admitted && self.ready.load(Ordering::Acquire)
     }
-
-    pub fn retained_by(&self, retention: &Retention) -> bool {
-        self.lease
-            .as_ref()
-            .is_some_and(|lease| Arc::ptr_eq(&lease.owner, &retention.0))
-    }
-
     pub fn submitted(&self) {
         self.ready.store(true, Ordering::Release);
+        if let Some(publication) = self.publication.lock().unwrap().take() {
+            publication.submitted(&self.image);
+        }
     }
 }

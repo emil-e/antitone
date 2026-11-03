@@ -9,6 +9,73 @@ use std::{
 };
 
 #[test]
+fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph() {
+    let file = crate::raw::fixture::bayer_dng();
+    let mut document = Document::default();
+    document.project.input = crate::processing::InputSettings::Digital;
+    document.import(&[file.path().to_owned()]).unwrap();
+    let id = document.project.order[0];
+    let source = document.project.source(id).unwrap().clone();
+    let scan = Scan::open(file.path(), Some(source.development.decode.fixed_wb)).unwrap();
+    let camera = Arc::new(crate::scan::CameraPixels::from_scan(&scan).unwrap());
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let loader = source_loading::SourceLoader::new();
+    let thumbnails = Thumbnails::with_developments(
+        device.clone(),
+        queue.clone(),
+        Arc::default(),
+        None,
+        loader.clone(),
+    );
+    let Services::Production(worker) = thumbnails.services.as_ref().unwrap() else {
+        unreachable!()
+    };
+    for ev in [0., -1.] {
+        let job = super::super::tests::service_job(
+            &thumbnails,
+            super::super::tests::key(&document, id),
+            file.path().to_owned(),
+            source.clone(),
+            None,
+            true,
+        );
+        assert!(
+            job.key
+                .recipe
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .neutral
+                .reference
+                .is_none()
+        );
+        let reference = crate::exposure_reference::ReferenceExposure::Matched(
+            crate::exposure_reference::StartingExposure {
+                ev,
+                samples: 1024,
+                spread: 0.,
+            },
+        );
+        job.reference.set(reference.clone()).unwrap();
+        let proxy = crate::scan::CameraProxy::new(camera.clone(), Some(reference.clone()));
+        let product = worker
+            .positive(&job, Some(&proxy), &mut ThumbnailMetrics::default())
+            .unwrap()
+            .unwrap();
+        let (native, view) = product.positive.as_ref().unwrap();
+        let crate::gpu::view::Capture::Photograph(captured) = &view.capture else {
+            panic!("photographic thumbnail must retain its resolved recipe")
+        };
+        assert_eq!(captured.neutral.reference.as_ref(), Some(&reference));
+        let program =
+            crate::gpu::evaluation::Photograph::input_program(&native.definition).unwrap();
+        assert_eq!(program.matrix(), scan.camera_to_ap1 * ev.exp2());
+    }
+    loader.close_and_wait().unwrap();
+}
+
+#[test]
 fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_finishes() {
     let file = crate::raw::fixture::bayer_dng();
     let mut document = Document::default();

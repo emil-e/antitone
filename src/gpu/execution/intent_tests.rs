@@ -231,6 +231,15 @@ fn display_reference_can_deliver_linear_float_or_encoded_rgb16_without_a_file_co
             panic!("encoded result")
         };
         assert_eq!(encoded_target, target);
+        assert!(
+            linear.iter().all(|p| p[..3]
+                .iter()
+                .all(|v| v.is_finite() && (0. ..=1.).contains(v))),
+            "invalid display result {:?}",
+            linear.iter().enumerate().find(|(_, p)| p[..3]
+                .iter()
+                .any(|v| !v.is_finite() || !(0. ..=1.).contains(v)))
+        );
         let expected = target
             .encode_u16(
                 &linear

@@ -1,65 +1,73 @@
-//! Captured upstream content and immutable acquisition demand; no publication authority.
+//! Immutable source-space sampling demand; mathematical inputs belong to the calculation.
 
-use crate::{
-    Error,
-    frame_raster::FrameRaster,
-    gpu::{GpuInputProgram, ProcessingParameters, SourceGeometry},
-    processing::InputSettings,
-};
+#[cfg(test)]
+use crate::gpu::{GpuInputProgram, SourceInterpretation};
+use crate::{Error, frame_raster::FrameRaster, gpu::SourceGeometry};
 use crate::{
     acquisition::{Plan, Request as AcquisitionRequest, Sampling},
     pixel_pipeline::PixelPipeline,
 };
+#[cfg(test)]
 use glam::DMat3;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub(crate) struct Request {
+pub(crate) struct SourceRequest {
     pub(crate) identity: crate::gpu::execution::source::Identity,
     pub(crate) repairs: crate::gpu::repairs::Snapshot,
     pub(crate) area: crate::raw::Rect,
-    pub(crate) matrix: DMat3,
-    pub(crate) neutral: ProcessingParameters,
-    pub(crate) program: Option<GpuInputProgram>,
-    pub(crate) inspection: bool,
+    inspection: bool,
+    #[cfg(test)]
+    fixture: Option<SourceInterpretation>,
+    #[cfg(test)]
     pub(crate) field: Option<Arc<crate::flat_field::FlatField>>,
     pub(crate) plan: Arc<Plan>,
     presentation: FrameRaster,
 }
 
-impl PartialEq for Request {
+impl PartialEq for SourceRequest {
     fn eq(&self, other: &Self) -> bool {
         self.same_acquisition(other) && self.repairs == other.repairs
     }
 }
 
-// Numerical source provenance and representation, independent of requested support and ticket.
-#[derive(Clone)]
-struct NeutralContent(Request);
-
-impl PartialEq for NeutralContent {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.same_source(&other.0)
-            && self.0.repairs == other.0.repairs
-            && self.0.plan.sampling() == other.0.plan.sampling()
-    }
-}
-
-impl std::fmt::Debug for NeutralContent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NeutralContent")
-            .field("area", &self.0.area)
-            .field("sampling", &self.0.plan.sampling())
-            .field("inspection", &self.0.inspection)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Request {
-    pub(crate) fn cache_key(&self) -> crate::gpu::evaluation::RetainedKey {
-        crate::gpu::evaluation::RetainedKey::new(NeutralContent(self.clone()))
+impl SourceRequest {
+    pub(crate) fn for_processing(
+        frame: FrameRaster,
+        input: &crate::gpu::ProcessingInput,
+    ) -> Result<Self, Error> {
+        let program = input.source_program().ok_or(Error::InvalidParameter(
+            "working photograph has no captured source interpretation",
+        ))?;
+        program.neutral_parameters()?;
+        let request = Self::for_frame(frame, false)?;
+        #[cfg(test)]
+        let request = Self {
+            fixture: Some(SourceInterpretation::Photograph(*program)),
+            ..request
+        };
+        request
+            .with_pipeline(input.pixel_pipeline())
+            .map(|request| request.with_repairs(input.repairs.clone()))
     }
 
+    #[cfg(test)]
+    pub(crate) fn processing_fixture(&self) -> crate::gpu::ProcessingInput {
+        if let Some(program) = self.program() {
+            crate::gpu::ProcessingInput::new(
+                &wgpu::Limits::default(),
+                program.input,
+                Default::default(),
+                crate::adjustment_layers::AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
+                program.matrix,
+                self.area,
+            )
+            .unwrap()
+            .with_pixel_pipeline(self.plan.pipeline().clone())
+        } else {
+            crate::gpu::ProcessingInput::from(crate::gpu::ProcessingParameters::source())
+        }
+    }
     pub(crate) fn frame(&self) -> FrameRaster {
         self.presentation
     }
@@ -88,36 +96,13 @@ impl Request {
     pub(crate) fn same_source(&self, other: &Self) -> bool {
         self.identity == other.identity
             && self.area == other.area
-            && self.matrix == other.matrix
-            && self.program == other.program
             && self.inspection == other.inspection
-            && self.field == other.field
-            && bytemuck::bytes_of(&self.neutral) == bytemuck::bytes_of(&other.neutral)
     }
 
     pub(crate) fn same_acquisition(&self, other: &Self) -> bool {
         self.same_source(other)
             && self.presentation == other.presentation
             && self.plan.same_acquisition_layout(&other.plan)
-    }
-
-    /// A source at its retained frame can run current stages only with sufficient neighbours.
-    pub(crate) fn compatible_processing(&self, wanted: &Self) -> bool {
-        self.same_source(wanted)
-            && self.plan.sampling() == wanted.plan.sampling()
-            && self.view_grid_sufficient(wanted.plan.pipeline())
-            && self
-                .plan
-                .for_pipeline(wanted.plan.pipeline())
-                .is_ok_and(|demand| self.plan.can_supply(&demand))
-    }
-
-    /// Exact output demand may be satisfied by a larger acquired input; repairs remain content.
-    pub(crate) fn satisfies(&self, wanted: &Self) -> bool {
-        self.same_source(wanted)
-            && self.repairs == wanted.repairs
-            && self.presentation == wanted.presentation
-            && self.plan.can_supply(&wanted.plan)
     }
 
     pub(crate) fn with_frame(mut self, frame: FrameRaster) -> Result<Self, Error> {
@@ -134,7 +119,7 @@ impl Request {
     }
 
     pub(crate) fn with_pipeline(self, pipeline: PixelPipeline) -> Result<Self, Error> {
-        if self.inspection && !pipeline.is_empty() {
+        if self.is_inspection() && !pipeline.is_empty() {
             return Err(Error::Gpu(
                 "source inspection bypasses post-grade stages".into(),
             ));
@@ -185,6 +170,20 @@ impl Request {
         self.plan.for_pipeline(pipeline)?.using_input(&self.plan)
     }
 
+    pub(crate) fn input_region(&self) -> Result<crate::gpu::evaluation::CellRegion, Error> {
+        let offset = self.plan.output_offset().ok_or(Error::InvalidParameter(
+            "physical view requires a frame grid",
+        ))?;
+        let offset = offset.map(i32::try_from);
+        let x = -offset[0]
+            .as_ref()
+            .map_err(|_| Error::InvalidParameter("view padding exceeds cell coordinates"))?;
+        let y = -offset[1]
+            .as_ref()
+            .map_err(|_| Error::InvalidParameter("view padding exceeds cell coordinates"))?;
+        crate::gpu::evaluation::CellRegion::new([x, y], self.plan.input().size()).validate()
+    }
+
     pub(crate) fn input_frame(&self) -> Result<FrameRaster, Error> {
         self.plan.processing_frame()
     }
@@ -202,29 +201,58 @@ impl Request {
         self.clone().with_frame(frame)
     }
 
+    #[cfg(test)]
     pub(crate) fn new(
         frame: FrameRaster,
-        input: impl Into<InputSettings>,
+        input: impl Into<crate::processing::InputSettings>,
         matrix: DMat3,
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
         let program = GpuInputProgram::new(input, matrix)?;
-        let neutral = program.neutral_parameters()?;
-        let mut spec = Self::with_parameters(frame, matrix, neutral, field, false)?;
-        spec.program = Some(program);
-        Ok(spec)
+        program.neutral_parameters()?;
+        Ok(Self {
+            fixture: Some(SourceInterpretation::Photograph(program)),
+            field,
+            ..Self::for_frame(frame, false)?
+        })
     }
 
-    pub(crate) fn inspection(
+    pub(crate) fn inspection(frame: FrameRaster) -> Result<Self, Error> {
+        Self::for_frame(frame, true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inspection_fixture(
         frame: FrameRaster,
         matrix: DMat3,
         field: Option<Arc<crate::flat_field::FlatField>>,
     ) -> Result<Self, Error> {
-        Self::with_parameters(frame, matrix, ProcessingParameters::source(), field, true)
+        crate::processing::validate_camera_matrix(matrix)?;
+        crate::gpu::CameraMatrix::new(matrix)?;
+        Ok(Self {
+            fixture: Some(SourceInterpretation::Inspection(matrix)),
+            field,
+            ..Self::inspection(frame)?
+        })
     }
 
     pub(crate) fn is_inspection(&self) -> bool {
         self.inspection
+    }
+
+    #[cfg(test)]
+    pub(crate) fn matrix(&self) -> DMat3 {
+        self.fixture
+            .as_ref()
+            .expect("declared scalar fixture")
+            .matrix()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn program(&self) -> Option<&GpuInputProgram> {
+        self.fixture
+            .as_ref()
+            .and_then(SourceInterpretation::program)
     }
 
     fn require_frame(frame: FrameRaster) -> Result<(), Error> {
@@ -239,14 +267,7 @@ impl Request {
         Ok(())
     }
 
-    // The correction owner supplies effective calibration and source floor.
-    fn with_parameters(
-        frame: FrameRaster,
-        matrix: DMat3,
-        neutral: ProcessingParameters,
-        field: Option<Arc<crate::flat_field::FlatField>>,
-        inspection: bool,
-    ) -> Result<Self, Error> {
+    fn for_frame(frame: FrameRaster, inspection: bool) -> Result<Self, Error> {
         let area = frame.composition.area();
         Self::require_frame(frame)?;
         SourceGeometry::new(
@@ -257,11 +278,11 @@ impl Request {
             identity: crate::gpu::execution::source::Identity::unbound(),
             repairs: Default::default(),
             area,
-            matrix,
-            neutral,
-            program: None,
-            field,
             inspection,
+            #[cfg(test)]
+            fixture: None,
+            #[cfg(test)]
+            field: None,
             presentation: frame,
             plan: Arc::new(Plan::new(AcquisitionRequest {
                 output: frame,

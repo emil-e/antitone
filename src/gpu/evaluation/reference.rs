@@ -46,31 +46,28 @@ impl Reference {
         let Some(target) = self.target else {
             return Ok(image);
         };
-        display(self.looked(image, None), renderer, target)
+        display(self.looked(image), renderer, target)
     }
 
-    /// Caller supplies fresh admission status in slot one for each encoding, not per recipe.
     pub fn presentation(
         &self,
         image: Arc<ImageNode>,
         renderer: &crate::renderer::GpuRenderer,
         texture: &wgpu::Texture,
+        region: CellRegion,
     ) -> Result<Arc<ImageNode>, Error> {
         let target = self.target.ok_or(Error::InvalidParameter(
             "presentation requires a display reference",
         ))?;
-        operators::display_texture(self.looked(image, Some(1)), renderer, target, texture)
+        operators::display_texture(self.looked(image), renderer, target, texture, region)
     }
 
-    fn looked(&self, image: Arc<ImageNode>, status_slot: Option<usize>) -> Arc<ImageNode> {
+    pub fn looked(&self, image: Arc<ImageNode>) -> Arc<ImageNode> {
         match &self.look {
             Some(look) => ImageNode::new(
                 image.domain,
                 Some(image.clone()),
-                Look {
-                    look: look.clone(),
-                    status_slot,
-                },
+                Look { look: look.clone() },
             ),
             None => image,
         }
@@ -79,7 +76,6 @@ impl Reference {
 
 struct Look {
     look: Arc<crate::gpu::look::Lut>,
-    status_slot: Option<usize>,
 }
 
 impl Look {
@@ -107,10 +103,13 @@ impl Look {
 }
 
 impl Operation for Look {
-    fn input(
-        &self,
-        r: crate::geometry::SourceRegion,
-    ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
+    fn identity(&self) -> Option<RetainedKey> {
+        #[derive(Debug, PartialEq)]
+        struct Content(crate::looks::LookId);
+        Some(RetainedKey::new(Content(self.look.id())))
+    }
+
+    fn input(&self, r: CellRegion) -> Result<Option<CellRegion>, Error> {
         Ok(Some(r))
     }
 
@@ -126,14 +125,9 @@ impl Operation for Look {
             output.cells().div_ceil(64) * 64,
             input.domain.grid.coverage != 0,
         ));
-        let status = f.resource(match self.status_slot {
-            Some(slot) => Storage::Input {
-                slot,
-                bytes: 8,
-                writable: true,
-            },
-            None => Storage::Data(bytemuck::cast_slice(&[0u32, u32::MAX]).into()),
-        });
+        let status = f.resource(Storage::Data(
+            bytemuck::cast_slice(&[0u32, u32::MAX]).into(),
+        ));
         f.work.push(Self::work(
             input.resource,
             output.resource,

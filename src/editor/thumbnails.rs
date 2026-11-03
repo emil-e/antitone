@@ -165,14 +165,6 @@ impl ImageKey {
             }
     }
 
-    fn same_neutral(&self, other: &Self) -> bool {
-        self.source == other.source
-            && match (&self.recipe, &other.recipe) {
-                (Ok(Some(a)), Ok(Some(b))) => a.same_neutral_content(b),
-                _ => false,
-            }
-    }
-
     fn same_presentation(&self, other: &Self) -> bool {
         self.source == other.source
             && self.field == other.field
@@ -184,7 +176,8 @@ impl ImageKey {
 
     fn estimated_product_bytes(&self) -> Option<usize> {
         let positive = matches!(&self.recipe, Ok(Some(_)));
-        let mut bytes = 256_u64 * 256 * 48 + Product::overhead(positive) as u64;
+        let mut bytes =
+            256_u64 * 256 * if positive { 64 } else { 48 } + Product::overhead(positive) as u64;
         if let Ok(Some(recipe)) = &self.recipe {
             if recipe.film_emulation.enabled {
                 bytes = bytes.checked_add(256 * 256 * 16)?;
@@ -588,6 +581,7 @@ impl Thumbnails {
     pub(super) fn set_limits(&mut self, limits: cache_limits::CacheLimits) {
         self.limits = limits;
         self.update_memory();
+        self.sync_image_budget();
     }
 
     pub(super) fn update_memory(&mut self) {
@@ -617,6 +611,12 @@ impl Thumbnails {
         self.embedded.set_budget(available.min(16 << 20));
         self.cache
             .set_budget(available.saturating_sub(self.embedded.byte_len()));
+        if let Some((_, _, renderers)) = &self.gpu {
+            let available = available
+                .saturating_sub(self.embedded.byte_len())
+                .saturating_sub(self.cache.measured_bytes());
+            renderers.set_retention_budget(available as u64);
+        }
     }
 
     fn can_retain(&self, key: &ImageKey) -> bool {
@@ -644,11 +644,13 @@ impl Thumbnails {
         self.cache.can_retain(extra)
     }
 
-    fn compatible_product(&self, key: &ImageKey) -> Option<(&ImageKey, &Arc<Product>)> {
+    fn source_product(&self, key: &ImageKey) -> Option<(&ImageKey, &Arc<Product>)> {
+        if !matches!(&key.recipe, Ok(Some(_))) {
+            return None;
+        }
         self.cache.entries.iter().rev().find_map(|(old, product)| {
-            key.same_neutral(old)
-                .then(|| product.as_ref().ok().map(|product| (old, product)))
-                .flatten()
+            let product = product.as_ref().ok()?;
+            (key.source == old.source && product.positive.is_some()).then_some((old, product))
         })
     }
 
@@ -672,12 +674,13 @@ impl Thumbnails {
             })
             .filter_map(|key| {
                 self.previous_product(key)
-                    .or_else(|| self.compatible_product(key))
+                    .or_else(|| self.source_product(key))
                     .map(|(old, _)| old.clone())
             })
             .collect::<Vec<_>>();
         wanted.extend(previous);
         self.cache.protect(wanted);
+        self.sync_image_budget();
     }
 
     pub fn new(
@@ -848,6 +851,7 @@ impl Thumbnails {
                 Err(error) => self.cache.insert(outcome.key, Err(error)),
                 Ok(None) => {}
             }
+            self.sync_image_budget();
         }
     }
 
@@ -871,7 +875,7 @@ mod production_worker;
 struct ThumbnailMetrics {
     disk_hit: bool,
     neutral_hit: bool,
-    neutral_seconds: f64,
+    calculation_seconds: f64,
     disk_seconds: f64,
     development_seconds: f64,
     renderer_seconds: f64,
@@ -1398,14 +1402,6 @@ impl Editor {
         if (strip.response.rect.height() - height).abs() > 0.5 {
             self.preferences.filmstrip_height = strip.response.rect.height().clamp(52., 240.);
         }
-        let mut graded_sources: Vec<_> = visible
-            .iter()
-            .map(|index| self.document.state.project.order[*index])
-            .collect();
-        if let Some(id) = self.document.visit.current_source {
-            graded_sources.push(id);
-        }
-        self.document.grades.retain(&graded_sources);
         if remove {
             self.request_removal();
         }

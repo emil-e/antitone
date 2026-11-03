@@ -265,7 +265,10 @@ impl CameraProxy {
         ))
     }
     pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
-        positive_matrix(input, self.matrix, self.reference.as_ref())
+        input.positive_matrix(
+            self.matrix,
+            self.reference.as_ref().map(|reference| reference.ev()),
+        )
     }
 }
 
@@ -273,19 +276,6 @@ impl CameraProxy {
 mod proxy_tests;
 #[cfg(all(test, feature = "project"))]
 mod source_scale_tests;
-
-pub(crate) fn positive_matrix(
-    input: &crate::processing::InputSettings,
-    matrix: DMat3,
-    reference: Option<&crate::exposure_reference::ReferenceExposure>,
-) -> Result<DMat3> {
-    let gain = if input.is_negative() {
-        1.
-    } else {
-        crate::processing::exposure_multiplier(reference.map_or(0., |value| value.ev()))?
-    };
-    Ok(matrix * gain)
-}
 
 pub struct Scan {
     source: Arc<DevelopedSource>,
@@ -479,10 +469,11 @@ impl Scan {
     }
 
     pub fn positive_matrix(&self, input: &crate::processing::InputSettings) -> Result<DMat3> {
-        positive_matrix(
-            input,
+        input.positive_matrix(
             self.source.camera_to_ap1,
-            self.reference_exposure.as_ref(),
+            self.reference_exposure
+                .as_ref()
+                .map(|reference| reference.ev()),
         )
     }
 
@@ -742,12 +733,16 @@ impl Scan {
         }
         let image = self.source.camera_image()?;
         let mut pixels = vec![[0.; 4]; width as usize * height as usize];
-        for dy in 0..height.min(area.height - y) {
-            for dx in 0..width.min(area.width - x) {
-                pixels[(dy * width + dx) as usize] =
-                    image.pixel_samples(area.x + x + dx, area.y + y + dy)?;
-            }
-        }
+        image.copy_samples(
+            Rect {
+                x: area.x + x,
+                y: area.y + y,
+                width: width.min(area.width - x),
+                height: height.min(area.height - y),
+            },
+            &mut pixels,
+            width as usize,
+        )?;
         Ok(pixels)
     }
 

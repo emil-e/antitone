@@ -369,7 +369,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
     scheduler.close_and_wait().unwrap();
 
     fn digital_proxy_pixels(e: &Editor, ready: &crate::editor::Ready) -> Vec<[f32; 4]> {
-        use crate::gpu::view::{RenderedView, ViewKernels, ViewSourceSpec};
+        use crate::gpu::view::{RenderedView, SourceRequest, ViewKernels};
         let services = e.source_services.as_ref().unwrap();
         let (device, queue) = (&services.device, &services.queue);
         let composition =
@@ -378,19 +378,20 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         let mut frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
         frame.output = ready.proxy.size();
         let matrix = ready.proxy.matrix();
-        let spec = ViewSourceSpec::new(e.id, frame, InputSettings::Digital, matrix, None).unwrap();
+        let spec = SourceRequest::new(frame, InputSettings::Digital, matrix, None).unwrap();
         let source = ready
             .proxy
             .view_source(
                 queue,
                 &crate::gpu::SubmissionGate::default(),
                 pollster::block_on(ViewKernels::new(device)).unwrap(),
+                &spec.processing_fixture(),
                 spec,
             )
             .unwrap();
         let parameters = crate::gpu::ProcessingInput::from(Arc::new(
             crate::gpu::ProcessingInput::new(
-                device,
+                &device.limits(),
                 InputSettings::Digital,
                 Default::default(),
                 crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),

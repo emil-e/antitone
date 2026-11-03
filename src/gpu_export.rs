@@ -15,8 +15,6 @@ use crate::{
 use glam::{DVec3, Vec3};
 use std::{path::Path, sync::Arc};
 
-#[cfg(all(test, target_os = "macos", feature = "editor"))]
-use crate::gpu::ProcessingInput;
 mod area;
 #[cfg(feature = "project")]
 pub(crate) mod job;

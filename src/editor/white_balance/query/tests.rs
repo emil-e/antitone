@@ -48,9 +48,8 @@ fn weight_images_preserve_original_coordinates_for_identity_controls_and_disable
             enabled,
             photo: AdjustmentLayerSettings::default(),
         };
-        let image =
-            Grading::weight_image(&services.device, samples.source.clone(), selected).unwrap();
-        assert_eq!(image.domain.meaning, evaluation::Meaning::Weight);
+        let image = Grading::weight_image(samples.source.clone(), selected).unwrap();
+        assert_eq!(image.domain().meaning, evaluation::Meaning::Weight);
         let mut count = 0;
         let mut range = [1_f64, 0_f64];
         samples

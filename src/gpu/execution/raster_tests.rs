@@ -14,7 +14,7 @@ fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_sourc
         .set_geometry(SourceGeometry::new([10, 20, 2, 2], [2, 2]).unwrap())
         .unwrap();
     let input = ProcessingInput::new(
-        &device,
+        &device.limits(),
         crate::processing::InputSettings::Digital,
         Default::default(),
         crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -22,9 +22,15 @@ fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_sourc
         [10, 20, 2, 2].into(),
     )
     .unwrap()
-    .with_film_emulation(FilmPreset::ThirtyFiveMm.settings())
-    .with_frame_size([2000; 2])
-    .with_film_seed(17);
+    .with_pixel_pipeline(
+        crate::pixel_pipeline::PixelPipeline::emulation(
+            FilmPreset::ThirtyFiveMm.settings(),
+            Default::default(),
+            [2000; 2],
+            17,
+        )
+        .unwrap(),
+    );
     let plan = resident_plan(&source, &input).unwrap().unwrap();
     assert_eq!(
         Raster::planned(&plan).dimensions[2],
@@ -50,13 +56,12 @@ fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_sourc
     .unwrap();
     let output = crate::gpu::raster::buffer(&device, [2, 2], "source-layout admission").unwrap();
     let mut encoder = device.create_command_encoder(&Default::default());
-    let _prepared = Request::new(&source, &input, Some(&plan))
+    let _prepared = Request::new(&source, &input, Some(&plan), plan.input().size())
         .encode(&renderer, &device, &mut encoder, &output)
-        .unwrap()
         .expect("matching source layout must be encodable");
     assert!(
         matches!(
-            Request::new(&source, &input, Some(&unrelated)).encode(
+            Request::new(&source, &input, Some(&unrelated), plan.input().size()).encode(
                 &renderer,
                 &device,
                 &mut encoder,

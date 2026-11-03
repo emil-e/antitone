@@ -266,6 +266,20 @@ impl InputSettings {
         matches!(self, Self::Negative { .. })
     }
 
+    #[cfg(any(feature = "raw", feature = "project"))]
+    pub(crate) fn positive_matrix(
+        &self,
+        matrix: DMat3,
+        reference_ev: Option<f64>,
+    ) -> Result<DMat3, Error> {
+        let gain = if self.is_negative() {
+            1.
+        } else {
+            exposure_multiplier(reference_ev.unwrap_or(0.))?
+        };
+        Ok(matrix * gain)
+    }
+
     /// Whether switching interpretation would discard user-editable stage settings.
     pub fn has_stage_settings(&self) -> bool {
         match *self {

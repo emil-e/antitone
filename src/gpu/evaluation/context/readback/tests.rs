@@ -14,11 +14,11 @@ impl Source for Pattern {
         self.domain
     }
 
-    fn read(&self, region: SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
+    fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
         self.reads.fetch_add(1, Ordering::Relaxed);
-        Ok((region.y..region.y + region.height)
+        Ok((region.y..region.bottom())
             .flat_map(|y| {
-                (region.x..region.x + region.width)
+                (region.x..region.right())
                     .map(move |x| [-(x as f32) * 0.125, y as f32 * 0.25, 2., 13.])
             })
             .collect())
@@ -27,7 +27,7 @@ impl Source for Pattern {
 
 fn image(reads: Arc<AtomicUsize>) -> Arc<ImageNode> {
     let domain = Domain {
-        bounds: [11, 17, 7, 5].into(),
+        bounds: Some([11, 17, 7, 5].into()),
         grid: Grid {
             origin: [3., -5.],
             axes: [[0., 2.], [-3., 0.]],
@@ -91,8 +91,8 @@ fn host_delivery_preserves_grid_coordinates_metadata_and_signed_hdr_values_acros
                 assert!(region.width <= 2 && region.height <= 2);
                 assert_eq!(pixels.len(), (region.width * region.height) as usize);
                 for (index, pixel) in pixels.iter().enumerate() {
-                    let x = region.x + index as u32 % region.width;
-                    let y = region.y + index as u32 / region.width;
+                    let x = region.x + (index as u32 % region.width) as i32;
+                    let y = region.y + (index as u32 / region.width) as i32;
                     assert!(
                         locations.insert([x, y]),
                         "each requested cell is delivered once"
@@ -216,7 +216,7 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
     struct Packed;
 
     impl Operation for Packed {
-        fn input(&self, _: SourceRegion) -> Result<Option<SourceRegion>, Error> {
+        fn input(&self, _: CellRegion) -> Result<Option<CellRegion>, Error> {
             Ok(None)
         }
 
@@ -235,7 +235,7 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
     let context = renderer.evaluation();
     let image = ImageNode::new(
         Domain {
-            bounds: [0, 0, 1, 1].into(),
+            bounds: Some([0, 0, 1, 1].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             meaning: Meaning::Graded,
         },
@@ -246,7 +246,7 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
         .request(
             image.clone(),
             Region {
-                bounds: image.domain.bounds,
+                bounds: image.domain.finite().unwrap(),
                 grid: image.domain.grid,
             },
             Budget {

@@ -13,7 +13,6 @@ struct ProxyState {
     #[cfg(feature = "editor")]
     identity: Option<crate::gpu::execution::source::Identity>,
     size: [u32; 2],
-    matrix: DMat3,
     active: std::sync::Mutex<Option<(OutputTarget, Arc<GpuImage>)>>,
 }
 
@@ -36,7 +35,7 @@ impl GpuProxy {
         }
         let mut source = ProcessingSource::new(device, pixels, matrix)?;
         source.set_flat_field(field, geometry)?;
-        Ok(Self::from_source(renderer, device, size, source, matrix))
+        Ok(Self::from_source(renderer, device, size, source))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -56,7 +55,7 @@ impl GpuProxy {
         }
         let mut source = ProcessingSource::new_continuous(device, pixels, matrix)?;
         source.set_flat_field(field, geometry)?;
-        Ok(Self::from_source(renderer, device, size, source, matrix))
+        Ok(Self::from_source(renderer, device, size, source))
     }
 
     fn from_source(
@@ -64,7 +63,6 @@ impl GpuProxy {
         device: &wgpu::Device,
         size: [u32; 2],
         source: ProcessingSource,
-        matrix: DMat3,
     ) -> Self {
         Self(Arc::new(ProxyState {
             device: device.clone(),
@@ -73,7 +71,6 @@ impl GpuProxy {
             #[cfg(feature = "editor")]
             identity: None,
             size,
-            matrix,
             active: Default::default(),
         }))
     }
@@ -90,21 +87,28 @@ impl GpuProxy {
         Ok(self)
     }
 
+    #[cfg(feature = "editor")]
+    pub(crate) fn same_source(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0.source, &other.0.source)
+    }
+
     pub(crate) fn size(&self) -> [u32; 2] {
         self.0.size
     }
 
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn matrix(&self) -> DMat3 {
-        self.0.matrix
+        self.0.source.camera_matrix()
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn view_source(
         &self,
         queue: &wgpu::Queue,
         submissions: &crate::gpu::SubmissionGate,
         kernels: Arc<crate::gpu::view::ViewKernels>,
-        spec: crate::gpu::view::ViewSourceSpec,
+        input: &ProcessingInput,
+        spec: crate::gpu::view::SourceRequest,
     ) -> Result<Arc<crate::gpu::view::ViewSource>, Error> {
         crate::gpu::view::ViewSource::from_processing(
             &self.0.device,
@@ -113,9 +117,39 @@ impl GpuProxy {
             self.0.renderer.clone(),
             kernels,
             self.0.source.clone(),
+            input,
             spec.with_identity(self.0.identity.clone().unwrap_or_else(|| {
                 crate::gpu::execution::source::Identity::Resident(Arc::downgrade(&self.0.source))
             })),
+        )
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn preview(
+        &self,
+        queue: &wgpu::Queue,
+        submissions: &crate::gpu::SubmissionGate,
+        kernels: Arc<crate::gpu::view::ViewKernels>,
+        input: &ProcessingInput,
+        spec: crate::gpu::view::SourceRequest,
+    ) -> Result<
+        (
+            Arc<crate::gpu::view::ViewSource>,
+            Arc<crate::gpu::execution::footprints::Processed>,
+        ),
+        Error,
+    > {
+        crate::gpu::view::ViewSource::processing_preview(
+            &self.0.device,
+            queue,
+            submissions,
+            self.0.renderer.clone(),
+            kernels,
+            self.0.source.clone(),
+            input,
+            spec.capture(self.0.identity.clone().unwrap_or_else(|| {
+                crate::gpu::execution::source::Identity::Resident(Arc::downgrade(&self.0.source))
+            }))?,
         )
     }
 
@@ -157,10 +191,5 @@ impl GpuProxy {
     #[cfg(all(test, feature = "ui-tests"))]
     pub(crate) fn output_retained(&self) -> bool {
         self.0.active.lock().unwrap().is_some()
-    }
-
-    #[cfg(all(test, feature = "ui-tests"))]
-    pub(crate) fn same_source(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
     }
 }

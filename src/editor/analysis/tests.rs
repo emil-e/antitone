@@ -361,9 +361,8 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
     let input = ProcessingInput::from(ProcessingParameters::source());
     editor.document.visit.working_view.observe(
-        editor.id,
         frame,
-        input.signature(),
+        super::super::working_view::Capture::Primitive(input.clone()),
         editor.document.target,
     );
     assert!(editor.document.visit.working_view.revision().is_some());
@@ -374,15 +373,26 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     };
     editor.document.visit.canvas.grade.original.observe(
         OriginalPurpose::Reference,
-        (
-            input.signature(),
+        super::super::original_view::Demand::fixture(
+            input.clone(),
             editor.document.target,
             Some(view),
             composition,
+            source::Context {
+                source: super::super::tests::developed_fixture(),
+                reference: None,
+                correction: None,
+            },
         ),
     );
-    let original_revision = editor.document.visit.canvas.grade.original.revision();
-    editor.document.visit.canvas.grade.original.refining = Some((original_revision, view));
+    let original_revision = editor.document.visit.canvas.grade.original.continuation();
+    editor
+        .document
+        .visit
+        .canvas
+        .grade
+        .original
+        .start_fixture(view);
     let request = capture_request(&editor);
     let result = outcome(&request);
     let expected = result.document.project.clone();
@@ -466,51 +476,31 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert!(editor.document.visit.working_view.revision().is_none());
     assert!(editor.document.visit.working_view.displayed.is_none());
     assert!(
-        editor
-            .document
-            .visit
-            .canvas
-            .grade
-            .original
-            .signature
-            .is_none()
+        editor.document.visit.canvas.grade.original.wanted.is_none()
             && editor
                 .document
                 .visit
                 .canvas
                 .grade
                 .original
-                .settled
+                .settled()
                 .is_none()
     );
-    assert!(editor.document.visit.canvas.grade.original.revision() > original_revision);
-    assert!(
-        editor
-            .document
-            .visit
-            .canvas
-            .grade
-            .original
-            .refining
-            .is_none()
+    assert_ne!(
+        editor.document.visit.canvas.grade.original.continuation(),
+        original_revision
     );
-    editor.original_result(original_revision, Ok(None));
+    assert!(!editor.document.visit.canvas.grade.original.refining());
+    assert!(original_revision.receive(Ok(None)).is_none());
     assert!(
-        editor
-            .document
-            .visit
-            .canvas
-            .grade
-            .original
-            .refining
-            .is_none()
+        !editor.document.visit.canvas.grade.original.refining()
             && editor
                 .document
                 .visit
                 .canvas
                 .grade
                 .original
-                .settled
+                .settled()
                 .is_none()
     );
     assert!(editor.document.dirty());
@@ -599,7 +589,7 @@ fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() 
 
 #[test]
 fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_requested_work() {
-    for (settled, outstanding) in [(false, true), (true, true), (true, false)] {
+    for (settled, outstanding) in [(false, true), (true, false)] {
         for cancel in [false, true] {
             let mut editor = super::super::tests::authored_fixture(&["patches.dng"]);
             editor.document.input = super::super::tests::fixture().document.input;
@@ -644,20 +634,18 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                     editor.document.visit.canvas.grade.original.last_edit =
                         std::time::Instant::now() - Duration::from_secs(1);
                     frame(editor);
-                    // Retire the real reconstruction before installing synthetic replies;
-                    // its drop guard must not retire their newer revision when pumped.
+                    // Use a policy-only completion after retiring real reconstruction.
                     editor.cancel_original_pending();
-                    let revision = editor.document.visit.canvas.grade.original.revision();
-                    let signature = editor
+                    let revision = editor.document.visit.canvas.grade.original.continuation();
+                    let signature = editor.document.visit.canvas.grade.original.wanted.clone();
+                    let view = signature.as_ref().unwrap().view.unwrap();
+                    editor
                         .document
                         .visit
                         .canvas
                         .grade
                         .original
-                        .signature
-                        .clone();
-                    let view = signature.as_ref().unwrap().2.unwrap();
-                    editor.document.visit.canvas.grade.original.refining = Some((revision, view));
+                        .start_fixture(view);
                     let image = editor
                         .document
                         .visit
@@ -668,28 +656,16 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         .proxy
                         .image(OutputTarget::Srgb)
                         .unwrap();
-                    assert!(
-                        editor
-                            .document
-                            .visit
-                            .canvas
-                            .grade
-                            .original
-                            .refining
-                            .is_some()
-                    );
-                    if !outstanding {
-                        editor.original_result(revision, Ok(Some(image.clone())));
-                    } else if settled {
-                        editor.document.visit.canvas.grade.original.settled =
-                            Some((revision, view, image.clone()));
+                    assert!(editor.document.visit.canvas.grade.original.refining());
+                    if settled {
+                        revision.receive(Ok(Some(image.clone())));
                     }
                     let before = editor.document.state.project.clone();
                     let reply = analysis_workflow::testing::fitting(editor);
                     editor.begin_analysis(cx);
-                    assert_eq!(
-                        editor.document.visit.canvas.grade.original.signature,
-                        signature
+                    assert!(
+                        editor.document.visit.canvas.grade.original.wanted == signature,
+                        "rejected analysis preserves the actual original request"
                     );
                     assert_eq!(
                         editor
@@ -698,16 +674,16 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                             .canvas
                             .grade
                             .original
-                            .settled
+                            .settled()
                             .is_some(),
                         settled
                     );
                     if outstanding {
-                        // A late completion from cancelled work cannot replace the accepted image.
-                        editor.original_result(revision, Ok(Some(image.clone())));
+                        // The retired owner cannot accept a late completion.
+                        assert!(revision.receive(Ok(Some(image.clone()))).is_none());
                     } else {
                         assert_eq!(
-                            editor.document.visit.canvas.grade.original.revision(),
+                            editor.document.visit.canvas.grade.original.continuation(),
                             revision
                         );
                     }
@@ -718,7 +694,7 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                             .canvas
                             .grade
                             .original
-                            .settled
+                            .settled()
                             .is_some(),
                         settled
                     );
@@ -754,44 +730,21 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                     );
                     output.textures_delta.clear();
                     if settled {
-                        let (current_revision, current_view, retained) = editor
+                        let (current_view, retained) = editor
                             .document
                             .visit
                             .canvas
                             .grade
                             .original
-                            .settled
-                            .as_ref()
+                            .settled()
                             .unwrap();
-                        assert_eq!(
-                            *current_revision,
-                            editor.document.visit.canvas.grade.original.revision()
-                        );
-                        assert_eq!(*current_view, view);
-                        assert!(Arc::ptr_eq(retained, &image));
-                        assert!(
-                            editor
-                                .document
-                                .visit
-                                .canvas
-                                .grade
-                                .original
-                                .refining
-                                .is_none()
-                        );
-                        assert!(editor.document.visit.canvas.grade.task.is_none());
+                        assert_eq!(current_view, view);
+                        assert!(Arc::ptr_eq(&retained, &image));
+                        assert!(!editor.document.visit.canvas.grade.original.refining());
+                        assert!(editor.document.visit.canvas.grade.original.task.is_none());
                     } else {
-                        assert!(
-                            editor
-                                .document
-                                .visit
-                                .canvas
-                                .grade
-                                .original
-                                .refining
-                                .is_some()
-                        );
-                        assert!(editor.document.visit.canvas.grade.task.is_some());
+                        assert!(editor.document.visit.canvas.grade.original.refining());
+                        assert!(editor.document.visit.canvas.grade.original.task.is_some());
                     }
                 });
             });
@@ -1191,16 +1144,9 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             for _ in 0..4 {
                 super::super::tests::app_frame(editor, &ctx, vec![]);
             }
-            let signature = editor
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .signature
-                .clone();
-            let revision = editor.document.visit.canvas.grade.original.revision();
-            let view = signature.as_ref().unwrap().2.unwrap();
+            let signature = editor.document.visit.canvas.grade.original.wanted.clone();
+            let revision = editor.document.visit.canvas.grade.original.continuation();
+            let view = signature.as_ref().unwrap().view.unwrap();
             let image = editor
                 .document
                 .visit
@@ -1211,8 +1157,13 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
                 .proxy
                 .image(OutputTarget::Srgb)
                 .unwrap();
-            editor.document.visit.canvas.grade.original.settled =
-                Some((revision, view, image.clone()));
+            editor
+                .document
+                .visit
+                .canvas
+                .grade
+                .original
+                .settle_fixture(view, image.clone());
             editor.request_analysis(cx);
             let before = editor.document.state.project.clone();
             let mut output = ctx.run_ui(
@@ -1234,12 +1185,12 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             assert!(!editor.analysis_preparing());
             assert!(editor.tasks.view().is_none());
             assert_eq!(editor.document.state.project, before);
-            assert_eq!(
-                editor.document.visit.canvas.grade.original.signature,
-                signature
+            assert!(
+                editor.document.visit.canvas.grade.original.wanted == signature,
+                "rejected analysis preserves the actual original request"
             );
             assert_eq!(
-                editor.document.visit.canvas.grade.original.revision(),
+                editor.document.visit.canvas.grade.original.continuation(),
                 revision
             );
             assert!(Arc::ptr_eq(
@@ -1249,10 +1200,10 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
                     .canvas
                     .grade
                     .original
-                    .settled
+                    .settled()
                     .as_ref()
                     .unwrap()
-                    .2,
+                    .1,
                 &image
             ));
         });

@@ -1,7 +1,7 @@
 use super::CameraMatrix;
 use crate::{Error, flat_field::FlatField, geometry::SourceRaster};
 use bytemuck::Zeroable;
-use glam::{DMat3, DVec3, Vec4};
+use glam::{DMat3, DVec3};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -197,12 +197,4 @@ impl FieldGeometry {
             ..Self::uncorrected(Some(source))
         }
     }
-}
-
-pub(super) fn identity_nodes(device: &wgpu::Device) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("inactive flat-field binding"),
-        contents: bytemuck::cast_slice(&[Vec4::ONE]),
-        usage: wgpu::BufferUsages::STORAGE,
-    })
 }

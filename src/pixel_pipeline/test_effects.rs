@@ -2,7 +2,7 @@
 
 use crate::gpu::evaluation::{self, Binding, Domain, Fragment, Operation, PlannedImage};
 use crate::{
-    Error, geometry::SourceRegion as Rect, pixel_pipeline::EffectDefinition,
+    Error, gpu::evaluation::CellRegion as Rect, pixel_pipeline::EffectDefinition,
     processing_support::Support,
 };
 use std::sync::Arc;
@@ -23,17 +23,17 @@ impl EffectDefinition for NeighbourEffect {
         input: Arc<evaluation::ImageNode>,
     ) -> Result<Arc<evaluation::ImageNode>, Error> {
         let neighbourhood = evaluation::ImageNode::new(
-            input.domain,
+            input.domain(),
             Some(input.clone()),
             Neighbour {
-                domain: input.domain,
-                margin: self.support(input.domain.grid.pitch),
+                domain: input.domain(),
+                margin: self.support(input.domain().grid.pitch),
                 gain: self.gain,
             },
         );
         Ok(evaluation::pointwise(
             neighbourhood,
-            input.domain.meaning,
+            input.domain().meaning,
             evaluation::Function {
                 code: r#"
 fn independent_source_bias(pixel: vec4f, position: vec2f) -> vec4f {
@@ -56,7 +56,7 @@ struct Neighbour {
 
 impl Operation for Neighbour {
     fn input(&self, output: Rect) -> Result<Option<Rect>, Error> {
-        Ok(Some(self.margin.expand(output, self.domain.bounds)))
+        Ok(Some(output.expanded(self.margin.0, self.domain.bounds)?))
     }
 
     fn lower(

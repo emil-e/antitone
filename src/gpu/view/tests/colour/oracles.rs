@@ -148,14 +148,8 @@ fn physical_view_original_footprints_match_scalar_correction_signed_hdr_and_floo
             height: area.height * 3 / 4,
         };
         let frame = cropped(area, region, [13, 9], 0.23);
-        let spec = ViewSourceSpec::new(
-            1,
-            frame,
-            input,
-            scan.camera_to_ap1,
-            Some(correction.clone()),
-        )
-        .unwrap();
+        let spec =
+            SourceRequest::new(frame, input, scan.camera_to_ap1, Some(correction.clone())).unwrap();
         let source = ViewSource::acquire(
             &device,
             &queue,
@@ -231,11 +225,11 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
             ])
             .and_then(|snapshot| {
                 crate::gpu::ProcessingInput::new(
-                    &device,
+                    &device.limits(),
                     negative(0.65),
                     roll,
                     snapshot,
-                    source.spec.matrix,
+                    source.spec.matrix(),
                     source.spec.area,
                 )
             })

@@ -6,23 +6,23 @@ fn source(
     device: &wgpu::Device,
     renderer: &Arc<crate::renderer::GpuRenderer>,
     kernels: &Arc<ViewKernels>,
-    spec: ViewSourceSpec,
+    spec: SourceRequest,
     pixels: &[[f32; 4]],
 ) -> Arc<ViewSource> {
     assert_eq!(
         pixels.len(),
         (spec.input_frame().unwrap().output[0] * spec.input_frame().unwrap().output[1]) as usize
     );
-    Arc::new(ViewSource {
+    Arc::new(ViewSource::from_neutral_samples(
         spec,
-        renderer: renderer.clone(),
-        kernels: kernels.clone(),
-        pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        renderer.clone(),
+        kernels.clone(),
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("synthetic signed/HDR coverage chart"),
             contents: bytemuck::cast_slice(pixels),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         }),
-    })
+    ))
 }
 
 fn sample(pixels: &[[f32; 4]], size: [u32; 2], uv: [f64; 2]) -> [f64; 4] {
@@ -114,7 +114,7 @@ fn physical_view_underlay_paired_acquisition_keeps_each_original_footprint_and_f
                 [35, 27],
             )
             .unwrap();
-            let spec = ViewSourceSpec::new(7, regional, cal, scan.camera_to_ap1, field).unwrap();
+            let spec = SourceRequest::new(regional, cal, scan.camera_to_ap1, field).unwrap();
             let mut underlay = spec.underlay().unwrap();
             let resized_frame = FrameRaster {
                 output: [19, 17],
@@ -191,7 +191,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
             [8, 16],
         )
         .unwrap();
-        let spec = ViewSourceSpec::new(11, detail_frame, input, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(detail_frame, input, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [8, 8],
@@ -262,7 +262,7 @@ fn physical_view_underlay_chart_fills_only_missing_detail_with_one_coherent_targ
                 )
                 .unwrap();
                 if let Some(old) = &previous_base
-                    && (old.processing != detail.processing || old.target != target)
+                    && (old.processing() != detail.processing() || old.target != target)
                 {
                     assert!(
                         RenderedView::composite(&device, detail.clone(), old.clone(), full, None)
@@ -488,7 +488,7 @@ fn physical_view_underlay_constant_signed_hdr_charts_have_no_tone_or_colour_seam
             [8, 16],
         )
         .unwrap();
-        let spec = ViewSourceSpec::new(13, regional, input, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(regional, input, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [8, 8],
@@ -557,7 +557,7 @@ fn physical_view_underlay_in_flight_callbacks_do_not_retain_support_or_renderer_
             [8, 16],
         )
         .unwrap();
-        let spec = ViewSourceSpec::new(17, regional, cal, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(regional, cal, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [8, 8],
@@ -636,7 +636,7 @@ fn physical_view_underlay_texture_composition_does_not_inherit_storage_buffer_si
             [8, 16],
         )
         .unwrap();
-        let spec = ViewSourceSpec::new(19, regional, cal, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::new(regional, cal, scan.camera_to_ap1, None).unwrap();
         let mut base_spec = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [8, 8],

@@ -5,6 +5,19 @@ use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage};
 fn film_seed_routing_uses_source_identity_not_visit_identity() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
+        editor.document.film_emulation.enabled = true;
+        let seed = |input: &ProcessingInput| {
+            input
+                .pixel_pipeline()
+                .stages
+                .iter()
+                .find_map(|stage| {
+                    stage
+                        .get::<crate::pixel_pipeline::Grain>()
+                        .map(|grain| grain.seed)
+                })
+                .expect("fixture must request actual grain")
+        };
         let source = editor.document.visit.current_source.unwrap();
         let first = editor
             .positive_processing(
@@ -13,7 +26,7 @@ fn film_seed_routing_uses_source_identity_not_visit_identity() {
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        assert_eq!(first.film_seed(), Some(source.0));
+        assert_eq!(seed(&first), source.0);
         editor.id = editor.id.wrapping_add(123);
         let reacquired = editor
             .positive_processing(
@@ -22,7 +35,7 @@ fn film_seed_routing_uses_source_identity_not_visit_identity() {
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        assert_eq!(first.film_seed(), reacquired.film_seed());
+        assert_eq!(seed(&first), seed(&reacquired));
         let mut other = editor
             .document
             .state
@@ -41,8 +54,8 @@ fn film_seed_routing_uses_source_identity_not_visit_identity() {
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        assert_eq!(changed.film_seed(), Some(other.0));
-        assert_ne!(first.film_seed(), changed.film_seed());
+        assert_eq!(seed(&changed), other.0);
+        assert_ne!(seed(&first), seed(&changed));
     });
 }
 
@@ -78,10 +91,10 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        let revision = editor.document.visit.canvas.grade.original.revision();
+        let revision = editor.document.visit.canvas.grade.original.continuation();
         editor.apply_adjustment_layer_action(Action::Rename(order[0], "Sky".into()));
         assert_eq!(
-            editor.document.visit.canvas.grade.original.revision(),
+            editor.document.visit.canvas.grade.original.continuation(),
             revision,
             "metadata must not invalidate processing"
         );
@@ -92,10 +105,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        assert!(std::ptr::eq(
-            accepted.grade().unwrap(),
-            renamed.grade().unwrap()
-        ));
+        assert_eq!(accepted.clone(), renamed.clone());
         editor.apply_adjustment_layer_action(Action::Reorder(
             editor.order_drag(order[0]).unwrap(),
             2,
@@ -110,8 +120,8 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
                     editor.document.visit.adjustment_layer_settings
                 )
                 .unwrap()
-                .signature(),
-            accepted.signature()
+                .clone(),
+            accepted.clone()
         );
         editor.apply_adjustment_layer_action(Action::Enable(order[0], false));
         let source = editor.document.state.project.source(id).unwrap();
@@ -121,7 +131,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
                 .enabled
         );
         let before = editor.document.state.project.clone();
-        let revision = editor.document.visit.canvas.grade.original.revision();
+        let revision = editor.document.visit.canvas.grade.original.continuation();
         assert!(
             editor
                 .edit_adjustment_layers(|layers| {
@@ -132,7 +142,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
         );
         assert_eq!(editor.document.state.project, before);
         assert_eq!(
-            editor.document.visit.canvas.grade.original.revision(),
+            editor.document.visit.canvas.grade.original.continuation(),
             revision
         );
         editor.apply_adjustment_layer_action(Action::Rename(order[0], "  ".into()));
@@ -273,7 +283,7 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
                 editor.id += 1;
             }
             let before = editor.document.state.project.clone();
-            let revision = editor.document.visit.canvas.grade.original.revision();
+            let revision = editor.document.visit.canvas.grade.original.continuation();
             let input = editor
                 .positive_processing(
                     editor.document.input,
@@ -284,7 +294,7 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
             assert!(editor.reorder_adjustment(drag, 2).is_err());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(
-                editor.document.visit.canvas.grade.original.revision(),
+                editor.document.visit.canvas.grade.original.continuation(),
                 revision
             );
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
@@ -295,10 +305,7 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
                     editor.document.visit.adjustment_layer_settings,
                 )
                 .unwrap();
-            assert!(std::ptr::eq(
-                input.grade().unwrap(),
-                current.grade().unwrap()
-            ));
+            assert_eq!(input.clone(), current.clone());
         }
     });
 }
@@ -322,7 +329,7 @@ fn finishing_canvas_interaction_preserves_the_selected_layer_and_accepted_grade(
         assert_eq!(editor.adjustment_layer_target(), Target::Layer(order[1]));
         assert_eq!(editor.document.state.project, before);
         assert_eq!(
-            processing.signature(),
+            processing.clone(),
             editor
                 .positive_processing(
                     editor.document.input,
@@ -330,7 +337,7 @@ fn finishing_canvas_interaction_preserves_the_selected_layer_and_accepted_grade(
                     editor.document.visit.adjustment_layer_settings
                 )
                 .unwrap()
-                .signature()
+                .clone()
         );
         editor
             .edit_adjustment_layers(|layers| layers.remove(order[1]))
@@ -449,7 +456,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
             )
             .unwrap();
         let before = editor.document.state.project.clone();
-        let revision = editor.document.visit.canvas.grade.original.revision();
+        let revision = editor.document.visit.canvas.grade.original.continuation();
         let viewport = editor.document.visit.canvas.viewport;
         let result = editor.edit_adjustment_layers(|layers| {
             let mut adjustment = layers.layers[0].adjustment;
@@ -464,7 +471,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
         assert!(result.is_err());
         assert_eq!(editor.document.state.project, before);
         assert_eq!(
-            editor.document.visit.canvas.grade.original.revision(),
+            editor.document.visit.canvas.grade.original.continuation(),
             revision
         );
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
@@ -475,10 +482,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        assert!(std::ptr::eq(
-            accepted.grade().unwrap(),
-            current.grade().unwrap()
-        ));
+        assert_eq!(accepted.clone(), current.clone());
     });
 }
 
@@ -550,7 +554,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 )
                 .unwrap_or_else(|error| panic!("accepted fixture reorder={reorder}: {error}"));
             let before = editor.document.state.project.clone();
-            let revision = editor.document.visit.canvas.grade.original.revision();
+            let revision = editor.document.visit.canvas.grade.original.continuation();
             let viewport = editor.document.visit.canvas.viewport;
             editor.apply_adjustment_layer_action(if reorder {
                 Action::Reorder(editor.order_drag(subject).unwrap(), 0)
@@ -565,7 +569,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(subject));
             assert_eq!(
-                editor.document.visit.canvas.grade.original.revision(),
+                editor.document.visit.canvas.grade.original.continuation(),
                 revision
             );
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
@@ -576,10 +580,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                     editor.document.visit.adjustment_layer_settings,
                 )
                 .unwrap();
-            assert!(std::ptr::eq(
-                accepted.grade().unwrap(),
-                current.grade().unwrap()
-            ));
+            assert_eq!(accepted.clone(), current.clone());
         }
     });
 }
@@ -655,7 +656,7 @@ fn reenabling_a_finite_stack_is_not_blocked_by_a_precision_budget() {
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        assert_ne!(before.signature(), current.signature());
+        assert_ne!(before.clone(), current.clone());
     });
 }
 

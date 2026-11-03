@@ -3,15 +3,15 @@ use crate::project::Development;
 use crate::viewer::readback::image_pixels;
 
 fn preview_image(editor: &Editor, input: &ProcessingInput) -> Arc<GpuImage> {
-    let (_, _, frame, target, view) = editor
+    let (_, frame, view) = editor
         .document
         .visit
         .canvas
         .preview_rendered
         .as_ref()
         .expect("shared provisional renderer");
-    assert_eq!(view.processing, input.signature());
-    assert_eq!(*target, editor.document.target);
+    assert_eq!(view.processing(), input.clone());
+    assert_eq!(view.target, editor.document.target);
     assert_eq!(
         frame.composition,
         editor
@@ -229,15 +229,8 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                 assert!(editor.document.crop_edit().is_none());
                 assert!(editor.document.export.operation.is_none());
                 assert!(
-                    editor
-                        .document
-                        .visit
-                        .canvas
-                        .grade
-                        .original
-                        .refining
-                        .is_none()
-                        && editor.document.visit.canvas.grade.task.is_none()
+                    !editor.document.visit.canvas.grade.original.refining()
+                        && editor.document.visit.canvas.grade.original.task.is_none()
                         && !editor.measurement_pending()
                         && editor.document.export.operation.is_none()
                 );
@@ -307,15 +300,8 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                                     && pixel[3] > 0.)
                         );
                         assert!(
-                            editor
-                                .document
-                                .visit
-                                .canvas
-                                .grade
-                                .original
-                                .refining
-                                .is_none()
-                                && editor.document.visit.canvas.grade.task.is_none()
+                            !editor.document.visit.canvas.grade.original.refining()
+                                && editor.document.visit.canvas.grade.original.task.is_none()
                                 && !editor.measurement_pending()
                                 && editor.document.export.operation.is_none(),
                             "pending preview scheduled authoritative work"
@@ -719,7 +705,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                         let positive = editor
                             .thumbnail_parameters(editor.document.state.project.source(id).unwrap())
                             .unwrap();
-                        assert_eq!(positive.signature(), captured.signature());
+                        assert_eq!(positive.clone(), captured.clone());
                         let expected = if source_mode {
                             editor.source_parameters(2.).unwrap().into()
                         } else {
@@ -737,15 +723,8 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                             positive_pixels = Some(actual);
                         }
                         assert!(
-                            editor
-                                .document
-                                .visit
-                                .canvas
-                                .grade
-                                .original
-                                .refining
-                                .is_none()
-                                && editor.document.visit.canvas.grade.task.is_none(),
+                            !editor.document.visit.canvas.grade.original.refining()
+                                && editor.document.visit.canvas.grade.original.task.is_none(),
                             "cached preview must not schedule full-source work"
                         );
                     }
@@ -772,7 +751,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                     let edited = editor
                         .thumbnail_parameters(editor.document.state.project.source(id).unwrap())
                         .unwrap();
-                    assert_ne!(edited.signature(), captured.signature());
+                    assert_ne!(edited.clone(), captured.clone());
                     let mut encoder = device.create_command_encoder(&Default::default());
                     selected
                         .prepare_processing(&device, &mut encoder, &edited)

@@ -7,10 +7,15 @@ use crate::{
     processing::InputPipeline,
 };
 
-fn input(device: &wgpu::Device, scan: &Scan, film: FilmEmulationSettings) -> ProcessingInput {
+fn capture(
+    device: &wgpu::Device,
+    scan: &Scan,
+    film: FilmEmulationSettings,
+    frame_size: [u32; 2],
+) -> ProcessingInput {
     ProcessingInput::from(Arc::new(
         ProcessingInput::new(
-            device,
+            &device.limits(),
             InputSettings::Digital,
             Default::default(),
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -19,9 +24,10 @@ fn input(device: &wgpu::Device, scan: &Scan, film: FilmEmulationSettings) -> Pro
         )
         .unwrap(),
     ))
-    .with_film_emulation(film)
-    .with_frame_size([scan.area.width, scan.area.height])
-    .with_film_seed(17)
+    .with_pixel_pipeline(
+        crate::pixel_pipeline::PixelPipeline::emulation(film, Default::default(), frame_size, 17)
+            .unwrap(),
+    )
 }
 
 fn render(
@@ -60,16 +66,20 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
         )
         .unwrap();
         let settings = FilmPreset::ThirtyFiveMm.settings();
-        let input = input(&device, &scan, settings);
-        let spec = ViewSourceSpec::new(
-            17,
+        let input = capture(
+            &device,
+            &scan,
+            settings,
+            [scan.area.width, scan.area.height],
+        );
+        let spec = SourceRequest::new(
             frame,
             InputSettings::Digital,
             scan.positive_matrix(&InputSettings::Digital).unwrap(),
             None,
         )
         .unwrap()
-        .with_pipeline(input.pixel_pipeline().unwrap())
+        .with_pipeline(input.pixel_pipeline())
         .unwrap();
         let source = ViewSource::acquire(
             &device,
@@ -88,10 +98,15 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
             &device,
             &queue,
             source.clone(),
-            &input.clone().with_film_emulation(FilmEmulationSettings {
-                amount: 0.,
-                ..settings
-            }),
+            &capture(
+                &device,
+                &scan,
+                FilmEmulationSettings {
+                    amount: 0.,
+                    ..settings
+                },
+                [scan.area.width, scan.area.height],
+            ),
         );
         let grain = render(&device, &queue, source, &input);
         assert!(grain.iter().flatten().all(|v| v.is_finite()));
@@ -151,11 +166,11 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
                 amount: 0.,
                 colour: 0.5,
             };
-            let input = input(&device, &scan, film).with_frame_size(composition.crop().size);
+            let input = capture(&device, &scan, film, composition.crop().size);
             let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
-            let spec = ViewSourceSpec::new(17, frame, InputSettings::Digital, matrix, None)
+            let spec = SourceRequest::new(frame, InputSettings::Digital, matrix, None)
                 .unwrap()
-                .with_pipeline(input.pixel_pipeline().unwrap())
+                .with_pipeline(input.pixel_pipeline())
                 .unwrap();
             let source = ViewSource::acquire(
                 &device,
@@ -309,17 +324,16 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
                 amount: 0.,
                 colour: 0.5,
             };
-            let mut input = input(&device, &scan, film).with_frame_size(composition.crop().size);
+            let mut input = capture(&device, &scan, film, composition.crop().size);
             input.repairs = patches.clone();
-            let spec = ViewSourceSpec::new(
-                17,
+            let spec = SourceRequest::new(
                 frame,
                 InputSettings::Digital,
                 scan.positive_matrix(&InputSettings::Digital).unwrap(),
                 None,
             )
             .unwrap()
-            .with_pipeline(input.pixel_pipeline().unwrap())
+            .with_pipeline(input.pixel_pipeline())
             .unwrap();
             let acquire = |spec| {
                 ViewSource::acquire(
@@ -341,8 +355,6 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
                 &device,
                 &queue,
                 &SubmissionGate::default(),
-                &scan,
-                None,
                 base.clone(),
                 patches.clone(),
                 None,

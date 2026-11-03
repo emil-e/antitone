@@ -54,6 +54,21 @@ impl Editor {
     }
 }
 
+impl PartialEq for Context {
+    fn eq(&self, other: &Self) -> bool {
+        self.source.identity() == other.source.identity()
+            && self.reference == other.reference
+            && self
+                .correction
+                .as_ref()
+                .map(|correction| &correction.settings.map)
+                == other
+                    .correction
+                    .as_ref()
+                    .map(|correction| &correction.settings.map)
+    }
+}
+
 impl Context {
     pub fn scan(&self) -> Result<Scan, Error> {
         if let Some(correction) = &self.correction {

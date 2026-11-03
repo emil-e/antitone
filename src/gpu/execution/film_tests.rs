@@ -75,7 +75,6 @@ fn processed_pixels(
         device,
         pipeline,
         crate::gpu::raster::Raster::native(bounds),
-        None,
     )
     .unwrap();
     kernels

@@ -125,6 +125,6 @@ fn positive_input_adopts_look_but_source_inspection_cannot() {
             .unwrap(),
     );
     let looked = input.clone().with_look(Some(look));
-    assert_ne!(input.signature(), looked.signature());
-    assert!(input.signature().same_photographic(&looked.signature()));
+    assert_ne!(input.clone(), looked.clone());
+    assert!(input.clone().same_photographic(&looked.clone()));
 }

@@ -113,14 +113,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.step();
         wait_for(&mut h, |editor| {
             assert!(
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .refinement_error
-                    .is_none(),
+                !editor.document.visit.canvas.grade.original.failed(),
                 "{}",
                 editor.status
             );
@@ -155,14 +148,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.step();
         wait_for(&mut h, |editor| {
             assert!(
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .refinement_error
-                    .is_none(),
+                !editor.document.visit.canvas.grade.original.failed(),
                 "{}",
                 editor.status
             );
@@ -172,7 +158,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
                 .canvas
                 .grade
                 .original
-                .settled
+                .settled()
                 .is_some()
         });
         h.event(egui::Event::PointerGone);

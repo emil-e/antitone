@@ -60,7 +60,7 @@ fn fresh_resident_camera_paints_without_incidental_acquisition_or_thumbnail_comp
         for input in [
             ProcessingInput::from(ProcessingParameters::source()),
             ProcessingInput::new(
-                &device,
+                &device.limits(),
                 InputSettings::Digital,
                 Default::default(),
                 AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -104,7 +104,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
             kernels.clone(),
             &scan,
             None,
-            ViewSourceSpec::new(1, frame, calibration(), scan.camera_to_ap1, None).unwrap(),
+            SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap(),
             || false,
         )
         .unwrap()
@@ -117,7 +117,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
             kernels,
             &scan,
             None,
-            ViewSourceSpec::inspection(2, frame, scan.camera_to_ap1, None).unwrap(),
+            SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None).unwrap(),
             || false,
         )
         .unwrap()

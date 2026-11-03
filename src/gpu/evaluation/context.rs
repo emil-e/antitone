@@ -1,13 +1,15 @@
 //! Device-scoped evaluation policy; optional retention is separate from required work budgets.
 
+use super::CellRegion;
 use super::*;
-use crate::geometry::SourceRegion;
 
+mod production;
 mod readback;
+pub use production::Production;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CachePolicy {
-    /// Optional generated/intermediate-buffer payload bytes across prepared work and image scopes.
+    /// Optional GPU-image and generated-resource payload bytes across evaluation scopes.
     /// Zero keeps only required active inputs and working storage.
     pub generated_bytes: u64,
 }
@@ -22,36 +24,72 @@ impl Default for CachePolicy {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Region {
-    pub bounds: SourceRegion,
+    pub bounds: CellRegion,
     pub grid: Grid,
 }
+
+#[cfg(feature = "editor")]
+mod batch;
+#[cfg(feature = "editor")]
+mod materialize;
 
 #[derive(Clone)]
 pub struct Context {
     device: wgpu::Device,
     pub(crate) programs: Arc<Programs>,
-    retention: cache::Retention,
+    retention: cache::Allowance,
+    #[cfg(feature = "editor")]
+    pub(super) active_inputs: cache::Allowance,
+    products: Materializations,
 }
 
 impl Context {
     pub fn new(device: &wgpu::Device, policy: CachePolicy) -> Self {
+        let programs = Arc::new(Programs::default());
+        let retention = cache::Allowance::new(policy.generated_bytes);
         Self {
             device: device.clone(),
-            programs: Arc::default(),
-            retention: cache::Retention::new(policy.generated_bytes),
+            products: Materializations::new(programs.clone(), retention.clone()),
+            programs,
+            retention,
+            #[cfg(feature = "editor")]
+            active_inputs: cache::Allowance::new(super::inputs::capacity(device)),
         }
     }
 
-    /// A bounded caller-owned lifetime for optional completed intermediates. Its payloads
-    /// share this context's retention allowance with generated values.
-    pub fn image_cache(&self, capacity: usize) -> ImageCache {
-        ImageCache::new(self.programs.clone(), self.retention.clone(), capacity)
+    /// Isolated stores for reservation, eviction and supplied-value fixtures.
+    #[cfg(test)]
+    pub fn test_materializations(&self, retain: bool) -> Materializations {
+        Materializations::new(
+            self.programs.clone(),
+            if retain {
+                self.retention.clone()
+            } else {
+                cache::Allowance::new(0)
+            },
+        )
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
     }
 
     pub fn cache_policy(&self) -> CachePolicy {
         CachePolicy {
             generated_bytes: self.retention.limit(),
         }
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn set_retention_limit(&self, bytes: u64) {
+        if self.retention.limit() != bytes {
+            self.products.set_retention_limit(bytes);
+        }
+    }
+
+    /// Shared in-flight production, live-value discovery and byte-bounded optional retention.
+    pub fn materializations(&self) -> Materializations {
+        self.products.clone()
     }
 
     /// Payload bytes owned by admitted reusable values, not total GPU allocation.
@@ -71,7 +109,10 @@ impl Context {
             ));
         }
         Ok(Evaluation {
-            job: Job::new(image, region.bounds, budget)?.with_policy(Policy::Composed),
+            job: Job::new(image, region.bounds, budget)?
+                .with_limits(self.device.limits())
+                .with_policy(Policy::Composed)
+                .with_materializations(self.materializations()),
         })
     }
 
@@ -93,14 +134,15 @@ impl Context {
     #[cfg(feature = "ui")]
     pub(crate) fn prewarm_image(&self, image: Arc<ImageNode>) -> Result<(), Error> {
         let domain = image.domain;
+        let bounds = domain.finite()?;
         let evaluation = self.request(
             image,
             Region {
-                bounds: domain.bounds,
+                bounds,
                 grid: domain.grid,
             },
             Budget {
-                tile: [domain.bounds.width, domain.bounds.height],
+                tile: [bounds.width, bounds.height],
                 scratch_bytes: self.device.limits().max_buffer_size,
             },
         )?;
@@ -113,14 +155,22 @@ impl Context {
     }
 
     pub(crate) fn executor(&self) -> Executor {
-        Executor::with_retention(self.programs.clone(), self.retention.clone())
+        Executor::with_scope(self.programs.clone(), self.materializations())
     }
 
     pub(crate) fn record(
         &self,
-        evaluation: Evaluation,
-        previous: Vec<Arc<RetainedBuffer>>,
+        mut evaluation: Evaluation,
+        scope: Materializations,
+        supplied: Vec<SuppliedImage>,
     ) -> Result<Recorded, Error> {
+        evaluation.job = evaluation.job.with_supplied(supplied.into());
+        if !scope.belongs_to(self) {
+            return Err(Error::InvalidParameter(
+                "materializations belong to a different evaluation context",
+            ));
+        }
+        let evaluation = evaluation.with_materializations(scope.clone());
         let mut plans = evaluation.plans();
         let plan = plans
             .next()
@@ -130,7 +180,7 @@ impl Context {
                 "record-only execution requires one bounded tile",
             ));
         }
-        self.executor().prepare(&self.device, plan, previous)
+        Executor::with_scope(self.programs.clone(), scope).prepare(&self.device, plan)
     }
 
     pub(crate) fn record_work(
@@ -141,7 +191,6 @@ impl Context {
         self.executor().prepare(
             &self.device,
             Plan::from_work(fragment, result, self.device.limits().max_buffer_size)?,
-            vec![],
         )
     }
 
@@ -226,12 +275,11 @@ impl Context {
             let Some(plan) = plans.next() else {
                 break;
             };
-            let Some(stats) = executor.run_sink_with(
-                &self.device,
-                queue,
-                gate,
+            let Some(stats) = self.run_sink(
+                &mut executor,
+                (queue, gate),
                 &plan?,
-                &cancelled,
+                (&cancelled, &|| {}),
                 Sink {
                     encode: &mut sink.encode,
                     submitted: &mut sink.submitted,
@@ -253,11 +301,31 @@ impl Context {
 }
 
 /// An immutable requested region of a source-bearing captured composition, lowered lazily.
+#[derive(Clone)]
 pub struct Evaluation {
     job: Job,
 }
 
 impl Evaluation {
+    pub fn image(&self) -> &Arc<ImageNode> {
+        self.job.image()
+    }
+
+    pub fn region(&self) -> Region {
+        Region {
+            bounds: self.job.region(),
+            grid: self.job.image().domain().grid,
+        }
+    }
+
+    pub(in crate::gpu::evaluation) fn with_materializations(
+        mut self,
+        scope: Materializations,
+    ) -> Self {
+        self.job = self.job.with_materializations(scope);
+        self
+    }
+
     pub(crate) fn plans(&self) -> impl Iterator<Item = Result<Plan, Error>> + '_ {
         self.job.plans()
     }

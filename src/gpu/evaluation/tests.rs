@@ -3,8 +3,9 @@ use crate::{
     adjustment_layers::{
         AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
     },
-    geometry::{SourcePoint, SourceRegion as Rect},
+    geometry::SourcePoint,
     gpu::Grading,
+    gpu::evaluation::CellRegion as Rect,
     processing::{RollPipeline, RollSettings},
     rendering::OutputTarget,
 };
@@ -22,13 +23,10 @@ impl Source for Authored {
     }
 
     fn read(&self, rect: Rect) -> Result<Vec<[f32; 4]>, Error> {
-        assert!(self.domain.bounds.contains_region(rect));
-        let area = self.domain.bounds;
-        Ok((rect.y..rect.y + rect.height)
-            .flat_map(|y| {
-                (rect.x..rect.x + rect.width)
-                    .map(move |x| self.pixels[((y - area.y) * area.width + x - area.x) as usize])
-            })
+        assert!(self.domain.finite().unwrap().contains_region(rect));
+        let area = self.domain.finite().unwrap();
+        Ok((rect.y..rect.bottom())
+            .flat_map(|y| (rect.x..rect.right()).map(move |x| self.pixels[area.index([x, y])]))
             .collect())
     }
 }
@@ -59,7 +57,7 @@ pub(super) fn fixture() -> Authored {
         .collect();
     Authored {
         domain: Domain {
-            bounds: area,
+            bounds: Some(area),
             grid: Grid::axis_aligned([0., 0.], [1., 1.]),
             meaning: Meaning::Camera,
         },
@@ -88,10 +86,7 @@ pub(super) fn settings(area: Rect) -> (RollSettings, AdjustmentLayerSnapshot) {
     });
     local.mask = AdjustmentLayerCoverage::Linear {
         start: SourcePoint([f64::from(area.x), f64::from(area.y)]),
-        end: SourcePoint([
-            f64::from(area.x + area.width),
-            f64::from(area.y + area.height),
-        ]),
+        end: SourcePoint([f64::from(area.right()), f64::from(area.bottom())]),
     };
     let snapshot = AdjustmentLayerSnapshot::new(vec![
         AdjustmentLayer::global(AdjustmentLayerSettings {
@@ -106,9 +101,9 @@ pub(super) fn settings(area: Rect) -> (RollSettings, AdjustmentLayerSnapshot) {
 }
 
 pub(super) fn reduced(domain: Domain, size: [u32; 2]) -> Domain {
-    let area = domain.bounds;
+    let area = domain.finite().unwrap();
     Domain {
-        bounds: [0, 0, size[0], size[1]].into(),
+        bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], size)),
         grid: Grid::axis_aligned(
             domain.point([f64::from(area.x), f64::from(area.y)]),
             [
@@ -133,11 +128,19 @@ pub(super) fn chain(
     if physical {
         node = reconstruct(node.clone(), reduced(node.domain, [41, 35])).unwrap();
     }
-    let (roll, snapshot) = settings(domain.bounds);
+    let (roll, snapshot) = settings(domain.finite().unwrap());
     node = grade(
         node,
         device,
-        Arc::new(Grading::new(device, roll, snapshot, domain.bounds).unwrap()),
+        Arc::new(
+            Grading::new(
+                &device.limits(),
+                roll,
+                snapshot,
+                domain.finite().unwrap().source().unwrap(),
+            )
+            .unwrap(),
+        ),
     )
     .unwrap();
     if sigma > 0. {
@@ -155,7 +158,7 @@ pub(super) fn chain(
 pub(super) fn make_plan(node: Arc<ImageNode>, tile: [u32; 2]) -> Plan {
     Plan::new(
         node.clone(),
-        node.domain.bounds,
+        node.domain.finite().unwrap(),
         Budget {
             tile,
             scratch_bytes: 32 << 20,
@@ -174,8 +177,12 @@ fn grade_scalar(values: Vec<DVec3>, domain: Domain, source_area: Rect) -> Vec<DV
         .enumerate()
         .map(|(i, p)| {
             let xy = [
-                f64::from(domain.bounds.x) + (i % domain.bounds.width as usize) as f64 + 0.5,
-                f64::from(domain.bounds.y) + (i / domain.bounds.width as usize) as f64 + 0.5,
+                f64::from(domain.finite().unwrap().x)
+                    + (i % domain.finite().unwrap().width as usize) as f64
+                    + 0.5,
+                f64::from(domain.finite().unwrap().y)
+                    + (i / domain.finite().unwrap().width as usize) as f64
+                    + 0.5,
             ];
             layers
                 .apply_rgb(roll.apply(p).unwrap(), SourcePoint(domain.point(xy)))
@@ -188,7 +195,10 @@ fn blur_scalar(values: &[DVec3], domain: Domain, sigma: f64) -> Vec<DVec3> {
     if sigma == 0. {
         return values.to_vec();
     }
-    let [width, height] = [domain.bounds.width as usize, domain.bounds.height as usize];
+    let [width, height] = [
+        domain.finite().unwrap().width as usize,
+        domain.finite().unwrap().height as usize,
+    ];
     let mut image = values.to_vec();
     for axis in 0..2 {
         let s = sigma / domain.grid.pitch[axis];
@@ -212,23 +222,21 @@ fn blur_scalar(values: &[DVec3], domain: Domain, sigma: f64) -> Vec<DVec3> {
 }
 
 pub(super) fn reconstruct_scalar(values: &[DVec3], input: Domain, output: Domain) -> Vec<DVec3> {
-    let area = output.bounds;
-    (area.y..area.y + area.height)
+    let area = output.finite().unwrap();
+    (area.y..area.bottom())
         .flat_map(|y| {
-            (area.x..area.x + area.width).map(move |x| {
+            (area.x..area.right()).map(move |x| {
                 let lo = output.point([f64::from(x), f64::from(y)]);
                 let hi = output.point([f64::from(x + 1), f64::from(y + 1)]);
                 let mut sum = DVec3::ZERO;
                 let mut mass = 0.;
-                for sy in input.bounds.y..input.bounds.y + input.bounds.height {
-                    for sx in input.bounds.x..input.bounds.x + input.bounds.width {
+                for sy in input.finite().unwrap().y..input.finite().unwrap().bottom() {
+                    for sx in input.finite().unwrap().x..input.finite().unwrap().right() {
                         let a = input.point([f64::from(sx), f64::from(sy)]);
                         let b = input.point([f64::from(sx + 1), f64::from(sy + 1)]);
                         let w = (hi[0].min(b[0]) - lo[0].max(a[0])).max(0.)
                             * (hi[1].min(b[1]) - lo[1].max(a[1])).max(0.);
-                        sum += values[((sy - input.bounds.y) * input.bounds.width + sx
-                            - input.bounds.x) as usize]
-                            * w;
+                        sum += values[input.finite().unwrap().index([sx, sy])] * w;
                         mass += w;
                     }
                 }
@@ -258,7 +266,7 @@ pub(super) fn scalar(
         pixels = reconstruct_scalar(&pixels, domain, next);
         domain = next;
     }
-    pixels = grade_scalar(pixels, domain, data.domain.bounds);
+    pixels = grade_scalar(pixels, domain, data.domain.finite().unwrap());
     pixels = blur_scalar(&pixels, domain, sigma);
     #[cfg(feature = "ocio-reference")]
     if let Some(target) = target {
@@ -318,7 +326,7 @@ fn composed_real_grade_and_multi_pass_fragment_match_independent_signed_hdr_edge
             matches!(
                 w,
                 Work::Compute {
-                    entry: "evaluation_main",
+                    entry: "sample_main",
                     ..
                 }
             )

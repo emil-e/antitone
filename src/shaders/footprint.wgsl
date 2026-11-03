@@ -91,6 +91,11 @@ fn extended_overlap(
     }
     let cell_low = select(vec2f(0.), min(vec2f(0.), low), cell == source_low);
     let cell_high = select(vec2f(1.), max(vec2f(1.), high), cell + vec2f(1.) == source_high);
+    // Exact axis alignment admits interval overlap, including flips and quarter turns.
+    if (dx.y == 0. && dy.x == 0.) || (dx.x == 0. && dy.y == 0.) {
+        let extent = max(min(high, cell_high) - max(low, cell_low), vec2f(0.));
+        return extent.x * extent.y;
+    }
     if all(cell_low == vec2f(0.)) && all(cell_high == vec2f(1.)) {
         return overlap(start, cell, dx, dy);
     }

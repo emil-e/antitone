@@ -37,28 +37,18 @@ impl CacheBudgets {
 }
 
 pub(super) struct PressureWatch {
-    _alive: std::sync::Arc<()>,
+    _watch: crate::sys::MemoryPressureWatch,
 }
 
 impl PressureWatch {
     pub fn new(context: egui::Context) -> Self {
-        let alive = std::sync::Arc::new(());
-        let weak = std::sync::Arc::downgrade(&alive);
-        let mut previous = crate::sys::memory_pressure();
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                if weak.upgrade().is_none() {
-                    break;
-                }
-                let current = crate::sys::memory_pressure();
-                if current != previous {
-                    previous = current;
-                    context.request_repaint();
-                }
-            }
-        });
-        Self { _alive: alive }
+        Self::observe(move |_| context.request_repaint())
+    }
+
+    pub(super) fn observe(notify: impl Fn(Pressure) + Send + 'static) -> Self {
+        Self {
+            _watch: crate::sys::MemoryPressureWatch::observe(notify),
+        }
     }
 }
 

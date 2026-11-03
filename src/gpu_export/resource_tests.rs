@@ -8,7 +8,7 @@ use crate::{
     geometry::{PhotoOrientation, QuarterTurns, RollOrientation},
     gpu::{
         ProcessingInput,
-        view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec},
+        view::{RenderedView, SourceRequest, ViewKernels, ViewSource},
     },
 };
 use std::time::{Duration, Instant};
@@ -151,7 +151,7 @@ fn exercise(
         .map_err(|e| e.to_string())?;
         let input: ProcessingInput = Arc::new(
             ProcessingInput::new(
-                device,
+                &device.limits(),
                 adjusted,
                 roll,
                 snapshot.clone(),
@@ -187,7 +187,7 @@ fn exercise(
         frame.output = frame
             .output
             .map(|n| (n as f64 * 3072. / max_side).ceil() as u32);
-        let spec = ViewSourceSpec::new(1, frame, adjusted, scan.camera_to_ap1, field)
+        let spec = SourceRequest::new(frame, adjusted, scan.camera_to_ap1, field)
             .map_err(|e| e.to_string())?;
         let underlay_spec = spec.underlay().map_err(|e| e.to_string())?;
         let underlay_size = underlay_spec.frame().output;
@@ -399,7 +399,7 @@ fn exercise(
                             .collect(),
                         )?;
                         let edited_input: ProcessingInput = Arc::new(ProcessingInput::new(
-                            device,
+                            &device.limits(),
                             adjusted,
                             roll,
                             edited.clone(),
@@ -417,8 +417,8 @@ fn exercise(
                         updated.ensure_submitted(device, queue, &gate, &context);
                         observation::wait(device, queue).map_err(|e| Error::Gpu(e.to_string()))?;
                         assert!(!updated.in_flight());
-                        assert_eq!(updated.processing, edited_input.signature());
-                        assert_eq!(rendered[0].processing, input.signature());
+                        assert_eq!(updated.processing(), edited_input.clone());
+                        assert_eq!(rendered[0].processing(), input.clone());
                         Ok(())
                     },
                 )?;

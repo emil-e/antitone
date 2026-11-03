@@ -535,7 +535,7 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
             ])
             .and_then(|snapshot| {
                 antitone::gpu::ProcessingInput::new(
-                    &gpu.device,
+                    &gpu.device.limits(),
                     cal,
                     roll,
                     snapshot,

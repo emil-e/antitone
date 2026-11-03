@@ -183,7 +183,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
                         editor.document.visit.adjustment_layer_settings,
                     )
                     .unwrap();
-                assert_ne!(preview.signature(), input.signature());
+                assert_ne!(preview.clone(), input.clone());
                 assert_eq!(input.grade().unwrap().snapshot(), &snapshot);
                 let AdjustmentLayerCoverage::Linear {
                     end: preview_end, ..

@@ -2,7 +2,7 @@ use super::*;
 use crate::geometry::{Composition, FramePoint};
 
 #[test]
-fn demand_revision_tracks_source_authority_and_idle_requires_presentation() {
+fn demand_revision_tracks_view_intent_and_idle_requires_presentation() {
     let frame = FrameRaster::full(
         Composition::new(
             [0, 0, 32, 24].into(),
@@ -12,18 +12,20 @@ fn demand_revision_tracks_source_authority_and_idle_requires_presentation() {
         .unwrap(),
     )
     .unwrap();
-    let processing = ProcessingInput::from(ProcessingParameters::source()).signature();
+    let processing = Capture::Primitive(ProcessingInput::from(ProcessingParameters::source()));
 
     let mut working = WorkingView::default();
     assert_eq!(working.revision(), None);
 
-    assert!(working.observe(7, frame, processing.clone(), OutputTarget::Srgb));
+    assert!(working.observe(frame, processing.clone(), OutputTarget::Srgb));
     let initial_revision = working.revision();
-    assert!(!working.observe(7, frame, processing.clone(), OutputTarget::Srgb));
+    assert!(!working.observe(frame, processing.clone(), OutputTarget::Srgb));
     assert_eq!(working.revision(), initial_revision);
 
-    assert!(working.observe(8, frame, processing, OutputTarget::Srgb));
+    assert!(working.observe(frame, processing.clone(), OutputTarget::DisplayP3));
     assert!(working.revision() > initial_revision);
+    let mut revisit = working.for_visit();
+    assert!(revisit.observe(frame, processing, OutputTarget::Srgb));
 
     working.changed_at = Some(std::time::Instant::now() - Duration::from_secs(1));
     assert!(
@@ -36,7 +38,7 @@ fn demand_revision_tracks_source_authority_and_idle_requires_presentation() {
 }
 
 #[test]
-fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
+fn completed_frames_keep_their_own_processing_until_scope_retirement() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -73,7 +75,7 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
             dmax: DVec3::new(0.008, 0.004, 0.002),
             input_floor: crate::processing::CAMERA_INPUT_FLOOR,
         };
-        let first = ViewSourceSpec::new(7, frame, cal, scan.camera_to_ap1, None)
+        let first = SourceRequest::new(frame, cal, scan.camera_to_ap1, None)
             .unwrap()
             .with_identity(crate::gpu::execution::source::Identity::camera(
                 input.source.identity(),
@@ -98,22 +100,26 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
 
             let mut working = WorkingView::default();
             let mailbox = working.mailbox.clone();
-            mailbox.0.lock().unwrap().underlay = Some(underlay);
-            working.request(first.clone(), input.clone());
+            mailbox.0.lock().unwrap().completed = Some(Arc::new(Frame {
+                source: underlay.clone(),
+                underlay: Some(underlay),
+                request: Arc::new(Demand::fixture(first.clone(), input.clone())),
+                processed: Vec::new(),
+            }));
+            working.request(Demand::fixture(first.clone(), input.clone()));
             let mut navigated = first.clone();
             let mut moved_frame = navigated.frame();
             moved_frame.min.0[0] += 10.;
             moved_frame.max.0[0] += 10.;
             navigated = navigated.with_frame(moved_frame).unwrap();
-            working.request(navigated, input.clone());
+            working.request(Demand::fixture(navigated, input.clone()));
 
-            assert!(working.underlay.is_some());
+            assert!(working.underlay().is_some());
             assert!(weak_underlay.upgrade().is_some());
 
             match retirement {
-                "basis" => working.request(
-                    ViewSourceSpec::new(
-                        7,
+                "basis" => working.request(Demand::fixture(
+                    SourceRequest::new(
                         frame,
                         crate::processing::NegativeInput {
                             calibration: cal,
@@ -126,8 +132,8 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
                     )
                     .unwrap(),
                     input.clone(),
-                ),
-                "support" => working.request(
+                )),
+                "support" => working.request(Demand::fixture(
                     first
                         .clone()
                         .with_pipeline(crate::pixel_pipeline::PixelPipeline {
@@ -137,12 +143,41 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
                         })
                         .unwrap(),
                     input.clone(),
-                ),
+                )),
                 "clear" => working.clear(),
-                _ => drop(working),
+                _ => {
+                    drop(working);
+                    assert!(mailbox.0.lock().unwrap().completed.is_none());
+                    assert!(
+                        weak_underlay.upgrade().is_none(),
+                        "dropping the owner releases completed support"
+                    );
+                    continue;
+                }
             }
 
-            assert!(mailbox.0.lock().unwrap().underlay.is_none());
+            if matches!(retirement, "basis" | "support") {
+                let frame = working.frame.as_ref().unwrap();
+                assert!(
+                    !mailbox
+                        .0
+                        .lock()
+                        .unwrap()
+                        .demand
+                        .as_ref()
+                        .unwrap()
+                        .can_use(&frame.source)
+                        .unwrap_or(false),
+                    "old support must not be treated as input for the new calculation"
+                );
+                assert!(
+                    frame.processing(&Default::default()).unwrap() == first.processing_fixture(),
+                    "retained frames keep the settings belonging to their source"
+                );
+                assert!(weak_underlay.upgrade().is_some());
+                working.clear();
+            }
+            assert!(mailbox.0.lock().unwrap().completed.is_none());
             assert!(
                 weak_underlay.upgrade().is_none(),
                 "{retirement}: a queued mailbox must not retain retired source support"
@@ -151,7 +186,7 @@ fn navigation_reuses_underlay_until_basis_change_clear_or_drop() {
     });
 }
 
-fn spec(offset: f64) -> ViewSourceSpec {
+fn spec(offset: f64) -> SourceRequest {
     let composition = Composition::new(
         Rect {
             x: 12,
@@ -170,8 +205,7 @@ fn spec(offset: f64) -> ViewSourceSpec {
         [1920, 1080],
     )
     .unwrap();
-    ViewSourceSpec::new(
-        7,
+    SourceRequest::new(
         frame,
         Calibration {
             dmin: DVec3::new(0.19, 0.14, 0.12),
@@ -195,39 +229,171 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
     };
     let identity = crate::gpu::execution::source::Identity::camera(input.source.identity());
     let first = spec(0.).with_identity(identity.clone());
-    working.request(first.clone(), input.clone());
+    working.request(Demand::fixture(first.clone(), input.clone()));
     for n in 1..40 {
-        working.request(
+        working.request(Demand::fixture(
             spec(f64::from(n)).with_identity(identity.clone()),
             input.clone(),
-        );
+        ));
     }
     let last = spec(39.).with_identity(identity);
-    assert!(working.mailbox.0.lock().unwrap().wanted.as_ref() == Some(&last));
+    assert!(
+        working
+            .mailbox
+            .0
+            .lock()
+            .unwrap()
+            .demand
+            .as_ref()
+            .map(|demand| &demand.spec)
+            == Some(&last)
+    );
 
     working.acquired(Completion {
-        spec: first,
+        owner: Arc::downgrade(&working.mailbox),
+        demand: Completion::fixture_demand(&working, first),
         result: Err("obsolete failure".into()),
     });
-    working.request(last.clone(), input.clone());
+    working.request(Demand::fixture(last.clone(), input.clone()));
     assert!(working.error.is_none());
     assert!(working.failed.is_none());
     working.acquired(Completion {
-        spec: last.clone(),
+        owner: Arc::downgrade(&working.mailbox),
+        demand: Completion::fixture_demand(&working, last.clone()),
         result: Err("current failure".into()),
     });
     for _ in 0..5 {
-        working.request(last.clone(), input.clone());
+        working.request(Demand::fixture(last.clone(), input.clone()));
     }
     assert_eq!(working.error.as_deref(), Some("current failure"));
     assert!(
-        working.acquisition(7).is_none(),
+        working.acquisition().is_none(),
         "unchanged failure does not spin retries"
     );
 
     working.clear();
-    assert!(working.mailbox.0.lock().unwrap().wanted.is_none());
+    assert!(working.mailbox.0.lock().unwrap().demand.is_none());
     assert!(working.error.is_none());
+}
+
+#[test]
+fn the_same_captured_demand_does_not_give_a_departed_owner_continuation_rights() {
+    let pixels = source::Context {
+        reference: None,
+        source: crate::editor::tests::developed_fixture(),
+        correction: None,
+    };
+    let captured = spec(0.).with_identity(crate::gpu::execution::source::Identity::camera(
+        pixels.source.identity(),
+    ));
+    let mut former = WorkingView::default();
+    former.request(Demand::fixture(captured.clone(), pixels.clone()));
+    let departed = Arc::downgrade(&former.mailbox);
+    let mut current = former.for_visit();
+    current.request(Demand::fixture(captured.clone(), pixels));
+    drop(former);
+    current.acquired(Completion {
+        owner: departed,
+        demand: Completion::fixture_demand(&current, captured.clone()),
+        result: Err("departed failure".into()),
+    });
+    assert!(current.error.is_none());
+    assert!(current.failed.is_none());
+    current.acquired(Completion {
+        owner: Arc::downgrade(&current.mailbox),
+        demand: Completion::fixture_demand(&current, captured),
+        result: Err("live failure".into()),
+    });
+    assert_eq!(current.error.as_deref(), Some("live failure"));
+}
+
+#[test]
+fn a_departed_downstream_capture_cannot_latch_failure_for_the_same_native_request() {
+    let source = crate::editor::tests::developed_fixture();
+    let area = source.area();
+    let matrix = source.camera_to_ap1();
+    let frame =
+        FrameRaster::full(Composition::new(area, Default::default(), Default::default()).unwrap())
+            .unwrap();
+    let spec = SourceRequest::new(
+        frame,
+        crate::processing::InputSettings::Digital,
+        matrix,
+        None,
+    )
+    .unwrap();
+    let first = Demand::fixture(
+        spec.clone(),
+        source::Context {
+            source,
+            reference: None,
+            correction: None,
+        },
+    );
+    let mut working = WorkingView::default();
+    working.request(first.clone());
+    let departed = Completion {
+        owner: Arc::downgrade(&working.mailbox),
+        demand: working.mailbox.0.lock().unwrap().demand.clone().unwrap(),
+        result: Err("old downstream failure".into()),
+    };
+    let mut latest = first;
+    latest.capture = Capture::Primitive(
+        ProcessingInput::new(
+            &Default::default(),
+            crate::processing::InputSettings::Digital,
+            RollSettings {
+                exposure: 1.,
+                ..Default::default()
+            },
+            crate::adjustment_layers::AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
+            matrix,
+            area,
+        )
+        .unwrap(),
+    );
+    working.request(latest.clone());
+    working.acquired(departed);
+    assert!(working.error.is_none());
+    assert!(working.failed.is_none());
+    let current = Completion {
+        owner: Arc::downgrade(&working.mailbox),
+        demand: working.mailbox.0.lock().unwrap().demand.clone().unwrap(),
+        result: Err("current downstream failure".into()),
+    };
+    working.acquired(current);
+    assert_eq!(working.error.as_deref(), Some("current downstream failure"));
+    working.request(latest);
+    assert!(
+        working.acquisition().is_none(),
+        "unchanged failed capture must not spin"
+    );
+}
+
+#[test]
+fn repeated_view_capture_does_not_wake_a_blocked_acquisition_or_repaint_loop() {
+    let input = source::Context {
+        reference: None,
+        source: crate::editor::tests::developed_fixture(),
+        correction: None,
+    };
+    let mut working = WorkingView::default();
+    let demand = Demand::fixture(spec(0.), input);
+    working.request(demand.clone());
+    let changed = working.mailbox.1.listen();
+    working.request(demand.clone());
+    let mut changed = Box::pin(changed);
+    pollster::block_on(std::future::poll_fn(|cx| {
+        assert!(
+            std::future::Future::poll(changed.as_mut(), cx).is_pending(),
+            "unchanged paint demand must not create another host wake"
+        );
+        std::task::Poll::Ready(())
+    }));
+    let mut next = demand;
+    next.spec = next.spec.with_frame(spec(10.).frame()).unwrap();
+    working.request(next);
+    pollster::block_on(changed);
 }
 
 #[test]
@@ -246,23 +412,23 @@ fn reference_admission_respects_budget_inspection_and_explicit_comparison() {
         frame: Some(frame),
         output: frame.output,
     };
-
-    editor
+    let retired = editor
         .document
         .visit
         .canvas
         .grade
         .original
-        .generation
-        .store(23, std::sync::atomic::Ordering::Relaxed);
-    editor.document.visit.canvas.grade.original.refining = Some((23, view));
+        .start_fixture(view);
     assert!(!editor.admit_view_reference(frame));
-    assert_eq!(editor.document.visit.canvas.grade.original.revision(), 24);
-
+    assert_ne!(
+        editor.document.visit.canvas.grade.original.continuation(),
+        retired
+    );
+    let idle = editor.document.visit.canvas.grade.original.continuation();
     assert!(!editor.admit_view_reference(frame));
     assert_eq!(
-        editor.document.visit.canvas.grade.original.revision(),
-        24,
+        editor.document.visit.canvas.grade.original.continuation(),
+        idle,
         "cancel an admitted reference once"
     );
 

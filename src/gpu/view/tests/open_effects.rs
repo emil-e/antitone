@@ -49,7 +49,7 @@ fn input(
 ) -> ProcessingInput {
     ProcessingInput::from(Arc::new(
         ProcessingInput::new(
-            device,
+            &device.limits(),
             InputSettings::Digital,
             Default::default(),
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -251,7 +251,7 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
 fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physical_views() {
     use crate::{
         frame_raster::FrameRaster,
-        gpu::view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec},
+        gpu::view::{RenderedView, SourceRequest, ViewKernels, ViewSource},
     };
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
@@ -275,9 +275,9 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
     )
     .unwrap();
     let processing = input(&device, area, DMat3::IDENTITY);
-    let spec = ViewSourceSpec::new(17, frame, InputSettings::Digital, DMat3::IDENTITY, None)
+    let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
-        .with_pipeline(processing.pixel_pipeline().unwrap())
+        .with_pipeline(processing.pixel_pipeline())
         .unwrap();
     let origin = frame.source_point([0.5, 0.5]).0;
     let axis = frame.source_point([1.5, 0.5]).0;
@@ -304,16 +304,16 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
             [value.x, value.y, value.z, 8.]
         })
         .collect();
-    let source = Arc::new(ViewSource {
+    let source = Arc::new(ViewSource::from_neutral_samples(
         spec,
         renderer,
         kernels,
-        pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("independent affine neutral field"),
             contents: bytemuck::cast_slice(&values),
             usage: wgpu::BufferUsages::STORAGE,
         }),
-    });
+    ));
     let view = RenderedView::new(&device, source, &processing, OutputTarget::Srgb, None).unwrap();
     view.ensure_submitted(
         &device,
@@ -341,15 +341,15 @@ fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physic
     );
     let equal = input(&device, area, DMat3::IDENTITY);
     assert_eq!(
-        processing.signature(),
-        equal.signature(),
+        processing.clone(),
+        equal.clone(),
         "independently assembled equal effect values preserve reuse identity"
     );
     assert_ne!(
-        processing.signature(),
+        processing.clone(),
         processing
             .clone()
             .with_pixel_pipeline(PixelPipeline::default())
-            .signature()
+            .clone()
     );
 }

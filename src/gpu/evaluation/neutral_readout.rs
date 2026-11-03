@@ -4,7 +4,6 @@ use super::*;
 use crate::{
     gpu::{GpuFlatField, GpuInputProgram},
     processing::RollSettings,
-    renderer::GpuRenderer,
 };
 
 #[cfg(all(test, feature = "editor"))]
@@ -46,15 +45,12 @@ pub(super) fn readout_roll(program: &GpuInputProgram) -> RollSettings {
 
 impl Photograph {
     pub(crate) fn neutral_readout(
-        device: &wgpu::Device,
-        renderer: &GpuRenderer,
         camera: Arc<ImageNode>,
         field: Option<Arc<GpuFlatField>>,
         program: GpuInputProgram,
     ) -> Result<NeutralReadout, Error> {
         let roll = readout_roll(&program);
-        let image =
-            Self::unrepaired_readout(device, &renderer.camera, camera, field, program, roll)?;
+        let image = Self::unrepaired_readout(camera, field, program, roll)?;
 
         Ok(NeutralReadout {
             image,

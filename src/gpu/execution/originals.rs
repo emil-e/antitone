@@ -5,7 +5,7 @@ use crate::gpu::{ProcessingInput, SubmissionGate, evaluation, rgb16};
 use crate::{
     Error,
     frame_raster::FrameRaster,
-    geometry::{Composition, SourceRegion},
+    geometry::Composition,
     renderer::GpuRenderer,
     rendering::{OutputReference, OutputTarget},
 };
@@ -30,10 +30,10 @@ pub(crate) type RenderBlock<'a> = dyn FnMut([u32; 2], [u32; 2]) -> Result<Output
 
 pub(crate) type Complete<'a> = dyn FnMut() -> Result<(), Error> + 'a;
 
+#[cfg(test)]
+use crate::{acquisition::ValidOutput, geometry::SourceRegion};
 use crate::{
-    acquisition::{
-        Plan, Request as AcquisitionRequest, Sampling, SourceRead, SourceSupport, ValidOutput,
-    },
+    acquisition::{Plan, Request as AcquisitionRequest, Sampling, SourceRead, SourceSupport},
     geometry::FramePoint,
 };
 #[cfg(test)]
@@ -47,218 +47,51 @@ mod film_tests;
 #[path = "intent_tests.rs"]
 mod intent_tests;
 
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Mapping {
-    sizes: [u32; 4],
-    origin: [f32; 4],
-    dx: [f32; 4],
-    dy: [f32; 4],
-    space: [u32; 4],
-}
-
-pub(crate) struct Unit {
-    pub bounds: SourceRegion,
-    mapping: Mapping,
-    support: Option<Vec<u32>>,
-}
-
-impl Unit {
-    #[cfg(test)]
-    pub(crate) fn new(
-        composition: Composition,
-        origin: [u32; 2],
-        extent: [u32; 2],
-    ) -> Result<Self, Error> {
-        Self::planned(composition, origin, extent, &Default::default()).map(|(unit, _)| unit)
-    }
-
-    #[cfg(test)]
-    fn planned(
-        composition: Composition,
-        origin: [u32; 2],
-        extent: [u32; 2],
-        pipeline: &crate::pixel_pipeline::PixelPipeline,
-    ) -> Result<(Self, Plan), Error> {
-        let plan = Self::plan(
-            composition,
-            origin,
-            extent,
-            pipeline,
-            WorkBudget {
-                source_pixels: u64::MAX,
-            },
-        )?;
-        Ok((Self::from_plan(&plan, origin)?, plan))
-    }
-
-    // Geometry and admission precede all source-sized preparation, including coverage masks.
-    fn plan(
-        composition: Composition,
-        origin: [u32; 2],
-        extent: [u32; 2],
-        pipeline: &crate::pixel_pipeline::PixelPipeline,
-        budget: WorkBudget,
-    ) -> Result<Plan, Error> {
-        if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
-            return Err(Error::InvalidParameter(
-                "invalid processing destination unit",
-            ));
-        }
-        let raster = FrameRaster::new(
-            composition,
-            FramePoint(origin.map(f64::from)),
-            FramePoint(std::array::from_fn(|i| {
-                f64::from(origin[i]) + f64::from(extent[i])
-            })),
-            extent,
-        )?;
-        // The source adapter receives the planned read; it does not propagate stage margins.
-        let plan = Plan::new(AcquisitionRequest {
-            output: raster,
-            stages: pipeline,
-            sampling: Sampling::Originals {
-                reconstruction: SourceSupport([1; 2]),
-            },
-        })?;
-        let SourceRead::Originals(bounds) = plan.source_read() else {
-            unreachable!("original-sample processing plan")
-        };
-        budget.require_source([bounds.width, bounds.height])?;
-        Ok(plan)
-    }
-
-    fn from_plan(plan: &Plan, origin: [u32; 2]) -> Result<Self, Error> {
-        let SourceRead::Originals(bounds) = plan.source_read() else {
-            unreachable!("original-sample processing plan")
-        };
-        let composition = plan.output().composition;
-        let extent = plan.output().output;
-        let ValidOutput::Reconstruction {
-            affine: [start, dx, dy],
-        } = plan.valid_output()
-        else {
-            unreachable!("original-sample output reconstruction")
-        };
-        let frame = composition.size();
-        let edge = (0..2).any(|i| origin[i] == 0 || origin[i] + extent[i] == frame[i]);
-        let support = if edge {
-            let coverage =
-                composition.coverage(FramePoint([0.; 2]), FramePoint(frame.map(f64::from)))?;
-            let count = u64::from(bounds.width) * u64::from(bounds.height);
-            let len = usize::try_from(count.div_ceil(32))
-                .map_err(|_| Error::InvalidParameter("processing mask exceeds address space"))?;
-            let mut bits = vec![0u32; len];
-            for row in 0..bounds.height {
-                for col in 0..bounds.width {
-                    let index = u64::from(row) * u64::from(bounds.width) + u64::from(col);
-                    if coverage.weight([bounds.x + col, bounds.y + row]) > 0. {
-                        bits[index as usize / 32] |= 1 << (index % 32);
-                    }
-                }
-            }
-            Some(bits)
-        } else {
-            None
-        };
-        let mapping = Mapping {
-            sizes: [bounds.width, bounds.height, extent[0], extent[1]],
-            origin: [start[0], start[1], 0., 0.],
-            dx: [dx[0], dx[1], 0., 0.],
-            dy: [dy[0], dy[1], 0., 0.],
-            space: [0, u32::from(support.is_some()), 0, 0],
-        };
-        Ok(Self {
-            bounds,
-            mapping,
-            support,
-        })
-    }
-}
-
-/// Original-cell affine reconstruction owns its demand mapping and shader, not the planner.
-struct Area {
+// Geometry and admission precede all source-sized preparation, including coverage masks.
+fn admit_source(
     composition: Composition,
-    stages: crate::pixel_pipeline::PixelPipeline,
+    origin: [u32; 2],
+    extent: [u32; 2],
+    pipeline: &crate::pixel_pipeline::PixelPipeline,
     budget: WorkBudget,
-    unused_texture: wgpu::TextureView,
-}
-
-impl evaluation::Operation for Area {
-    fn input(&self, output: SourceRegion) -> Result<Option<SourceRegion>, Error> {
-        let origin = [output.x, output.y];
-        let extent = [output.width, output.height];
-        // Admit the complete original read before allocating coverage or repair payloads.
-        Unit::plan(self.composition, origin, extent, &self.stages, self.budget)?;
-        let plan = Unit::plan(
-            self.composition,
-            origin,
-            extent,
-            &Default::default(),
-            self.budget,
-        )?;
-        let SourceRead::Originals(bounds) = plan.source_read() else {
-            unreachable!()
-        };
-        Ok(Some(bounds))
-    }
-
-    fn lower(
-        &self,
-        fragment: &mut evaluation::Fragment,
-        input: Option<evaluation::PlannedImage>,
-        output: evaluation::PlannedImage,
-    ) -> Result<(), Error> {
-        let input = input.unwrap();
-        let plan = Unit::plan(
-            self.composition,
-            [output.region.x, output.region.y],
-            output.size(),
-            &Default::default(),
-            self.budget,
-        )?;
-        let mut unit = Unit::from_plan(&plan, [output.region.x, output.region.y])?;
-        if unit.bounds != input.region {
-            return Err(Error::InvalidParameter(
-                "reconstruction input differs from demand",
-            ));
-        }
-        // The common reconstruction shader reads the buffer for either linear reference.
-        // Its legacy texture binding is deliberately unused in this implementation.
-        unit.mapping.space[0] = 1;
-        let mapping = fragment.uniform(&unit.mapping);
-        let support = fragment.resource(evaluation::Storage::Data(
-            bytemuck::cast_slice(unit.support.as_deref().unwrap_or(&[u32::MAX])).into(),
+) -> Result<Plan, Error> {
+    if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
+        return Err(Error::InvalidParameter(
+            "invalid processing destination unit",
         ));
-        fragment.work.push(evaluation::Work::Compute {
-            code: include_str!("../../shaders/export_area.wgsl").into(),
-            entry: "main",
-            initialize: None,
-            bindings: vec![
-                (
-                    0,
-                    evaluation::Binding::Shared(evaluation::Shared::Texture(
-                        self.unused_texture.clone(),
-                    )),
-                ),
-                (1, evaluation::Binding::Read(input.resource)),
-                (2, evaluation::Binding::Write(output.resource)),
-                (3, mapping),
-                (4, evaluation::Binding::Read(support)),
-            ],
-            groups: [
-                output.size()[0].div_ceil(8),
-                output.size()[1].div_ceil(8),
-                1,
-            ],
-        });
-        Ok(())
     }
+    let raster = FrameRaster::new(
+        composition,
+        FramePoint(origin.map(f64::from)),
+        FramePoint(std::array::from_fn(|i| {
+            f64::from(origin[i]) + f64::from(extent[i])
+        })),
+        extent,
+    )?;
+    // The source adapter receives the planned read; it does not propagate stage margins.
+    let plan = Plan::new(AcquisitionRequest {
+        output: raster,
+        stages: pipeline,
+        sampling: Sampling::Originals {
+            reconstruction: SourceSupport([1; 2]),
+        },
+    })?;
+    let SourceRead::Originals(bounds) = plan.source_read() else {
+        unreachable!("original-sample processing plan")
+    };
+    budget.require_source([bounds.width, bounds.height])?;
+    Ok(plan)
 }
 
+#[cfg(test)]
+mod unit_fixture;
+#[cfg(test)]
+pub(crate) use unit_fixture::{Mapping, Unit};
+
+/// Bounded readback and optional target encoding after reconstruction.
 pub(super) struct Reconstructor {
     #[cfg(test)]
-    pipeline: Option<wgpu::ComputePipeline>,
+    context: Option<evaluation::Context>,
     #[cfg(test)]
     output: Option<wgpu::Buffer>,
     readback: wgpu::Buffer,
@@ -274,22 +107,6 @@ impl Reconstructor {
     #[cfg(test)]
     fn new_test(device: &wgpu::Device, target: Option<OutputTarget>) -> Result<Self, Error> {
         let mut reconstruction = Self::new_output(device, target)?;
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cell-local export area reconstruction"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/export_area.wgsl").into()),
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("cell-local export area reconstruction"),
-            layout: None,
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        if let Some(error) = pollster::block_on(scope.pop()) {
-            return Err(Error::Gpu(error.to_string()));
-        }
         let bytes = u64::from(TILE[0]) * u64::from(TILE[1]) * 16;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bounded reconstructed destination"),
@@ -298,14 +115,17 @@ impl Reconstructor {
             mapped_at_creation: false,
         });
 
-        reconstruction.pipeline = Some(pipeline);
+        reconstruction.context = Some(evaluation::Context::new(
+            device,
+            evaluation::CachePolicy { generated_bytes: 0 },
+        ));
         reconstruction.output = Some(output);
         Ok(reconstruction)
     }
 
     fn new_output(device: &wgpu::Device, target: Option<OutputTarget>) -> Result<Self, Error> {
         #[cfg(test)]
-        let (pipeline, output) = (None, None);
+        let (context, output) = (None, None);
         let bytes = u64::from(TILE[0]) * u64::from(TILE[1]) * 16;
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("destination-only reconstruction readback"),
@@ -327,7 +147,7 @@ impl Reconstructor {
             .transpose()?;
         Ok(Self {
             #[cfg(test)]
-            pipeline,
+            context,
             #[cfg(test)]
             output,
             readback,
@@ -344,58 +164,34 @@ impl Reconstructor {
         texture: &wgpu::Texture,
         working: &wgpu::Buffer,
     ) -> Result<(), Error> {
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("tile-local backward affine map"),
-            contents: bytemuck::bytes_of(&unit.mapping),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        // Exact whole-frame relevance also governs native geometry: roundoff must not
-        // admit an unresolved repair outside the captured composition at its outer edge.
-        let mask = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("exact contributing source-cell mask"),
-            contents: bytemuck::cast_slice(unit.support.as_deref().unwrap_or(&[u32::MAX])),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let view = texture.create_view(&Default::default());
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("original-to-destination export area bindings"),
-            layout: &self.pipeline.as_ref().unwrap().get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
+        evaluation::encode_reconstruction_test(
+            self.context.as_ref().unwrap(),
+            encoder,
+            (
+                texture,
+                working,
+                unit.mapping.space[0] == 0,
+                [unit.mapping.sizes[0], unit.mapping.sizes[1]],
+            ),
+            self.output.as_ref().unwrap(),
+            (
+                crate::gpu::evaluation::CellRegion::new(
+                    [0, 0],
+                    [unit.mapping.sizes[2], unit.mapping.sizes[3]],
+                ),
+                evaluation::ReconstructionMapping {
+                    start: [unit.mapping.origin[0], unit.mapping.origin[1]].map(f64::from),
+                    axes: [
+                        [unit.mapping.dx[0], unit.mapping.dx[1]],
+                        [unit.mapping.dy[0], unit.mapping.dy[1]],
+                    ]
+                    .map(|a| a.map(f64::from)),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: working.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.output.as_ref().unwrap().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: mask.as_entire_binding(),
-                },
-            ],
-        });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("export area reconstruction"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(self.pipeline.as_ref().unwrap());
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(
-                unit.mapping.sizes[2].div_ceil(8),
-                unit.mapping.sizes[3].div_ceil(8),
-                1,
-            );
-        }
+            ),
+            unit.support
+                .as_deref()
+                .filter(|_| unit.mapping.space[1] != 0),
+        )?;
         self.encode_pixels(
             device,
             encoder,
@@ -569,13 +365,13 @@ pub(crate) fn execute(
     }
     let program = crate::gpu::GpuInputProgram::for_scan(request.scan, request.input)?;
     let photographic = Arc::new(crate::gpu::Grading::new(
-        device,
+        &device.limits(),
         request.roll,
         request.grade.clone(),
         request.scan.area,
     )?);
     let grade = Arc::new(ProcessingInput::compose(
-        device,
+        &device.limits(),
         program,
         photographic,
         request.scan.area,
@@ -584,7 +380,7 @@ pub(crate) fn execute(
     let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;
     repairs.require_area(request.scan.area)?;
     if !repairs.0.is_empty() {
-        grade.validate_repairs(device, repairs.bound())?;
+        grade.validate_repairs(&device.limits(), repairs.bound())?;
     }
     let mut processing =
         crate::gpu::ProcessingInput::from(grade.clone()).with_look(request.look.clone());
@@ -609,42 +405,24 @@ pub(crate) fn execute(
         request.output,
         pipeline,
     )?;
-    let dummy = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("unused legacy reconstruction binding"),
-        size: wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba32Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    });
     let size = request.composition.size();
-    let root = evaluation::ImageNode::new(
-        evaluation::Domain {
-            bounds: [0, 0, size[0], size[1]].into(),
-            grid: evaluation::Grid::from_frame(crate::frame_raster::FrameRaster::full(
+    let domain = evaluation::Domain {
+        bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], size)),
+        grid: evaluation::Grid {
+            coverage: 8,
+            ..evaluation::Grid::from_frame(crate::frame_raster::FrameRaster::full(
                 request.composition,
-            )?),
-            meaning: original.domain.meaning,
+            )?)
         },
-        Some(original),
-        Area {
-            composition: request.composition,
-            stages: pipeline.clone(),
-            budget: WorkBudget {
-                source_pixels: request
-                    .budget
-                    .source_pixels
-                    .min(WorkBudget::for_device(device).source_pixels),
-            },
-            unused_texture: dummy.create_view(&Default::default()),
-        },
-    );
+        meaning: original.domain().meaning,
+    };
+    let root = evaluation::reconstruct_complete(original, domain)?;
+    let budget = WorkBudget {
+        source_pixels: request
+            .budget
+            .source_pixels
+            .min(WorkBudget::for_device(device).source_pixels),
+    };
     let mut executor = renderer.evaluation.executor();
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
@@ -679,6 +457,7 @@ pub(crate) fn execute(
                     "invalid processing destination unit",
                 ));
             }
+            admit_source(request.composition, origin, extent, pipeline, budget)?;
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             let timing = std::cell::RefCell::new(timestamps.borrow_mut());
             let plan = timed!(
@@ -688,8 +467,8 @@ pub(crate) fn execute(
                     .request(
                         root.clone(),
                         evaluation::Region {
-                            bounds: [origin[0], origin[1], extent[0], extent[1]].into(),
-                            grid: root.domain.grid
+                            bounds: [origin[0], origin[1], extent[0], extent[1]].try_into()?,
+                            grid: root.domain().grid
                         },
                         evaluation::Budget {
                             tile: TILE,
@@ -713,18 +492,20 @@ pub(crate) fn execute(
             }
             let interrupted = std::cell::RefCell::new(None);
             let receiver = std::cell::RefCell::new(None);
-            let executed = executor.run_sink_with(
-                device,
-                queue,
-                gate,
+            let executed = renderer.evaluation.run_sink(
+                &mut executor,
+                (queue, gate),
                 &plan,
-                || match check() {
-                    Ok(()) => false,
-                    Err(error) => {
-                        *interrupted.borrow_mut() = Some(error);
-                        true
-                    }
-                },
+                (
+                    &|| match check() {
+                        Ok(()) => false,
+                        Err(error) => {
+                            *interrupted.borrow_mut() = Some(error);
+                            true
+                        }
+                    },
+                    &|| {},
+                ),
                 evaluation::Sink {
                     encode: |encoder: &mut wgpu::CommandEncoder,
                              image: evaluation::PlannedImage,
@@ -778,7 +559,7 @@ pub(crate) fn execute(
                         }
                         stats.peak_repair_upload_bytes = stats
                             .peak_repair_upload_bytes
-                            .max(repairs.upload_scratch_bytes(output.region));
+                            .max(repairs.upload_scratch_bytes(output.region.source()?));
                     }
                 }
                 stats.readback_bytes +=

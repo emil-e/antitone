@@ -20,10 +20,10 @@ mod neutral_cache;
 mod open_effects;
 mod performance;
 mod prewarm;
-mod publication;
 mod repairs;
 #[cfg(target_os = "macos")]
 mod resource_observation;
+mod reuse;
 mod sampling;
 mod source_scale;
 mod stage_acquisition;
@@ -32,6 +32,17 @@ mod stage_support;
 mod underlay;
 
 async fn context() -> (
+    wgpu::Device,
+    wgpu::Queue,
+    Arc<crate::renderer::GpuRenderer>,
+    Arc<ViewKernels>,
+) {
+    context_with_cache_policy(Default::default()).await
+}
+
+async fn context_with_cache_policy(
+    policy: crate::gpu::evaluation::CachePolicy,
+) -> (
     wgpu::Device,
     wgpu::Queue,
     Arc<crate::renderer::GpuRenderer>,
@@ -46,9 +57,14 @@ async fn context() -> (
         })
         .await
         .unwrap();
-    let renderer = crate::renderer::GpuRenderer::new(&device, &queue)
-        .await
-        .unwrap();
+    let renderer = crate::renderer::GpuRenderer::new_with_cache_policy(
+        &device,
+        &queue,
+        SubmissionGate::default(),
+        policy,
+    )
+    .await
+    .unwrap();
     let kernels = ViewKernels::new(&device).await.unwrap();
     (device, queue, renderer, kernels)
 }
@@ -94,7 +110,7 @@ fn processing_input(
     scan: &Scan,
 ) -> ProcessingInput {
     crate::gpu::ProcessingInput::new(
-        device,
+        &device.limits(),
         input,
         roll,
         AdjustmentLayerSnapshot::new(vec![crate::adjustment_layers::AdjustmentLayer::global(
@@ -136,58 +152,62 @@ fn read(device: &wgpu::Device, queue: &wgpu::Queue, source: &wgpu::Buffer) -> Ve
 }
 
 #[test]
-fn request_keys_separate_publication_from_source_response_correction_and_layout() {
-    let scan = scan();
-    let frame = frame(&scan);
-    let settings = negative(0.6);
-    let identity = crate::gpu::execution::source::Identity::camera(scan.source().identity());
-    let key = |frame, settings: &InputSettings, field| {
-        ViewSourceSpec::new(7, frame, settings, scan.camera_to_ap1, field)
-            .unwrap()
-            .with_identity(identity.clone())
-    };
-    let spec = key(frame, &settings, None);
-    assert!(spec == key(frame, &settings, None));
-    let mut gamma_changed = settings;
-    if let InputSettings::Negative { gamma, .. } = &mut gamma_changed {
-        *gamma += 0.01;
-    }
-    assert!(spec != key(frame, &gamma_changed, None));
-    let mut calibration_changed = settings;
-    if let InputSettings::Negative {
-        dmin: Some(dmin), ..
-    } = &mut calibration_changed
-    {
-        *dmin *= 1.01;
-    }
-    assert!(spec != key(frame, &calibration_changed, None));
-    let mut changed = spec.clone();
-    changed.authority += 1;
-    assert!(spec != changed);
-    assert!(spec.same_source(&changed));
-    assert!(
-        spec.satisfies(&changed),
-        "a new publication ticket does not change available pixels"
-    );
-    let changed = key(
-        FrameRaster {
-            output: frame.output.map(|v| v * 2),
+fn native_graph_identity_captures_source_response_correction_and_grid() {
+    pollster::block_on(async {
+        let (device, _, _, _) = context().await;
+        let mut scan = scan();
+        let frame = frame(&scan);
+        let settings = negative(0.6);
+        let native = |scan: &Scan, frame, settings, field| {
+            let input = ProcessingInput::new(
+                &device.limits(),
+                settings,
+                RollSettings::default(),
+                AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
+                scan.camera_to_ap1,
+                scan.area,
+            )
+            .unwrap();
+            let spec = SourceRequest::for_processing(frame, &input).unwrap();
+            crate::gpu::execution::footprints::Acquired::definitions(scan, field, &input, &[spec])
+                .unwrap()
+                .remove(0)
+        };
+        let original = native(&scan, frame, settings, None);
+        assert!(original.same_definition(&native(&scan, frame, settings, None)));
+        let mut gamma_changed = settings;
+        if let InputSettings::Negative { gamma, .. } = &mut gamma_changed {
+            *gamma += 0.01;
+        }
+        assert!(!original.same_definition(&native(&scan, frame, gamma_changed, None)));
+        let mut calibration_changed = settings;
+        if let InputSettings::Negative {
+            dmin: Some(dmin), ..
+        } = &mut calibration_changed
+        {
+            *dmin *= 1.01;
+        }
+        assert!(!original.same_definition(&native(&scan, frame, calibration_changed, None)));
+        let file = crate::dng_fixture::Fixture::default().write();
+        let unrelated = Scan::open(file.path(), None).unwrap();
+        assert!(!original.same_definition(&native(&unrelated, frame, settings, None)));
+        let finer = FrameRaster {
+            output: frame.output.map(|n| n * 2),
             ..frame
-        },
-        &settings,
-        None,
-    );
-    assert!(spec != changed);
-    assert!(spec.same_source(&changed));
-    let field = Arc::new(
-        crate::flat_field::FlatField::from_nodes(
-            [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
-            [2, 2],
-            vec![DVec3::splat(1.1); 4],
-        )
-        .unwrap(),
-    );
-    assert!(spec != key(frame, &settings, Some(field)));
+        };
+        assert!(!original.same_definition(&native(&scan, finer, settings, None)));
+        let field = Arc::new(
+            crate::flat_field::FlatField::from_nodes(
+                [scan.area.x, scan.area.y, scan.area.width, scan.area.height],
+                [2, 2],
+                vec![DVec3::splat(0.9); 4],
+            )
+            .unwrap(),
+        );
+        let gpu_field = Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
+        scan.set_flat_field(Some(field)).unwrap();
+        assert!(!original.same_definition(&native(&scan, frame, settings, Some(gpu_field))));
+    });
 }
 
 #[test]
@@ -240,7 +260,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 frame(&scan)
             };
             let roll = RollSettings::default();
-            let spec = ViewSourceSpec::new(7, frame, cal, scan.camera_to_ap1, field).unwrap();
+            let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1, field).unwrap();
             let source = ViewSource::acquire(
                 &device,
                 &queue,
@@ -344,16 +364,16 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
             // must neither count an unsupported pixel nor compose the already-rotated raster again.
             let mut partial = original.clone();
             partial.last_mut().unwrap()[3] = 0.;
-            let partial = Arc::new(ViewSource {
-                spec: source.spec.clone(),
-                renderer: renderer.clone(),
-                kernels: kernels.clone(),
-                pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let partial = Arc::new(ViewSource::from_neutral_samples(
+                source.spec.clone(),
+                renderer.clone(),
+                kernels.clone(),
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: None,
                     contents: bytemuck::cast_slice(&partial),
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 }),
-            });
+            ));
             let partial =
                 RenderedView::new(&device, partial, &input, OutputTarget::Srgb, None).unwrap();
             partial.ensure_submitted(&device, &queue, &gate, &context);
@@ -404,7 +424,11 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 .collect();
             assert_eq!(bins, expected_bins);
             assert_eq!(gpu.reduction_count(), 1);
-            let calls = std::cell::Cell::new(0);
+            let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let signal = stopped.clone();
+            gate.observe_submissions(Arc::new(move || {
+                signal.store(true, std::sync::atomic::Ordering::SeqCst)
+            }));
             let cancelled = ViewSource::acquire(
                 &device,
                 &queue,
@@ -414,10 +438,7 @@ fn physical_view_acquisition_and_publication_preserve_original_reference_and_tar
                 &scan,
                 gpu_field,
                 spec,
-                || {
-                    calls.set(calls.get() + 1);
-                    calls.get() > 3
-                },
+                || stopped.load(std::sync::atomic::Ordering::SeqCst),
             )
             .unwrap();
             assert!(cancelled.is_none());

@@ -181,7 +181,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
                     for _ in 0..3 {
                         let start = Instant::now();
                         let result = ProcessingInput::new(
-                            &device,
+                            &device.limits(),
                             calibration,
                             roll,
                             AdjustmentLayerSnapshot::new(

@@ -134,7 +134,7 @@ fn exercise(
             let cal = scan.processing_calibration(basis)?;
             let mut frame = frame(&scan);
             frame.output = [1920, 1080];
-            let spec = ViewSourceSpec::new(1, frame, cal, scan.camera_to_ap1, field.clone())?;
+            let spec = SourceRequest::new(frame, cal, scan.camera_to_ap1, field.clone())?;
             let specs = vec![spec.clone(), spec.underlay()?];
             let gpu_field = field
                 .as_ref()
@@ -172,7 +172,7 @@ fn exercise(
                 let snapshot = snapshot(&scan, local, edit)?;
                 let input: ProcessingInput = if local {
                     Arc::new(ProcessingInput::new(
-                        device,
+                        &device.limits(),
                         cal,
                         RollSettings::default(),
                         snapshot.clone(),

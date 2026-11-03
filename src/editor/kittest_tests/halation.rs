@@ -75,8 +75,24 @@ fn independent_halation_controls_persist_render_and_undo_at_both_display_scales(
                         e.document.visit.adjustment_layer_settings
                     )
                     .unwrap()
-                    .halation(),
-                    e.document.halation
+                    .pixel_pipeline()
+                    .stages
+                    .iter()
+                    .find_map(|stage| stage.get::<crate::halation::HalationParameters>())
+                    .copied(),
+                    e.document
+                        .halation
+                        .parameters(
+                            e.document
+                                .state
+                                .project
+                                .image_recipe(e.document.visit.current_source.unwrap())
+                                .unwrap()
+                                .composition
+                                .crop()
+                                .size
+                        )
+                        .unwrap()
                 );
             });
             h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Enable halation")

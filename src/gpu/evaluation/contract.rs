@@ -1,7 +1,7 @@
 //! Image nodes, operation contracts and declared GPU work. Shader bodies stay opaque to planning.
 
+use super::CellRegion as Rect;
 use super::*;
-use crate::geometry::SourceRegion as Rect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Meaning {
@@ -96,30 +96,68 @@ impl Grid {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Domain {
-    pub bounds: Rect,
+    /// Finite source-cell boundaries; reconstructed planes have no new viewport edge.
+    pub bounds: Option<Rect>,
     pub grid: Grid,
     pub meaning: Meaning,
 }
 
 impl Domain {
+    pub fn contains_region(self, region: Rect) -> bool {
+        region.validate().is_ok()
+            && self
+                .bounds
+                .is_none_or(|bounds| bounds.contains_region(region))
+    }
+
+    pub fn finite(self) -> Result<Rect, Error> {
+        self.bounds.ok_or(Error::InvalidParameter(
+            "image has no finite sample boundary",
+        ))
+    }
+
     pub fn point(self, p: [f64; 2]) -> [f64; 2] {
         self.grid.point(p)
     }
 
     pub fn same_grid(self, other: Self) -> bool {
-        self.bounds == other.bounds && self.grid == other.grid
+        self.grid == other.grid
     }
 }
 
+/// Immutable source samples on a captured domain.
 pub trait Source: Send + Sync {
     fn domain(&self) -> Domain;
 
+    fn identity(&self) -> Option<RetainedKey> {
+        None
+    }
+
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error>;
+
+    fn storage_format(&self) -> ImageFormat {
+        ImageFormat::Rgba32Float
+    }
+
+    fn read_codes(&self, _region: Rect) -> Result<Vec<[u16; 4]>, Error> {
+        Err(Error::InvalidParameter(
+            "source does not provide native camera codes",
+        ))
+    }
 }
 
 /// Declares upstream demand and GPU lowering for a captured image operation.
-pub trait Operation: Send + Sync {
+pub trait Operation: std::any::Any + Send + Sync {
     fn input(&self, output: Rect) -> Result<Option<Rect>, Error>;
+
+    fn source(&self) -> Option<Arc<dyn Source>> {
+        None
+    }
+
+    /// Captured calculation identity. Unnamed operations still execute but do not name reusable values.
+    fn identity(&self) -> Option<RetainedKey> {
+        None
+    }
 
     fn pointwise(&self) -> Option<Function> {
         None
@@ -139,19 +177,30 @@ pub trait Operation: Send + Sync {
 
     fn lower(
         &self,
-        fragment: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error>;
+        _fragment: &mut Fragment,
+        _input: Option<PlannedImage>,
+        _output: PlannedImage,
+    ) -> Result<(), Error> {
+        Err(Error::InvalidParameter(
+            "operation requires a declared executable calculation",
+        ))
+    }
 }
 
 /// An addressable result: its domain, upstream image and captured producing operation.
 /// Nodes describe composition, not mandatory buffers or dispatches.
 pub struct ImageNode {
-    pub domain: Domain,
-    pub input: Option<Arc<ImageNode>>,
-    pub operation: Arc<dyn Operation>,
-    pub(crate) implementation: Option<Arc<ImageNode>>,
+    pub(super) domain: Domain,
+    pub(super) input: Option<Arc<ImageNode>>,
+    pub(super) operation: Arc<dyn Operation>,
+    identity: Option<RetainedKey>,
+}
+
+#[derive(Debug, PartialEq)]
+struct ImageIdentity {
+    domain: Domain,
+    upstream: Option<RetainedKey>,
+    operation: RetainedKey,
 }
 
 impl ImageNode {
@@ -160,38 +209,87 @@ impl ImageNode {
         input: Option<Arc<ImageNode>>,
         operation: impl Operation + 'static,
     ) -> Arc<Self> {
+        Self::captured(domain, input, Arc::new(operation))
+    }
+
+    pub(crate) fn captured(
+        domain: Domain,
+        input: Option<Arc<ImageNode>>,
+        operation: Arc<dyn Operation>,
+    ) -> Arc<Self> {
+        let identity = operation.identity().and_then(|operation| {
+            let upstream = match &input {
+                Some(input) => Some(input.identity.clone()?),
+                None => None,
+            };
+            Some(RetainedKey::new(ImageIdentity {
+                domain,
+                upstream,
+                operation,
+            }))
+        });
         Arc::new(Self {
             domain,
             input,
-            operation: Arc::new(operation),
-            implementation: None,
+            operation,
+            identity,
         })
     }
 
-    /// Supply an equivalent physical implementation without erasing logical image boundaries.
-    /// Composed planning selects it; materialized planning follows the logical chain.
-    /// Approximate preview orderings are separate compositions, not equivalent implementations.
-    pub fn implemented_by(
-        logical: Arc<Self>,
-        implementation: Arc<Self>,
-    ) -> Result<Arc<Self>, Error> {
-        if logical.domain != implementation.domain {
-            return Err(Error::InvalidParameter(
-                "equivalent implementation changes the image domain",
-            ));
+    pub fn domain(&self) -> Domain {
+        self.domain
+    }
+
+    pub fn source(&self) -> Option<Arc<dyn Source>> {
+        self.operation.source()
+    }
+
+    pub fn identity(&self) -> Option<&RetainedKey> {
+        self.identity.as_ref()
+    }
+
+    /// Propagate requested cells to an ancestor through the authored operation contracts.
+    pub fn region_for(
+        self: &Arc<Self>,
+        ancestor: &Arc<Self>,
+        region: CellRegion,
+    ) -> Result<Option<CellRegion>, Error> {
+        let region = region.validate()?;
+        if self.same_definition(ancestor) {
+            return Ok(Some(region));
         }
-        Ok(Arc::new(Self {
-            domain: logical.domain,
-            input: logical.input.clone(),
-            operation: logical.operation.clone(),
-            implementation: Some(implementation),
-        }))
+        match (&self.input, self.operation.input(region)?) {
+            (Some(input), Some(region)) => input.region_for(ancestor, region),
+            _ => Ok(None),
+        }
+    }
+
+    /// Compare definitions without assigning identities to unnamed inputs.
+    /// Callers comparing recorded work must also match its supplied values.
+    pub(crate) fn same_definition(&self, other: &Self) -> bool {
+        if std::ptr::eq(self, other) {
+            return true;
+        }
+        if let (Some(a), Some(b)) = (&self.identity, &other.identity) {
+            return a == b;
+        }
+        self.domain == other.domain
+            && self
+                .operation
+                .identity()
+                .zip(other.operation.identity())
+                .is_some_and(|(a, b)| a == b)
+            && match (&self.input, &other.input) {
+                (Some(a), Some(b)) => a.same_definition(b),
+                (None, None) => true,
+                _ => false,
+            }
     }
 }
 
 /// Pointwise ABI: fn(vec4f, vec2f) -> vec4f, preserving metadata in w.
-/// Modules own bindings below 20; 20–22 belong to the map entrypoint. Functions from the
-/// same module may share identical resources. Conflicting bindings force materialization.
+/// Module symbols and bindings are private to the function. Evaluation links their namespaces
+/// when composing calculations, whether the input is stored or callable.
 #[derive(Clone)]
 pub struct Function {
     pub code: Arc<str>,
@@ -225,6 +323,13 @@ impl Function {
         self
     }
 
+    /// Capture immutable storage bytes; their allocation follows the consuming plan.
+    pub fn with_storage(mut self, slot: u32, bytes: impl Into<Arc<[u8]>>) -> Self {
+        self.bindings
+            .push((slot, FunctionBinding::Storage(bytes.into())));
+        self
+    }
+
     pub(crate) fn lower_bindings(&self, fragment: &mut Fragment) -> Vec<(u32, Binding)> {
         self.bindings
             .iter()
@@ -237,6 +342,7 @@ impl Function {
 pub enum FunctionBinding {
     Shared(Shared),
     Uniform(Arc<[u8]>),
+    Storage(Arc<[u8]>),
 }
 
 impl From<Shared> for FunctionBinding {
@@ -252,6 +358,7 @@ impl FunctionBinding {
             Self::Uniform(bytes) => {
                 Binding::Uniform(fragment.resource(Storage::Uniform(bytes.clone())))
             }
+            Self::Storage(bytes) => Binding::Read(fragment.resource(Storage::Data(bytes.clone()))),
         }
     }
 }
@@ -262,6 +369,10 @@ pub enum Shared {
     Texture(wgpu::TextureView),
     StorageTexture(wgpu::TextureView),
     Sampler(wgpu::Sampler),
+    Image {
+        image: Arc<GpuImage>,
+        view: Option<wgpu::TextureView>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,6 +403,8 @@ pub enum Storage {
         bytes: u64,
         writable: bool,
     },
+    /// A caller-owned read-only image; its physical owner survives recorded consumers.
+    ResidentBuffer(Arc<GpuImage>),
     Buffer(u64),
     Uniform(Arc<[u8]>),
     Data(Arc<[u8]>),
@@ -307,7 +420,7 @@ pub enum Storage {
 impl Storage {
     pub fn bytes(&self) -> u64 {
         match self {
-            Self::Input { .. } | Self::RenderTarget(_) => 0,
+            Self::Input { .. } | Self::ResidentBuffer(_) | Self::RenderTarget(_) => 0,
             Self::Buffer(bytes) | Self::Retained { bytes, .. } => *bytes,
             Self::Uniform(bytes) | Self::Data(bytes) => bytes.len() as u64,
             Self::Texture(size) => u64::from(size[0]) * u64::from(size[1]) * 16,
@@ -350,7 +463,12 @@ impl Binding {
     }
 }
 
+#[derive(Clone)]
 pub enum Work {
+    Produce {
+        image: Arc<ImageNode>,
+        output: PlannedImage,
+    },
     Upload {
         source: Arc<dyn Source>,
         output: PlannedImage,
@@ -390,7 +508,7 @@ impl Work {
 
     pub fn resources(&self) -> Vec<Resource> {
         match self {
-            Self::Upload { output, .. } => vec![output.resource],
+            Self::Upload { output, .. } | Self::Produce { output, .. } => vec![output.resource],
             Self::Compute { bindings, .. } => {
                 bindings.iter().filter_map(|(_, b)| b.local()).collect()
             }
@@ -405,7 +523,7 @@ impl Work {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Fragment {
     pub resources: Vec<Storage>,
     pub work: Vec<Work>,

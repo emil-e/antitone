@@ -26,7 +26,7 @@ pub(super) fn service_job(
     let previous = render
         .then(|| {
             thumbnails
-                .compatible_product(&key)
+                .source_product(&key)
                 .map(|(_, product)| product.clone())
         })
         .flatten();
@@ -604,7 +604,7 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
     let other_before = editor
         .thumbnail_parameters(editor.document.state.project.source(other).unwrap())
         .unwrap()
-        .signature();
+        .clone();
     assert_eq!(
         first.grade().unwrap().snapshot(),
         &source.grade_snapshot().unwrap()
@@ -613,8 +613,8 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
     editor.source_white_balance = crate::raw::SourceWhiteBalance::AsShot;
     editor.source_exposure = -2.;
     assert_eq!(
-        editor.thumbnail_parameters(&source).unwrap().signature(),
-        first.signature()
+        editor.thumbnail_parameters(&source).unwrap().clone(),
+        first.clone()
     );
     assert_eq!(key(&editor.document, id), unchanged_key);
     editor.document.visit.adjustment_layer_settings = AdjustmentLayerSettings {
@@ -631,12 +631,12 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
         adjusted.grade().unwrap().snapshot().layers()[0].photo,
         editor.document.visit.adjustment_layer_settings
     );
-    assert_ne!(adjusted.signature(), first.signature());
+    assert_ne!(adjusted.clone(), first.clone());
     assert_eq!(
         editor
             .thumbnail_parameters(editor.document.state.project.source(other).unwrap())
             .unwrap()
-            .signature(),
+            .clone(),
         other_before
     );
     editor.document.roll.exposure = 0.5;
@@ -644,7 +644,7 @@ fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode()
         editor
             .thumbnail_parameters(editor.document.state.project.source(other).unwrap())
             .unwrap()
-            .signature(),
+            .clone(),
         other_before
     );
     assert_eq!(key(&editor.document, id), unchanged_key);
@@ -883,14 +883,17 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
     let (commands, requests) = mpsc::channel();
     editor.document.thumbnails.services = Some(Services::Controlled(commands));
     // Only original-policy state is involved here, not an original producer.
-    editor.document.visit.canvas.grade.original.refining = Some((
-        0,
-        crate::refinement::ViewRequest {
+    editor
+        .document
+        .visit
+        .canvas
+        .grade
+        .original
+        .start_fixture(crate::refinement::ViewRequest {
             area: [0, 0, 1, 1].into(),
             output: [1, 1],
             frame: None,
-        },
-    ));
+        });
     let context = egui::Context::default();
     let budgets = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Normal);
     crate::application::test_support::with_application(editor, |app| {

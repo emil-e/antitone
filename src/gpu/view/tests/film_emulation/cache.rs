@@ -14,24 +14,36 @@ fn candidate(
         .unwrap();
     let grade = Arc::new(
         ProcessingInput::new(
-            device,
+            &device.limits(),
             InputSettings::Digital,
             RollSettings::default(),
             snapshot.clone(),
-            source.spec.matrix,
+            source.spec.matrix(),
             source.spec.area,
         )
         .unwrap(),
     );
-    let input = ProcessingInput::from(grade)
-        .with_film_emulation(film)
-        .with_frame_size(source.spec.frame().composition.crop().size)
-        .with_film_seed(17);
+    let input = ProcessingInput::from(grade).with_pixel_pipeline(
+        crate::pixel_pipeline::PixelPipeline::emulation(
+            film,
+            Default::default(),
+            source.spec.frame().composition.crop().size,
+            17,
+        )
+        .unwrap(),
+    );
     RenderedView::new(device, source, &input, OutputTarget::Srgb, previous).unwrap()
 }
 
 fn field(view: &RenderedView) -> &Arc<crate::gpu::evaluation::RetainedBuffer> {
-    view.graded.as_ref().unwrap().stages.field().unwrap()
+    view.graded
+        .as_ref()
+        .unwrap()
+        .stages
+        .as_ref()
+        .unwrap()
+        .field()
+        .unwrap()
 }
 
 #[test]
@@ -52,27 +64,32 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
         let source = base.graded.as_ref().unwrap().source.clone();
         let make = |strength, previous: &Arc<RenderedView>| {
             let input = ProcessingInput::new(
-                &device,
+                &device.limits(),
                 InputSettings::Digital,
                 RollSettings::default(),
                 AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-                source.spec.matrix,
+                source.spec.matrix(),
                 source.spec.area,
             )
             .unwrap()
-            .with_film_emulation(FilmEmulationSettings {
-                enabled: true,
-                size: 2. / 6000. * 100.,
-                image_sigma: 2. / 6000. * 100.,
-                ..Default::default()
-            })
-            .with_halation(crate::halation::HalationSettings {
-                enabled: true,
-                size: 0.02,
-                strength,
-            })
-            .with_frame_size(source.spec.frame().composition.crop().size)
-            .with_film_seed(17);
+            .with_pixel_pipeline(
+                crate::pixel_pipeline::PixelPipeline::emulation(
+                    FilmEmulationSettings {
+                        enabled: true,
+                        size: 2. / 6000. * 100.,
+                        image_sigma: 2. / 6000. * 100.,
+                        ..Default::default()
+                    },
+                    crate::halation::HalationSettings {
+                        enabled: true,
+                        size: 0.02,
+                        strength,
+                    },
+                    source.spec.frame().composition.crop().size,
+                    17,
+                )
+                .unwrap(),
+            );
             RenderedView::new(
                 &device,
                 source.clone(),
@@ -93,7 +110,7 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
         let noise = read(&device, &queue, &field(&first).pixels);
         assert!(field(&first).ready());
         let changed = make(0.8, &first);
-        assert!(Arc::ptr_eq(field(&first), field(&changed)));
+        assert_eq!(field(&first).pixels, field(&changed).pixels);
         assert!(field(&changed).ready());
         changed.ensure_submitted(
             &device,
@@ -204,7 +221,15 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             None,
         );
         assert!(
-            cold_zero.graded.as_ref().unwrap().stages.field().is_none(),
+            cold_zero
+                .graded
+                .as_ref()
+                .unwrap()
+                .stages
+                .as_ref()
+                .unwrap()
+                .field()
+                .is_none(),
             "omitted grain does not allocate a field; warm reuse may retain an existing value"
         );
         drop(cold_zero);
@@ -214,13 +239,22 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             &SubmissionGate::default(),
             &egui::Context::default(),
         );
-        assert!(Arc::ptr_eq(field(&base), field(&zero)));
         assert!(
-            !field(&zero).ready(),
+            zero.graded
+                .as_ref()
+                .unwrap()
+                .stages
+                .as_ref()
+                .unwrap()
+                .field()
+                .is_none()
+        );
+        assert!(
+            !field(&base).ready(),
             "zero Amount must not compute or mark an uninitialized field ready"
         );
         let edited = candidate(&device, source.clone(), settings, photo, Some(&zero));
-        assert!(Arc::ptr_eq(field(&base), field(&edited)));
+        assert_eq!(field(&base).pixels, field(&edited).pixels);
         assert!(!field(&base).ready());
 
         // Encoding alone is not initialization, including when a different photographic view
@@ -277,7 +311,7 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             AdjustmentLayerSettings::default(),
             Some(&edited),
         );
-        assert!(Arc::ptr_eq(field(&edited), field(&warm)));
+        assert_eq!(field(&edited).pixels, field(&warm).pixels);
         drop(base);
         drop(edited);
         warm.ensure_submitted(
@@ -287,14 +321,23 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             &egui::Context::default(),
         );
         let warm_pixels = read(&device, &queue, &warm.graded.as_ref().unwrap().pixels);
+        let cold_renderer = crate::renderer::GpuRenderer::new(&device, &queue)
+            .await
+            .unwrap();
+        let cold_source = Arc::new(ViewSource::from_neutral_samples(
+            source.spec.clone(),
+            cold_renderer,
+            kernels.clone(),
+            (*source.pixels).clone(),
+        ));
         let cold = candidate(
             &device,
-            source.clone(),
+            cold_source,
             warm_settings,
             AdjustmentLayerSettings::default(),
             None,
         );
-        assert!(!Arc::ptr_eq(field(&warm), field(&cold)));
+        assert_ne!(field(&warm).pixels, field(&cold).pixels);
         cold.ensure_submitted(
             &device,
             &queue,
@@ -318,9 +361,10 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             AdjustmentLayerSettings::default(),
             Some(&warm),
         );
-        assert!(
-            Arc::ptr_eq(field(&warm), field(&softer)),
-            "independent image softness must reuse the same grain realization"
+        assert_eq!(
+            field(&warm).pixels,
+            field(&softer).pixels,
+            "independent image softness reuses the selected field"
         );
         softer.ensure_submitted(
             &device,
@@ -348,16 +392,9 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             photo,
             Some(&warm),
         );
-        assert!(!Arc::ptr_eq(field(&warm), field(&resized)));
-        let mut other_spec = source.spec.clone();
-        // Publication rights do not change the source-anchored field's geometry/model/seed.
-        other_spec.authority += 65536;
-        let other_source = Arc::new(ViewSource {
-            spec: other_spec,
-            pixels: source.pixels.clone(),
-            renderer: renderer.clone(),
-            kernels: kernels.clone(),
-        });
+        assert_ne!(field(&warm).pixels, field(&resized).pixels);
+        let other_source = ViewSource::from_acquired(kernels.clone(), source.acquired());
+        assert!(!Arc::ptr_eq(&source, &other_source));
         let other = candidate(
             &device,
             other_source,
@@ -365,7 +402,7 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             AdjustmentLayerSettings::default(),
             Some(&warm),
         );
-        assert!(Arc::ptr_eq(field(&warm), field(&other)));
+        assert_eq!(field(&warm).pixels, field(&other).pixels);
         other.ensure_submitted(
             &device,
             &queue,
@@ -383,12 +420,12 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         shifted_frame.min.0 = shifted_frame.min.0.map(|x| x + 8.);
         shifted_frame.max.0 = shifted_frame.max.0.map(|x| x + 8.);
         shifted_spec = shifted_spec.with_frame(shifted_frame).unwrap();
-        let shifted_source = Arc::new(ViewSource {
-            spec: shifted_spec,
-            pixels: source.pixels.clone(),
+        let shifted_source = Arc::new(ViewSource::from_neutral_samples(
+            shifted_spec,
             renderer,
             kernels,
-        });
+            (*source.pixels).clone(),
+        ));
         let shifted = candidate(
             &device,
             shifted_source,
@@ -396,7 +433,7 @@ fn film_emulation_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
             AdjustmentLayerSettings::default(),
             Some(&warm),
         );
-        assert!(!Arc::ptr_eq(field(&warm), field(&shifted)));
+        assert_ne!(field(&warm).pixels, field(&shifted).pixels);
         shifted.ensure_submitted(
             &device,
             &queue,
@@ -470,7 +507,16 @@ fn film_emulation_cache_off_and_an_insufficient_budget_preserve_rendered_pixels(
                     ProbeConfig::default(),
                     17,
                 );
-                assert!(view.graded.as_ref().unwrap().stages.field().is_none());
+                assert!(
+                    view.graded
+                        .as_ref()
+                        .unwrap()
+                        .stages
+                        .as_ref()
+                        .unwrap()
+                        .field()
+                        .is_none()
+                );
                 view.ensure_submitted(
                     &device,
                     &queue,

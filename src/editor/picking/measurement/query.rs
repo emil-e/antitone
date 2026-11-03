@@ -69,7 +69,7 @@ impl<'a> Samples<'a> {
         let evaluation = self.renderer.evaluation().request(
             image,
             Region {
-                bounds: self.coverage.bounds(self.scan.area)?,
+                bounds: self.coverage.bounds(self.scan.area)?.try_into()?,
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             },
             Budget {
@@ -84,6 +84,7 @@ impl<'a> Samples<'a> {
             &evaluation,
             cancelled,
             |region, pixels| {
+                let region = region.source()?;
                 for (index, pixel) in pixels.iter().enumerate() {
                     let point = [
                         region.x + index as u32 % region.width,
@@ -103,12 +104,7 @@ impl<'a> Samples<'a> {
     }
 
     pub(in crate::editor) fn camera_light(&self) -> Result<Arc<ImageNode>, Error> {
-        Photograph::camera_light(
-            &self.services.device,
-            &self.renderer.camera,
-            self.source.clone(),
-            self.field.clone(),
-        )
+        Photograph::camera_light(self.source.clone(), self.field.clone())
     }
 
     pub(in crate::editor) fn require_precision(
@@ -148,21 +144,20 @@ impl<'a> Samples<'a> {
         let matrix = self.scan.positive_matrix(&input)?;
 
         let grade = Arc::new(Grading::new(
-            &self.services.device,
+            &self.services.device.limits(),
             roll,
             layers,
             self.scan.area,
         )?);
         let pipeline = Arc::new(ProcessingInput::compose(
-            &self.services.device,
+            &self.services.device.limits(),
             program,
             grade,
             self.scan.area,
         )?);
 
         Photograph::new(
-            &self.services.device,
-            &self.renderer.camera,
+            &self.services.device.limits(),
             self.source.clone(),
             self.field.clone(),
             &ProcessingInput::from(pipeline),

@@ -78,7 +78,8 @@ fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair
     project.orientation.turn_clockwise();
     let graded = project.image_recipe(id).unwrap();
     assert_ne!(repaired, graded);
-    assert!(repaired.same_neutral_content(&graded));
+    assert_eq!(repaired.neutral, graded.neutral);
+    assert_eq!(repaired.repairs(), graded.repairs());
     assert_eq!(
         repaired.grade.layers()[0].photo.exposure,
         0.,
@@ -88,7 +89,7 @@ fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair
     if let InputSettings::Negative { gamma, .. } = &mut project.input {
         *gamma = 0.7;
     }
-    assert!(!graded.same_neutral_content(&project.image_recipe(id).unwrap()));
+    assert_ne!(graded.neutral, project.image_recipe(id).unwrap().neutral);
     project.input = original_gamma;
     let mut metadata = serde_json::to_value(&project).unwrap();
     metadata["sources"][0]["repairs"]["repairs"][0]["id"] = 4.into();
@@ -142,7 +143,7 @@ fn halation_is_captured_without_repair_invalidation_or_grain_enablement() {
     };
     let captured = project.image_recipe(id).unwrap();
     assert_ne!(clean, captured);
-    assert!(clean.same_neutral_content(&captured));
+    assert_eq!(clean.neutral, captured.neutral);
     assert!(!captured.film_emulation.enabled);
     assert_eq!(captured.pixel_pipeline().unwrap().stages.len(), 1);
     project.output.halation.strength = 0.4;
@@ -168,7 +169,7 @@ fn film_emulation_is_captured_immutably_without_changing_neutral_repair_identity
     let captured = project.image_recipe(id).unwrap();
     assert_eq!(captured.film_emulation, film);
     assert_ne!(clean, captured);
-    assert!(clean.same_neutral_content(&captured));
+    assert_eq!(clean.neutral, captured.neutral);
     project.output.film_preset = antitone::film_emulation::FilmPreset::MediumFormat;
     assert_eq!(
         captured,
@@ -208,9 +209,9 @@ fn emulation_resolves_from_the_captured_crop_not_its_source_bounds_or_orientatio
         angle: 0.21,
     });
     let cropped = project.image_recipe(id).unwrap();
-    assert!(
-        full.same_neutral_content(&cropped),
-        "crop scale is downstream of healing"
+    assert_eq!(
+        full.neutral, cropped.neutral,
+        "crop scale does not alter captured input interpretation"
     );
     let check = |recipe: &antitone::image_recipe::ImageRecipe, expected: f64| {
         let pipeline = recipe.pixel_pipeline().unwrap();
@@ -259,7 +260,8 @@ fn accepted_look_identity_is_numeric_immutable_and_downstream_of_neutral_repairs
     ));
     let looked = project.image_recipe(id).unwrap();
     assert_ne!(none, looked);
-    assert!(none.same_neutral_content(&looked));
+    assert_eq!(none.neutral, looked.neutral);
+    assert_eq!(none.repairs(), looked.repairs());
     assert!(looked.retained_bytes() >= none.retained_bytes() + lut.byte_len());
     project.output.look = Some(Arc::new(
         LookAsset::new("Renamed".into(), LookOrigin::Imported, lut.clone()).unwrap(),

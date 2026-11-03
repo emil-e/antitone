@@ -92,15 +92,17 @@ The provisional Dust tool heals here. RAW-development WB, gamma balance and fixe
 
 Healing and nonlinear grading do not commute, so pre-grade donor matching can differ from matching graded input. Full-resolution repair composition precedes view filtering; saved repairs identify this stage through an explicit [project repair contract](projects.md#source-owned-dust-repairs). Viewer and TIFF/AP0 EXR consume those repairs; [navigation thumbnails](editor.md#positive-thumbnail-reuse) and measurement inputs omit them.
 
-### Input and grading have separate contracts
-
-[`GpuInputProgram`](../src/gpu/input_program.rs) prepares source interpretation and camera conversion; [`Grading`](../src/gpu/grading.rs) owns captured Roll/layer controls, prepared resources and grading operations on working positives. [`ProcessingInput`](../src/gpu/input.rs) captures these independently, including the original extent for spatial admission.
-
-The [ordered photographic definition](../src/gpu/photograph.rs) drives both component admission and [image assembly](../src/gpu/evaluation/photograph/assembly.rs). Full photographs and requested prefixes follow that definition; source adapters supply captured settings and coordinate mappings rather than separate upstream operation lists. Recognized folded camera implementations preserve their arithmetic and representable range without requiring each logical boundary to become a buffer.
-
 ### One accepted image recipe
 
-[Full image recipes](../src/image_recipe.rs) capture accepted source/development, input interpretation and active correction, committed enabled repairs, ordered adjustment layers, MTF/grain and independent halation, composition and the immutable creative-look asset. Navigation recipes retain grade/emulation/look/composition but omit repair payload. Numeric look identity affects rendering, not neutral healing or graded-AP1 reuse. Output target and format are consumer choices, including EXR's explicit look bypass; metadata-only repair IDs, look labels and disabled instructions do not change photographic identity. Interactive and offscreen repairs use a [shared GPU source](../src/gpu/repair_source.rs) to supply bounded crops to the CPU matching and healing algorithms.
+[ImageRecipe](../src/image_recipe.rs) captures accepted source/development, interpretation/correction, committed enabled repairs, ordered grading, emulation/halation, composition and the immutable look asset. Navigation recipes omit repairs. Output target and format are consumer choices, including EXR's look bypass; repair IDs, look labels and disabled instructions do not change photographic identity. Interactive and offscreen repairs use a [shared GPU source](../src/gpu/repair_source.rs) for bounded CPU matching and healing.
+
+### Input and grading have separate contracts
+
+[`GpuInputProgram`](../src/gpu/input_program.rs) supplies interpretation/camera conversion; [`Grading`](../src/gpu/grading.rs) captures Roll/layer values and owns their operations. [`ProcessingInput`](../src/gpu/input.rs) is a transient lowering bundle or standalone mathematical input, not another retained photograph description.
+
+[Photograph assembly](../src/gpu/evaluation/photograph/assembly.rs) builds complete purpose-specific graphs from captured intent before recording work. Original-sample and physical-view graphs can choose different grids, regions and ordering as described [below](#physical-view-processing-is-an-approximation). Operations own mathematics and support; generic [evaluation](../src/gpu/evaluation.rs) plans dependencies, access, resources and production.
+
+Stored arguments retain their complete upstream definitions and actual layouts. Reuse follows captured content, upstream calculations, domain and sampling rather than shader bytes or allocations; anonymous inputs require their actual shared definition. One [materialization store](../src/gpu/evaluation/materializations.rs) joins production and discovers live values independently of byte-bounded optional recency retention. Eviction releases optional ownership without withdrawing another consumer's value. Recorded results become discoverable after queue submission; an unsubmitted recording cannot make a worker wait for a paint.
 
 ### Photo contrast and saturation
 

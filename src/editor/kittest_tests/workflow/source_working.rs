@@ -335,8 +335,18 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             }));
         });
         harness.step();
-        harness.application.pump();
-        starts.recv_timeout(Duration::from_secs(15)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            harness.application.pump();
+            if starts.try_recv().is_ok() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "physical acquisition did not reach submission"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         harness.read(|editor| {
             assert!(editor.document.visit.working.task.is_some());
             assert!(!editor.document.visit.working_view.support_ready());
@@ -369,9 +379,11 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                 .preview_rendered
                 .as_ref()
                 .expect("available proxy preview");
-            assert_eq!(
-                preview.0, editor.id,
-                "preview belongs to the selected photo"
+            assert!(
+                preview
+                    .0
+                    .same_source(&editor.document.visit.canvas.ready.as_ref().unwrap().proxy),
+                "preview consumes the selected photo's actual camera value"
             );
             assert!(
                 editor
@@ -405,7 +417,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             assert!(Arc::ptr_eq(&view, displayed));
             if film {
                 assert_eq!(
-                    view.processing,
+                    view.processing(),
                     editor
                         .positive_processing(
                             editor.document.input,
@@ -413,7 +425,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                             editor.document.visit.adjustment_layer_settings
                         )
                         .unwrap()
-                        .signature()
+                        .clone()
                 );
             }
         });
@@ -599,7 +611,8 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                     .as_ref()
                     .is_some_and(|v| {
                         v.spec.frame() == e.document.visit.working_view.current_frame().unwrap()
-                            && Some(&v.processing) == e.document.visit.working_view.processing()
+                            && Some(&v.processing())
+                                == e.document.visit.working_view.processing().as_ref()
                             && v.target == e.document.target
                     })
             });
@@ -636,18 +649,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                 )
             });
             harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
-            harness.read(|editor| {
-                assert!(
-                    editor
-                        .document
-                        .visit
-                        .canvas
-                        .grade
-                        .original
-                        .refining
-                        .is_none()
-                )
-            });
+            harness.read(|editor| assert!(!editor.document.visit.canvas.grade.original.refining()));
             harness.read(|editor| {
                 assert_eq!(
                     editor.document.state.project, project,

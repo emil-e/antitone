@@ -332,13 +332,7 @@ fn workload(
                         );
                     }
                     if app.read(|e| {
-                        e.document
-                            .visit
-                            .canvas
-                            .grade
-                            .original
-                            .refinement_error
-                            .is_some()
+                        e.document.visit.canvas.grade.original.failed()
                             || e.document.visit.working_view.error.is_some()
                     }) {
                         return Err(app.read(|e| format!("refinement failed: {}", e.status)));

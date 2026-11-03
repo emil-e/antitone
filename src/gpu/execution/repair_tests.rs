@@ -35,7 +35,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
     let photo = AdjustmentLayerSettings::default();
     let grade = Arc::new(
         ProcessingInput::new(
-            &device,
+            &device.limits(),
             Calibration {
                 dmin: DVec3::splat(0.8),
                 dmax: DVec3::splat(0.01),
@@ -51,10 +51,8 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         )
         .unwrap(),
     );
-    let kernel = crate::gpu::camera_fixture::CameraFixture::with_context(
-        renderer.camera.clone(),
-        renderer.evaluation.clone(),
-    );
+    let kernel =
+        crate::gpu::camera_fixture::CameraFixture::with_context(renderer.evaluation.clone());
     let reconstruction = Reconstructor::new(&device).unwrap();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -120,7 +118,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
                     assert!(
                         (f64::from(actual[c]) - expected[c]).abs()
                             <= 2e-5 + 2e-4 * expected[c].abs(),
-                        "{point:?} channel={c}"
+                        "{point:?} channel={c} actual={actual:?} expected={expected:?}"
                     );
                 }
             } else {

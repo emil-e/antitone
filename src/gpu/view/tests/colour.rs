@@ -20,17 +20,17 @@ pub(super) fn authored_source(
         DVec3::new(0.3802, 1.1927, -0.1490),
         DVec3::new(0.0136, -0.2088, 1.1521),
     );
-    let spec = ViewSourceSpec::new(1, frame, negative(0.65), matrix, None).unwrap();
-    Arc::new(ViewSource {
+    let spec = SourceRequest::new(frame, negative(0.65), matrix, None).unwrap();
+    Arc::new(ViewSource::from_neutral_samples(
         spec,
         renderer,
         kernels,
-        pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("identical signed/HDR acquired AP1, including provenance"),
             contents: bytemuck::cast_slice(values),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         }),
-    })
+    ))
 }
 
 fn render(
@@ -63,11 +63,11 @@ fn render_with_basis(
     let settings = input.into();
     let grade = Arc::new(
         ProcessingInput::new(
-            device,
+            &device.limits(),
             settings,
             roll,
             snapshot.clone(),
-            source.spec.matrix,
+            source.spec.matrix(),
             source.spec.area,
         )
         .unwrap(),

@@ -57,7 +57,7 @@ impl Editor {
             .working_view
             .displayed
             .as_ref()
-            .filter(|view| view.processing.look_id() == Some(id))
+            .filter(|view| view.look_id() == Some(id))
         {
             return view.image.look_failure(id);
         }

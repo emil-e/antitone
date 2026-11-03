@@ -23,7 +23,7 @@ pub use originals::{OriginalBatch, OriginalUnit};
 
 pub(crate) mod windows;
 
-pub use footprints::{FilterWindow, FootprintBatch, FootprintBudget, FootprintUnit};
+pub use footprints::WindowBudget;
 
 #[cfg(test)]
 mod tests;

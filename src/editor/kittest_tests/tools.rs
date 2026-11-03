@@ -177,21 +177,13 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             wait_for(&mut h, |e| e.active_pick().is_some());
             h.read(|e| assert_eq!(e.active_pick(), Some(kind.display())));
             wait_for(&mut h, |e| {
-                e.document.visit.canvas.grade.original.settled.is_some()
+                e.document.visit.canvas.grade.original.settled().is_some()
             });
             h.event(egui::Event::PointerGone);
             h.step();
             h.render().unwrap();
             let (layout, target, matrix, pipeline) = h.read(|e| {
-                let (_, view, _) = e
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .settled
-                    .as_ref()
-                    .unwrap();
+                let (view, _) = e.document.visit.canvas.grade.original.settled().unwrap();
                 assert_eq!(view.frame.is_some(), angle != 0.);
                 let matrix = e
                     .document
@@ -260,7 +252,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.step();
             h.read(|e| {
                 assert!(
-                    e.document.visit.canvas.grade.original.settled.is_none(),
+                    e.document.visit.canvas.grade.original.settled().is_none(),
                     "departed tool must not retain its image"
                 )
             });
@@ -513,12 +505,8 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
             harness.read(|editor| assert_eq!(editor.active_pick(), Some(flat::DISPLAY)));
             harness.read(|editor| assert!(editor.document.flat_edit().is_some()));
             wait_for(&mut harness, |e| {
-                assert!(
-                    e.active_canvas().grade.original.refinement_error.is_none(),
-                    "{}",
-                    e.status
-                );
-                e.active_canvas().grade.original.settled.is_some()
+                assert!(!e.active_canvas().grade.original.failed(), "{}", e.status);
+                e.active_canvas().grade.original.settled().is_some()
             });
             let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             let support = harness.read(|editor| editor.pick_region().expect("proposed support"));

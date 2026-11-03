@@ -115,6 +115,10 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
             h.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, view));
         }
         h.read(|editor| assert!(editor.document.visit.dust.brush_size > diameter));
+        wait_for(&mut h, |editor| editor.document.visit.working_view.idle());
+        // This live consumer protects reuse independently of optional window retention.
+        let initial_neutral =
+            h.read(|editor| editor.document.visit.working_view.neutral_source().unwrap());
         click(&mut h, egui::pos2(96., 32.), egui::Modifiers::NONE);
         ready(&mut h, 1);
         let sig = h.read(|editor| editor.dust_signature().unwrap());
@@ -128,8 +132,12 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
                 .unwrap()
                 .clone()
         });
-        let initial_neutral =
-            h.read(|editor| editor.document.visit.working_view.neutral_source().unwrap());
+        h.read(|editor| {
+            assert!(
+                initial_neutral
+                    .same_pixels_as(&editor.document.visit.working_view.neutral_source().unwrap())
+            )
+        });
         let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let target = layout.screen_point(egui::pos2(96., 32.));
         h.hover_at(target);

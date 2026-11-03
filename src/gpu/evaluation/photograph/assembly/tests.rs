@@ -8,6 +8,52 @@ use crate::{
 };
 use glam::{DMat3, DVec3};
 
+#[test]
+fn native_and_working_identity_use_captured_values_not_uniform_packing() {
+    let input = InputSettings::Negative {
+        dmin: Some(DVec3::splat(0.8)),
+        dmax: Some(DVec3::splat(0.02)),
+        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+        response: Response::film(),
+        gamma: 0.75,
+        balance: Default::default(),
+    };
+    let capture = |input| {
+        Interpretation::Program(
+            GpuInputProgram::new(input, DMat3::IDENTITY).unwrap(),
+            RollSettings::default(),
+        )
+    };
+    let original = capture(input);
+    let mut changed = input;
+    if let InputSettings::Negative { gamma, .. } = &mut changed {
+        *gamma = gamma.next_up();
+    }
+    let a = Native::new(original).unwrap();
+    let b = Native::new(capture(changed)).unwrap();
+    assert!(
+        a.pointwise().unwrap().bindings == b.pointwise().unwrap().bindings,
+        "control must collide in packed native constants"
+    );
+    assert_ne!(a.identity(), b.identity());
+    assert_eq!(a.identity(), Native::new(original).unwrap().identity());
+
+    let matrix = DMat3::IDENTITY;
+    let mut changed = matrix;
+    changed.x_axis.x = changed.x_axis.x.next_up();
+    let a = Working::new(original, matrix).unwrap();
+    let b = Working::new(original, changed).unwrap();
+    assert!(
+        a.pointwise().unwrap().bindings == b.pointwise().unwrap().bindings,
+        "control must collide in packed camera constants"
+    );
+    assert_ne!(a.identity(), b.identity());
+    assert_eq!(
+        a.identity(),
+        Working::new(original, matrix).unwrap().identity()
+    );
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Scale(DVec3);
 
@@ -85,9 +131,9 @@ impl Source for Pixels {
         self.domain
     }
 
-    fn read(&self, region: crate::geometry::SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
-        Ok((region.x..region.x + region.width)
-            .map(|x| self.values[(x - self.domain.bounds.x) as usize])
+    fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+        Ok((region.x..region.right())
+            .map(|x| self.values[(x - self.domain.finite().unwrap().x) as usize])
             .collect())
     }
 }
@@ -97,7 +143,7 @@ fn read(context: &Context, queue: &wgpu::Queue, image: Arc<ImageNode>) -> Vec<DV
         .request(
             image.clone(),
             Region {
-                bounds: image.domain.bounds,
+                bounds: image.domain.finite().unwrap(),
                 grid: image.domain.grid,
             },
             Budget {
@@ -146,7 +192,7 @@ fn inserting_one_upstream_operation_changes_independent_prefixes_and_complete_co
     let context = renderer.evaluation();
     let area = crate::geometry::SourceRegion::from([21, 17, 4, 1]);
     let domain = Domain {
-        bounds: area,
+        bounds: Some(area.try_into().unwrap()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::CameraCodes,
     };
@@ -198,28 +244,20 @@ fn inserting_one_upstream_operation_changes_independent_prefixes_and_complete_co
             ..Default::default()
         })])
         .unwrap();
-    let grade = Arc::new(Grading::new(&device, roll, layers.clone(), area).unwrap());
+    let grade = Arc::new(Grading::new(&device.limits(), roll, layers.clone(), area).unwrap());
     let captured = Captured::new(
-        &device,
-        &renderer.camera,
         CameraInput {
             matrix,
-            matrix_buffer: None,
             field: None,
             continuous: true,
             mapping: Mapping::Originals,
         },
-        Some(program.clone()),
-        None,
+        Interpretation::Program(program, Default::default()),
     )
     .unwrap();
     let mut assembly = Assembly::captured(captured);
     assembly.grading = Some(grade.for_grid(0));
-    assembly.photographic = Some(Arc::new(Photographic {
-        parameters: ProcessingParameters::interpret(negative, roll, matrix).unwrap(),
-        grade: Some(grade),
-        repairs: Default::default(),
-    }));
+
     // Gamma-one, unshaped inversion reduces to a ratio, and the two exposures give 2 × ¼.
     // This fixture checks operation placement without a second photographic evaluator.
     let native_response = |sensor: DVec3| {
@@ -255,7 +293,7 @@ fn inserting_one_upstream_operation_changes_independent_prefixes_and_complete_co
             .clone()
             .build(codes.clone(), Boundary::Codes, Boundary::Neutral, &steps)
             .unwrap();
-        let native = Assembly::native(program.clone(), RollSettings::default())
+        let native = Assembly::native(program, RollSettings::default())
             .build(
                 normalized.clone(),
                 Boundary::Camera,
@@ -316,7 +354,7 @@ fn inserting_one_upstream_operation_changes_independent_prefixes_and_complete_co
 fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_presentation() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let domain = Domain {
-        bounds: [0, 0, 4, 1].into(),
+        bounds: Some([0, 0, 4, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Neutral,
     };
@@ -326,7 +364,7 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
         values: values.map(|v| [v, v, v, 0.]).to_vec(),
     }));
     let grading = Grading::new(
-        &device,
+        &device.limits(),
         RollSettings {
             exposure: 1.,
             ..Default::default()
@@ -336,7 +374,7 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
             ..Default::default()
         })])
         .unwrap(),
-        domain.bounds,
+        domain.finite().unwrap().source().unwrap(),
     )
     .unwrap();
     let effects = PixelPipeline {
@@ -360,7 +398,7 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
     let mut assembly = Assembly::filtered(grading);
     let mut output = domain;
     output.meaning = Meaning::Graded;
-    output.bounds = [0, 0, 2, 1].into();
+    output.bounds = Some([0, 0, 2, 1].into());
     output.grid = Grid::axis_aligned([0.; 2], [2., 1.]);
     assembly.effect_output = Some(EffectOutput {
         domain: output,
@@ -412,7 +450,7 @@ fn encoded_readouts_stop_at_the_requested_boundary_and_reject_unproven_scaling_c
     let assembly = Assembly::native(program, encoding);
     let image = source(Arc::new(Pixels {
         domain: Domain {
-            bounds: [0, 0, 1, 1].into(),
+            bounds: Some([0, 0, 1, 1].into()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             meaning: Meaning::Camera,
         },

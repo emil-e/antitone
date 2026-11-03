@@ -15,6 +15,23 @@ fn buffer(device: &wgpu::Device, pixels: &[[f32; 4]]) -> wgpu::Buffer {
     })
 }
 
+fn supplied(source: &wgpu::Buffer, dimensions: [u32; 4]) -> SuppliedImage {
+    let domain = Domain {
+        bounds: Some(CellRegion::new([0, 0], [dimensions[0], dimensions[1]])),
+        grid: Grid {
+            coverage: dimensions[2],
+            ..Grid::axis_aligned([0.; 2], [1.; 2])
+        },
+        meaning: Meaning::Graded,
+    };
+    SuppliedImage::from_buffer(
+        borrowed_input(domain),
+        domain.finite().unwrap(),
+        source.clone().into(),
+    )
+    .unwrap()
+}
+
 fn texture(device: &wgpu::Device, size: [u32; 2], format: wgpu::TextureFormat) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -215,7 +232,13 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                 let expected = texture(&device, [3, 2], wgpu::TextureFormat::Rgba32Float);
                 let dimensions = [3, 2, coverage, 0];
                 let binding = renderer
-                    .render_binding(&device, &source, dimensions, target, selected, &output)
+                    .render_binding(
+                        &device,
+                        supplied(&source, dimensions),
+                        target,
+                        selected,
+                        &output,
+                    )
                     .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 let check = binding.encode(&device, &mut encoder).unwrap();
@@ -282,7 +305,7 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                     }
                 }
                 let domain = Domain {
-                    bounds: [0, 0, 3, 2].into(),
+                    bounds: Some([0, 0, 3, 2].into()),
                     grid: Grid {
                         coverage,
                         ..Grid::axis_aligned([0.; 2], [1.; 2])
@@ -297,11 +320,16 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                 )
                 .unwrap();
                 let image = reference
-                    .presentation(borrowed_input(domain), &renderer, &output)
+                    .presentation(
+                        borrowed_input(domain),
+                        &renderer,
+                        &output,
+                        domain.finite().unwrap(),
+                    )
                     .unwrap();
                 let plan = Plan::new(
                     image,
-                    domain.bounds,
+                    domain.finite().unwrap(),
                     Budget {
                         tile: [3, 2],
                         scratch_bytes: 1 << 20,
@@ -359,8 +387,7 @@ fn repeated_presentation_owns_fresh_admission_and_rejects_only_covered_nonfinite
     let binding = renderer
         .render_binding(
             &device,
-            &source,
-            [2, 1, 1, 0],
+            supplied(&source, [2, 1, 1, 0]),
             OutputTarget::Srgb,
             Some(&look),
             &output,
@@ -401,10 +428,263 @@ fn repeated_presentation_owns_fresh_admission_and_rejects_only_covered_nonfinite
 }
 
 #[test]
+fn display_and_look_values_preserve_sample_flags_and_ignore_uncovered_nonfinite_light() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let source = buffer(
+        &device,
+        &[
+            [-0.04, 0.18, 2., 9.],
+            [0., 0., 0., 8.],
+            [f32::NAN, 0.2, 0.3, 0.],
+            [0.2, f32::NAN, 0.3, 8.],
+            [0.2, 0.3, 0.4, -1.],
+        ],
+    );
+    let look = asset();
+    for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
+        for policy in [Policy::Materialized, Policy::Composed] {
+            for selected in [None, Some(&look)] {
+                let argument = supplied(&source, [5, 1, 8, 0]);
+                let domain = argument.definition.domain();
+                let image = Reference::capture(
+                    &device,
+                    &renderer,
+                    OutputReference::DisplayReferred(target),
+                    selected,
+                )
+                .unwrap()
+                .compose(argument.definition.clone(), &renderer)
+                .unwrap();
+                let job = Job::new(
+                    image,
+                    domain.finite().unwrap(),
+                    Budget {
+                        tile: [5, 1],
+                        scratch_bytes: 1 << 20,
+                    },
+                )
+                .unwrap()
+                .with_policy(policy)
+                .with_supplied(vec![argument].into());
+                let plan = job.plans().next().unwrap().unwrap();
+                let recorded = renderer
+                    .evaluation
+                    .executor()
+                    .prepare(&device, plan)
+                    .unwrap();
+                let output = buffer(&device, &[[0.; 4]; 5]);
+                let mut encoder = device.create_command_encoder(&Default::default());
+                recorded
+                    .encode_result(&device, &mut encoder, &output)
+                    .unwrap();
+                queue.submit([encoder.finish()]);
+                let actual = execute::read(&device, &queue, &output);
+                assert_eq!(
+                    actual.iter().map(|p| p[3]).collect::<Vec<_>>(),
+                    [9., 8., 0., -1., -1.]
+                );
+                assert_eq!(
+                    actual[2], [0.; 4],
+                    "uncovered light is not a failed contribution"
+                );
+                assert!(actual[0][..3].iter().all(|v| v.is_finite()));
+                assert!(actual[0][..3].iter().any(|v| *v > 0.));
+            }
+        }
+    }
+}
+
+#[test]
+fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readout() {
+    struct Pixel(Domain);
+    impl Source for Pixel {
+        fn domain(&self) -> Domain {
+            self.0
+        }
+        fn identity(&self) -> Option<RetainedKey> {
+            Some(RetainedKey::new([0.18f32, 0.2, 0.3, 8.].map(f32::to_bits)))
+        }
+        fn read(&self, region: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            assert_eq!(region, self.0.finite().unwrap());
+            Ok(vec![[0.18, 0.2, 0.3, 8.]])
+        }
+    }
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let other = pollster::block_on(crate::renderer::GpuRenderer::new(&device, &queue)).unwrap();
+    let domain = Domain {
+        bounds: Some([0, 0, 1, 1].into()),
+        grid: Grid {
+            coverage: 8,
+            ..Grid::axis_aligned([0.; 2], [1.; 2])
+        },
+        meaning: Meaning::Graded,
+    };
+    #[derive(Debug, PartialEq)]
+    struct Nonfinite;
+    impl Operation for Nonfinite {
+        fn identity(&self) -> Option<RetainedKey> {
+            Some(RetainedKey::new(Self))
+        }
+        fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
+            Ok(Some(region))
+        }
+        fn pointwise(&self) -> Option<Function> {
+            Some(Function::new(
+                "fn nonfinite(p: vec4f, xy: vec2f) -> vec4f { return vec4f(bitcast<f32>(0x7fc00000u), p.gba); }",
+                "nonfinite",
+            ))
+        }
+    }
+    let base = source(Arc::new(Pixel(domain)));
+    let different = Arc::new(
+        LookAsset::new(
+            "Different numeric look".into(),
+            LookOrigin::Imported,
+            Arc::new(Lut3D::new(2, [-0.5; 3], [1.; 3], vec![[0.3; 3]; 8]).unwrap()),
+        )
+        .unwrap(),
+    );
+    let context = renderer.evaluation();
+    let scope = context.materializations();
+    let gate = crate::gpu::SubmissionGate::default();
+    let budget = Budget {
+        tile: [1, 1],
+        scratch_bytes: 1 << 20,
+    };
+    for fails in [false, true] {
+        let look = asset();
+        let input = if fails {
+            ImageNode::new(domain, Some(base.clone()), Nonfinite)
+        } else {
+            base.clone()
+        };
+        let pixels = buffer(
+            &device,
+            &[[if fails { f32::NAN } else { 0.18 }, 0.2, 0.3, 8.]],
+        );
+        let argument =
+            SuppliedImage::from_buffer(input.clone(), domain.finite().unwrap(), pixels.into())
+                .unwrap();
+        let reference = Reference::capture(
+            &device,
+            &renderer,
+            OutputReference::DisplayReferred(OutputTarget::Srgb),
+            Some(&look),
+        )
+        .unwrap();
+        let renamed = Arc::new(
+            LookAsset::new(
+                "Different label".into(),
+                LookOrigin::Imported,
+                look.lut().clone(),
+            )
+            .unwrap(),
+        );
+        let independent = Reference::capture(
+            &device,
+            &other,
+            OutputReference::DisplayReferred(OutputTarget::Srgb),
+            Some(&renamed),
+        )
+        .unwrap();
+        let looked = reference.looked(input.clone());
+        let changed = Reference::capture(
+            &device,
+            &renderer,
+            OutputReference::DisplayReferred(OutputTarget::Srgb),
+            Some(&different),
+        )
+        .unwrap();
+        assert!(!looked.same_definition(&changed.looked(input.clone())));
+        assert!(looked.identity().is_some());
+        assert!(
+            looked.same_definition(&independent.looked(input.clone())),
+            "allocations and labels are not mathematical content"
+        );
+        let displayed = reference.compose(input.clone(), &renderer).unwrap();
+        assert!(displayed.identity().is_some());
+        assert!(displayed.same_definition(&independent.compose(input.clone(), &other).unwrap()));
+        let p3 = Reference::capture(
+            &device,
+            &renderer,
+            OutputReference::DisplayReferred(OutputTarget::DisplayP3),
+            Some(&look),
+        )
+        .unwrap();
+        assert!(!displayed.same_definition(&p3.compose(input.clone(), &renderer).unwrap()));
+        let evaluation = context
+            .request(
+                looked,
+                Region {
+                    bounds: domain.finite().unwrap(),
+                    grid: domain.grid,
+                },
+                budget,
+            )
+            .unwrap();
+        let cached = pollster::block_on(
+            context
+                .materialize(
+                    &queue,
+                    &gate,
+                    &scope,
+                    evaluation,
+                    ImageFormat::Rgba32Float,
+                    ImageBacking::Buffer,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let output = texture(&device, [1, 1], wgpu::TextureFormat::Rgba32Float);
+        let readout = reference
+            .presentation(input.clone(), &renderer, &output, domain.finite().unwrap())
+            .unwrap();
+        assert!(
+            readout.identity().is_none(),
+            "a bound attachment must still be written when mathematical inputs are reused"
+        );
+        let plan = Job::new(readout, domain.finite().unwrap(), budget)
+            .unwrap()
+            .with_materializations(scope.clone())
+            .with_supplied(vec![argument.clone()].into())
+            .plans()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert!(plan.tiles.iter().flat_map(|tile| &tile.fragment.resources).any(|resource| {
+            matches!(resource, Storage::ResidentBuffer(image) if image.as_buffer() == cached.as_buffer())
+        }), "control: readout must actually consume the stored look value");
+        let binding = renderer
+            .render_binding(
+                &device,
+                argument.clone(),
+                OutputTarget::Srgb,
+                Some(&look),
+                &output,
+            )
+            .unwrap();
+        let mut checks = Vec::new();
+        for _ in 0..2 {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let check = binding.encode(&device, &mut encoder).unwrap().unwrap();
+            queue.submit([encoder.finish()]);
+            check.begin(|| {});
+            checks.push(check);
+        }
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        assert!(!Arc::ptr_eq(&checks[0], &checks[1]));
+        for check in checks {
+            assert_eq!(check.result().unwrap().is_err(), fails);
+        }
+        assert_eq!(read_texture(&device, &queue, &output)[0][3] < 0., fails);
+    }
+}
+
+#[test]
 fn display_attachment_admission_checks_format_extent_and_complete_grid() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let domain = Domain {
-        bounds: [0, 0, 3, 2].into(),
+        bounds: Some([0, 0, 3, 2].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Graded,
     };
@@ -422,25 +702,40 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
     let wrong_size = texture(&device, [2, 2], wgpu::TextureFormat::Rgba32Float);
     assert!(
         reference
-            .presentation(borrowed_input(domain), &renderer, &wrong_size)
+            .presentation(
+                borrowed_input(domain),
+                &renderer,
+                &wrong_size,
+                domain.finite().unwrap()
+            )
             .is_err()
     );
     let wrong_format = texture(&device, [3, 2], wgpu::TextureFormat::Rgba16Float);
     let image = reference
-        .presentation(borrowed_input(domain), &renderer, &wrong_format)
+        .presentation(
+            borrowed_input(domain),
+            &renderer,
+            &wrong_format,
+            domain.finite().unwrap(),
+        )
         .unwrap();
-    let plan = Plan::new(image, domain.bounds, budget).unwrap();
+    let plan = Plan::new(image, domain.finite().unwrap(), budget).unwrap();
     assert!(Executor::admit(&device.limits(), &plan).is_err());
     let output = texture(&device, [3, 2], wgpu::TextureFormat::Rgba32Float);
     let image = reference
-        .presentation(borrowed_input(domain), &renderer, &output)
+        .presentation(
+            borrowed_input(domain),
+            &renderer,
+            &output,
+            domain.finite().unwrap(),
+        )
         .unwrap();
     let evaluation = renderer
         .evaluation
         .request(
             image.clone(),
             Region {
-                bounds: domain.bounds,
+                bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
             budget,
@@ -460,7 +755,14 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
         error.to_string(),
         Error::InvalidParameter("buffer sink requires raster storage").to_string()
     );
-    let recorded = renderer.evaluation.record(evaluation, vec![]).unwrap();
+    let recorded = renderer
+        .evaluation
+        .record(
+            evaluation,
+            renderer.evaluation.test_materializations(true),
+            Vec::new(),
+        )
+        .unwrap();
     let pixels = buffer(&device, &[[0.; 4]; 6]);
     let mut encoder = device.create_command_encoder(&Default::default());
     let error = recorded
@@ -474,7 +776,7 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
     assert!(
         Plan::new(
             image,
-            domain.bounds,
+            domain.finite().unwrap(),
             Budget {
                 tile: [2, 1],
                 ..budget

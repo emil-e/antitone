@@ -243,10 +243,7 @@ impl Editor {
                 ..visible
             };
             Ok(ScopeInput::Rendered(view.clone(), frame))
-        } else if !parameters
-            .pixel_pipeline()
-            .is_ok_and(|pipeline| pipeline.is_empty())
-        {
+        } else if !parameters.pixel_pipeline().is_empty() {
             // Camera proxies can lose original-sample detail; wait for the same
             // source-anchored emulation raster as the viewer rather than reprocessing that proxy.
             Err("Waiting for view")

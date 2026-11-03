@@ -14,6 +14,72 @@ use crate::{
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 #[test]
+fn regional_delivery_uses_the_authored_signed_grid_and_places_it_at_texture_origin() {
+    struct Pixels(evaluation::Domain);
+    impl evaluation::Source for Pixels {
+        fn domain(&self) -> evaluation::Domain {
+            self.0
+        }
+        fn read(&self, region: evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            assert!(self.0.contains_region(region));
+            Ok(vec![
+                [0., 0., 0., 8.];
+                region.width as usize * region.height as usize
+            ])
+        }
+    }
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let domain = evaluation::Domain {
+        bounds: Some(evaluation::CellRegion::new([-2, 3], [2, 2])),
+        grid: evaluation::Grid {
+            coverage: 8,
+            ..evaluation::Grid::axis_aligned([0.; 2], [1.; 2])
+        },
+        meaning: evaluation::Meaning::Display,
+    };
+    let root = evaluation::pointwise(
+        evaluation::source(Arc::new(Pixels(domain))),
+        evaluation::Meaning::Display,
+        evaluation::Function {
+            code: "fn coordinates(p: vec4f, xy: vec2f) -> vec4f { return vec4f(xy, 0.5, p.w); }"
+                .into(),
+            symbol: "coordinates",
+            bindings: vec![],
+        },
+    );
+    let output = pollster::block_on(crate::viewer::GpuImage::new_rendered_shared(
+        &renderer,
+        &device,
+        2,
+        2,
+        OutputTarget::Srgb,
+    ))
+    .unwrap();
+    assert!(
+        execute(
+            &renderer,
+            &device,
+            (&queue, &SubmissionGate::default()),
+            root,
+            false,
+            &output.linear,
+            || false
+        )
+        .unwrap()
+        .is_some()
+    );
+    assert_eq!(
+        crate::viewer::readback::image_pixels(&device, &queue, &output),
+        vec![
+            [-1.5, 3.5, 0.5, 1.],
+            [-0.5, 3.5, 0.5, 1.],
+            [-1.5, 4.5, 0.5, 1.],
+            [-0.5, 4.5, 0.5, 1.],
+        ]
+    );
+}
+
+#[test]
 fn regional_cancellation_observes_the_actual_submission_boundary_without_finishing_obsolete_work() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::dng_fixture::Fixture {
@@ -71,6 +137,94 @@ fn regional_cancellation_observes_the_actual_submission_boundary_without_finishi
         count.load(Ordering::Relaxed),
         1,
         "already cancelled demand does not acquire or submit"
+    );
+}
+
+#[test]
+fn reference_output_larger_than_a_storage_binding_keeps_its_full_grid_and_places_tail_tiles() {
+    let instance = crate::gpu::instance();
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits: wgpu::Limits {
+            max_storage_buffer_binding_size: 1 << 20,
+            ..Default::default()
+        },
+        ..Default::default()
+    }))
+    .unwrap();
+    let renderer = pollster::block_on(GpuRenderer::new(&device, &queue)).unwrap();
+    let file = crate::dng_fixture::Fixture {
+        side: 64,
+        ramp: true,
+        ..Default::default()
+    }
+    .write();
+    let scan = Scan::open(file.path(), None).unwrap();
+    let composition =
+        crate::geometry::Composition::new(scan.area, Default::default(), Default::default())
+            .unwrap();
+    let size = composition.size();
+    let output = [515, 259];
+    assert!(
+        u64::from(output[0]) * u64::from(output[1]) * 16
+            > device.limits().max_storage_buffer_binding_size,
+        "control: a full-output storage binding must actually exceed this device's allowance"
+    );
+    let full = crate::frame_raster::FrameRaster::new(
+        composition,
+        crate::geometry::FramePoint([0.; 2]),
+        crate::geometry::FramePoint(size.map(f64::from)),
+        output,
+    )
+    .unwrap();
+    let run = |frame: crate::frame_raster::FrameRaster| {
+        crate::refinement::refine(
+            &renderer,
+            &device,
+            (&queue, &SubmissionGate::default()),
+            (&scan, None),
+            ProcessingParameters::source(),
+            OutputTarget::Srgb,
+            (&AtomicU64::new(7), 7),
+            Demand {
+                area: frame.bounds().unwrap(),
+                output: frame.output,
+                frame: Some(frame),
+            },
+        )
+        .unwrap()
+        .unwrap()
+    };
+    let image = run(full);
+    let pixels = crate::viewer::readback::image_pixels(&device, &queue, &image);
+    assert_eq!(pixels.len(), output[0] as usize * output[1] as usize);
+    let mut samples = Vec::new();
+    for point in [[0, 0], [511, 127], [512, 128], [514, 258]] {
+        let frame = crate::frame_raster::FrameRaster::new(
+            composition,
+            crate::geometry::FramePoint(std::array::from_fn(|i| {
+                f64::from(size[i]) * f64::from(point[i]) / f64::from(output[i])
+            })),
+            crate::geometry::FramePoint(std::array::from_fn(|i| {
+                f64::from(size[i]) * f64::from(point[i] + 1) / f64::from(output[i])
+            })),
+            [1, 1],
+        )
+        .unwrap();
+        let expected = crate::viewer::readback::image_pixels(&device, &queue, &run(frame));
+        let actual = pixels[(point[1] * output[0] + point[0]) as usize];
+        for channel in 0..3 {
+            assert!(
+                (actual[channel] - expected[0][channel]).abs() < 2e-6,
+                "output {point:?} channel {channel}: {actual:?} versus independent-position request {:?}",
+                expected[0]
+            );
+        }
+        samples.push(actual);
+    }
+    assert!(
+        samples.windows(2).any(|pair| pair[0][..3] != pair[1][..3]),
+        "control: contrasting source samples must expose shifted or missing tail writes"
     );
 }
 
@@ -132,7 +286,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
     let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital).unwrap();
     let gpu = Arc::new(
         ProcessingInput::new(
-            &device,
+            &device.limits(),
             InputSettings::Digital,
             roll,
             layers.clone(),
@@ -141,16 +295,21 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         )
         .unwrap(),
     );
-    let input = ProcessingInput::from(gpu)
-        .with_frame_size([620, 480])
-        .with_film_seed(17)
-        .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
-            enabled: true,
-            size: 0.1,
-            image_sigma: 0.1,
-            amount: 0.,
-            colour: 0.5,
-        });
+    let input = ProcessingInput::from(gpu).with_pixel_pipeline(
+        crate::pixel_pipeline::PixelPipeline::emulation(
+            crate::film_emulation::FilmEmulationSettings {
+                enabled: true,
+                size: 0.1,
+                image_sigma: 0.1,
+                amount: 0.,
+                colour: 0.5,
+            },
+            Default::default(),
+            [620, 480],
+            17,
+        )
+        .unwrap(),
+    );
     let grading = GradingPipeline::new(roll, layers).unwrap();
     let original: Vec<_> = (a.y..a.y + a.height)
         .flat_map(|y| (a.x..a.x + a.width).map(move |x| [x, y]))
@@ -183,70 +342,119 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         let cpu = crate::rendering::CpuRenderer::new(target).unwrap();
         let rendered = cpu.render(&blurred).unwrap();
         let unfiltered = cpu.render(&original).unwrap();
-        let actual = crate::refinement::refine(
-            &renderer,
-            &device,
-            (&queue, &SubmissionGate::default()),
-            (&scan, None),
-            input.clone(),
-            target,
-            (&AtomicU64::new(7), 7),
-            Demand {
-                area: bounds,
-                output: frame.output,
-                frame: Some(frame),
-            },
-        )
-        .unwrap()
-        .unwrap();
-        let pixels = crate::viewer::readback::image_pixels(&device, &queue, &actual);
         let mut order_difference = 0_f64;
         let mut blur_difference = 0_f64;
-        for y in 0..frame.output[1] {
-            for x in 0..frame.output[0] {
-                let cells: Vec<_> = frame
-                    .footprint([x, y])
-                    .unwrap()
-                    .pixels(a)
-                    .unwrap()
-                    .collect();
-                let expected =
-                    crate::sampling::weighted_mean_iter(cells.iter().map(|(p, weight)| {
-                        Ok((
-                            rendered[((p[1] - a.y) * a.width + p[0] - a.x) as usize].as_dvec3(),
-                            *weight,
-                        ))
-                    }))
-                    .unwrap();
-                let without_mtf =
-                    crate::sampling::weighted_mean_iter(cells.iter().map(|(p, weight)| {
-                        Ok((
-                            unfiltered[((p[1] - a.y) * a.width + p[0] - a.x) as usize].as_dvec3(),
-                            *weight,
-                        ))
-                    }))
-                    .unwrap();
-                blur_difference = blur_difference.max((expected - without_mtf).abs().max_element());
-                let working =
-                    crate::sampling::weighted_mean_iter(cells.iter().map(|(p, weight)| {
-                        Ok((
-                            blurred[((p[1] - a.y) * a.width + p[0] - a.x) as usize],
-                            *weight,
-                        ))
-                    }))
-                    .unwrap();
-                let reversed = cpu.render(&[working]).unwrap()[0].as_dvec3();
-                order_difference = order_difference.max((expected - reversed).abs().max_element());
-                let actual = glam::Vec3::from_array(
-                    pixels[(y * frame.output[0] + x) as usize][..3]
-                        .try_into()
-                        .unwrap(),
+        for output in [[147, 113], [1, 1], [515, 131]] {
+            let frame = FrameRaster { output, ..frame };
+            if output == [1, 1] {
+                let original = crate::gpu::evaluation::original_chain(
+                    &device,
+                    &renderer,
+                    &scan,
+                    None,
+                    &input,
+                    crate::rendering::OutputReference::DisplayReferred(target),
+                    &input.pixel_pipeline(),
                 )
-                .as_dvec3();
+                .unwrap();
+                let domain = crate::gpu::evaluation::Domain {
+                    bounds: Some([0, 0, 1, 1].into()),
+                    grid: crate::gpu::evaluation::Grid::from_frame(frame),
+                    meaning: original.domain().meaning,
+                };
+                let root = crate::gpu::evaluation::reconstruct(original, domain).unwrap();
+                let evaluation = renderer
+                    .evaluation()
+                    .request(
+                        root,
+                        crate::gpu::evaluation::Region {
+                            bounds: domain.finite().unwrap(),
+                            grid: domain.grid,
+                        },
+                        crate::gpu::evaluation::Budget {
+                            tile: [1, 1],
+                            scratch_bytes: 32 << 20,
+                        },
+                    )
+                    .unwrap();
                 assert!(
-                    (expected - actual).abs().max_element() < TOLERANCE,
-                    "{target:?} ({x},{y}) expected={expected:?} actual={actual:?}"
+                    renderer
+                        .evaluation()
+                        .record(
+                            evaluation,
+                            renderer.evaluation().materializations(),
+                            Vec::new()
+                        )
+                        .is_err(),
+                    "control: this aperture must require worker production rather than an ordinary recorded dispatch"
                 );
+            }
+            let actual = crate::refinement::refine(
+                &renderer,
+                &device,
+                (&queue, &SubmissionGate::default()),
+                (&scan, None),
+                input.clone(),
+                target,
+                (&AtomicU64::new(7), 7),
+                Demand {
+                    area: bounds,
+                    output: frame.output,
+                    frame: Some(frame),
+                },
+            )
+            .unwrap()
+            .unwrap();
+            let pixels = crate::viewer::readback::image_pixels(&device, &queue, &actual);
+            for y in 0..frame.output[1] {
+                for x in 0..frame.output[0] {
+                    let cells: Vec<_> = frame
+                        .footprint([x, y])
+                        .unwrap()
+                        .pixels(a)
+                        .unwrap()
+                        .collect();
+                    let expected =
+                        crate::sampling::weighted_mean_iter(cells.iter().map(|(p, weight)| {
+                            Ok((
+                                rendered[((p[1] - a.y) * a.width + p[0] - a.x) as usize].as_dvec3(),
+                                *weight,
+                            ))
+                        }))
+                        .unwrap();
+                    let without_mtf =
+                        crate::sampling::weighted_mean_iter(cells.iter().map(|(p, weight)| {
+                            Ok((
+                                unfiltered[((p[1] - a.y) * a.width + p[0] - a.x) as usize]
+                                    .as_dvec3(),
+                                *weight,
+                            ))
+                        }))
+                        .unwrap();
+                    blur_difference =
+                        blur_difference.max((expected - without_mtf).abs().max_element());
+                    let working =
+                        crate::sampling::weighted_mean_iter(cells.iter().map(|(p, weight)| {
+                            Ok((
+                                blurred[((p[1] - a.y) * a.width + p[0] - a.x) as usize],
+                                *weight,
+                            ))
+                        }))
+                        .unwrap();
+                    let reversed = cpu.render(&[working]).unwrap()[0].as_dvec3();
+                    order_difference =
+                        order_difference.max((expected - reversed).abs().max_element());
+                    let actual = glam::Vec3::from_array(
+                        pixels[(y * frame.output[0] + x) as usize][..3]
+                            .try_into()
+                            .unwrap(),
+                    )
+                    .as_dvec3();
+                    assert!(
+                        (expected - actual).abs().max_element() < TOLERANCE,
+                        "{target:?} output={output:?} ({x},{y}) expected={expected:?} actual={actual:?}"
+                    );
+                }
             }
         }
         assert!(

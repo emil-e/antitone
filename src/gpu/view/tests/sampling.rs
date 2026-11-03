@@ -26,7 +26,7 @@ impl EffectDefinition for Unrefined {
 
 fn input(device: &wgpu::Device, frame: FrameRaster, pipeline: PixelPipeline) -> ProcessingInput {
     ProcessingInput::new(
-        device,
+        &device.limits(),
         InputSettings::Digital,
         RollSettings::default(),
         AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -45,7 +45,7 @@ fn ready_source(
     pipeline: PixelPipeline,
     frequency: f64,
 ) -> Arc<ViewSource> {
-    let spec = ViewSourceSpec::new(17, frame, InputSettings::Digital, DMat3::IDENTITY, None)
+    let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
         .with_pipeline(pipeline)
         .unwrap();
@@ -74,16 +74,16 @@ fn ready_source(
             [value as f32, value as f32, value as f32, 8.]
         })
         .collect();
-    Arc::new(ViewSource {
+    Arc::new(ViewSource::from_neutral_samples(
         spec,
-        renderer: renderer.clone(),
-        kernels: kernels.clone(),
-        pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        renderer.clone(),
+        kernels.clone(),
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("independently integrated sinusoidal neutral cells"),
             contents: bytemuck::cast_slice(&values),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         }),
-    })
+    ))
 }
 
 fn render(
@@ -162,20 +162,17 @@ fn padded_f32_grids_near_zero_origins_preserve_valid_composed_mappings() {
         let source = ready_source(&device, &renderer, &kernels, frame, pipeline.clone(), 3.);
         assert!(source.spec.plan.output_offset().unwrap()[0] > 0);
         let domain = crate::gpu::evaluation::Domain {
-            bounds: [
-                0,
-                0,
-                source.spec.input_frame().unwrap().output[0],
-                source.spec.input_frame().unwrap().output[1],
-            ]
-            .into(),
+            bounds: Some(crate::gpu::evaluation::CellRegion::new(
+                [0, 0],
+                source.spec.input_frame().unwrap().output,
+            )),
             grid: crate::gpu::evaluation::Grid::from_raster(crate::gpu::raster::Raster::planned(
                 &source.spec.plan,
             )),
             meaning: crate::gpu::evaluation::Meaning::Graded,
         };
         let output = crate::gpu::evaluation::Domain {
-            bounds: [0, 0, 50, 50].into(),
+            bounds: Some([0, 0, 50, 50].into()),
             grid: crate::gpu::evaluation::Grid::from_raster(crate::gpu::raster::Raster::frame(
                 frame,
             )),
@@ -265,7 +262,15 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
         )
         .unwrap();
         if budget > 1 {
-            let field = view.graded.as_ref().unwrap().stages.field().unwrap();
+            let field = view
+                .graded
+                .as_ref()
+                .unwrap()
+                .stages
+                .as_ref()
+                .unwrap()
+                .field()
+                .unwrap();
             assert!(!field.ready());
             assert_eq!(
                 field.pixels.size(),
@@ -295,7 +300,14 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
             Some(&view),
         )
         .unwrap();
-        let scratch = edited.graded.as_ref().unwrap().stages.scratch_bytes();
+        let scratch = edited
+            .graded
+            .as_ref()
+            .unwrap()
+            .stages
+            .as_ref()
+            .unwrap()
+            .scratch_bytes();
         if let Some(expected) = expected_scratch {
             assert_eq!(
                 scratch, expected,
@@ -304,10 +316,24 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
         } else {
             expected_scratch = Some(scratch);
         }
-        let a = view.graded.as_ref().unwrap().stages.field();
-        let b = edited.graded.as_ref().unwrap().stages.field();
+        let a = view
+            .graded
+            .as_ref()
+            .unwrap()
+            .stages
+            .as_ref()
+            .unwrap()
+            .field();
+        let b = edited
+            .graded
+            .as_ref()
+            .unwrap()
+            .stages
+            .as_ref()
+            .unwrap()
+            .field();
         if budget > 1 {
-            assert!(Arc::ptr_eq(a.unwrap(), b.unwrap()));
+            assert_eq!(a.unwrap().pixels, b.unwrap().pixels);
             assert!(
                 b.unwrap().ready(),
                 "Amount, Colour and fixed-support halation reuse the initialized field"
@@ -399,7 +425,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
         .unwrap();
         let make_input = |pipeline| {
             ProcessingInput::new(
-                &device,
+                &device.limits(),
                 InputSettings::Digital,
                 Default::default(),
                 AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -418,7 +444,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
                 kernels.clone(),
                 &scan,
                 None,
-                ViewSourceSpec::new(17, frame, InputSettings::Digital, matrix, None)
+                SourceRequest::new(frame, InputSettings::Digital, matrix, None)
                     .unwrap()
                     .with_pipeline(pipeline)
                     .unwrap(),

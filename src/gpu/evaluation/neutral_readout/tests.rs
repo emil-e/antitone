@@ -17,14 +17,15 @@ impl Source for Codes {
         self.domain
     }
 
-    fn read(&self, region: SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
+    fn read(&self, region: crate::gpu::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+        let region = region.source()?;
         Ok(vec![self.value; (region.width * region.height) as usize])
     }
 }
 
 #[test]
 fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_local_pixels() {
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
     let region = SourceRegion::from([11, 17, 3, 2]);
     let mut input = InputSettings::negative(Calibration {
         dmin: DVec3::splat(0.7),
@@ -55,15 +56,13 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
         let codes = (raw * 65535.).as_vec3();
         let camera = source(Arc::new(Codes {
             domain: Domain {
-                bounds: region,
+                bounds: Some(region.try_into().unwrap()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
                 meaning: Meaning::CameraCodes,
             },
             value: [codes.x, codes.y, codes.z, 0.],
         }));
         let readout = Photograph::neutral_readout(
-            &device,
-            &renderer,
             camera,
             None,
             GpuInputProgram::new(input, DMat3::IDENTITY).unwrap(),
@@ -77,7 +76,7 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
             .request(
                 readout.image.clone(),
                 Region {
-                    bounds: region,
+                    bounds: region.try_into().unwrap(),
                     grid: readout.image.domain.grid,
                 },
                 Budget {
@@ -135,7 +134,7 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
                 .request(
                     image.clone(),
                     Region {
-                        bounds: region,
+                        bounds: region.try_into().unwrap(),
                         grid: image.domain.grid,
                     },
                     Budget {

@@ -9,7 +9,7 @@ fn source_input() -> source::Context {
     }
 }
 
-fn request(ev: f64) -> (Signature, ProcessingInput) {
+fn request(ev: f64) -> (Demand, ProcessingInput) {
     let input = ProcessingInput::from(ProcessingParameters::source_inspection(ev).unwrap());
     let area = Rect {
         x: 0,
@@ -23,41 +23,35 @@ fn request(ev: f64) -> (Signature, ProcessingInput) {
         frame: None,
     };
     (
-        (
-            input.signature(),
+        Demand::fixture(
+            input.clone(),
             OutputTarget::Srgb,
             Some(view),
             Composition::new(area, Default::default(), Default::default()).unwrap(),
+            source_input(),
         ),
         input,
     )
 }
 
 #[test]
-fn original_request_is_readonly_and_policy_rejects_departed_completion() {
-    let mut owner = OriginalView::new(Arc::default());
+fn original_request_is_readonly_and_its_owner_rejects_departed_completion() {
+    let mut owner = OriginalView::default();
     let mut retired = None;
     for i in 0..40 {
         let (signature, input) = request(i as f64 / 10.);
         owner.observe(OriginalPurpose::Tool, signature);
         owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-        let captured = owner
-            .request(&input, OutputTarget::Srgb, source_input())
-            .unwrap();
-        assert_eq!(captured.input.signature(), input.signature());
-        assert!(
-            owner.refining.is_none(),
-            "building input does not stage work"
-        );
-        // Policy-only producer event; real task registration/retirement has workflow coverage.
-        owner.refining = Some((captured.revision, captured.view));
-        retired.get_or_insert(captured.revision);
+        let captured = owner.request().unwrap();
+        assert!(captured.demand.capture == working_view::Capture::Primitive(input));
+        assert!(!owner.refining(), "capturing input does not stage work");
+        let completion = captured.begin().unwrap();
+        retired.get_or_insert(completion);
     }
-    let running = owner.refining.unwrap();
-    assert!(owner.receive(retired.unwrap(), Ok(None)).is_none());
-    assert_eq!(owner.refining, Some(running));
+    assert!(retired.unwrap().receive(Err("departed".into())).is_none());
+    assert!(owner.refining() && !owner.failed());
     owner.leave();
-    assert!(owner.signature.is_none() && owner.refining.is_none());
+    assert!(owner.wanted.is_none() && !owner.refining());
 }
 
 #[test]
@@ -74,24 +68,10 @@ fn ordinary_views_never_become_original_tool_requests() {
             super::super::tests::app_frame(&mut editor, &context, vec![]);
         }
         assert!(
-            editor
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .signature
-                .is_none()
-                && editor
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .refining
-                    .is_none()
+            editor.document.visit.canvas.grade.original.wanted.is_none()
+                && !editor.document.visit.canvas.grade.original.refining()
         );
-        assert!(editor.document.visit.canvas.grade.task.is_none());
+        assert!(editor.document.visit.canvas.grade.original.task.is_none());
     }
 }
 
@@ -127,42 +107,41 @@ fn an_uninitialized_viewer_does_not_paint_through_an_alternate_proxy_renderer() 
 }
 
 #[test]
-fn leaving_unbuilt_reference_releases_idle_authority_without_revision_churn() {
-    let mut owner = OriginalView::new(Arc::default());
+fn leaving_unbuilt_reference_releases_its_continuation_without_idle_owner_churn() {
+    let mut owner = OriginalView::default();
     owner.observe(OriginalPurpose::Reference, request(0.).0);
     owner.leave();
-    assert!(owner.signature.is_none());
-    let revision = owner.revision();
+    assert!(owner.wanted.is_none());
+    let continuation = owner.continuation();
     for _ in 0..40 {
         owner.leave();
     }
-    assert_eq!(owner.revision(), revision);
+    assert_eq!(owner.continuation(), continuation);
     owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
     assert!(owner.idle());
 }
 
 #[test]
 fn original_failure_latches_once_and_rejects_unrequested_completions() {
-    let mut owner = OriginalView::new(Arc::default());
-    let (signature, input) = request(0.);
+    let mut owner = OriginalView::default();
+    let (signature, _) = request(0.);
     owner.observe(OriginalPurpose::Tool, signature);
     owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
-    let captured = owner
-        .request(&input, OutputTarget::Srgb, source_input())
-        .unwrap();
-    let revision = captured.revision;
-    owner.refining = Some((revision, captured.view));
+    let captured = owner.request().unwrap();
+    assert!(
+        captured
+            .completion
+            .receive(Err("unrequested".into()))
+            .is_none()
+    );
+    let completion = captured.begin().unwrap();
     assert_eq!(
-        owner
-            .receive(revision, Err("source unavailable".into()))
+        completion
+            .receive(Err("source unavailable".into()))
             .as_deref(),
         Some("Original view failed: source unavailable")
     );
-    assert!(
-        owner
-            .request(&input, OutputTarget::Srgb, source_input())
-            .is_none()
-    );
-    assert!(owner.receive(revision, Ok(None)).is_none());
-    assert_eq!(owner.refinement_error, Some(revision));
+    assert!(owner.request().is_none());
+    assert!(completion.receive(Ok(None)).is_none());
+    assert!(owner.failed());
 }
