@@ -1,0 +1,61 @@
+{
+  "paper": [
+    {
+      "id": "foma_fomabrom_variant_glossy_filter_2",
+      "name": "Fomabrom Variant glossy \u00b7 filter 2",
+      "citation": "FOMA FOMABROM VARIANT technical sheet,04/25, https://www.foma.cz/en/fomabrom-variant"
+    },
+    {
+      "id": "foma_fomaspeed_variant_glossy_filter_2",
+      "name": "Fomaspeed Variant glossy \u00b7 filter 2",
+      "citation": "FOMA FOMASPEED VARIANT technical sheet,04/25, https://www.foma.cz/en/fomaspeed-variant"
+    },
+    {
+      "id": "ilford_multigrade_fb_classic_filter_2",
+      "name": "Ilford Multigrade FB Classic \u00b7 filter 2",
+      "citation": "ILFORD MULTIGRADE FB CLASSIC Technical Information, October 2013, Japanese manufacturer edition, https://ilford.co.jp/photo/wp-content/uploads/2023/02/TDS_MULTIGRADE_FB_CLASSIC.pdf"
+    },
+    {
+      "id": "ilford_multigrade_rc_deluxe_filter_2",
+      "name": "Ilford Multigrade RC Deluxe \u00b7 filter 2",
+      "citation": "Ilford MULTIGRADE RC Papers J20, October 2020, https://www.ilfordphoto.com/wp/wp-content/uploads/2021/01/MULTIGRADE-RC-Papers-J20.pdf"
+    }
+  ],
+  "negative": [
+    {
+      "id": "ilford_delta_100_id11_8m30s",
+      "name": "Ilford Delta 100 \u00b7 ID-11 8\u00bd min",
+      "citation": "ILFORD DELTA 100 PROFESSIONAL Technical Information, November 2018, https://125px.com/docs/film/ilford/Delta-100_201811.pdf"
+    },
+    {
+      "id": "ilford_delta_400_id11_8m_24c",
+      "name": "Ilford Delta 400 \u00b7 ID-11 8 min at 24 \u00b0C",
+      "citation": "ILFORD DELTA 400 PROFESSIONAL Technical Information, November 2018, https://125px.com/docs/film/ilford/Delta-400_201811.pdf"
+    },
+    {
+      "id": "ilford_fp4_plus_ilfotec_hc_8m",
+      "name": "Ilford FP4 Plus \u00b7 Ilfotec HC 8 min",
+      "citation": "ILFORD FP4 Plus Technical Information, November 2018, https://125px.com/docs/film/ilford/FP4-Plus_201811.pdf"
+    },
+    {
+      "id": "ilford_hp5_plus_ilfotec_hc_6m30s",
+      "name": "Ilford HP5 Plus \u00b7 Ilfotec HC 6\u00bd min",
+      "citation": "ILFORD HP5 Plus Technical Information, November 2018, https://125px.com/docs/film/ilford/HP5-Plus_201811.pdf"
+    },
+    {
+      "id": "kodak_tmax_100_d76_7m30s",
+      "name": "Kodak T-Max 100 \u00b7 D-76 7\u00bd min",
+      "citation": "Kodak F-4016,June2018, https://125px.com/docs/film/kodak/f4016_tmax_100-2018.pdf"
+    },
+    {
+      "id": "kodak_tmax_400_d76_8m",
+      "name": "Kodak T-Max 400 \u00b7 D-76 8 min",
+      "citation": "Kodak F-4043, February 2016, https://125px.com/docs/film/kodak/f4043_TMax_400-2016.pdf"
+    },
+    {
+      "id": "kodak_trix_400_d76_8m",
+      "name": "Kodak Tri-X 400 \u00b7 D-76 8 min",
+      "citation": "Kodak F-4017,December2016, https://125px.com/docs/film/kodak/f4017-2016.pdf"
+    }
+  ]
+}

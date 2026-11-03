@@ -275,7 +275,7 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
         gpu_bytes: 0,
     });
     let lut = Arc::new(Lut3D::new(2, [-0.5; 3], [1.1; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
-    document.project.output.look = Some(Arc::new(
+    document.project.output.lut = Some(Arc::new(
         LookAsset::new("Card look".into(), LookOrigin::Imported, lut.clone()).unwrap(),
     ));
     let key = tests::key(&document, id);
@@ -314,7 +314,7 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     #[cfg(feature = "ui-tests")]
     assert!(view.same_grade_as(&framed.positive.as_ref().unwrap().1));
     assert!(matches!(framed.look_result(), Some(Ok(()))));
-    document.project.output.look = None;
+    document.project.output.lut = None;
     assert!(!key.current_recipe(&document));
     let restored = complete(&mut thumbnails, &document, tests::key(&document, id)).unwrap();
     assert!(Arc::ptr_eq(
@@ -584,7 +584,7 @@ fn cpu_look_charges_follow_node_allocations_not_equal_contents_or_wrapper_identi
         .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     let asset = |lut| Arc::new(LookAsset::new("Shared".into(), LookOrigin::Imported, lut).unwrap());
     let lut = Arc::new(Lut3D::new(2, [-0.5; 3], [1.1; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
-    document.project.output.look = Some(asset(lut.clone()));
+    document.project.output.lut = Some(asset(lut.clone()));
     // Failed entries still retain their recipe's CPU look, but no GPU LUT.
     let mut entries: std::collections::VecDeque<_> = document.project.order[..2]
         .iter()
@@ -592,7 +592,7 @@ fn cpu_look_charges_follow_node_allocations_not_equal_contents_or_wrapper_identi
         .collect();
     let node_bytes = 8 * std::mem::size_of::<[f32; 3]>();
     assert_eq!(shared_look_bytes(&entries), node_bytes);
-    document.project.output.look = Some(asset(Arc::new((*lut).clone())));
+    document.project.output.lut = Some(asset(Arc::new((*lut).clone())));
     entries.push_back((
         tests::key(&document, document.project.order[2]),
         Err("failed card".into()),
@@ -604,7 +604,7 @@ fn cpu_look_charges_follow_node_allocations_not_equal_contents_or_wrapper_identi
     );
     let distinct = Arc::new(Lut3D::new(2, [-0.5; 3], [1.1; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
     assert_eq!(distinct.id(), lut.id());
-    document.project.output.look = Some(asset(distinct));
+    document.project.output.lut = Some(asset(distinct));
     entries.push_back((
         tests::key(&document, document.project.order[3]),
         Err("failed card".into()),
@@ -748,7 +748,7 @@ fn authored_36_positive_cards_with_a_shared_full_size_look_survive_reverse_brows
         .set_input_floor(Some(crate::processing::CAMERA_INPUT_FLOOR));
     // The production look grid is 129³. A constant authored LUT makes its resource
     // footprint realistic without bringing a built-in generator or photographs into this test.
-    document.project.output.look = Some(Arc::new(
+    document.project.output.lut = Some(Arc::new(
         LookAsset::new(
             "Shared roll look".into(),
             LookOrigin::Imported,

@@ -40,7 +40,7 @@ pub(super) fn write(
             composition,
             stages: request.pipeline,
             output,
-            look: request.look,
+            luts: request.luts,
             encoding,
             budget: WorkBudget::for_device(device),
         },

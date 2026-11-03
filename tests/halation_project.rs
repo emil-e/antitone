@@ -30,7 +30,7 @@ fn absent_settings_keep_old_output_and_custom_disabled_values_survive_save_open(
             strength: 0.37,
         };
         assert!(project.input.is_negative());
-        assert!(!project.output.film_emulation.enabled);
+        assert!(!project.output.grain.enabled);
         project.validate().unwrap();
         let path = directory
             .path()

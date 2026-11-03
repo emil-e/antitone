@@ -2,12 +2,24 @@
 use crate::{Error, photographic};
 use glam::DVec3;
 use std::sync::Arc;
+mod chain;
+pub use chain::LutChain;
 
 #[cfg(feature = "project")]
-pub mod builtin;
+pub mod authoring;
+#[cfg(feature = "project")]
+mod lookup;
+#[cfg(feature = "project")]
+pub mod material;
+#[cfg(feature = "project")]
+pub mod monochrome;
+#[cfg(feature = "project")]
+mod sampling;
+#[cfg(feature = "project")]
+pub mod spektrafilm;
 
-#[cfg(all(feature = "project", feature = "gpu"))]
-pub mod bake;
+#[cfg(all(test, feature = "project", feature = "gpu"))]
+pub(crate) mod reference;
 
 #[cfg(feature = "project")]
 pub mod cache;
@@ -190,41 +202,51 @@ impl Lut3D {
 )]
 pub enum LookOrigin {
     Imported,
-    Builtin {
-        id: String,
-        version: u32,
+    Photochemical {
+        negative: Option<String>,
+        paper: String,
+        revision: String,
         generator: String,
-        definition: String,
+        attribution: String,
     },
 }
 
 impl LookOrigin {
     fn validate(&self) -> Result<(), Error> {
-        if let Self::Builtin {
-            id,
-            version,
+        if let Self::Photochemical {
+            negative,
+            paper,
+            revision,
             generator,
-            definition,
+            attribution,
         } = self
         {
-            require(
+            let valid_id = |id: &str| {
                 !id.is_empty()
                     && id.len() <= 128
                     && id
                         .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-                "invalid built-in look identity",
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            };
+            require(
+                valid_id(paper) && negative.as_deref().is_none_or(valid_id),
+                "invalid photochemical profile identity",
             )?;
             require(
-                *version > 0
-                    && !generator.is_empty()
+                revision.len() == 40 && revision.bytes().all(|b| b.is_ascii_hexdigit()),
+                "invalid spektrafilm revision",
+            )?;
+            require(
+                !generator.is_empty()
                     && generator.len() <= 128
                     && !generator.chars().any(char::is_control),
-                "invalid built-in look version/generator",
+                "invalid photochemical generator identity",
             )?;
             require(
-                definition.len() == 64 && definition.bytes().all(|b| b.is_ascii_hexdigit()),
-                "invalid built-in definition digest",
+                !attribution.trim().is_empty()
+                    && attribution.len() <= 2048
+                    && !attribution.chars().any(char::is_control),
+                "invalid photochemical attribution",
             )?;
         }
         Ok(())
@@ -257,12 +279,19 @@ impl LookAsset {
             + self.lut.byte_len()
             + match &self.origin {
                 LookOrigin::Imported => 0,
-                LookOrigin::Builtin {
-                    id,
+                LookOrigin::Photochemical {
+                    negative,
+                    paper,
+                    revision,
                     generator,
-                    definition,
-                    ..
-                } => id.capacity() + generator.capacity() + definition.capacity(),
+                    attribution,
+                } => {
+                    negative.as_ref().map_or(0, String::capacity)
+                        + paper.capacity()
+                        + revision.capacity()
+                        + generator.capacity()
+                        + attribution.capacity()
+                }
             }
     }
 

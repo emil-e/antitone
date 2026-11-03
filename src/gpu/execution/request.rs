@@ -85,7 +85,7 @@ pub(crate) struct Request<'a> {
     pub composition: Composition,
     pub stages: PixelPipeline,
     pub output: OutputReference,
-    pub look: Option<Arc<crate::looks::LookAsset>>,
+    pub luts: crate::looks::LutChain,
     pub encoding: SampleEncoding,
     pub budget: WorkBudget,
 }

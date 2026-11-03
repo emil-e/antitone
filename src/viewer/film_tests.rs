@@ -4,11 +4,11 @@ use super::*;
 fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_representation() {
     use crate::{
         adjustment_layers::AdjustmentLayerSnapshot,
-        film_emulation::FilmPreset,
         frame_raster::FrameRaster,
         geometry::Composition,
         gpu::ProcessingInput,
         gpu_scopes::{GpuScopes, ScopePaint},
+        grain::GrainPreset,
         processing::InputSettings,
     };
     pollster::block_on(async {
@@ -40,7 +40,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         let clean = ProcessingInput::from(Arc::new(grade));
         let film = clean.clone().with_pixel_pipeline(
             crate::pixel_pipeline::PixelPipeline::emulation(
-                FilmPreset::ThirtyFiveMm.settings(),
+                GrainPreset::ThirtyFiveMm.settings(),
                 Default::default(),
                 [1200; 2],
                 17,
@@ -163,7 +163,7 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
             .unwrap();
             let input = ProcessingInput::from(Arc::new(pipeline)).with_pixel_pipeline(
                 crate::pixel_pipeline::PixelPipeline::emulation(
-                    crate::film_emulation::FilmEmulationSettings {
+                    crate::grain::GrainSettings {
                         enabled: true,
                         size: 0.065,
                         image_sigma: 0.065,

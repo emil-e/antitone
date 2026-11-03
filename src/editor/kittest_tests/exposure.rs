@@ -17,8 +17,8 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
             editor.document.input = crate::processing::InputSettings::Digital;
             editor.document.target = OutputTarget::Srgb;
             // Zero grain amplitude keeps the constant-patch oracle; MTF still needs padding.
-            editor.document.film_emulation.enabled = film_enabled;
-            editor.document.film_emulation.amount = 0.;
+            editor.document.grain.enabled = film_enabled;
+            editor.document.grain.amount = 0.;
             editor.sync_document();
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().to_owned()], cx));
@@ -38,7 +38,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         let image = h.read(|editor| {
             assert!(!editor.document.source);
             let support = crate::pixel_pipeline::PixelPipeline::film(
-                editor.document.film_emulation,
+                editor.document.grain,
                 editor
                     .source_composition(
                         editor

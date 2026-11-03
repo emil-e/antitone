@@ -260,7 +260,7 @@ fn exercise(
                 monitor.phase(&label, || {
                     let request = Request {
                         pipeline: Default::default(),
-                        look: None,
+                        luts: (None).into(),
                         scan: &scan,
                         field: gpu_field.clone(),
                         input: calibration.into(),
@@ -496,7 +496,7 @@ fn reference_benchmark_counts_samples_and_preserves_bounded_stop_checks() {
     let composition = Composition::new(scan.area, Default::default(), Default::default()).unwrap();
     let request = || Request {
         pipeline: Default::default(),
-        look: None,
+        luts: (None).into(),
         scan: &scan,
         field: None,
         input: calibration.into(),
@@ -546,7 +546,7 @@ fn write_reference(
         repairs,
         composition,
         format,
-        look,
+        luts,
         ..
     } = request;
     let pipeline = crate::adjustment_layers::AdjustmentLayerPipeline::new(
@@ -575,8 +575,8 @@ fn write_reference(
             pipeline.apply(sample, [x, y])?.rgb
         };
         if matches!(format, Format::Tiff(_)) {
-            look.as_ref()
-                .map_or(Ok(value), |asset| asset.lut().apply(value))
+            luts.assets()
+                .try_fold(value, |rgb, asset| asset.lut().apply(rgb))
         } else {
             Ok(value)
         }

@@ -70,7 +70,7 @@ fn common_linear_engine_exr_matches_independent_scalar_with_shared_working_budge
                     repairs: &[],
                     composition,
                     format: Format::Exr(precision),
-                    look: None,
+                    luts: (None).into(),
                 },
                 &actual,
                 Overwrite::Refuse,

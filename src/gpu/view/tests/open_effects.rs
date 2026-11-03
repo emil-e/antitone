@@ -90,7 +90,7 @@ fn native(
             composition: Composition::new(area, Default::default(), Default::default()).unwrap(),
             stages,
             output: OutputReference::SceneReferred,
-            look: None,
+            luts: (None).into(),
             encoding: crate::gpu::execution::SampleEncoding::LinearFloat,
             budget: crate::gpu::execution::WorkBudget::for_device(device),
         },

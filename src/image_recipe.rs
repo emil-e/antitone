@@ -40,9 +40,9 @@ pub struct ImageRecipe {
     pub roll: RollSettings,
     pub grade: AdjustmentLayerSnapshot,
     pub composition: Composition,
-    pub film_emulation: crate::film_emulation::FilmEmulationSettings,
+    pub grain: crate::grain::GrainSettings,
     pub halation: crate::halation::HalationSettings,
-    pub look: Option<Arc<crate::looks::LookAsset>>,
+    pub luts: crate::looks::LutChain,
     repairs: Vec<Repair>,
 }
 
@@ -51,11 +51,10 @@ impl PartialEq for ImageRecipe {
         self.roll == other.roll
             && self.grade == other.grade
             && self.composition == other.composition
-            && self.film_emulation == other.film_emulation
+            && self.grain == other.grain
             && self.halation.active().then_some(self.halation)
                 == other.halation.active().then_some(other.halation)
-            && self.look.as_ref().map(|look| look.lut().id())
-                == other.look.as_ref().map(|look| look.lut().id())
+            && self.luts == other.luts
             && self.same_neutral_content(other)
     }
 }
@@ -93,7 +92,7 @@ impl ImageRecipe {
                 .correction
                 .as_ref()
                 .map_or(0, |field| field.retained_bytes())
-            + self.look.as_ref().map_or(0, |look| look.retained_bytes())
+            + self.luts.retained_bytes()
             + self.grade.retained_bytes()
             - std::mem::size_of::<AdjustmentLayerSnapshot>()
             + self.repairs.capacity() * std::mem::size_of::<Repair>()
@@ -129,7 +128,7 @@ impl ImageRecipe {
 
     pub fn pixel_pipeline(&self) -> Result<crate::pixel_pipeline::PixelPipeline, Error> {
         crate::pixel_pipeline::PixelPipeline::emulation(
-            self.film_emulation,
+            self.grain,
             self.halation,
             self.composition.crop().size,
             self.neutral.source.0,
@@ -222,9 +221,9 @@ impl Project {
             roll,
             grade: source.grade_snapshot()?,
             composition,
-            film_emulation: self.output.film_emulation,
+            grain: self.output.grain,
             halation: self.output.halation,
-            look: self.output.look.clone(),
+            luts: self.output.luts(),
             repairs: if include_repairs {
                 source
                     .repairs

@@ -126,7 +126,7 @@ fn cold_sdk_project_exports_reopen_as_scalar_corresponding_tiff_and_ap0_exr() {
                 composition,
                 pipeline: Default::default(),
                 format,
-                look: None,
+                luts: Default::default(),
             },
             &actual_path,
             Overwrite::Refuse,

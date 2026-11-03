@@ -184,7 +184,7 @@ fn completed_signed_mtf_precedes_positive_light_extraction() {
         .collect();
     let data = fixture(size, [1.; 2], 0, pixels);
     let frame = [3840, 2160];
-    let mtf_sigma = crate::film_emulation::FilmPreset::ThirtyFiveMm
+    let mtf_sigma = crate::grain::GrainPreset::ThirtyFiveMm
         .settings()
         .parameters(frame)
         .unwrap()

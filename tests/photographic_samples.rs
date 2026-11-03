@@ -190,7 +190,7 @@ fn photographic_tiff_pairs() {
                             composition,
                             pipeline: Default::default(),
                             format: Format::Tiff(target),
-                            look: None,
+                            luts: Default::default(),
                         },
                         &gpu_path,
                         Overwrite::Refuse,

@@ -1,14 +1,14 @@
 use super::*;
 #[test]
 fn look_failures_survive_reconstruction_only_for_positive_weight_samples() {
-    use crate::gpu::look::Kernel;
+    use crate::gpu::lut3d::Validation;
     use std::{sync::Arc, time::Duration};
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let pipelines = Arc::new(AveragePipelines::new(&device).await.unwrap());
-        let check = Kernel::new(&device).await.unwrap();
+        let check = Validation::new(&device).await.unwrap();
         let texture = |width, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: None,

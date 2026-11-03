@@ -281,9 +281,8 @@ impl Editor {
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && !self.masking()
-            && !self.document.visit.adjustment_layers.confirming()
             && !reviewing
-            && self.document.removal_pending.is_none();
+            && !self.document.confirming();
         let mut analyze = false;
 
         ToolShelf::show(ui, |ui| {

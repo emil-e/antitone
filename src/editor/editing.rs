@@ -98,7 +98,7 @@ pub(super) struct ControlSettings {
     pub input: InputSettings,
     pub roll: RollSettings,
     pub photo: AdjustmentLayerSettings,
-    pub film_emulation: FilmEmulationSettings,
+    pub grain: GrainSettings,
     pub halation: crate::halation::HalationSettings,
 }
 
@@ -108,7 +108,7 @@ impl ControlSettings {
             input: editor.document.input,
             roll: editor.document.roll,
             photo: editor.document.visit.adjustment_layer_settings,
-            film_emulation: editor.document.film_emulation,
+            grain: editor.document.grain,
             halation: editor.document.halation,
         }
     }
@@ -117,7 +117,7 @@ impl ControlSettings {
         editor.document.input = self.input;
         editor.document.roll = self.roll;
         editor.document.visit.adjustment_layer_settings = self.photo;
-        editor.document.film_emulation = self.film_emulation;
+        editor.document.grain = self.grain;
         editor.document.halation = self.halation;
     }
 }
@@ -337,7 +337,7 @@ impl Editor {
         previous: ControlSettings,
         candidate: ControlSettings,
     ) -> Result<(), Error> {
-        candidate.film_emulation.validate()?;
+        candidate.grain.validate()?;
         candidate.halation.validate()?;
         if candidate == previous || !candidate.input.ready() {
             return Ok(());
@@ -403,16 +403,11 @@ impl Editor {
                     let previous = ControlSettings::capture(self);
                     let mut candidate = previous;
                     match kind {
-                        controls::Parameter::FilmAmount => {
-                            candidate.film_emulation.amount = kind.default()
-                        }
+                        controls::Parameter::FilmAmount => candidate.grain.amount = kind.default(),
                         controls::Parameter::FilmSize => {
-                            candidate.film_emulation =
-                                candidate.film_emulation.resized(kind.default())
+                            candidate.grain = candidate.grain.resized(kind.default())
                         }
-                        controls::Parameter::FilmColour => {
-                            candidate.film_emulation.colour = kind.default()
-                        }
+                        controls::Parameter::FilmColour => candidate.grain.colour = kind.default(),
                         controls::Parameter::HalationStrength => {
                             candidate.halation.strength = kind.default()
                         }

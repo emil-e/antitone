@@ -1,0 +1,27 @@
+Derived from spektrafilm by Andrea Volpato
+https://github.com/andreavolpato/spektrafilm
+Source revision: 3bb2c2d2801ff68b92019cf1dbcbb133d60832bc
+Profile and sampled-LUT derivatives: CC BY-SA 4.0 (LICENSE-data.txt).
+Native algorithm ports: GPLv3 (LICENSE-code.txt).
+Modified by Antitone contributors.
+
+Antitone modifications:
+- Evaluate the deterministic nonspatial pipeline at build time.
+- Retain the source camera-negative and printing-media names.
+- Factor characteristic curves, DIR/pre-correction, spectral sensitivities,
+  dye/base spectra, input-gamut coordinates and enlarger calibration.
+- Share the Hanatos input spectral family rather than installing a full
+  camera-negative exposure LUT for every stock.
+- Calibrate print time on a controlled neutral AP1 0.18 to output XYZ Y=0.1,
+  retaining the frozen complete-rendering reference's printing convention.
+  This is a rendering convention, not a photographic or stock-fidelity fit.
+- Sample each paper-density readout together with the pinned inverse
+  authoring DRT, storing ACEScct/AP1 values.
+- Add a positive-to-paper adapter using the existing 0.6 ACEScct/stops
+  convention, with a controlled neutral 0.18 anchor.
+- Generate compact source conformance observations for native tests.
+
+No source photograph, publisher artwork, Python runtime, grain/halation
+profile, camera calibration or measured physical scanner profile is included.
+Source hashes, generator identities and numeric component hashes are in
+provenance.json. LICENSE-data.txt and LICENSE-code.txt are retained unchanged.

@@ -11,9 +11,7 @@ impl PartialEq for Capture {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Photograph(a), Self::Photograph(b)) => {
-                a.same_photographic(b)
-                    && a.look.as_ref().map(|look| look.lut().id())
-                        == b.look.as_ref().map(|look| look.lut().id())
+                a.same_photographic(b) && a.luts == b.luts
             }
             (Self::Primitive(a), Self::Primitive(b)) => a == b,
             _ => false,
@@ -22,15 +20,15 @@ impl PartialEq for Capture {
 }
 
 impl Capture {
-    pub(crate) fn look(&self) -> Option<&Arc<crate::looks::LookAsset>> {
+    pub(crate) fn luts(&self) -> &crate::looks::LutChain {
         match self {
-            Self::Photograph(recipe) => recipe.look.as_ref(),
-            Self::Primitive(input) => input.look(),
+            Self::Photograph(recipe) => &recipe.luts,
+            Self::Primitive(input) => input.luts(),
         }
     }
 
     pub(crate) fn look_id(&self) -> Option<crate::looks::LookId> {
-        self.look().map(|look| look.lut().id())
+        self.luts().id()
     }
 
     pub(crate) fn processing(

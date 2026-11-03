@@ -79,7 +79,7 @@ fn dense_repaired_unit_accounts_host_and_gpu_uploads_separately_from_retained_re
             repairs,
             composition,
             format: Format::Tiff(OutputTarget::Srgb),
-            look: None,
+            luts: (None).into(),
         };
         let (result, pixels) = crate::export_timing::pixels::capture(|| {
             write(

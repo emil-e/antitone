@@ -28,11 +28,16 @@ pub fn app_panel(
                 ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
                 ui.label("An editor for camera-scanned film negatives.");
                 ui.label("Analyze a roll, refine your photographs, and export TIFF or EXR.");
-                ui.small("Copyright © Emil Sahlén · MIT · No warranty");
+                ui.small("Copyright © Emil Sahlén · No warranty");
                 ui.hyperlink_to(
-                    "License and redistribution terms",
+                    "Original Antitone code: MIT license",
                     "https://opensource.org/license/MIT",
                 );
+                ui.hyperlink_to(
+                    "spektrafilm by Andrea Volpato",
+                    "https://github.com/andreavolpato/spektrafilm",
+                );
+                ui.small("Profile data: CC BY-SA 4.0 · Native algorithm ports: GPLv3");
                 ui.small("Packaged builds include third-party licenses in Resources/Licenses.");
                 ui.small("Development build · macOS on Apple Silicon");
             }

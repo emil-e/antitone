@@ -1,9 +1,13 @@
 use super::*;
+#[cfg(test)]
+use crate::looks::spektrafilm::Selection;
 use crate::looks::{
     LookAsset, LookOrigin,
-    builtin::{Builtin, DEFAULT_GRID},
+    authoring::DEFAULT_GRID,
     cache::Cache,
+    material::{self, Selection as MaterialSelection},
 };
+use crate::project::Project;
 use std::{
     fs::File,
     io::Read,
@@ -11,16 +15,54 @@ use std::{
 };
 
 #[cfg(test)]
+mod photochemical_tests;
+#[cfg(test)]
 mod resolver_tests;
+#[cfg(test)]
+mod switch_tests;
 #[cfg(test)]
 mod tests;
 mod ui;
 
 #[derive(Clone)]
 pub(super) enum Source {
-    Builtin(Builtin),
+    Photochemical(MaterialSelection),
     Imported(PathBuf),
     Loaded(Arc<LookAsset>),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Lut,
+    FilmAndPaper,
+}
+impl Source {
+    fn slot(&self) -> Slot {
+        match self {
+            Self::Photochemical(_) => Slot::FilmAndPaper,
+            _ => Slot::Lut,
+        }
+    }
+}
+impl Slot {
+    fn asset(self, project: &Project) -> Option<&Arc<LookAsset>> {
+        match self {
+            Self::Lut => project.output.lut.as_ref(),
+            Self::FilmAndPaper => project.output.film_and_paper.as_ref(),
+        }
+    }
+    fn set(self, project: &mut Project, asset: Option<Arc<LookAsset>>) {
+        match self {
+            Self::Lut => project.output.lut = asset,
+            Self::FilmAndPaper => project.output.film_and_paper = asset,
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Lut => "LUT",
+            Self::FilmAndPaper => "Film & paper",
+        }
+    }
 }
 
 #[derive(Default)]
@@ -29,37 +71,45 @@ pub(super) struct Session {
     pub loaded: Vec<Arc<LookAsset>>,
 }
 
-pub(super) struct Operation {
-    pub activity: u64,
-    task: Option<async_executor::Task<()>>,
+/// A decision outlives any preparation it was opened over; declining keeps that work alive.
+pub(super) struct MaterialSwitch {
+    previous: MaterialSelection,
+    selection: MaterialSelection,
 }
 
-/// Shared derived assets and lazy baking resources survive document changes.
+pub(super) struct Operation {
+    pub activity: u64,
+    pub selection: Option<MaterialSelection>,
+    task: Option<async_executor::Task<()>>,
+}
+impl Operation {
+    fn slot(&self) -> Slot {
+        if self.selection.is_some() {
+            Slot::FilmAndPaper
+        } else {
+            Slot::Lut
+        }
+    }
+}
+
 struct CacheOwner {
     value: Option<Cache>,
-    baker: crate::looks::bake::Baker,
+    limits: wgpu::Limits,
     #[cfg(test)]
     _directory: tempfile::TempDir,
 }
-
 #[cfg(test)]
 type PreparedObserver = Arc<dyn Fn(bool, crate::cancellation::Cancellation) + Send + Sync>;
-
 #[derive(Clone)]
 pub(super) struct Services {
     cache: Arc<CacheOwner>,
     #[cfg(test)]
     prepared: Option<PreparedObserver>,
 }
-
 impl Services {
-    pub fn new(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        submissions: crate::gpu::SubmissionGate,
-    ) -> Self {
+    pub fn new(limits: wgpu::Limits) -> Self {
         #[cfg(test)]
-        let directory = tempfile::tempdir().expect("look cache fixture directory");
+        let directory = tempfile::tempdir().expect("LUT cache fixture directory");
         let value = {
             #[cfg(test)]
             {
@@ -73,7 +123,7 @@ impl Services {
         Self {
             cache: Arc::new(CacheOwner {
                 value,
-                baker: crate::looks::bake::Baker::new(device, queue, submissions),
+                limits,
                 #[cfg(test)]
                 _directory: directory,
             }),
@@ -81,13 +131,16 @@ impl Services {
             prepared: None,
         }
     }
-
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn observe_prepared(&mut self, observer: PreparedObserver) {
+        self.prepared = Some(observer);
+    }
     pub async fn prepare(self, source: Source) -> Result<Option<Arc<LookAsset>>, String> {
         crate::background::run(move |cancelled| {
             let result = prepare_asset(
                 source,
                 &cancelled.flag(),
-                &self.cache.baker,
+                &self.cache.limits,
                 self.cache.value.as_ref(),
             );
             #[cfg(test)]
@@ -97,7 +150,7 @@ impl Services {
             result
         })
         .await
-        .map_err(|_| "Look preparation worker panicked".to_owned())?
+        .map_err(|_| "LUT preparation worker panicked".to_owned())?
         .map_err(|error| error.to_string())
     }
 }
@@ -105,7 +158,7 @@ impl Services {
 pub(super) fn prepare_asset(
     source: Source,
     cancel: &AtomicBool,
-    baker: &crate::looks::bake::Baker,
+    limits: &wgpu::Limits,
     cache: Option<&Cache>,
 ) -> Result<Option<Arc<LookAsset>>, Error> {
     if cancel.load(Ordering::Relaxed) {
@@ -113,26 +166,30 @@ pub(super) fn prepare_asset(
     }
     let asset = match source {
         Source::Loaded(asset) => asset.as_ref().clone(),
-        Source::Builtin(builtin) => {
-            let cached = cache.and_then(|cache| match cache.load(builtin, DEFAULT_GRID) {
-                Ok(asset) => asset,
-                Err(e) => {
-                    log::warn!(error = e.to_string().as_str(); "look_cache_ignored");
-                    None
-                }
-            });
+        Source::Photochemical(selection) => {
+            let cached =
+                cache.and_then(
+                    |cache| match cache.load_photochemical(selection, DEFAULT_GRID) {
+                        Ok(asset) => asset,
+                        Err(error) => {
+                            log::warn!(error = error.to_string().as_str(); "lut_cache_ignored");
+                            None
+                        }
+                    },
+                );
             match cached {
                 Some(asset) => asset,
                 None => {
-                    let asset = match baker.bake(builtin, DEFAULT_GRID, cancel) {
+                    let result = selection.bake(DEFAULT_GRID, cancel);
+                    let asset = match result {
                         Ok(asset) => asset,
                         Err(_) if cancel.load(Ordering::Relaxed) => return Ok(None),
-                        Err(e) => return Err(e),
+                        Err(error) => return Err(error),
                     };
                     if let Some(cache) = cache
-                        && let Err(e) = cache.store(builtin, &asset)
+                        && let Err(error) = cache.store_photochemical(selection, &asset)
                     {
-                        log::warn!(error = e.to_string().as_str(); "look_cache_write_failed");
+                        log::warn!(error = error.to_string().as_str(); "lut_cache_write_failed");
                     }
                     asset
                 }
@@ -154,27 +211,113 @@ pub(super) fn prepare_asset(
             let name = path
                 .file_stem()
                 .and_then(|n| n.to_str())
-                .unwrap_or("Imported look");
+                .unwrap_or("Imported LUT");
             LookAsset::import_cube(text, name)?
         }
     };
     if cancel.load(Ordering::Relaxed) {
         Ok(None)
     } else {
-        crate::gpu::look::Lut::require_limits(&baker.device_limits(), asset.lut())?;
+        crate::gpu::lut3d::Lut::require_limits(limits, asset.lut())?;
         Ok(Some(Arc::new(asset)))
     }
 }
 
 impl Editor {
+    fn material_selection(&self) -> Option<MaterialSelection> {
+        self.document
+            .look
+            .as_ref()
+            .and_then(|op| op.selection)
+            .or_else(|| {
+                self.document
+                    .state
+                    .project
+                    .output
+                    .film_and_paper
+                    .as_ref()
+                    .and_then(|asset| MaterialSelection::from_origin(asset.origin()))
+            })
+    }
+    fn look_request_allowed(&self, slot: Slot) -> bool {
+        !self.document.confirming()
+            && (!self.busy
+                || self
+                    .document
+                    .look
+                    .as_ref()
+                    .is_some_and(|op| op.slot() == slot))
+    }
+    fn select_negative(&mut self, negative: Option<material::Negative>, cx: &UiContext<'_, Self>) {
+        if !self.look_request_allowed(Slot::FilmAndPaper) {
+            return;
+        }
+        let current = self.material_selection();
+        let paper = current
+            .map(MaterialSelection::paper)
+            .or_else(|| negative.map(material::Negative::default_paper));
+        if let Some(selection) = paper.and_then(|paper| MaterialSelection::new(negative, paper)) {
+            self.select_look(Source::Photochemical(selection), cx);
+        } else if let (Some(previous), Some(negative)) = (current, negative) {
+            self.document.material_switch = Some(MaterialSwitch {
+                previous,
+                selection: MaterialSelection::new(Some(negative), negative.default_paper())
+                    .expect("negative's default paper is supported"),
+            });
+        }
+    }
+    #[cfg(test)]
+    fn photochemical_selection(&self) -> Option<Selection> {
+        match self.material_selection() {
+            Some(MaterialSelection::Colour(selection)) => Some(selection),
+            _ => None,
+        }
+    }
+    fn select_paper(&mut self, paper: Option<material::Paper>, cx: &UiContext<'_, Self>) {
+        if !self.look_request_allowed(Slot::FilmAndPaper) {
+            return;
+        }
+        let current = self.material_selection();
+        let negative = current.and_then(MaterialSelection::negative);
+        match paper {
+            Some(paper) => {
+                if let Some(selection) = MaterialSelection::new(negative, paper) {
+                    self.select_look(Source::Photochemical(selection), cx);
+                } else if let Some(previous) = current {
+                    self.document.material_switch = Some(MaterialSwitch {
+                        previous,
+                        selection: MaterialSelection::new(None, paper)
+                            .expect("paper-only treatment is supported"),
+                    });
+                }
+            }
+            None if current.is_some() && negative.is_none() => self.clear_slot(Slot::FilmAndPaper),
+            _ => {}
+        }
+    }
+    fn resolve_material_switch(&mut self, confirm: bool, cx: &UiContext<'_, Self>) {
+        let Some(proposal) = self.document.material_switch.take() else {
+            return;
+        };
+        if confirm {
+            self.select_look(Source::Photochemical(proposal.selection), cx);
+        }
+    }
     pub(super) fn select_look(&mut self, source: Source, cx: &UiContext<'_, Self>) {
-        if self.busy && self.document.look.is_none() {
+        let slot = source.slot();
+        // One preparation owns the busy interaction; the other stage keeps its accepted asset.
+        if !self.look_request_allowed(slot) {
             return;
         }
         self.retire_look_selection();
         let activity = self.request_id();
+        let selection = match &source {
+            Source::Photochemical(s) => Some(*s),
+            _ => None,
+        };
         self.document.look = Some(Operation {
             activity,
+            selection,
             task: None,
         });
         self.busy = true;
@@ -183,21 +326,21 @@ impl Editor {
         let task = cx.spawn(move |cx| async move {
             let result = match services {
                 Some(services) => services.prepare(source).await,
-                None => Err("Look services unavailable".into()),
+                None => Err("LUT services unavailable".into()),
             };
             cx.update(|editor| {
                 editor.retire_look_selection();
                 match result {
                     Ok(Some(asset)) => {
                         let before = editor.history_snapshot();
-                        editor.document.state.project.output.look = Some(asset);
+                        slot.set(&mut editor.document.state.project, Some(asset));
                         editor.remember_imported_look();
                         editor.invalidate_original();
-                        editor.record_edit(before, "Creative look", None);
+                        editor.record_edit(before, slot.label(), None);
                         editor.resolve_failure(FailureKind::Look);
                         editor.resolve_failure(FailureKind::LookRendering);
                     }
-                    Ok(None) => editor.status = "Look preparation cancelled".into(),
+                    Ok(None) => editor.status = "LUT preparation cancelled".into(),
                     Err(message) => editor.report_failure(FailureKind::Look, message),
                 }
             });
@@ -209,12 +352,10 @@ impl Editor {
             self.report_failure(FailureKind::Look, "Application stopped".into());
         }
     }
-
     pub(super) fn cancel_look_selection(&mut self) {
         self.retire_look_selection();
-        self.status = "Look preparation cancelled".into();
+        self.status = "LUT preparation cancelled".into();
     }
-
     pub(super) fn retire_look_selection(&mut self) {
         if let Some(pending) = self.document.look.take()
             && self.tasks.finish(TaskRequest::Look(pending.activity))
@@ -222,25 +363,40 @@ impl Editor {
             self.busy = false;
         }
     }
-
-    pub(super) fn clear_look(&mut self) {
-        self.retire_look_selection();
-        if self.document.state.project.output.look.is_some() {
+    fn clear_slot(&mut self, slot: Slot) {
+        if self.document.confirming() {
+            return;
+        }
+        if self
+            .document
+            .look
+            .as_ref()
+            .is_some_and(|op| op.slot() == slot)
+        {
+            self.retire_look_selection();
+        }
+        if slot.asset(&self.document.state.project).is_some() {
             let before = self.history_snapshot();
-            self.document.state.project.output.look = None;
+            slot.set(&mut self.document.state.project, None);
             self.invalidate_original();
-            self.record_edit(before, "Creative look", None);
+            self.record_edit(before, slot.label(), None);
         }
         self.resolve_failure(FailureKind::Look);
         self.resolve_failure(FailureKind::LookRendering);
     }
+    pub(super) fn clear_film_and_paper(&mut self) {
+        self.clear_slot(Slot::FilmAndPaper);
+    }
 
+    pub(super) fn clear_look(&mut self) {
+        self.clear_slot(Slot::Lut);
+    }
     pub(super) fn remember_imported_look(&mut self) {
         let Some(asset) = self
             .document
             .project
             .output
-            .look
+            .lut
             .as_ref()
             .filter(|asset| matches!(asset.origin(), LookOrigin::Imported))
         else {

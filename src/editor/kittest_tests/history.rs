@@ -212,13 +212,13 @@ fn native_history_restores_accepted_creative_looks_and_shares_the_numeric_lut() 
         h.read(|editor| assert!(editor.failure.is_none(), "{}", editor.status));
         let accepted = h.read(|editor| editor.document.state.project.clone());
         assert!(Arc::ptr_eq(
-            accepted.output.look.as_ref().unwrap().lut(),
+            accepted.output.lut.as_ref().unwrap().lut(),
             chosen.lut()
         ));
         h.read(|editor| {
             assert_eq!(
                 editor.application_menu_state().label(Action::Undo),
-                "Undo Creative look"
+                "Undo LUT"
             )
         });
         native_action(&mut h, Action::Undo);
@@ -232,7 +232,7 @@ fn native_history_restores_accepted_creative_looks_and_shares_the_numeric_lut() 
                     .state
                     .project
                     .output
-                    .look
+                    .lut
                     .as_ref()
                     .unwrap()
                     .lut(),
@@ -241,7 +241,7 @@ fn native_history_restores_accepted_creative_looks_and_shares_the_numeric_lut() 
         });
         h.update(|editor| editor.clear_look());
         h.step();
-        h.read(|editor| assert!(editor.document.state.project.output.look.is_none()));
+        h.read(|editor| assert!(editor.document.state.project.output.lut.is_none()));
         native_action(&mut h, Action::Undo);
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
         h.render().unwrap();

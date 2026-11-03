@@ -322,7 +322,7 @@ impl Editor {
                 )
                 .and_then(|mut captured| {
                     if bypass_look {
-                        captured.look = None;
+                        captured.luts = Default::default();
                     }
                     let limits = self
                         .document

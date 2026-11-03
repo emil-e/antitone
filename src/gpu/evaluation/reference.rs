@@ -5,12 +5,13 @@ use crate::rendering::{OutputReference, OutputTarget};
 
 pub(crate) struct Reference {
     target: Option<OutputTarget>,
-    look: Option<Arc<crate::gpu::look::Lut>>,
+    id: Option<crate::looks::LookId>,
+    luts: Vec<Arc<crate::gpu::lut3d::Lut>>,
 }
 
 impl Reference {
     pub fn prewarm(context: &Context) -> Result<(), Error> {
-        context.prewarm(&[Look::work(
+        context.prewarm(&[LutOperation::work(
             Resource(0),
             Resource(1),
             Binding::Read(Resource(2)),
@@ -24,18 +25,30 @@ impl Reference {
         device: &wgpu::Device,
         renderer: &crate::renderer::GpuRenderer,
         reference: OutputReference,
-        asset: Option<&Arc<crate::looks::LookAsset>>,
+        assets: &crate::looks::LutChain,
     ) -> Result<Self, Error> {
         let target = reference.display_target();
-        let look = asset
-            .filter(|_| target.is_some())
-            .map(|asset| renderer.look_resource(device, asset))
-            .transpose()?;
-        Ok(Self { target, look })
+        let luts = if target.is_some() {
+            assets
+                .assets()
+                .map(|asset| renderer.look_resource(device, asset))
+                .collect::<Result<_, _>>()?
+        } else {
+            Vec::new()
+        };
+        Ok(Self {
+            target,
+            id: target.and_then(|_| assets.id()),
+            luts,
+        })
     }
 
-    pub fn look(&self) -> Option<Arc<crate::gpu::look::Lut>> {
-        self.look.clone()
+    pub fn look_id(&self) -> Option<crate::looks::LookId> {
+        self.id
+    }
+
+    pub fn lut_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+        self.luts.clone()
     }
 
     pub fn compose(
@@ -62,23 +75,23 @@ impl Reference {
         operators::display_texture(self.looked(image), renderer, target, texture, region)
     }
 
-    pub fn looked(&self, image: Arc<ImageNode>) -> Arc<ImageNode> {
-        match &self.look {
-            Some(look) => ImageNode::new(
+    pub fn looked(&self, mut image: Arc<ImageNode>) -> Arc<ImageNode> {
+        for lut in &self.luts {
+            image = ImageNode::new(
                 image.domain,
                 Some(image.clone()),
-                Look { look: look.clone() },
-            ),
-            None => image,
+                LutOperation { look: lut.clone() },
+            );
         }
+        image
     }
 }
 
-struct Look {
-    look: Arc<crate::gpu::look::Lut>,
+struct LutOperation {
+    look: Arc<crate::gpu::lut3d::Lut>,
 }
 
-impl Look {
+impl LutOperation {
     fn work(
         input: Resource,
         output: Resource,
@@ -88,7 +101,7 @@ impl Look {
         count: u32,
     ) -> Work {
         Work::linear(
-            include_str!("../../shaders/look.wgsl"),
+            include_str!("../lut3d.wgsl"),
             "main",
             vec![
                 (0, Binding::Read(input)),
@@ -102,7 +115,7 @@ impl Look {
     }
 }
 
-impl Operation for Look {
+impl Operation for LutOperation {
     fn identity(&self) -> Option<RetainedKey> {
         #[derive(Debug, PartialEq)]
         struct Content(crate::looks::LookId);

@@ -177,8 +177,7 @@ impl Editor {
             && self.fullscreen.is_none()
             && !fullscreen_was_active
             && self.failure.is_none()
-            && self.document.removal_pending.is_none()
-            && !self.document.visit.adjustment_layers.confirming()
+            && !self.document.confirming()
             && !(text_was_focused && ui.input(|input| input.key_pressed(egui::Key::Escape)))
             && !self.export_modal()
             && self.transition.is_none()
@@ -302,8 +301,7 @@ impl Editor {
             || self.document_pending.is_some() && self.tool_activity().is_none()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
-            || self.document.removal_pending.is_some()
-            || self.document.visit.adjustment_layers.confirming()
+            || self.document.confirming()
         {
             ui.disable();
         }
@@ -346,7 +344,7 @@ impl Editor {
                 }
             });
         self.filmstrip(ui, cx);
-        if self.document.removal_pending.is_some() {
+        if self.document.confirming() {
             ui.disable();
         }
     }
@@ -502,9 +500,11 @@ impl Editor {
         self.document_dialogs(ui.ctx(), dialog_escape_available, cx);
         self.input_stage_dialog(ui.ctx(), dialog_escape_available, cx);
         self.removal_dialog(ui.ctx(), dialog_escape_available, cx);
+        self.material_switch_dialog(ui.ctx(), dialog_escape_available, cx);
         self.adjustment_layer_dialog(ui.ctx(), dialog_escape_available);
         self.export_dialogs(ui.ctx(), dialog_escape_available, cx);
         if self.failure.is_none()
+            && !self.document.confirming()
             && self.tool_activity().is_none()
             && let Some(request) = self
                 .tasks

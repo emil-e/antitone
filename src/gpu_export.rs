@@ -51,7 +51,7 @@ pub struct Request<'a> {
     pub repairs: &'a [Arc<crate::dust_repair::EvaluatedRepair>],
     pub composition: Composition,
     pub format: Format,
-    pub look: Option<Arc<crate::looks::LookAsset>>,
+    pub luts: crate::looks::LutChain,
     pub pipeline: crate::pixel_pipeline::PixelPipeline,
 }
 

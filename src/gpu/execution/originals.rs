@@ -383,14 +383,17 @@ pub(crate) fn execute(
         grade.validate_repairs(&device.limits(), repairs.bound())?;
     }
     let mut processing =
-        crate::gpu::ProcessingInput::from(grade.clone()).with_look(request.look.clone());
+        crate::gpu::ProcessingInput::from(grade.clone()).with_luts(request.luts.clone());
     processing.repairs = repairs.clone();
-    let _look_resource = request
-        .look
-        .as_ref()
-        .filter(|_| request.output.display_target().is_some())
-        .map(|asset| renderer.look_resource(device, asset))
-        .transpose()?;
+    let _lut_resources = if request.output.display_target().is_some() {
+        request
+            .luts
+            .assets()
+            .map(|asset| renderer.look_resource(device, asset))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     let target = match request.encoding {
         SampleEncoding::LinearFloat => None,
         SampleEncoding::Rgb16 => request.output.display_target(),
@@ -432,9 +435,10 @@ pub(crate) fn execute(
             0
         },
         retained_repair_payload_bytes: repairs.byte_len(),
-        look_payload_bytes: _look_resource
-            .as_ref()
-            .map_or(0, |resource| resource.byte_len()),
+        look_payload_bytes: _lut_resources
+            .iter()
+            .map(|resource| resource.byte_len())
+            .sum(),
         ..Default::default()
     };
     #[cfg(not(all(test, target_os = "macos")))]

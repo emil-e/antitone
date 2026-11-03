@@ -1,0 +1,165 @@
+{
+  "source": "https://github.com/andreavolpato/spektrafilm",
+  "author": "Andrea Volpato",
+  "revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
+  "modification": "Antitone evaluates and factors the nonspatial model, calibrates print time on neutral0.18 toY0.1, adds the positive-paper adapter and inverse authoring DRT; no photographic fitting. Data derivatives CC BY-SA4.0; native algorithm ports GPLv3.",
+  "source_code_sha256": {
+    "src/spektrafilm/__init__.py": "c042866a99e58250654195a34fb60dfed397325b9e2515d7f0cf386d1026250d",
+    "src/spektrafilm/config.py": "d090b6401431e44b8c9ea31c980728ceec6ed1f5468415fbfa8200454add7d0d",
+    "src/spektrafilm/model/__init__.py": "3e2b5fd54813d03f9330883ec5bb41eab654bde04e06927575f917ebe17bb531",
+    "src/spektrafilm/model/color_filters.py": "175aa801e228484880805e84af66bf1005fe916860fa4c36b955b4f5967579a7",
+    "src/spektrafilm/model/couplers.py": "706a1832cdfa0399b45e9a246b4c29ef669d42bf4d679080fb0346cf6ec5fcf3",
+    "src/spektrafilm/model/density_curves.py": "dc29948e4982112ecc900acad5e980514288cfd9f2caa5722a72eb5f37ffc692",
+    "src/spektrafilm/model/develop.py": "41dfe710e89188dcdc87b5ad87c56095efa44f3dbc9393095f95762e2c1d0c83",
+    "src/spektrafilm/model/diffusion.py": "33358f7830e81f6e81e7c4d424f78bac877fefb2bf70511527ab1e0f75c3043b",
+    "src/spektrafilm/model/glare.py": "89734fc7e68fc49beb4d30a29df999c9b6cb649e325481f29bef6aba7ddebf4e",
+    "src/spektrafilm/model/grain.py": "110a702d1f03d08935e2f138e7c9c77ee8d44ef4af65956c323495fd70cb3f62",
+    "src/spektrafilm/model/illuminants.py": "757608544bd603bfcf26db24c70d84ec9618569fb26bdfe6bf4e7362b62e4676",
+    "src/spektrafilm/model/parametric.py": "172e0faabcf6bd317ac426aa485d8e7f3fcf0d8851d1921fa6b78cb34b4bbf41",
+    "src/spektrafilm/model/stocks.py": "73ce1c272e1e2fc0f8eaed2b515c0e003b35ed42047a385fef57eebb0563d757",
+    "src/spektrafilm/profiles/__init__.py": "ae658ed435311eabbfe9b96665e0cad0dbc1605be88da82602887462ac70bb8a",
+    "src/spektrafilm/profiles/io.py": "76900653dc2f00c0f3301cfcc5bcad959416ab75c774aa17df7719f8a1a3e7dc",
+    "src/spektrafilm/runtime/__init__.py": "e7abeae2b52bd8c7ee8730f7ca601125ff230ab35bff960eabf29c8b7f9a0f82",
+    "src/spektrafilm/runtime/api.py": "534cb0d6e242a8db3b81a390af607a6b77d053688bb51942fe0c686892eb01cf",
+    "src/spektrafilm/runtime/params_builder.py": "edc4537e2b1e021eea4a46e746550185525f9bcc25610ae577f936ad513d99c2",
+    "src/spektrafilm/runtime/params_schema.py": "3373d4cbc31476041dd5ae071ff00445313ac1a2d9d5e3517cf13dc5e87e18fa",
+    "src/spektrafilm/runtime/pipeline.py": "22d3772529270f936363ddfc5ae8f30e4ee2fa2a8d562ef359242d6de728f4e8",
+    "src/spektrafilm/runtime/process.py": "b3dffdb3ea145d859591d8cbdcb192c37c1c82e396b374cf951e383515bfcfc1",
+    "src/spektrafilm/runtime/services/__init__.py": "6e7e511328c168d05e60844699f913406859a67ae78b87ca36a8e376b78a852d",
+    "src/spektrafilm/runtime/services/color_reference.py": "ba893811bf5e88c75f324c6362cf66e2020afeeca86083c7158932486185219f",
+    "src/spektrafilm/runtime/services/filter_enlarger_source.py": "11e929438af47dd8393485597348b889e9bc46891fa2d9d0fb27552a75ea5981",
+    "src/spektrafilm/runtime/services/resize.py": "f52845228aef1448f6d4b180fc6f774ecebaee665a827f8c5d3ca58e260a507c",
+    "src/spektrafilm/runtime/services/spectral_lut_compute.py": "6f9ccc9f7758b381e3fd25abf961784af70bbcc7323b71974a434d771bf7c5f0",
+    "src/spektrafilm/runtime/stages/__init__.py": "651ab2112a7ecc6d328f46c3021690adf28a351f4d63602c4251f22f5048f6dd",
+    "src/spektrafilm/runtime/stages/filming.py": "e5f7acc4a5d90b1452ff08cb8aee13dbeb28d08e9c6a31eff4471df5dcc6aa3e",
+    "src/spektrafilm/runtime/stages/printing.py": "6d47514f230c65ed60b0012be93277057bac4d3dd16089123aaa0ce99c0a25b0",
+    "src/spektrafilm/runtime/stages/scanning.py": "30078ef985e731b4b0150ed310ec1e2870fc6f7e037f5876c9afa2188b2cc99f",
+    "src/spektrafilm/runtime/topology.py": "5db60027c917bbf87276222e538476830e24ef88c48c7741aeb91f96a753d7f9",
+    "src/spektrafilm/utils/__init__.py": "d5afe630ecca3efaca71f549537375433fea141d108a16dc68617b8a18f256f4",
+    "src/spektrafilm/utils/autoexposure.py": "bfa6a95676935ccf87aa6ecaee09dbc0ee720bc6c121b200217ecb9b4d077e92",
+    "src/spektrafilm/utils/calibration_targets.py": "54f9a7e772ed273ee72384c7fcb3bd7ea6e6e8d2405e20625022ec7dafa5d514",
+    "src/spektrafilm/utils/conversions.py": "c07686bcb2357c54b63b3ab9cf0a889e6783e18f6b56e69e17d1cdbb8415d54e",
+    "src/spektrafilm/utils/crop_resize.py": "5873ed91cb65ac7d7b68a69ca5e01fc14dc281d0ccc55bee9f463e536be4d5db",
+    "src/spektrafilm/utils/fast_gaussian_filter.py": "d82120001fc431c5ac094cc544d17642f6e9382f515365f383b7dc91f4f32865",
+    "src/spektrafilm/utils/fast_interp.py": "d3ac51dae3b651f8e0da5b10791428ce0c8806b37ab46d91a9a6da0fb6f17025",
+    "src/spektrafilm/utils/fast_interp_lut.py": "520c649ee63c4131ac178b45f363dc6e83130a5c0b03dc259d46347dabbe4e2f",
+    "src/spektrafilm/utils/fast_stats.py": "e2edb4e48845736f1143b0493284ba6c1c5bcbf7d457d2008ac49d1050a1e003",
+    "src/spektrafilm/utils/fft_gaussian_filter.py": "ac3e96ad0923c30bfe71129e208f51d61059288a0ba55b9f2b15e1a249001ecc",
+    "src/spektrafilm/utils/gamut_compression.py": "4f7e6b48f8fd582c5ed3bb9559cf55a2c32be8b637cf90532b7979719fd13924",
+    "src/spektrafilm/utils/io.py": "3d15ffa56cc27f3c34a0967570afb406ce08e33b237300c603e6715ae7825ef0",
+    "src/spektrafilm/utils/lut.py": "c9e3f8035658b20c2133d054f88fcdc320fd47e59d26c6f5b6189b206d708a4f",
+    "src/spektrafilm/utils/measure.py": "dbdcad739f75951cf01ad60e80c23772fd9b2ea8541946d26be2d5e907c8964f",
+    "src/spektrafilm/utils/morph_curves.py": "f082d40c69f8f8c70f4d94ae947becf907609f2f56426c2fa7b9dd3006d4a6c9",
+    "src/spektrafilm/utils/numba_boost_hightlights.py": "821d9ed462a8e4f360583c344866009fe567ee0f9fd41d4d40d31a131a917cd6",
+    "src/spektrafilm/utils/numba_warmup.py": "607739cefb81ebcb1bbf79de337382049cf91d6b76463393417fd72c4fc27970",
+    "src/spektrafilm/utils/plotting.py": "6507abe70725ed38e10dd916046b2a4267f0e681e927bc7d469b21aac858c4b8",
+    "src/spektrafilm/utils/preview.py": "871478a67292244d64a266016908f74debe8e526d196e79368fa4c5a0adf4f0c",
+    "src/spektrafilm/utils/raw_file_processor.py": "855c4143fcbef3b21b4f5d0cc1341e9842cc34065bf3154d8fabfb4e02d587be",
+    "src/spektrafilm/utils/spectral_upsampling.py": "6c51273383c6aa5538c3c742dfd46a6660300c8211936bfbbc498c64e60ef6ea",
+    "src/spektrafilm/utils/timings.py": "e4f0e638333148a458068128232979ac02f58b650518fab06c45b8b19c26365a"
+  },
+  "environment_lock_sha256": "e1182ee0eb7b0aeb29fa75a4b11ec33ba776570f60cebba10bd74cbd2d1841f8",
+  "build_tool_sha256": "b1af10b6c42c70cc088d4dced4d2136ff242dd46f40ccfd6fc7fd55f8558422c",
+  "authoring_reference_sha256": "a299444e75f6a85c3e1482f3d45665e939a0a3e486f4d3c11573e158f61f8d40",
+  "locked_dependencies": {
+    "colour-science": "0.4.7",
+    "contourpy": "1.4.0",
+    "cycler": "0.12.1",
+    "exiv2": "0.18.1",
+    "fonttools": "4.68.0",
+    "ImageIO": "2.38.1",
+    "kiwisolver": "1.5.1",
+    "lazy-loader": "0.6",
+    "lensfunpy": "1.18.0",
+    "llvmlite": "0.50.0",
+    "matplotlib": "3.11.2",
+    "networkx": "3.7",
+    "numba": "0.68.1",
+    "numpy": "2.5.4",
+    "OpenImageIO": "3.1.19.0",
+    "opt_einsum": "3.4.0",
+    "packaging": "26.3",
+    "pillow": "13.0.0",
+    "pyFFTW": "0.15.1",
+    "pyparsing": "3.3.3",
+    "python-dateutil": "3.0.0",
+    "rawpy": "0.26.1",
+    "scikit-image": "0.26.0",
+    "scipy": "1.18.1",
+    "six": "1.17.0",
+    "tifffile": "2026.10.15",
+    "tzdata": "2026.6"
+  },
+  "generation_dependencies": {
+    "python": "3.14.6 (main, Jun 10 2026, 10:03:53) [Clang 21.0.0 (clang-2100.0.123.102)]",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "colour-science": "0.4.7",
+    "OpenColorIO": "2.6.0"
+  },
+  "generator_sha256": "bdbb934214e3cbbbc5e8237c46bb6d8bc2a396a3efe86939d1ce700d062a195b",
+  "reference_helper_sha256": "121c8116744b33f9f003797c8f102c63304fcea08c8d1c21e5f13910793e1262",
+  "source_lut_sha256": "52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783",
+  "files": {
+    "catalog.json.z": {
+      "bytes": 665498,
+      "sha256": "1a71acfeb2cd9ee05fc1ce3182a0806435e631e200f935194b4a5cec82706ac0"
+    },
+    "conformance.json": {
+      "bytes": 350495,
+      "sha256": "4971e4c12a4555fc641a80be4480008c559a9fe7f890b23ecc28e6103abb076f"
+    },
+    "fujifilm_crystal_archive_typeii-scan.cct.z": {
+      "bytes": 368962,
+      "sha256": "a0c1610e8a0162d9655c8dda7fb4cbc5989ca6abdf206f750d9f4fce4d957dc6"
+    },
+    "index.rs": {
+      "bytes": 1076,
+      "sha256": "3ea08659602e35cb35aa121353d45020f8dee4d7d5345e2a3780fed1f1b656ef"
+    },
+    "input_gamut_D55.f64.z": {
+      "bytes": 534815,
+      "sha256": "399edf781c2f84384225e45f705ec64c71d458ae3acbe8eb293b32ef6fe73fa2"
+    },
+    "input_gamut_T.f64.z": {
+      "bytes": 534209,
+      "sha256": "7d015c33fcd8d245aa6b23661c1af8d9da3a89e02d77d00c55171d66a42c780f"
+    },
+    "irradiance_xy_tc.f16.z": {
+      "bytes": 4770746,
+      "sha256": "75aa975b223ddb700f46bd5a42381ea7f5a8a35bb9e02219a89e5db939909222"
+    },
+    "kodak_2383-scan.cct.z": {
+      "bytes": 369035,
+      "sha256": "967d6b38b529566966898bbec27e560f837be3be1dff249e57f135d48c2c8a4a"
+    },
+    "kodak_2393-scan.cct.z": {
+      "bytes": 374386,
+      "sha256": "7cb61d178e8943b91b043f9538dc324d2b90d46f1a9ea2cf28b08205f2d48af0"
+    },
+    "kodak_ektacolor_edge-scan.cct.z": {
+      "bytes": 368066,
+      "sha256": "9a6a06584d9b9dd31de6b63e24622aac68bf5a520a72c128b23805647e77f856"
+    },
+    "kodak_endura_premier-scan.cct.z": {
+      "bytes": 368399,
+      "sha256": "f9b5515dd09a4c20298dda3459b8ecdc9728b5eecf2d41a46ccb7dea8c1e8fd3"
+    },
+    "kodak_portra_endura-scan.cct.z": {
+      "bytes": 368083,
+      "sha256": "2d6422e05dbd6097cb4031265d771963ab500c126831523a9c2d0270a6c90a0d"
+    },
+    "kodak_supra_endura-scan.cct.z": {
+      "bytes": 368200,
+      "sha256": "af302d6b4f8ae6c078106849e725fa26edd412055f24b8ecd3adcc2c98a81b47"
+    },
+    "kodak_ultra_endura-scan.cct.z": {
+      "bytes": 366970,
+      "sha256": "67364af9b947d140454b4417251cd8651d7d2a21e75945c7eaecf02eb08098c3"
+    },
+    "selection.json": {
+      "bytes": 2124,
+      "sha256": "85f9a7e3a09cba879bf8cadab199575a2c357b665551645e26e9176776f3ab60"
+    }
+  }
+}

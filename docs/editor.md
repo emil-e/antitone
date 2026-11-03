@@ -2,7 +2,7 @@
 
 The editor connects photographic settings, image tools and asynchronous work. Its central rule is simple: **a view may be temporary, but accepted photographic state must remain coherent**.
 
-Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll selects Negative or Digital interpretation and owns shared grading plus Negative's scan setup; Photo owns individual grading and composition — its turn/flip setting starts from the orientation the camera recorded, and saved projects keep their stored setting; Rendering owns the project-wide creative look and preview target, which also initializes rendered export. Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
+Roll, Photo and Rendering are editing scopes, not separate pipelines. Roll selects Negative or Digital interpretation and owns shared grading plus Negative's scan setup; Photo owns individual grading and composition — its turn/flip setting starts from the orientation the camera recorded, and saved projects keep their stored setting; Rendering owns Film texture, LUT, Film & paper and the preview target, which also initializes rendered export. Changing tabs changes available controls, not the image's processing. [Architecture](architecture.md) describes how these scopes are owned and disposed.
 
 The editor uses a neutral dark workspace with amber identity and active-state accents. The shared application header presents the film-edge wordmark and project identity without making the wordmark an interactive control. [Branding assets](../assets/branding/README.md) explain the artwork and regeneration.
 
@@ -48,13 +48,15 @@ A released new or changed mask stays pending while a short, best-effort search f
 
 Accepted repair instructions participate in ordinary [project saving and dirty protection](projects.md#source-owned-dust-repairs). [Repair evaluation and GPU patches](../src/editor/dust.rs) remain with document/photo consumers after Dust ends; rendering borrows provisional mask/donor instructions without retaining the interaction. TIFF/EXR export consumes the accepted set, including before the photo has been viewed.
 
-## Look selection prepares before acceptance
+## Colour selection prepares before acceptance
 
-Rendering owns one project-wide look. Its dropdown offers None, the built-in paper/print looks and **Load LUT…**; the load entry and file dialog declare the scene-referred contract, and [colour and output](colour-and-output.md#creative-looks-precede-output-rendering) owns the restrictions.
+Rendering orders **Film texture**, **LUT**, **Film & paper**, then **Target**. Film texture groups coupled image-MTF/grain and separate halation. Its presets apply starting values while preserving enablement; edited values display Custom rather than retaining a preset identity.
 
-Built-in names come from the versioned catalog; imported and unknown historic names remain as saved, and [project storage](projects.md#embed-the-accepted-look-not-a-catalog-reference) preserves their accepted appearance. Successful imports also appear under **Loaded LUTs** for the rest of the editor session, including across project changes; repeated identical payloads share one entry.
+The **LUT** section imports working-space 3D tables before **Film & paper**. Negative and Paper select the synthetic stock and print medium: [Spektrafilm](../assets/spektrafilm/README.md) supplies colour treatments; the [scalar B&W model](../src/looks/monochrome.rs) uses independently sourced materials. Negative None bypasses synthetic film formation, not source inversion. Paper None requires no selected negative. Starting a negative from bypass chooses Portra Endura for colour or Ilford Multigrade RC Deluxe for B&W. Both sections work on Digital and interpreted negatives.
 
-One [document-owned action](../src/editor/look.rs) awaits resolution and device preflight, then installs the asset and records its edit. Cancel retires the action immediately; running work uses [cancel-on-drop](architecture.md#cooperative-cancellation) for physical cleanup. Failed or cancelled preparation leaves the accepted look unchanged; only accepted imports enter Loaded LUTs.
+Cross-family printing is unsupported by these providers, but all materials remain selectable. A family switch asks before clearing the negative or choosing a matching default paper. Cancel leaves accepted settings and earlier preparation intact. One [document-owned preparation](../src/editor/look.rs) checks the confirmed treatment and device limits before accepting both material choices as one undoable edit. During preparation, that section can replace its pending choice; the other section waits. Cancelling preparation retires acceptance rights while running work retains its inputs through cleanup. Failure or cancellation preserves both accepted assets.
+
+Stock/media names retain upstream attribution. Imported names remain as saved. Successful imports enter the session comparison list across document changes; identical numeric payloads share an entry. [Project storage](projects.md#embed-accepted-colour-assets) preserves the accepted numeric assets without relying on that list or the [derived cache](../assets/spektrafilm/README.md).
 
 ## Undo and redo
 

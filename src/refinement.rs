@@ -66,7 +66,7 @@ pub(crate) fn refine_cancellable(
         device,
         (queue, submissions),
         root,
-        input.look().is_some(),
+        !input.luts().is_empty(),
         &output.linear,
         cancelled,
     )?

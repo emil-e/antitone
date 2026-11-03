@@ -324,7 +324,7 @@ fn armed_creation_suspends_outside_photo_and_resumes_without_consuming_an_id() {
                 stage(&mut h, name);
                 if name == "Rendering" {
                     assert!(
-                        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+                        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "LUT")
                             .accesskit_node()
                             .is_disabled()
                     );

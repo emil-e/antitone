@@ -1,0 +1,254 @@
+{
+  "upstream_revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
+  "inputs": {
+    "scripts/spektrafilm/monochrome.py": "25813d344a5ee3fc496a99da965f183504c9bcc0f70e07c0960635c0d1964e3c",
+    "scripts/spektrafilm/build.py": "b1af10b6c42c70cc088d4dced4d2136ff242dd46f40ccfd6fc7fd55f8558422c",
+    "scripts/spektrafilm/requirements.lock": "e1182ee0eb7b0aeb29fa75a4b11ec33ba776570f60cebba10bd74cbd2d1841f8",
+    "assets/papers/fomabrom-variant-glossy-filter-2/source.json": "ba3f73d627f1c9fa548e3ce79e7065b2468b99db6d41659dbfaaa51f944192a6",
+    "assets/papers/fomaspeed-variant-glossy-filter-2/source.json": "e76c3d90a36c27e2753580efdd8e6dcbed94bdbd5cf75759c098633f82d46f12",
+    "assets/papers/ilford-multigrade-fb-classic-filter-2/source.json": "ec5a7f3f22bd9dc8f3c1e4de5171ac13cfcdf8d4c49d1ce76c2f6f72e14fe3b6",
+    "assets/papers/ilford-multigrade-rc-deluxe-filter-2/source.json": "b808bc1a4bfe5c68f974207537b94e4afd8fa5318e16bdfb11ed09552deb1116",
+    "assets/negatives/ilford-delta-100-id11-8m30s/source.json": "bebc5e1dded16105070778a5b37f39a0c8c6f65bbd1913d9f0f0802f276af0a6",
+    "assets/negatives/ilford-delta-400-id11-8m-24c/source.json": "334970ff695e5f6a923f92ec5af5bd800b7274d0012de2bc41af6176f01b9ca8",
+    "assets/negatives/ilford-fp4-plus-ilfotec-hc-8m/source.json": "810380b35afad0b58b7726bcb4a572a60612be7e90943e5d6f912fefe3d9c89a",
+    "assets/negatives/ilford-hp5-plus-ilfotec-hc-6m30s/source.json": "7be29ca7375a69f0cc34939f6d9bb2f014b9610ca6735dc54810da59c4a1d122",
+    "assets/negatives/kodak-tmax-100-d76-7m30s/source.json": "cc9fa26643ce284a286ed78603e9ee24c2ed41bc7ed645331b03847e3adc8373",
+    "assets/negatives/kodak-tmax-400-d76-8m/source.json": "638b5c199300bc906b4e344d34bb43a094007fc3a6761fc0a6ec948d4bba1f59",
+    "assets/negatives/kodak-trix-400-d76-8m/source.json": "df8a70dee2f57f683e38628ad9bf9d825adc916fc3a019982926e424a8d454f2",
+    "native/spektrafilm/reference.cpp": "121c8116744b33f9f003797c8f102c63304fcea08c8d1c21e5f13910793e1262",
+    "native/rendering_transform.h": "ad7b554e6bca7eb3521199310e33becab41a2870649db12e68e945f39b1932a2",
+    "assets/ocio/authoring-reference.json": "a299444e75f6a85c3e1482f3d45665e939a0a3e486f4d3c11573e158f61f8d40"
+  },
+  "dependencies": {
+    "colour-science": "0.4.7",
+    "contourpy": "1.4.0",
+    "cycler": "0.12.1",
+    "exiv2": "0.18.1",
+    "fonttools": "4.68.0",
+    "ImageIO": "2.38.1",
+    "kiwisolver": "1.5.1",
+    "lazy-loader": "0.6",
+    "lensfunpy": "1.18.0",
+    "llvmlite": "0.50.0",
+    "matplotlib": "3.11.2",
+    "networkx": "3.7",
+    "numba": "0.68.1",
+    "numpy": "2.5.4",
+    "OpenImageIO": "3.1.19.0",
+    "opt_einsum": "3.4.0",
+    "packaging": "26.3",
+    "pillow": "13.0.0",
+    "pyFFTW": "0.15.1",
+    "pyparsing": "3.3.3",
+    "python-dateutil": "3.0.0",
+    "rawpy": "0.26.1",
+    "scikit-image": "0.26.0",
+    "scipy": "1.18.1",
+    "six": "1.17.0",
+    "tifffile": "2026.10.15",
+    "tzdata": "2026.6"
+  },
+  "conditions": {
+    "foma_fomabrom_variant_glossy_filter_2": {
+      "surface": "glossy",
+      "filter": "ILFORD MULTIGRADE 2 (special contrast grade)",
+      "characteristic_process": "Not specified separately in the plotted curves",
+      "recommended_manual_process": {
+        "developer": "Fomatol LQN 1+7",
+        "temperature_C": 20,
+        "development_s": [
+          100,
+          130
+        ]
+      },
+      "rendering": "neutral-density interpretation; manufacturer recommends neutral-working developers for neutral tone"
+    },
+    "foma_fomaspeed_variant_glossy_filter_2": {
+      "surface": "glossy",
+      "filter": "ILFORD MULTIGRADE 2 (special contrast grade)",
+      "characteristic_process": "Not specified separately in the plotted curves",
+      "recommended_manual_process": {
+        "developer": "Fomatol LQN 1+7",
+        "temperature_C": 20,
+        "development_s": [
+          60,
+          90
+        ]
+      },
+      "rendering": "neutral-density interpretation; manufacturer recommends neutral-working developers for neutral tone"
+    },
+    "ilford_multigrade_fb_classic_filter_2": {
+      "filter": "ILFORD MULTIGRADE 2",
+      "developer": "ILFORD MULTIGRADE",
+      "dilution": "1+9",
+      "temperature_C": 20,
+      "development_s": 120,
+      "surface": "Publication covers 1K glossy and 5K matt; characteristic plot does not separately identify its surface or drying geometry",
+      "exposure_axis": "relative exposure abscissa interpreted as log10 exposure, as used by the characteristic/ISO-range convention; arbitrary relative origin retained",
+      "density": "one total reflection density as plotted, no extra base",
+      "toning": "untoned characteristic curve; no selenium/other toner added",
+      "endpoint": "constant numerical extension outside the published plotted curve; no common black/white adjustment"
+    },
+    "ilford_multigrade_rc_deluxe_filter_2": {
+      "developer": "ILFORD MULTIGRADE 1+9",
+      "temperature_C": 20,
+      "development_s": 60,
+      "filter": 2,
+      "emulsion": "NEW MULTIGRADE RC DELUXE & PORTFOLIO, bottom row, not legacy IV",
+      "rendering": "neutral scalar reflectance interpretation, not measured image/base colour"
+    },
+    "ilford_delta_100_id11_8m30s": {
+      "developer": "ILFORD ID-11",
+      "dilution": "stock",
+      "temperature_C": 20,
+      "development_s": 510,
+      "agitation": "intermittent; four inversions in the first 10 seconds and first 10 seconds of each further minute",
+      "format": "roll film, representative of 35mm and sheet film",
+      "exposure_axis": "relative log exposure; no absolute exposure/ISO calibration inferred",
+      "density": "total density as plotted, no additional base or fog",
+      "shoulder": "Published exposure extent does not establish measured Dmax; constant numerical endpoint extension only."
+    },
+    "ilford_delta_400_id11_8m_24c": {
+      "developer": "ILFORD ID-11",
+      "dilution": "stock",
+      "temperature_C": 24,
+      "development_s": 480,
+      "agitation": "intermittent; four inversions in the first 10 seconds and first 10 seconds of each further minute",
+      "format": "publication does not identify a separate format for this characteristic curve",
+      "exposure_axis": "relative log exposure; no absolute exposure/ISO calibration inferred",
+      "density": "total density as plotted, no additional base or fog",
+      "shoulder": "Published exposure extent does not establish measured Dmax; constant numerical endpoint extension only."
+    },
+    "ilford_fp4_plus_ilfotec_hc_8m": {
+      "developer": "ILFORD ILFOTEC HC",
+      "dilution": "1+31",
+      "temperature_C": 20,
+      "development_s": 480,
+      "agitation": "intermittent; four inversions in first10seconds and first10seconds of each further minute",
+      "format": "roll film; publication says representative of35mm and sheet film",
+      "exposure_axis": "relative log exposure; no absolute ISO/exposure calibration inferred",
+      "density": "total density as plotted; no separate base/fog added",
+      "shoulder": "Published curve approaches a plateau; constant numerical extension outside the plotted exposure range, not a laboratory Dmax claim."
+    },
+    "ilford_hp5_plus_ilfotec_hc_6m30s": {
+      "developer": "ILFORD ILFOTEC HC",
+      "dilution": "1+31",
+      "temperature_C": 20,
+      "development_s": 390,
+      "agitation": "intermittent; four inversions in first10seconds and first10seconds of each further minute",
+      "format": "representative of roll and sheet film formats",
+      "exposure_axis": "relative log exposure; no absolute ISO/exposure calibration inferred",
+      "density": "total density as plotted; no separate base/fog added",
+      "shoulder": "Published curve leaves the plotted exposure range without a measured shoulder; constant numerical endpoint extension only."
+    },
+    "kodak_tmax_100_d76_7m30s": {
+      "developer": "KODAK PROFESSIONAL D-76",
+      "dilution": "stock",
+      "temperature_C": 20,
+      "development_s": 450,
+      "equipment": "small tank",
+      "exposure": "daylight",
+      "densitometry": "diffuse visual",
+      "shoulder": "Not measured to a plateau; constant numerical extension outside the published curve extent."
+    },
+    "kodak_tmax_400_d76_8m": {
+      "developer": "KODAK PROFESSIONAL D-76",
+      "dilution": "stock",
+      "temperature_C": 20,
+      "development_s": 480,
+      "equipment": "small tank",
+      "exposure": "daylight",
+      "densitometry": "diffuse visual",
+      "stock_version": "F-4043 February 2016 optimized-light-filtration T-Max 400 publication; no curve from the older T-Max 400 publication reused",
+      "shoulder": "No measured plateau; constant numerical extension outside the published curve extent."
+    },
+    "kodak_trix_400_d76_8m": {
+      "format": "35mm400TX",
+      "developer": "KODAK PROFESSIONAL D-76",
+      "dilution": "stock",
+      "temperature_C": 20,
+      "development_s": 480,
+      "equipment": "large tank",
+      "agitation": "1minute intervals",
+      "densitometry": "diffuse visual",
+      "shoulder": "Not measured to a plateau; constant numerical extension outside the published curve extent."
+    }
+  },
+  "model": "Scalar total film density with neutral transmission; fixed-grade paper total reflection density, no extra base. Paper-only uses luminance and0.6-stop exposure convention. No colour-stock data, DIR, invented paper sensitivities or tint.",
+  "spectral": "Shared Hanatos family, no stock-adaptation window/surface, CAT16/D55 input and configured input-gamut compression; published sensitivity support only. Estimated scene spectrum, not recovered radiance.",
+  "finishing": "OutputGamutCompressSpec(algorithm='cam16ucs', knee=(0.0, 1.0, 6.0), lightness_compression=(0.7, 1.0, 2.2))",
+  "viewing": "D50, CIE1931, CAT02 to linear sRGB, global upstream finishing, shared inverse authoring DRT",
+  "calibration": {
+    "reference_gray_y": 0.09999930348057195,
+    "film_gray_placement_stops_above_Dmin_plus_0_1": 4,
+    "print_time": "Paper gray logH plus developed film density at AP1gray0.18; only scalar printing exposure changes."
+  },
+  "approximation": {
+    "max_density_errors": {
+      "foma_fomabrom_variant_glossy_filter_2": 2.220446049250313e-16,
+      "foma_fomaspeed_variant_glossy_filter_2": 4.440892098500626e-16,
+      "ilford_multigrade_fb_classic_filter_2": 4.440892098500626e-16,
+      "ilford_multigrade_rc_deluxe_filter_2": 4.292286168050552e-06,
+      "ilford_delta_100_id11_8m30s": 2.220446049250313e-16,
+      "ilford_delta_400_id11_8m_24c": 4.440892098500626e-16,
+      "ilford_fp4_plus_ilfotec_hc_8m": 2.220446049250313e-16,
+      "ilford_hp5_plus_ilfotec_hc_6m30s": 4.440892098500626e-16,
+      "kodak_tmax_100_d76_7m30s": 4.440892098500626e-16,
+      "kodak_tmax_400_d76_8m": 4.440892098500626e-16,
+      "kodak_trix_400_d76_8m": 4.440892098500626e-16
+    },
+    "max_encoded_readout_error": 8.166914444718287e-07
+  },
+  "source_audit": {
+    "foma_fomabrom_variant_glossy_filter_2": {
+      "constraints": 257,
+      "max_density_outside_ink_interval": 0
+    },
+    "foma_fomaspeed_variant_glossy_filter_2": {
+      "constraints": 257,
+      "max_density_outside_ink_interval": 0
+    },
+    "ilford_multigrade_fb_classic_filter_2": {
+      "constraints": 257,
+      "max_density_outside_ink_interval": 0
+    },
+    "ilford_multigrade_rc_deluxe_filter_2": {
+      "constraints": 476,
+      "max_density_outside_ink_interval": 0.023010645828494575
+    },
+    "ilford_delta_100_id11_8m30s": {
+      "constraints": 350,
+      "max_density_outside_ink_interval": 0.0012633452852606197
+    },
+    "ilford_delta_400_id11_8m_24c": {
+      "constraints": 377,
+      "max_density_outside_ink_interval": 0
+    },
+    "ilford_fp4_plus_ilfotec_hc_8m": {
+      "constraints": 257,
+      "max_density_outside_ink_interval": 0
+    },
+    "ilford_hp5_plus_ilfotec_hc_6m30s": {
+      "constraints": 257,
+      "max_density_outside_ink_interval": 0
+    },
+    "kodak_tmax_100_d76_7m30s": {
+      "constraints": 257,
+      "max_density_outside_ink_interval": 0
+    },
+    "kodak_tmax_400_d76_8m": {
+      "constraints": 257,
+      "max_density_outside_ink_interval": 0
+    },
+    "kodak_trix_400_d76_8m": {
+      "constraints": 257,
+      "max_density_outside_ink_interval": 0
+    }
+  },
+  "outputs": {
+    "components.json.z": "d58175f150d2b790784beff834f528358f51f1051fa7f1e6128496d294791d38",
+    "spectral.f32.z": "7c538f1b8ec36deb4bced3ae68d33aec57fa2bb2d0512c93a16a701f97fb1c73",
+    "index.json": "1916036a5e06acd92a2926129937abd16c499281d7e18ed4be1278c7cde3a76d",
+    "conformance.json.z": "ba0efe86bbd43f9daf7c9ae9a54d5e5607e9d6903ed00356554c5e17e11c2096"
+  }
+}

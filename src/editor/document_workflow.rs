@@ -249,7 +249,7 @@ impl Editor {
                     .and_then(|source| source.crop);
                 self.document.clear_crop_edit();
                 self.document.visit.canvas.last_layout = None;
-                self.document.film_emulation = self.document.state.project.output.film_emulation;
+                self.document.grain = self.document.state.project.output.grain;
                 self.document.halation = self.document.state.project.output.halation;
                 self.document.target = match self.document.state.project.output.tiff {
                     crate::project::TiffTarget::Srgb => OutputTarget::Srgb,

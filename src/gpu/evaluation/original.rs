@@ -115,6 +115,6 @@ pub(crate) fn original_chain(
     let node = camera_source(scan)?;
     let photograph =
         Photograph::new_with_stages(&device.limits(), node, field, input, matrix, stages)?;
-    Reference::capture(device, renderer, reference, input.look())?
+    Reference::capture(device, renderer, reference, input.luts())?
         .compose(photograph.processed, renderer)
 }

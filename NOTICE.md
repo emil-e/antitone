@@ -13,10 +13,12 @@ Antitone's original code is licensed under the MIT license; see `LICENSE`. You m
 - LLVM OpenMP 22.1.8: the original LLVM OpenMP license accompanies the bundled runtime.
 - IBM Plex fonts: SIL Open Font License 1.1, retained in `assets/fonts/OFL.txt`.
 - OpenColorIO-derived rendering algorithms: retained notice in `assets/ocio/LICENSE-OpenColorIO.txt`. The production executable does not dynamically link the OCIO reference library.
+- spektrafilm by Andrea Volpato, https://github.com/andreavolpato/spektrafilm, revision `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`: native algorithm ports are GPLv3; evaluated upstream colour-profile/LUT derivatives are CC BY-SA 4.0. Retained licenses, attribution and modifications are in `assets/spektrafilm/`. The top-level MIT license does not relicense these components.
+- Independently sourced B&W materials: Antitone reconstructions of ILFORD, FOMA and Kodak publications, including Ilford Multigrade RC Deluxe, FP4 Plus and HP5 Plus. Sources, processes and interpretation assumptions are in `assets/papers/` and `assets/negatives/`; generated provenance is in `assets/monochrome/`. These are not manufacturer-authored or Spektrafilm colour-stock profiles. Negative reconstruction reuses the separately licensed Hanatos spectrum family. Public-distribution clearance for the source-derived materials remains unresolved.
 - Rust dependencies: the selected production dependency graph's declared licenses and supplied license/notice files are inventoried in packaged `Contents/Resources/Licenses/`.
 
 ## Local packages versus public releases
 
-The maintained package command currently produces local test artifacts, not a declaration of release clearance. The generated license inventory is evidence for review, not a legal compatibility decision. Native bundled components, Cargo dependencies and asset provenance all matter; creative-look source/asset clearance remains separately unresolved in `assets/looks/README.md`.
+The maintained package command currently produces local test artifacts, not a declaration of release clearance. The generated license inventory is evidence for review, not a legal compatibility decision. Native bundled components, Cargo dependencies and asset provenance all matter; Spektrafilm-derived code and assets retain the separate terms documented in `assets/spektrafilm/README.md`.
 
 Before publishing binaries publicly, review the dependency and asset license inventory again: match each bundled component's own terms, keep its notices, and re-check the Adobe SDK commercial-distribution clause. Release also involves Developer ID signing/notarization if chosen, clean-machine execution and broader platform acceptance. Do not infer release clearance from a green build or a valid ad-hoc signature.

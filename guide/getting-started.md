@@ -52,8 +52,9 @@ per-photograph — see [Grading a photograph](grading.md).
 
 ## 5. Choose the look and export
 
-Open the **Rendering** tab to pick the project-wide **Look** and the **Target** output
-colour space. Then **File → Export…** writes TIFF or EXR;
+Open **Rendering** to choose **Negative** and **Paper**, optionally apply a **LUT** before
+them, and set the **Target** output colour space. For an already inverted scan, Negative None
+keeps paper-only processing available. Then **File → Export…** writes TIFF or EXR;
 [Rendering and export](rendering-and-export.md) explains which format to choose and walks
 through the export dialog.
 

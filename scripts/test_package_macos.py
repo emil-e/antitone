@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "package_macos", Path(__file__).with_name("package-macos.py")
@@ -64,6 +65,44 @@ Load command 2
 
 
 class NoticeCollection(unittest.TestCase):
+    def test_material_notices_follow_bound_paper_and_negative_sources(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            files = {
+                "assets/papers/README.md": b"material assumptions",
+                "assets/papers/paper/source.json": b"paper source",
+                "assets/negatives/negative/source.json": b"negative source",
+                "assets/negatives/unbound/source.json": b"not in the compiled catalogue",
+            }
+            for name, data in files.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            inputs = {
+                name: hashlib.sha256(files[name]).hexdigest()
+                for name in [
+                    "assets/papers/paper/source.json",
+                    "assets/negatives/negative/source.json",
+                ]
+            }
+            inputs["native/helper.cpp"] = "producer hash, not a source notice"
+            provenance = root / "assets/monochrome/provenance.json"
+            provenance.parent.mkdir(parents=True)
+            provenance.write_text(json.dumps({"inputs": inputs}))
+            output = root / "notices"
+            with patch.object(packager, "ROOT", root):
+                packager.copy_monochrome_notices(output)
+            self.assertEqual((output / "papers/paper/source.json").read_bytes(), b"paper source")
+            self.assertEqual(
+                (output / "negatives/negative/source.json").read_bytes(), b"negative source"
+            )
+            self.assertEqual(
+                (output / "monochrome/provenance.json").read_bytes(), provenance.read_bytes()
+            )
+            self.assertEqual((output / "papers/README.md").read_bytes(), b"material assumptions")
+            self.assertFalse((output / "negatives/unbound").exists())
+            self.assertFalse((output / "native").exists())
+
     def test_nested_codec_and_font_notices_are_retained_without_binary_assets(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

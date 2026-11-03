@@ -202,7 +202,7 @@ impl Worker {
             submissions,
             self.repaint.get().unwrap_or(&egui::Context::default()),
         );
-        if recipe.look.is_some() {
+        if !recipe.luts.is_empty() {
             // Cards retain a full-source raster; admit only their declared composed footprint.
             let composition = job.key.projection.unwrap_or(recipe.composition);
             let mapping = composition.texture_mapping(

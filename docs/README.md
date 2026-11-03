@@ -11,9 +11,9 @@ Before changing application code, read [architecture](architecture.md) and [deve
 | How does a negative become a positive? | [Processing](processing.md) |
 | How does Analyze choose its starting grade? | [Roll analysis](roll-analysis.md) |
 | What does the bare-light reference correct? | [Flat-field correction](flat-field.md) |
-| Where do image MTF and grain enter the picture? | [Film Emulation](processing.md#film-emulation) |
+| Where do image MTF and grain enter the picture? | [Film texture](processing.md#film-texture) |
 | Why do preview, TIFF and EXR differ? | [Colour and output](colour-and-output.md) |
-| How are independent creative looks authored offline? | [Look catalog and authoring](../assets/looks/README.md) |
+| How are film/paper components generated? | [Spektrafilm](../assets/spektrafilm/README.md) and [independent B&W materials](../assets/papers/README.md) |
 | Which pixels does a crop, pick or export represent? | [Geometry](geometry.md) |
 | How can features share film and picture locations? | [Spatial metadata](spatial-metadata.md) |
 | How do tools, workers and previews stay coherent? | [Editor](editor.md) |
@@ -43,8 +43,8 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Roll analysis | [spatial support](../src/scan_regions.rs), [estimator](../src/roll_analysis.rs), [fitter](../src/roll_analysis/gamma.rs) | Source-owned sampling hypotheses, sample-derived starting settings |
 | GPU | [processing](../src/gpu.rs), [renderer](../src/renderer.rs) | Interactive processing and reusable rendering resources |
 | Rendering/output | [rendering](../src/rendering.rs), [export](../src/export.rs), [native transform](../native/rendering_transform.h) | ACES, file encoding and output safety |
-| Film Emulation | [model/settings](../src/film_emulation.rs), [stage executor](../src/gpu/pixel_pipeline.rs) | Source-scale image MTF and RGB grain before look/output |
-| Creative looks | [asset/import](../src/looks.rs), [models](../src/looks/builtin.rs), [baking](../src/looks/bake.rs), [GPU execution](../src/gpu/look.rs), [selection](../src/editor/look.rs) | Project-wide embedded immutable LUTs before selected-output ACES |
+| Film texture | [coupled grain settings](../src/grain/settings.rs), [stage executor](../src/gpu/pixel_pipeline.rs) | Coordinated source-scale image MTF and RGB grain, with independent halation |
+| Colour treatments | [asset/import](../src/looks.rs), [film/paper model](../src/looks/spektrafilm.rs), [GPU resources](../src/gpu/lut3d.rs), [selection](../src/editor/look.rs) | Independent embedded LUT and Film & paper stages before output ACES |
 | Geometry | [geometry](../src/geometry.rs), [coverage](../src/coverage.rs), [crop](../src/crop.rs), [auto-crop](../src/auto_crop.rs) | Coordinate mappings, source-cell coverage, measured-frame proposals |
 | Viewer | [working owner](../src/editor/working_view.rs), [GPU view](../src/gpu/view.rs), [viewer](../src/viewer.rs), [original-view owner](../src/editor/original_view.rs), [refinement](../src/refinement.rs), [viewport](../src/viewport.rs) | Physical-view grading/inspection, original comparison, refinement |
 | Scopes | [measurement](../src/scopes.rs), [GPU reduction](../src/gpu_scopes.rs) | Approximate visible-image output statistics |

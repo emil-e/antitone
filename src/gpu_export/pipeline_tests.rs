@@ -134,7 +134,7 @@ fn supplied_pipeline_uses_original_neighbours_before_rotated_output_reconstructi
             repairs: &[],
             composition,
             format: Format::Exr(ExrPrecision::Full),
-            look: None,
+            luts: (None).into(),
             pipeline: PixelPipeline {
                 stages: vec![
                     PixelStage::new(NeighbourEffect {

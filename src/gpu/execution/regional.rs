@@ -93,7 +93,7 @@ impl Request<'_> {
 }
 
 pub(crate) struct Completed {
-    pub look_check: Option<Arc<crate::gpu::look::Check>>,
+    pub look_check: Option<Arc<crate::gpu::lut3d::Check>>,
 }
 
 pub(crate) fn execute(

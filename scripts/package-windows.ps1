@@ -65,6 +65,25 @@ foreach ($path in @(
         Copy-Item $source (Join-Path $notices (Split-Path -Leaf $path))
     }
 }
+$spektrafilm = Join-Path $notices 'spektrafilm'
+New-Item -ItemType Directory -Force $spektrafilm | Out-Null
+foreach ($name in @('LICENSE-code.txt', 'LICENSE-data.txt', 'CHANGELOG.txt', 'provenance.json')) {
+    Copy-Item (Join-Path $root "assets/spektrafilm/$name") (Join-Path $spektrafilm $name)
+}
+$papers = Join-Path $notices 'papers'
+$monochrome = Join-Path $notices 'monochrome'
+New-Item -ItemType Directory -Force $papers, $monochrome | Out-Null
+Copy-Item (Join-Path $root 'assets/papers/README.md') (Join-Path $papers 'README.md')
+$provenancePath = Join-Path $root 'assets/monochrome/provenance.json'
+Copy-Item $provenancePath (Join-Path $monochrome 'provenance.json')
+$provenance = Get-Content -Raw $provenancePath | ConvertFrom-Json
+foreach ($path in $provenance.inputs.PSObject.Properties.Name) {
+    if (($path.StartsWith('assets/papers/') -or $path.StartsWith('assets/negatives/')) -and $path.EndsWith('/source.json')) {
+        $target = Join-Path $notices $path.Substring('assets/'.Length)
+        New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
+        Copy-Item (Join-Path $root $path) $target
+    }
+}
 $licenses = Join-Path $root 'licenses'
 if (Test-Path $licenses) {
     Copy-Item $licenses $notices -Recurse

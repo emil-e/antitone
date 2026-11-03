@@ -2,15 +2,15 @@ use super::*;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
-    film_emulation::{FilmEmulationSettings, FilmPreset},
     gpu::repairs::{Patch, Snapshot},
+    grain::{GrainPreset, GrainSettings},
     processing::InputPipeline,
 };
 
 fn capture(
     device: &wgpu::Device,
     scan: &Scan,
-    film: FilmEmulationSettings,
+    film: GrainSettings,
     frame_size: [u32; 2],
 ) -> ProcessingInput {
     ProcessingInput::from(Arc::new(
@@ -65,7 +65,7 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
             [16, 16],
         )
         .unwrap();
-        let settings = FilmPreset::ThirtyFiveMm.settings();
+        let settings = GrainPreset::ThirtyFiveMm.settings();
         let input = capture(
             &device,
             &scan,
@@ -101,7 +101,7 @@ fn small_source_composed_processing_accepts_and_executes_finite_grain() {
             &capture(
                 &device,
                 &scan,
-                FilmEmulationSettings {
+                GrainSettings {
                     amount: 0.,
                     ..settings
                 },
@@ -159,7 +159,7 @@ fn acquired_source_edges_match_clamped_native_gaussian_and_rotated_constants_sta
             } else {
                 frame.output = [27, 27];
             }
-            let film = FilmEmulationSettings {
+            let film = GrainSettings {
                 enabled: true,
                 size: 0.060,
                 image_sigma: 0.060,
@@ -317,7 +317,7 @@ fn padded_repair_reconstruction_preserves_layout_at_crop_and_source_edges() {
                         < 0.
                 }));
             }
-            let film = FilmEmulationSettings {
+            let film = GrainSettings {
                 enabled: true,
                 size: 0.100,
                 image_sigma: 0.100,

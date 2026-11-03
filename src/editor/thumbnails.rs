@@ -111,11 +111,11 @@ impl Product {
             }
     }
 
-    fn look_lut(&self) -> Option<Arc<crate::gpu::look::Lut>> {
-        self.positive
-            .as_ref()
-            .and_then(|(_, view)| view.look_lut())
-            .or_else(|| self.image.look_lut())
+    fn lut_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+        self.positive.as_ref().map_or_else(
+            || self.image.lut_resources(),
+            |(_, view)| view.lut_resources(),
+        )
     }
 
     fn byte_len(&self) -> usize {
@@ -131,12 +131,12 @@ impl Product {
 }
 
 impl ImageKey {
-    fn look(&self) -> Option<&Arc<crate::looks::LookAsset>> {
+    fn luts(&self) -> crate::looks::LutChain {
         self.recipe
             .as_ref()
             .ok()
             .and_then(Option::as_ref)
-            .and_then(|recipe| recipe.look.as_ref())
+            .map_or_else(Default::default, |recipe| recipe.luts.clone())
     }
 
     fn retained_bytes(&self) -> usize {
@@ -179,10 +179,10 @@ impl ImageKey {
         let mut bytes =
             256_u64 * 256 * if positive { 64 } else { 48 } + Product::overhead(positive) as u64;
         if let Ok(Some(recipe)) = &self.recipe {
-            if recipe.film_emulation.enabled {
+            if recipe.grain.enabled {
                 bytes = bytes.checked_add(256 * 256 * 16)?;
             }
-            if let Some(look) = &recipe.look {
+            for look in recipe.luts.assets() {
                 bytes = bytes.checked_add(256 * 256 * 16)?.checked_add(
                     (look.lut().nodes().len() * std::mem::size_of::<[f32; 4]>()) as u64,
                 )?;
@@ -326,15 +326,17 @@ fn shared_look_bytes(entries: &std::collections::VecDeque<(ImageKey, CachedProdu
     let mut gpu = std::collections::HashSet::new();
     let mut bytes = 0;
     for (key, product) in entries {
-        if let Some(look) = key.look()
-            && cpu.insert(look.lut().nodes().as_ptr())
-        {
-            bytes += look.lut().byte_len();
+        for asset in key.luts().assets() {
+            if cpu.insert(asset.lut().nodes().as_ptr()) {
+                bytes += asset.lut().byte_len();
+            }
         }
-        if let Some(look) = product.as_ref().ok().and_then(|product| product.look_lut())
-            && gpu.insert(Arc::as_ptr(&look))
-        {
-            bytes += look.byte_len() as usize;
+        if let Ok(product) = product {
+            for lut in product.lut_resources() {
+                if gpu.insert(Arc::as_ptr(&lut)) {
+                    bytes += lut.byte_len() as usize;
+                }
+            }
         }
     }
     bytes
@@ -378,13 +380,20 @@ impl Default for Thumbnails {
         let budgets = memory::CacheBudgets::new(limits, pressure);
         Self {
             cache: Cache::new(budgets.images, |key: &ImageKey, value: &CachedProduct| {
-                key.retained_bytes() - key.look().map_or(0, |look| look.lut().byte_len())
+                key.retained_bytes()
+                    - key
+                        .luts()
+                        .assets()
+                        .map(|asset| asset.lut().byte_len())
+                        .sum::<usize>()
                     + match value {
                         Ok(product) => {
                             product.byte_len()
                                 - product
-                                    .look_lut()
-                                    .map_or(0, |look| look.byte_len() as usize)
+                                    .lut_resources()
+                                    .iter()
+                                    .map(|lut| lut.byte_len() as usize)
+                                    .sum::<usize>()
                         }
                         Err(reason) => 1024 + reason.capacity(),
                     }
@@ -623,19 +632,21 @@ impl Thumbnails {
         let Some(mut extra) = key.estimated_product_bytes() else {
             return false;
         };
-        if let Some(look) = key.look() {
+        for look in key.luts().assets() {
             if self.cache.entries.iter().any(|(old, _)| {
-                old.look()
-                    .is_some_and(|old| old.lut().nodes().as_ptr() == look.lut().nodes().as_ptr())
+                old.luts()
+                    .assets()
+                    .any(|old| old.lut().nodes().as_ptr() == look.lut().nodes().as_ptr())
             }) {
                 extra -= look.lut().byte_len();
             }
             if self.cache.entries.iter().any(|(_, product)| {
-                product
-                    .as_ref()
-                    .ok()
-                    .and_then(|product| product.look_lut())
-                    .is_some_and(|old| old.id() == look.lut().id())
+                product.as_ref().ok().is_some_and(|product| {
+                    product
+                        .lut_resources()
+                        .iter()
+                        .any(|old| old.id() == look.lut().id())
+                })
             }) {
                 // The renderer reuses a live immutable GPU LUT by content identity.
                 extra -= look.lut().nodes().len() * std::mem::size_of::<[f32; 4]>();
@@ -1012,7 +1023,7 @@ impl Editor {
             && self.transition.is_none()
             && self.project_overwrite.is_none()
             && !self.export_modal()
-            && self.document.removal_pending.is_none()
+            && !self.document.confirming()
     }
 
     pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui, cx: &UiContext<'_, Self>) {
@@ -1077,7 +1088,7 @@ impl Editor {
             && !self.cropping()
             && !self.masking()
             && (!self.picking() || reviewing)
-            && self.document.removal_pending.is_none();
+            && !self.document.confirming();
         let height = self
             .preferences
             .filmstrip_height
@@ -1216,9 +1227,9 @@ impl Editor {
                                     composition.area(),
                                 );
                                 let failure = match parameters.as_ref() {
-                                    Some(input) => input
-                                        .look()
-                                        .and_then(|look| image.look_failure(look.lut().id())),
+                                    Some(input) => {
+                                        input.luts().id().and_then(|id| image.look_failure(id))
+                                    }
                                     None => image.look_result().and_then(Result::err),
                                 };
                                 if let Some(failure) = failure {

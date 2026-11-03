@@ -66,7 +66,7 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
         ))
         .with_pixel_pipeline(
             crate::pixel_pipeline::PixelPipeline::emulation(
-                crate::film_emulation::FilmPreset::ThirtyFiveMm.settings(),
+                crate::grain::GrainPreset::ThirtyFiveMm.settings(),
                 crate::halation::HalationSettings {
                     enabled: true,
                     size: crate::halation::MAX_SIZE,

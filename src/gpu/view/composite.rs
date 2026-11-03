@@ -133,7 +133,7 @@ impl Composite {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         image: &GpuImage,
-    ) -> Arc<crate::gpu::look::Check> {
+    ) -> Arc<crate::gpu::lut3d::Check> {
         self.detail
             .graded
             .as_ref()

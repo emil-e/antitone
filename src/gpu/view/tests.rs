@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicU64;
 mod adjustment_layer_resources;
 mod colour;
 mod crop_scale;
-mod film_emulation;
+mod grain;
 mod halation;
 mod identity;
 mod inspection;
