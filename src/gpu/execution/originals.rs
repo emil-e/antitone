@@ -4,8 +4,6 @@ use super::{OutputBlock, Request, SampleEncoding};
 use crate::gpu::{ProcessingInput, SubmissionGate, evaluation, rgb16};
 use crate::{
     Error,
-    frame_raster::FrameRaster,
-    geometry::Composition,
     renderer::GpuRenderer,
     rendering::{OutputReference, OutputTarget},
 };
@@ -31,7 +29,11 @@ pub(crate) type RenderBlock<'a> = dyn FnMut([u32; 2], [u32; 2]) -> Result<Output
 pub(crate) type Complete<'a> = dyn FnMut() -> Result<(), Error> + 'a;
 
 #[cfg(test)]
-use crate::{acquisition::ValidOutput, geometry::SourceRegion};
+use crate::{
+    acquisition::ValidOutput,
+    frame_raster::FrameRaster,
+    geometry::{Composition, SourceRegion},
+};
 #[cfg(test)]
 use crate::{
     acquisition::{Plan, Request as AcquisitionRequest, Sampling, SourceRead, SourceSupport},
