@@ -5,9 +5,6 @@ use crate::{
     rendering::OutputReference,
 };
 
-#[cfg(all(test, target_os = "macos"))]
-use crate::gpu::execution::Unit;
-
 pub(super) fn write(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
@@ -51,6 +48,6 @@ pub(super) fn write(
 #[cfg(all(test, target_os = "macos"))]
 mod look_lifetime_tests;
 #[cfg(all(test, target_os = "macos"))]
-mod repair_payload_tests;
+mod repair_upload_tests;
 #[cfg(all(test, target_os = "macos", feature = "ocio-reference"))]
 mod stage_oracle_tests;

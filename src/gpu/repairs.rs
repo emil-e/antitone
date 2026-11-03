@@ -171,24 +171,6 @@ impl Snapshot {
         Ok(())
     }
 
-    #[cfg(all(test, feature = "raw", feature = "render"))]
-    pub(crate) fn upload_scratch_bytes(&self, region: SourceRegion) -> u64 {
-        self.0
-            .iter()
-            .filter(|patch| intersects(patch.region, region))
-            .map(|patch| {
-                patch.buffer.as_ref().map_or_else(
-                    || {
-                        patch.pixels_in(region).count() as u64
-                            * std::mem::size_of::<Pixel>() as u64
-                            * 2
-                    },
-                    wgpu::Buffer::size,
-                )
-            })
-            .sum()
-    }
-
     #[cfg(any(feature = "editor", all(test, feature = "raw", feature = "render")))]
     pub(crate) fn byte_len(&self) -> u64 {
         (std::mem::size_of::<Self>() + self.0.capacity() * std::mem::size_of::<Arc<Patch>>()) as u64

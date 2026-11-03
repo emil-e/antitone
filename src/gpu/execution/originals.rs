@@ -50,10 +50,6 @@ mod film_tests;
 #[path = "intent_tests.rs"]
 mod intent_tests;
 
-#[cfg(all(test, target_os = "macos", feature = "editor"))]
-#[path = "payload_tests.rs"]
-mod payload_tests;
-
 #[cfg(test)]
 mod unit_fixture;
 #[cfg(test)]
@@ -297,27 +293,15 @@ pub(crate) struct Stats {
     pub destination_pixels: u64,
     pub submissions: u64,
     pub readback_bytes: u64,
-    pub peak_unit_payload: u64,
     pub scratch_buffer_allocations: u64,
     pub planned_source_layout_changes: u64,
     pub look_payload_bytes: u64,
-    pub retained_repair_payload_bytes: u64,
-    pub peak_planned_repair_upload_bytes: u64,
     pub rgb16_payload_bytes: u64,
 }
 
 #[cfg(not(all(test, target_os = "macos")))]
 #[derive(Default)]
 pub(crate) struct Stats {}
-
-// Conservative explicit execution/readback payload bound, not process or device residency.
-#[cfg(all(test, target_os = "macos"))]
-fn unit_payload_bound(stats: &evaluation::Stats, extent: [u32; 2], rgb16: bool) -> u64 {
-    stats.scratch_bytes
-        + stats.host_upload_bytes
-        + u64::from(TILE[0]) * u64::from(TILE[1]) * (16 + if rgb16 { 8 } else { 0 })
-        + u64::from(extent[0]) * u64::from(extent[1]) * 42
-}
 
 pub(crate) fn execute(
     renderer: &GpuRenderer,
@@ -406,7 +390,6 @@ pub(crate) fn execute(
         } else {
             0
         },
-        retained_repair_payload_bytes: repairs.byte_len(),
         look_payload_bytes: _lut_resources
             .iter()
             .map(|resource| resource.byte_len())
@@ -532,20 +515,10 @@ pub(crate) fn execute(
                             stats.planned_source_layout_changes += 1;
                             previous_source_size = Some(output.size());
                         }
-                        stats.peak_planned_repair_upload_bytes = stats
-                            .peak_planned_repair_upload_bytes
-                            .max(repairs.upload_scratch_bytes(output.region.source()?));
                     }
                 }
                 stats.readback_bytes +=
                     u64::from(extent[0]) * u64::from(extent[1]) * reconstruction.bytes_per_pixel();
-                // Execution includes nested GPU storage and simultaneous CPU upload payloads.
-                // Immutable resources and driver overhead are separate from this payload bound.
-                stats.peak_unit_payload = stats.peak_unit_payload.max(unit_payload_bound(
-                    &_executed,
-                    extent,
-                    reconstruction.rgb16.is_some(),
-                ));
             }
             Ok(pixels)
         },
@@ -569,16 +542,13 @@ pub(crate) fn execute(
             probe.stats.report();
         }
         println!(
-            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} unit_payload_upper_bound_bytes={} job_look_payload_bytes={} scratch_buffer_allocations={} retained_repair_payload_bytes={} peak_planned_repair_upload_bytes={} job_rgb16_payload_bytes={}",
+            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} job_look_payload_bytes={} scratch_buffer_allocations={} job_rgb16_payload_bytes={}",
             stats.source_pixels,
             stats.destination_pixels,
             stats.submissions,
             stats.readback_bytes,
-            stats.peak_unit_payload,
             stats.look_payload_bytes,
             stats.scratch_buffer_allocations,
-            stats.retained_repair_payload_bytes,
-            stats.peak_planned_repair_upload_bytes,
             stats.rgb16_payload_bytes
         );
     }

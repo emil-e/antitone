@@ -19,8 +19,6 @@ pub struct Stats {
     pub initializations: usize,
     pub source_cells: u64,
     pub peak_source_cells: u64,
-    /// Bound on simultaneous source-read and declared upload payloads, excluding other host memory.
-    pub host_upload_bytes: u64,
     pub buffer_allocations: usize,
     pub texture_allocations: usize,
     pub encoded_device_peak: u64,
@@ -43,7 +41,6 @@ impl Stats {
         self.initializations += next.initializations;
         self.source_cells += next.source_cells;
         self.peak_source_cells = self.peak_source_cells.max(next.peak_source_cells);
-        self.host_upload_bytes = self.host_upload_bytes.max(next.host_upload_bytes);
         self.buffer_allocations += next.buffer_allocations;
         self.texture_allocations += next.texture_allocations;
         self.encoded_device_peak = self.encoded_device_peak.max(next.encoded_device_peak);
@@ -547,7 +544,7 @@ impl Executor {
                         .as_ref()
                         .unwrap()
                         .buffer();
-                    let mut nested = produce(
+                    let nested = produce(
                         image,
                         *output,
                         (
@@ -555,7 +552,6 @@ impl Executor {
                             plan.scratch_budget.saturating_sub(self.pool_bytes()),
                         ),
                     )?;
-                    nested.host_upload_bytes += tile.fragment.upload_bytes();
                     stats.include(nested, self.pool_bytes());
                 }
             }
@@ -595,8 +591,6 @@ impl Executor {
         stats: &mut Stats,
         inputs: &[&wgpu::Buffer],
     ) -> Result<(), Error> {
-        let uploads = tile.fragment.upload_bytes();
-        stats.host_upload_bytes = stats.host_upload_bytes.max(uploads);
         for allocation in self.pool.iter().flatten() {
             if let Allocation::Input { slot, bytes, .. } = allocation {
                 let input = inputs
@@ -650,9 +644,6 @@ impl Executor {
                     }
                     stats.source_cells += values.len() as u64;
                     stats.peak_source_cells = stats.peak_source_cells.max(values.len() as u64);
-                    stats.host_upload_bytes = stats
-                        .host_upload_bytes
-                        .max(uploads + values.len() as u64 * 16);
                     timed!(
                         SourceUpload,
                         queue.write_buffer(

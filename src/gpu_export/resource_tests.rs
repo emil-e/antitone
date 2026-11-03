@@ -239,7 +239,6 @@ fn exercise(
                 let mut gpu_samples = 0;
                 let mut dispatches = 0;
                 let mut readback_bytes = 0;
-                let mut peak_unit_payload = 0;
                 #[cfg(feature = "ocio-reference")]
                 let mut reference_samples = 0;
                 #[cfg(not(feature = "ocio-reference"))]
@@ -306,7 +305,6 @@ fn exercise(
                                 gpu_samples = stats.source_pixels;
                                 dispatches = stats.submissions;
                                 readback_bytes = stats.readback_bytes;
-                                peak_unit_payload = stats.peak_unit_payload;
                             })
                         }
                         #[cfg(feature = "ocio-reference")]
@@ -321,7 +319,7 @@ fn exercise(
                     "export_resources backend={backend:?} reference_sample_evaluations={reference_samples} gpu_sample_evaluations={gpu_samples}"
                 );
                 println!(
-                    "export_resources file_bytes={} seconds={:.6} dispatches={dispatches} readback_bytes={readback_bytes} peak_unit_payload_upper_bound={peak_unit_payload} stop_checks={checks}",
+                    "export_resources file_bytes={} seconds={:.6} dispatches={dispatches} readback_bytes={readback_bytes} stop_checks={checks}",
                     std::fs::metadata(&path).map_err(|e| e.to_string())?.len(),
                     start.elapsed().as_secs_f64()
                 );

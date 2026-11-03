@@ -530,16 +530,6 @@ pub struct Fragment {
 }
 
 impl Fragment {
-    pub(super) fn upload_bytes(&self) -> u64 {
-        self.resources
-            .iter()
-            .filter_map(|storage| match storage {
-                Storage::Data(bytes) | Storage::Uniform(bytes) => Some(bytes.len() as u64),
-                _ => None,
-            })
-            .sum()
-    }
-
     pub fn resource(&mut self, storage: Storage) -> Resource {
         let resource = Resource(self.resources.len());
         self.resources.push(storage);
