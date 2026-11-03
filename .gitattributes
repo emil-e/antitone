@@ -16,5 +16,9 @@
 /tests/fixtures/spektrafilm/*.json text eol=lf
 /assets/papers/**/*.json text eol=lf
 /assets/papers/**/*.z -text
+/assets/negatives/**/*.json text eol=lf
+/assets/monochrome/*.json text eol=lf
+/assets/monochrome/*.z -text
+/tests/fixtures/monochrome/*.z -text
 /tests/fixtures/papers/*.json text eol=lf
 /native/rendering_transform.h text eol=lf
