@@ -221,7 +221,7 @@ fn navigation_reuses_retained_camera_arguments_for_native_and_downstream_edits()
         document.project.input = input;
         for target in [OutputTarget::DisplayP3, OutputTarget::Srgb] {
             for selected in [None, Some(look.clone())] {
-                document.project.output.look = selected.clone();
+                document.project.output.lut = selected.clone();
                 let recipe = document.project.image_recipe(id).unwrap();
                 let pipeline = Pipeline::new(
                     recipe.neutral.processing_input().unwrap(),

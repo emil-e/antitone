@@ -144,7 +144,7 @@ fn halation_is_captured_without_repair_invalidation_or_grain_enablement() {
     let captured = project.image_recipe(id).unwrap();
     assert_ne!(clean, captured);
     assert_eq!(clean.neutral, captured.neutral);
-    assert!(!captured.film_emulation.enabled);
+    assert!(!captured.grain.enabled);
     assert_eq!(captured.pixel_pipeline().unwrap().stages.len(), 1);
     project.output.halation.strength = 0.4;
     assert_eq!(
@@ -161,42 +161,36 @@ fn halation_is_captured_without_repair_invalidation_or_grain_enablement() {
 }
 
 #[test]
-fn film_emulation_is_captured_immutably_without_changing_neutral_repair_identity() {
+fn grain_is_captured_immutably_without_changing_neutral_repair_identity() {
     let (mut project, id) = project();
     let clean = project.image_recipe(id).unwrap();
-    let film = antitone::film_emulation::FilmPreset::ThirtyFiveMm.settings();
-    project.output.film_emulation = film;
+    let film = antitone::grain::GrainPreset::ThirtyFiveMm.settings();
+    project.output.grain = film;
     let captured = project.image_recipe(id).unwrap();
-    assert_eq!(captured.film_emulation, film);
+    assert_eq!(captured.grain, film);
     assert_ne!(clean, captured);
     assert_eq!(clean.neutral, captured.neutral);
-    project.output.film_preset = antitone::film_emulation::FilmPreset::MediumFormat;
-    assert_eq!(
-        captured,
-        project.image_recipe(id).unwrap(),
-        "preset provenance must not change pixels or invalidate photographic reuse"
-    );
-    project.output.film_emulation.image_sigma *= 1.5;
+    project.output.grain.image_sigma *= 1.5;
     assert_ne!(
         captured,
         project.image_recipe(id).unwrap(),
         "independently authored image sigma is rendering identity"
     );
-    project.output.film_emulation.image_sigma = film.image_sigma;
-    project.output.film_emulation.amount *= 2.;
+    project.output.grain.image_sigma = film.image_sigma;
+    project.output.grain.amount *= 2.;
     let edited = project.image_recipe(id).unwrap();
     assert_ne!(captured, edited);
-    assert_eq!(captured.film_emulation, film);
+    assert_eq!(captured.grain, film);
     assert_eq!(captured.neutral.source, id);
-    project.output.film_emulation.enabled = false;
-    assert!(captured.film_emulation.enabled);
+    project.output.grain.enabled = false;
+    assert!(captured.grain.enabled);
 }
 
 #[test]
 fn emulation_resolves_from_the_captured_crop_not_its_source_bounds_or_orientation() {
-    use antitone::film_emulation::FilmEmulationSettings;
+    use antitone::grain::GrainSettings;
     let (mut project, id) = project();
-    project.output.film_emulation = FilmEmulationSettings {
+    project.output.grain = GrainSettings {
         enabled: true,
         size: 0.040,
         image_sigma: 0.040,
@@ -255,7 +249,7 @@ fn accepted_look_identity_is_numeric_immutable_and_downstream_of_neutral_repairs
         .unwrap();
     let none = project.image_recipe(id).unwrap();
     let lut = Arc::new(Lut3D::new(2, [0.; 3], [1.; 3], vec![[0.4, 0.3, 0.2]; 8]).unwrap());
-    project.output.look = Some(Arc::new(
+    project.output.lut = Some(Arc::new(
         LookAsset::new("First".into(), LookOrigin::Imported, lut.clone()).unwrap(),
     ));
     let looked = project.image_recipe(id).unwrap();
@@ -263,11 +257,11 @@ fn accepted_look_identity_is_numeric_immutable_and_downstream_of_neutral_repairs
     assert_eq!(none.neutral, looked.neutral);
     assert_eq!(none.repairs(), looked.repairs());
     assert!(looked.retained_bytes() >= none.retained_bytes() + lut.byte_len());
-    project.output.look = Some(Arc::new(
+    project.output.lut = Some(Arc::new(
         LookAsset::new("Renamed".into(), LookOrigin::Imported, lut.clone()).unwrap(),
     ));
     assert_eq!(looked, project.image_recipe(id).unwrap());
-    project.output.look = None;
+    project.output.lut = None;
     assert_eq!(none, project.image_recipe(id).unwrap());
-    assert_eq!(looked.look.as_ref().unwrap().lut().id(), lut.id());
+    assert_eq!(looked.luts.lut.as_ref().unwrap().lut().id(), lut.id());
 }

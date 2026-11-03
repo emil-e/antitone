@@ -18,13 +18,13 @@ Completed [Digital starting exposures](processing.md#digital-starting-brightness
 
 It does not retain active/multi-selection, canvas navigation, source-inspection WB/exposure, picker return context, tool drafts, GPU objects or caches. This distinction defines dirty state: accepted project changes are compared with the last successful Save/Open snapshot, and session-only [undo/redo](editor.md#undo-and-redo) preserves that baseline. Looking around, selecting a photo or cancelling a draft does not make a project modified; Auto-crop margin changes are drafts until Apply and never dirty project geometry. Export scope, filenames, format and target overrides belong to the export operation; the last destination folder is an application preference. Choosing another TIFF target in Export leaves the project's Rendering target unchanged.
 
-MTF/grain and independently enabled Halation belong to project output state and undo history. Each optional saved record carries its own model contract and all controls, including custom values while disabled. Absent settings leave that effect disabled; unsupported contracts and malformed values reject. Texture stores grain-basis Size and image sigma independently, alongside Amount/Colour; recipes consume those actual values, not a preset lookup. The selected 35mm/Medium format preset is separate saved provenance for the modified label and undo history, excluded from photographic identity. Reopening never classifies the values into a different preset. Image recipes capture both settings groups with the persistent source identity used for the grain seed.
+Coupled grain/image-MTF and independently enabled halation belong to project output state and undo history. Each record carries its model contract and actual controls, including custom values while disabled. Grain stores Size, image sigma, Amount and Colour; the shared enable and ratio-preserving Size adjustment keep image response and grain coordinated. Presets populate these values without a saved preset identity. The UI derives an exact match or shows Custom.
 
-## Embed the accepted look, not a catalog reference
+## Embed accepted colour assets
 
-The project optionally owns one immutable [creative-look asset](colour-and-output.md#creative-looks-precede-output-rendering). Built-ins and imports both store resolved numeric samples with their domain, dimension, contract and provenance — not `.cube` text, a source pathname or a catalog reference. Catalog upgrades, missing source files and deleted derived caches therefore cannot silently change a saved look; choosing a newer built-in is an explicit accepted edit.
+The project has independent optional `lut` and `film_and_paper` assets, evaluated in that order. Each embeds resolved numeric samples, domain, dimension, contract and provenance—not a source pathname or instructions requiring regeneration. Film & paper retains negative/media IDs and upstream/generator revisions as provenance, including when those IDs are absent from the current catalogue. Reopening uses the embedded samples. Catalogue changes, deleted imported files and evicted derived caches cannot upgrade a saved appearance.
 
-Pending preparation, errors, the session loaded-LUT comparison list and GPU caches are transient; saving embeds only the accepted look. Malformed, corrupt or unsupported assets reject instead of dropping the look, and older strict readers reject unknown fields rather than displaying a different appearance.
+Pending preparation, errors, the session loaded-LUT list and GPU caches are transient; Save embeds only accepted assets. Malformed or unsupported assets reject. The two slots validate their source roles rather than silently swapping imported and material-derived treatments.
 
 ## Source-owned adjustment layers
 
@@ -44,7 +44,7 @@ Calibration makes sense only in the camera basis and development in which it was
 
 Crossing input stages redevelops the ordered photos for the target stage's WB before accepting the new interpretation. It also clears the accepted flat-field correction and its nonordered reference record, because the map belongs to the stage in which it was measured. The dormant scan basis remains. Switching to Digital makes that basis inactive: it neither corrects Digital pixels nor constrains its sources. Returning to Negative redevelops with unity WB, rebuilds the scan basis from the new decode identities and validates the active sources against it. Incompatible mixed sources must be resolved first. Stage-specific Negative settings are discarded only after confirmation; shared grades and composition remain accepted choices.
 
-The supported format is **schema 13 with processing model 5**. Unsupported schemas, repair contracts and incompatible development are rejected rather than migrated; unknown fields reject.
+The supported format is **schema 14 with processing model 5**. Unsupported schemas, repair contracts and incompatible development are rejected rather than migrated; unknown fields reject.
 
 Decoder release versions are provenance and cache identity, not project admission criteria. Open verifies the processing basis with the current decoder and refreshes source version records without changing grading or saved starting exposures.
 

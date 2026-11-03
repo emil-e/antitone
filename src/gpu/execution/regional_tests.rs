@@ -297,7 +297,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
     );
     let input = ProcessingInput::from(gpu).with_pixel_pipeline(
         crate::pixel_pipeline::PixelPipeline::emulation(
-            crate::film_emulation::FilmEmulationSettings {
+            crate::grain::GrainSettings {
                 enabled: true,
                 size: 0.1,
                 image_sigma: 0.1,

@@ -1,6 +1,6 @@
 //! Ordered effect definitions. Recipe assembly selects effects; evaluation executes their nodes.
 
-use crate::{Error, film_emulation::FilmEmulationSettings, processing_support::Support};
+use crate::{Error, grain::GrainSettings, processing_support::Support};
 use std::{any::Any, fmt, sync::Arc};
 
 // A cost/accuracy choice for view acquisition, not a native kernel parameter. Integral
@@ -147,16 +147,12 @@ pub struct PixelPipeline {
 }
 
 impl PixelPipeline {
-    pub fn film(
-        settings: FilmEmulationSettings,
-        frame_size: [u32; 2],
-        seed: u64,
-    ) -> Result<Self, Error> {
+    pub fn film(settings: GrainSettings, frame_size: [u32; 2], seed: u64) -> Result<Self, Error> {
         Self::emulation(settings, Default::default(), frame_size, seed)
     }
 
     pub fn emulation(
-        film: FilmEmulationSettings,
+        film: GrainSettings,
         halation: crate::halation::HalationSettings,
         frame_size: [u32; 2],
         seed: u64,

@@ -37,23 +37,24 @@ fn crop_keeps_its_draft_while_roll_and_rendering_controls_accept_edits() {
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Enable")
             .scroll_to_me();
         h.try_run_realtime().unwrap();
-        let was_enabled = h.read(|editor| editor.document.film_emulation.enabled);
+        let was_enabled = h.read(|editor| editor.document.grain.enabled);
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Enable")
             .click();
         h.step();
-        h.read(|editor| assert_eq!(editor.document.film_emulation.enabled, !was_enabled));
+        h.read(|editor| assert_eq!(editor.document.grain.enabled, !was_enabled));
         let role = egui::accesskit::Role::ComboBox;
         h.get_by_role_and_label(role, "Target").scroll_to_me();
         h.try_run_realtime().unwrap();
         select_target(&mut h, OutputTarget::Srgb);
-        h.get_by_role_and_label(role, "Look").scroll_to_me();
+        let paper = crate::looks::spektrafilm::Paper::default();
+        h.get_by_role_and_label(role, "Paper").scroll_to_me();
         h.try_run_realtime().unwrap();
-        h.get_by_role_and_label(role, "Look").click();
+        h.get_by_role_and_label(role, "Paper").click();
         h.step();
         h.step();
-        h.get_by_label("Cinema Print").scroll_to_me();
+        h.get_by_label(paper.name()).scroll_to_me();
         h.try_run_realtime().unwrap();
-        h.get_by_label("Cinema Print").click();
+        h.get_by_label(paper.name()).click();
         h.step();
         wait_for(&mut h, |editor| {
             !editor.busy && editor.document.look.is_none()
@@ -64,15 +65,65 @@ fn crop_keeps_its_draft_while_roll_and_rendering_controls_accept_edits() {
                     .document
                     .project
                     .output
-                    .look
+                    .film_and_paper
                     .as_ref()
                     .unwrap()
                     .origin(),
-                &crate::looks::builtin::Builtin::Kodak2383.origin()
+                &crate::looks::spektrafilm::Selection {
+                    negative: None,
+                    paper
+                }
+                .origin()
             );
             assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
             assert!(editor.document.visit.crop.is_none());
         });
+        let before_switch = h.read(|editor| editor.document.state.project.clone());
+        let negative =
+            crate::looks::monochrome::Negative::from_id("ilford_fp4_plus_ilfotec_hc_8m").unwrap();
+        for confirm in [false, true] {
+            h.get_by_role_and_label(role, "Negative").scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_role_and_label(role, "Negative").click();
+            h.step();
+            h.get_by_label(negative.name()).scroll_to_me();
+            h.try_run_realtime().unwrap();
+            h.get_by_label(negative.name()).click();
+            h.step();
+            h.read(|editor| assert!(editor.document.material_switch.is_some()));
+            if confirm {
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Switch materials")
+                    .click();
+            } else {
+                h.key_press(egui::Key::Escape);
+            }
+            h.step();
+            wait_for(&mut h, |editor| {
+                editor.document.material_switch.is_none() && editor.document.look.is_none()
+            });
+            h.read(|editor| {
+                assert_eq!(editor.document.crop_edit().unwrap().draft, draft);
+                assert!(editor.document.visit.crop.is_none());
+                if confirm {
+                    let asset = editor
+                        .document
+                        .project
+                        .output
+                        .film_and_paper
+                        .as_ref()
+                        .unwrap();
+                    assert_eq!(
+                        crate::looks::monochrome::Selection::from_origin(asset.origin()),
+                        Some(crate::looks::monochrome::Selection {
+                            negative: Some(negative),
+                            paper: Default::default(),
+                        })
+                    );
+                } else {
+                    assert_eq!(editor.document.state.project, before_switch);
+                }
+            });
+        }
         let accepted = h.read(|editor| editor.document.state.project.clone());
         stage(&mut h, "Photo");
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel")

@@ -64,7 +64,7 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
         repairs: &[],
         composition,
         format,
-        look: None,
+        luts: (None).into(),
     };
     let directory = tempfile::tempdir().unwrap();
     let keep = directory.path().join("keep.tif");
@@ -135,7 +135,7 @@ fn renderer_exports_exact_rotated_tiff_and_both_exr_precisions_and_stops_safely(
     for (name, precision) in [("half", ExrPrecision::Half), ("full", ExrPrecision::Full)] {
         let path = directory.path().join(format!("with-look-{name}.exr"));
         let mut input = request(rotated, Format::Exr(precision));
-        input.look = Some(look.clone());
+        input.luts = Some(look.clone()).into();
         write(
             &renderer,
             &device,

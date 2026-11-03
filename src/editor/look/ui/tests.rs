@@ -21,60 +21,6 @@ fn asset() -> Arc<LookAsset> {
 }
 
 #[test]
-fn historic_builtin_sources_use_catalog_labels_but_imports_keep_their_names() {
-    let data = asset();
-    for (builtin, name, old_name) in [
-        (Builtin::PortraEndura, "Portrait Paper", "Portra Endura"),
-        (Builtin::ProImageII, "Colour Paper", "Pro Image II"),
-        (Builtin::Kodak2383, "Cinema Print", "Kodak 2383"),
-        (
-            Builtin::IlfordFilter2,
-            "Monochrome Paper",
-            "Ilford RC Deluxe · Filter 2",
-        ),
-    ] {
-        let legacy = LookAsset::new(
-            old_name.into(),
-            LookOrigin::Builtin {
-                id: builtin.id().into(),
-                version: 73,
-                generator: "historic-generator".into(),
-                definition: "a".repeat(64),
-            },
-            data.lut().clone(),
-        )
-        .unwrap();
-        assert_eq!(asset_label(&legacy), name);
-        assert_eq!(builtin_for_asset(&legacy), Some(builtin));
-        let note = builtin_attribution(builtin);
-        assert!(note.contains(builtin.source_product()));
-        assert!(note.contains("Independent creative interpretation"));
-        assert!(note.contains("Not affiliated with or endorsed"));
-    }
-    let imported = LookAsset::new(
-        "Kodak 2383".into(),
-        LookOrigin::Imported,
-        data.lut().clone(),
-    )
-    .unwrap();
-    assert_eq!(asset_label(&imported), "Kodak 2383");
-    assert_eq!(builtin_for_asset(&imported), None);
-    let unknown = LookAsset::new(
-        "Saved historic look".into(),
-        LookOrigin::Builtin {
-            id: "unknown-source".into(),
-            version: 1,
-            generator: "historic-generator".into(),
-            definition: "a".repeat(64),
-        },
-        data.lut().clone(),
-    )
-    .unwrap();
-    assert_eq!(asset_label(&unknown), "Saved historic look");
-    assert_eq!(builtin_for_asset(&unknown), None);
-}
-
-#[test]
 fn loaded_menu_names_are_unique_without_relabelling_the_accepted_assets() {
     let first = asset();
     let mut nodes = first.lut().nodes().to_vec();
@@ -113,8 +59,8 @@ fn loaded_menu_names_are_unique_without_relabelling_the_accepted_assets() {
 fn positive_input_adopts_look_but_source_inspection_cannot() {
     let look = asset();
     let source =
-        ProcessingInput::from(ProcessingParameters::source()).with_look(Some(look.clone()));
-    assert!(source.look().is_none());
+        ProcessingInput::from(ProcessingParameters::source()).with_luts(Some(look.clone()));
+    assert!(source.luts().is_empty());
     let calibration = Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.003),
@@ -124,7 +70,7 @@ fn positive_input_adopts_look_but_source_inspection_cannot() {
         ProcessingParameters::positive(calibration, RollSettings::default(), glam::DMat3::IDENTITY)
             .unwrap(),
     );
-    let looked = input.clone().with_look(Some(look));
+    let looked = input.clone().with_luts(Some(look));
     assert_ne!(input.clone(), looked.clone());
     assert!(input.clone().same_photographic(&looked.clone()));
 }

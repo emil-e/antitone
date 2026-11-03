@@ -7,9 +7,9 @@ use crate::{
     coverage::Coverage,
     crop::Crop,
     export::ExrPrecision,
-    film_emulation::{FilmEmulationSettings, FilmPreset},
     geometry::{Composition, PhotoOrientation, RollOrientation},
     gpu::{ProcessingInput, ProcessingParameters},
+    grain::{GrainPreset, GrainSettings},
     platform::host,
     processing::{Calibration, InputSettings, RollSettings},
     raw::Rect,
@@ -287,11 +287,7 @@ impl Editor {
         editor.document.input = editor.document.state.project.input;
         editor.submissions = submissions.clone();
         editor.initialize_viewer(&device, &queue);
-        editor.look.services = Some(look::Services::new(
-            device.clone(),
-            queue.clone(),
-            submissions.clone(),
-        ));
+        editor.look.services = Some(look::Services::new(device.limits()));
         editor.source_services = Some(source::Services {
             developments: developments.clone(),
             renderers: renderers.clone(),
@@ -406,19 +402,16 @@ impl Editor {
         }
     }
 
-    fn film_preset_controls(&mut self, ui: &mut egui::Ui) {
-        let current = self.document.project.output.film_preset;
-        let modified = !current.matches(self.document.film_emulation, self.document.halation);
-        let label = if modified {
-            format!("{} · modified", current.label())
-        } else {
-            current.label().to_owned()
-        };
+    fn grain_preset_controls(&mut self, ui: &mut egui::Ui) {
+        let current = [GrainPreset::ThirtyFiveMm, GrainPreset::MediumFormat]
+            .into_iter()
+            .find(|preset| preset.matches(self.document.grain, self.document.halation));
+        let label = current.map_or("Custom", GrainPreset::label);
         let mut selected = None;
-        presentation::inspector_dropdown(ui, "film-preset", "Film preset", &label, |ui| {
-            for preset in [FilmPreset::ThirtyFiveMm, FilmPreset::MediumFormat] {
+        presentation::inspector_dropdown(ui, "grain-preset", "Preset", label, |ui| {
+            for preset in [GrainPreset::ThirtyFiveMm, GrainPreset::MediumFormat] {
                 if ui
-                    .selectable_label(preset == current, preset.label())
+                    .selectable_label(Some(preset) == current, preset.label())
                     .clicked()
                 {
                     selected = Some(preset);
@@ -426,15 +419,14 @@ impl Editor {
             }
         });
         if let Some(preset) = selected {
-            self.document.film_emulation = FilmEmulationSettings {
-                enabled: self.document.film_emulation.enabled,
+            self.document.grain = GrainSettings {
+                enabled: self.document.grain.enabled,
                 ..preset.settings()
             };
             self.document.halation = crate::halation::HalationSettings {
                 enabled: self.document.halation.enabled,
                 ..preset.halation()
             };
-            self.document.project.output.film_preset = preset;
         }
     }
 
@@ -472,9 +464,9 @@ impl Editor {
         }
     }
 
-    fn film_emulation_controls(&mut self, ui: &mut egui::Ui) {
-        let settings = &mut self.document.film_emulation;
-        let changed = *settings != FilmEmulationSettings::default();
+    fn grain_controls(&mut self, ui: &mut egui::Ui) {
+        let settings = &mut self.document.grain;
+        let changed = *settings != GrainSettings::default();
         let summary = if settings.enabled {
             format!("{:.3}% · a {:.3}", settings.size, settings.amount)
         } else {
@@ -482,8 +474,8 @@ impl Editor {
         };
         let (_, action) = presentation::section(
             ui,
-            "film-emulation",
-            "Film texture",
+            "grain",
+            "Grain",
             presentation::SectionHeader {
                 summary: &summary,
                 changed,
@@ -508,7 +500,7 @@ impl Editor {
             },
         );
         if action.reset {
-            *settings = FilmEmulationSettings::default();
+            *settings = GrainSettings::default();
         }
     }
 
@@ -842,7 +834,7 @@ impl Editor {
         project.input = input;
         project.roll = self.document.roll;
         project.orientation = self.document.roll_orientation;
-        project.output.film_emulation = self.document.film_emulation;
+        project.output.grain = self.document.grain;
         project.output.halation = self.document.halation;
         project.output.tiff = match self.document.target {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
@@ -1213,7 +1205,7 @@ impl Editor {
                         start_pick = Some(Pick::Wb);
                     }
                 } else {
-                    if self.document.input.capabilities().film_emulation {
+                    if self.document.input.capabilities().grain {
                         let allowed = !self.busy
                             && !reviewing
                             && self.document.auto_crop_edit().is_none()
@@ -1222,10 +1214,10 @@ impl Editor {
                         ui.add_enabled_ui(allowed, |ui| {
                             presentation::section(
                                 ui,
-                                "film",
-                                "Film",
+                                "film-texture",
+                                "Film texture",
                                 SectionHeader {
-                                    summary: self.document.project.output.film_preset.label(),
+                                    summary: "",
                                     changed: false,
                                     reset: None,
                                     tool: None,
@@ -1233,8 +1225,8 @@ impl Editor {
                                 },
                                 |ui| {
                                     ui.indent("film-controls", |ui| {
-                                        self.film_preset_controls(ui);
-                                        self.film_emulation_controls(ui);
+                                        self.grain_preset_controls(ui);
+                                        self.grain_controls(ui);
                                         self.halation_controls(ui);
                                     });
                                 },

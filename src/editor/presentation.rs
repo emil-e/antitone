@@ -232,6 +232,18 @@ pub(super) fn inspector_dropdown<R>(
     response
 }
 
+/// Full-width selector with its own visible label inside a multi-control section.
+pub(super) fn labelled_inspector_dropdown<R>(
+    ui: &mut Ui,
+    id: &str,
+    name: &str,
+    selected: &str,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<Option<R>> {
+    ui.label(name);
+    inspector_dropdown(ui, id, name, selected, contents)
+}
+
 /// Inspector reset sits on the row it resets, so it shares that row's height.
 pub(super) fn reset_button_at(ui: &mut Ui, enabled: bool, name: &str, size: f32) -> Response {
     let name = format!("Reset {name}");

@@ -7,6 +7,13 @@ pub struct GrainBasis {
     pub factor: [[f64; 3]; 3],
 }
 
+mod settings;
+pub use settings::{
+    CONTRACT, DEFAULT_AMOUNT, DEFAULT_COLOUR, DEFAULT_IMAGE_SIGMA, DEFAULT_SIZE, GRAIN_SCALE,
+    GrainPreset, GrainResponse, GrainSettings, MAX_AMOUNT, MAX_COLOUR, MAX_SIZE, MIN_AMOUNT,
+    MIN_COLOUR, MIN_SIZE, MTF_SIGMA,
+};
+
 #[cfg(test)]
 mod tests;
 

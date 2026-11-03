@@ -77,8 +77,8 @@ pub struct GpuImage {
     device_limits: wgpu::Limits,
     last_parameters: std::sync::Mutex<Option<ProcessingInput>>,
     source_revision: std::sync::atomic::AtomicU64,
-    look_check: std::sync::Mutex<Option<Arc<crate::gpu::look::Check>>>,
-    look_projections: std::sync::Mutex<Vec<(TextureMapping, Arc<crate::gpu::look::Check>)>>,
+    look_check: std::sync::Mutex<Option<Arc<crate::gpu::lut3d::Check>>>,
+    look_projections: std::sync::Mutex<Vec<(TextureMapping, Arc<crate::gpu::lut3d::Check>)>>,
     paint_mapping: std::sync::Mutex<Option<TextureMapping>>,
     processing: Option<ImageProcessing>,
     pub linear: wgpu::Texture,
@@ -296,15 +296,17 @@ impl GpuImage {
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn look_lut(&self) -> Option<Arc<crate::gpu::look::Lut>> {
-        self.processing.as_ref().and_then(|processing| {
-            processing
-                .aces_group
-                .lock()
-                .unwrap()
-                .as_ref()
-                .and_then(|binding| binding.look_lut())
-        })
+    pub(crate) fn lut_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+        self.processing
+            .as_ref()
+            .map_or_else(Vec::new, |processing| {
+                processing
+                    .aces_group
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map_or_else(Vec::new, |binding| binding.lut_resources())
+            })
     }
 
     pub fn set_geometry(&mut self, geometry: SourceGeometry) -> Result<(), Error> {
@@ -387,8 +389,8 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        if let Some(asset) = input.look() {
-            crate::gpu::look::Lut::require_limits(&self.device_limits, asset.lut())?;
+        for asset in input.luts().assets() {
+            crate::gpu::lut3d::Lut::require_limits(&self.device_limits, asset.lut())?;
         }
         crate::gpu::execution::raster::resident_plan(&processing.source, input)?;
         Ok(())
@@ -463,7 +465,7 @@ impl GpuImage {
                 processing.working.clone().into(),
             )?,
             processing.target,
-            input.look(),
+            input.luts(),
             &self.linear,
         )?;
         let check = prepared_binding.encode(device, encoder)?;
@@ -473,7 +475,7 @@ impl GpuImage {
         Ok(())
     }
 
-    pub(crate) fn set_look_check(&self, check: Option<Arc<crate::gpu::look::Check>>) {
+    pub(crate) fn set_look_check(&self, check: Option<Arc<crate::gpu::lut3d::Check>>) {
         *self.look_check.lock().unwrap() = check;
     }
 
@@ -543,7 +545,7 @@ impl GpuImage {
         mapping: TextureMapping,
         context: Option<egui::Context>,
     ) -> Result<(), Error> {
-        if input.look().is_none() {
+        if input.luts().is_empty() {
             self.prepare_processing(device, encoder, input)?;
             return Ok(());
         }

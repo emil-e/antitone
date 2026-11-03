@@ -1,5 +1,6 @@
 use super::*;
 use std::path::Path;
+mod photochemical;
 
 /// Documentation screenshots for `guide/` and the README.
 ///
@@ -160,6 +161,9 @@ fn documented_states_render() {
         });
         settle_view(&mut harness);
         capture(&mut harness, "window-overview");
+        if let Some(directory) = std::env::var_os("ANTITONE_PHOTOCHEMICAL_DEMO") {
+            photochemical::capture_demo(&mut harness, Path::new(&directory), "negative");
+        }
     });
     write_capture_sources(&CaptureSources {
         scans: roll_size,

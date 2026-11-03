@@ -134,28 +134,33 @@ pub(crate) struct RenderBinding {
     reference: crate::gpu::evaluation::Reference,
     recorded: crate::gpu::evaluation::Recorded,
     destination: wgpu::Texture,
-    validation: Option<Arc<crate::gpu::look::Validation>>,
+    validation: Option<Arc<crate::gpu::lut3d::Validation>>,
 }
 
 impl RenderBinding {
     pub(crate) fn look_id(&self) -> Option<crate::looks::LookId> {
-        self.reference.look().map(|look| look.id())
+        self.reference.look_id()
     }
 
     pub(crate) fn reference_bytes(&self) -> u64 {
-        self.reference.look().map_or(0, |look| look.byte_len()) + self.recorded.byte_len()
+        self.reference
+            .lut_resources()
+            .iter()
+            .map(|lut| lut.byte_len())
+            .sum::<u64>()
+            + self.recorded.byte_len()
     }
 
     #[cfg(feature = "editor")]
-    pub(crate) fn look_lut(&self) -> Option<Arc<crate::gpu::look::Lut>> {
-        self.reference.look()
+    pub(crate) fn lut_resources(&self) -> Vec<Arc<crate::gpu::lut3d::Lut>> {
+        self.reference.lut_resources()
     }
 
     pub fn encode(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-    ) -> Result<Option<Arc<crate::gpu::look::Check>>, Error> {
+    ) -> Result<Option<Arc<crate::gpu::lut3d::Check>>, Error> {
         self.recorded
             .encode_work(device, encoder, &[self.source.pixels()])?;
         Ok(self
@@ -189,11 +194,11 @@ pub struct GpuRenderer {
     targets: [TargetResources; 2],
     #[cfg(feature = "render")]
     pub(crate) evaluation: crate::gpu::evaluation::Context,
-    look_validation: Arc<crate::gpu::look::Validation>,
+    look_validation: Arc<crate::gpu::lut3d::Validation>,
     #[cfg(test)]
     look_uploads: std::sync::atomic::AtomicU64,
     look_cache: std::sync::Mutex<
-        std::collections::HashMap<crate::looks::LookId, std::sync::Weak<crate::gpu::look::Lut>>,
+        std::collections::HashMap<crate::looks::LookId, std::sync::Weak<crate::gpu::lut3d::Lut>>,
     >,
 }
 
@@ -229,7 +234,7 @@ impl GpuRenderer {
             any(feature = "editor", all(feature = "raw", feature = "render"))
         ))]
         let repairs = crate::gpu::repairs::Kernels::new(device).await?;
-        let look_validation = Arc::new(crate::gpu::look::Validation::new(device).await?);
+        let look_validation = Arc::new(crate::gpu::lut3d::Validation::new(device).await?);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let vertex = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image fullscreen triangle"),
@@ -291,14 +296,14 @@ impl GpuRenderer {
         &self,
         device: &wgpu::Device,
         asset: &Arc<crate::looks::LookAsset>,
-    ) -> Result<Arc<crate::gpu::look::Lut>, Error> {
+    ) -> Result<Arc<crate::gpu::lut3d::Lut>, Error> {
         let mut cache = self.look_cache.lock().unwrap();
         cache.retain(|_, value| value.strong_count() != 0);
         let id = asset.lut().id();
         if let Some(value) = cache.get(&id).and_then(std::sync::Weak::upgrade) {
             return Ok(value);
         }
-        let value = crate::gpu::look::Lut::new(device, asset.lut())?;
+        let value = crate::gpu::lut3d::Lut::new(device, asset.lut())?;
         #[cfg(test)]
         self.look_uploads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -311,7 +316,7 @@ impl GpuRenderer {
         device: &wgpu::Device,
         source: crate::gpu::evaluation::SuppliedImage,
         target: OutputTarget,
-        look: Option<&Arc<crate::looks::LookAsset>>,
+        luts: &crate::looks::LutChain,
         destination: &wgpu::Texture,
     ) -> Result<RenderBinding, Error> {
         use crate::gpu::evaluation::{Budget, ImageFormat, Reference, Region};
@@ -325,7 +330,7 @@ impl GpuRenderer {
             device,
             self,
             crate::rendering::OutputReference::DisplayReferred(target),
-            look,
+            luts,
         )?;
         let image =
             reference.presentation(source.definition().clone(), self, destination, region)?;
@@ -345,7 +350,7 @@ impl GpuRenderer {
             self.evaluation.materializations(),
             vec![source.clone()],
         )?;
-        let validation = reference.look().map(|_| self.look_validation.clone());
+        let validation = reference.look_id().map(|_| self.look_validation.clone());
         Ok(RenderBinding {
             source,
             reference,
@@ -360,7 +365,7 @@ impl GpuRenderer {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         image: &wgpu::Texture,
-    ) -> Arc<crate::gpu::look::Check> {
+    ) -> Arc<crate::gpu::lut3d::Check> {
         self.look_validation.check_rendered(device, encoder, image)
     }
 
@@ -370,7 +375,7 @@ impl GpuRenderer {
         encoder: &mut wgpu::CommandEncoder,
         image: &wgpu::Texture,
         mapping: crate::geometry::TextureMapping,
-    ) -> Result<Arc<crate::gpu::look::Check>, Error> {
+    ) -> Result<Arc<crate::gpu::lut3d::Check>, Error> {
         self.look_validation
             .check_projected(device, encoder, image, mapping)
     }

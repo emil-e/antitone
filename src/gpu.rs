@@ -9,7 +9,7 @@ pub mod evaluation;
 #[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
 pub(crate) mod execution;
 mod flat;
-pub mod look;
+pub mod lut3d;
 #[cfg(all(
     feature = "raw",
     feature = "render",

@@ -1,12 +1,12 @@
 use super::*;
-use crate::film_emulation::{FilmEmulationSettings, FilmPreset};
+use crate::grain::{GrainPreset, GrainSettings};
 
 fn processed(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     kernels: &crate::gpu::pixel_pipeline::Kernels,
     bounds: SourceRegion,
-    settings: FilmEmulationSettings,
+    settings: GrainSettings,
     frame_size: [u32; 2],
 ) -> Vec<[f32; 4]> {
     processed_with_flags(device, queue, kernels, bounds, settings, 0., frame_size)
@@ -17,7 +17,7 @@ fn processed_with_flags(
     queue: &wgpu::Queue,
     kernels: &crate::gpu::pixel_pipeline::Kernels,
     bounds: SourceRegion,
-    settings: FilmEmulationSettings,
+    settings: GrainSettings,
     flags: f32,
     frame_size: [u32; 2],
 ) -> Vec<[f32; 4]> {
@@ -100,11 +100,11 @@ fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
     let bounds: SourceRegion = [1048, 980, 64, 64].into();
-    let settings = FilmEmulationSettings {
+    let settings = GrainSettings {
         amount: 0.,
         size: 0.030,
         image_sigma: 0.030,
-        ..FilmPreset::ThirtyFiveMm.settings()
+        ..GrainPreset::ThirtyFiveMm.settings()
     };
     // Declared Size0.030% at extent6000 gives sigma1.8, independently of the GPU stencil.
     let sigma = 1.8_f64;
@@ -121,7 +121,7 @@ fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf
             &queue,
             &kernels,
             bounds,
-            FilmEmulationSettings::default(),
+            GrainSettings::default(),
             flags,
             [6000; 2],
         );
@@ -161,7 +161,7 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
     )
     .unwrap();
     // Resolve sigma2 in a large logical crop while evaluating only bounded output units.
-    let settings = FilmEmulationSettings {
+    let settings = GrainSettings {
         enabled: true,
         size: 0.050,
         image_sigma: 0.050,

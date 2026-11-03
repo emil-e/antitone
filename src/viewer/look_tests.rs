@@ -48,7 +48,7 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
             [0, 0, 2, 2].into(),
         )
         .unwrap()
-        .with_look(Some(look));
+        .with_luts(Some(look));
         let mut encoder = device.create_command_encoder(&Default::default());
         image
             .prepare_rendering(

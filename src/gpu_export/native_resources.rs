@@ -52,7 +52,7 @@ fn native_output_resources() {
         ),
     ])
     .unwrap();
-    let film = crate::film_emulation::FilmEmulationSettings {
+    let film = crate::grain::GrainSettings {
         enabled: true,
         size: 0.1,
         image_sigma: 0.1,
@@ -108,7 +108,7 @@ fn native_output_resources() {
                         )
                         .unwrap(),
                         output,
-                        look: None,
+                        luts: (None).into(),
                         encoding,
                         budget: execution::WorkBudget::for_device(&device),
                     },
@@ -145,7 +145,7 @@ fn native_output_resources() {
                         (1 << 60) + 17,
                     )
                     .unwrap(),
-                    look: None,
+                    luts: (None).into(),
                 },
                 (&path, crate::export::Overwrite::Confirmed),
                 || Ok(()),

@@ -143,6 +143,19 @@ def collect_rust_notices(package, destination, supplements, licenses=None):
     return sorted(files)
 
 
+def copy_monochrome_notices(notices):
+    copy_notice("assets/papers/README.md", notices / "papers")
+    provenance_path = "assets/monochrome/provenance.json"
+    copy_notice(provenance_path, notices / "monochrome")
+    provenance = json.loads((ROOT / provenance_path).read_text())
+    for path in sorted(provenance["inputs"]):
+        if path.startswith(("assets/papers/", "assets/negatives/")) and path.endswith(
+            "/source.json"
+        ):
+            relative = Path(path).relative_to("assets")
+            copy_notice(path, notices / relative.parent)
+
+
 def write_notices(resources):
     notices = resources / "Licenses"
     notices.mkdir()
@@ -154,6 +167,9 @@ def write_notices(resources):
         "licenses/BSL-1.0.txt",
     ]:
         copy_notice(path, notices)
+    for name in ["LICENSE-code.txt", "LICENSE-data.txt", "CHANGELOG.txt", "provenance.json"]:
+        copy_notice(f"assets/spektrafilm/{name}", notices / "spektrafilm")
+    copy_monochrome_notices(notices)
     sdk = "vendor/dng-sdk/"
     for path in [
         "LICENSE.txt",

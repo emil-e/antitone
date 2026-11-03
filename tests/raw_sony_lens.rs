@@ -587,7 +587,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
                     composition,
                     pipeline: Default::default(),
                     format,
-                    look: None,
+                    luts: Default::default(),
                 },
                 &actual,
                 Overwrite::Confirmed,

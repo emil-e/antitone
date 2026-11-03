@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ProcessingInput {
     processing: Processing,
-    look: Option<Arc<crate::looks::LookAsset>>,
+    luts: crate::looks::LutChain,
     pixel_pipeline: crate::pixel_pipeline::PixelPipeline,
     pub(crate) repairs: super::repairs::Snapshot,
 }
@@ -66,7 +66,7 @@ impl ProcessingInput {
     fn capture(processing: Processing) -> Self {
         Self {
             processing,
-            look: None,
+            luts: Default::default(),
             pixel_pipeline: Default::default(),
             repairs: Default::default(),
         }
@@ -245,22 +245,22 @@ impl ProcessingInput {
             matrix,
             recipe.neutral.source_development.active_area.into(),
         )?
-        .with_look(recipe.look.clone())
+        .with_luts(recipe.luts.clone())
         .with_pixel_pipeline(recipe.pixel_pipeline()?))
     }
 
-    /// Rendering is downstream of the photographic constants; source inspection never adopts a look.
-    pub fn with_look(mut self, look: Option<Arc<crate::looks::LookAsset>>) -> Self {
-        self.look = if self.parameters().graded() {
-            look
+    /// Rendering is downstream of photographic processing; source inspection bypasses both LUTs.
+    pub fn with_luts(mut self, luts: impl Into<crate::looks::LutChain>) -> Self {
+        self.luts = if self.is_positive() {
+            luts.into()
         } else {
-            None
+            Default::default()
         };
         self
     }
 
-    pub fn look(&self) -> Option<&Arc<crate::looks::LookAsset>> {
-        self.look.as_ref()
+    pub fn luts(&self) -> &crate::looks::LutChain {
+        &self.luts
     }
 
     pub fn with_pixel_pipeline(mut self, pipeline: crate::pixel_pipeline::PixelPipeline) -> Self {
@@ -354,7 +354,7 @@ impl ProcessingInput {
 
 impl ProcessingInput {
     pub(crate) fn look_id(&self) -> Option<crate::looks::LookId> {
-        self.look.as_ref().map(|look| look.lut().id())
+        self.luts.id()
     }
 
     /// Look changes rerender, but may reuse an immutable graded AP1 prefix.
@@ -400,7 +400,7 @@ mod halation_tests;
 mod tests {
     use super::*;
     use crate::{
-        film_emulation::{FilmEmulationSettings, FilmPreset},
+        grain::{GrainPreset, GrainSettings},
         pixel_pipeline::{Grain, PixelPipeline},
     };
 
@@ -449,13 +449,13 @@ mod tests {
             })
             .unwrap();
         project.roll.exposure = 0.35;
-        project.output.film_emulation = crate::film_emulation::FilmEmulationSettings {
+        project.output.grain = crate::grain::GrainSettings {
             enabled: true,
             size: 0.04,
             image_sigma: 0.04,
             ..Default::default()
         };
-        project.output.look = Some(Arc::new(
+        project.output.lut = Some(Arc::new(
             crate::looks::LookAsset::new(
                 "Captured".into(),
                 crate::looks::LookOrigin::Imported,
@@ -498,16 +498,13 @@ mod tests {
         assert!((mtf.sigma - 0.08).abs() < 1e-12);
         assert!((grain.parameters.grain_size - 0.11).abs() < 1e-12);
         assert_eq!(grain.seed, id.0);
-        assert_eq!(
-            captured.look().unwrap().lut().id(),
-            recipe.look.as_ref().unwrap().lut().id()
-        );
+        assert_eq!(captured.luts().id(), recipe.luts.id());
         let override_view = captured.clone().with_pixel_pipeline(Default::default());
         assert!(override_view.pixel_pipeline().is_empty());
         assert_eq!(recipe.pixel_pipeline().unwrap(), pipeline);
         assert_ne!(override_view.clone(), captured.clone());
-        project.output.film_emulation.enabled = false;
-        project.output.look = None;
+        project.output.grain.enabled = false;
+        project.output.lut = None;
         project.source_mut(id).unwrap().crop = None;
         assert_eq!(captured.pixel_pipeline(), pipeline);
         assert!(
@@ -522,10 +519,10 @@ mod tests {
     }
 
     #[test]
-    fn source_inspection_cannot_adopt_film_emulation() {
+    fn source_inspection_cannot_adopt_grain() {
         let source = ProcessingInput::from(ProcessingParameters::source());
         let pipeline =
-            PixelPipeline::film(FilmPreset::ThirtyFiveMm.settings(), [3000, 2000], 17).unwrap();
+            PixelPipeline::film(GrainPreset::ThirtyFiveMm.settings(), [3000, 2000], 17).unwrap();
         assert!(!pipeline.is_empty(), "the attempted effect must be active");
         let film = source.clone().with_pixel_pipeline(pipeline);
         assert_eq!(source, film);
@@ -555,25 +552,25 @@ mod tests {
             capture(Default::default(), [3000, 2000])
         );
         assert_ne!(
-            capture(FilmPreset::ThirtyFiveMm.settings(), [6000, 4000]),
-            capture(FilmPreset::ThirtyFiveMm.settings(), [3000, 2000])
+            capture(GrainPreset::ThirtyFiveMm.settings(), [6000, 4000]),
+            capture(GrainPreset::ThirtyFiveMm.settings(), [3000, 2000])
         );
     }
 
     #[cfg(all(feature = "ui", feature = "render"))]
     #[test]
     fn enabled_processing_requires_explicit_crop_context_not_a_source_or_tile_fallback() {
-        assert!(PixelPipeline::film(FilmPreset::ThirtyFiveMm.settings(), [0; 2], 17).is_err());
+        assert!(PixelPipeline::film(GrainPreset::ThirtyFiveMm.settings(), [0; 2], 17).is_err());
         let pipeline =
-            PixelPipeline::film(FilmPreset::ThirtyFiveMm.settings(), [3000, 2000], 17).unwrap();
+            PixelPipeline::film(GrainPreset::ThirtyFiveMm.settings(), [3000, 2000], 17).unwrap();
         let input = positive_fixture().with_pixel_pipeline(pipeline);
         assert!(!input.pixel_pipeline().is_empty());
     }
 
     #[test]
-    fn film_emulation_changes_photographic_content_identity() {
+    fn grain_changes_photographic_content_identity() {
         let base = positive_fixture();
-        let settings = FilmEmulationSettings {
+        let settings = GrainSettings {
             enabled: true,
             size: 0.025,
             image_sigma: 0.025,

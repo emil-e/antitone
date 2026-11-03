@@ -374,7 +374,7 @@ fn resident_camera_execution_resources() {
             .unwrap(),
         );
         let input = ProcessingInput::from(pipeline.clone())
-            .with_pixel_pipeline(crate::pixel_pipeline::PixelPipeline::emulation(crate::film_emulation::FilmPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
+            .with_pixel_pipeline(crate::pixel_pipeline::PixelPipeline::emulation(crate::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
         let plan = crate::gpu::execution::raster::resident_plan(&source, &input)
             .unwrap()
             .unwrap();

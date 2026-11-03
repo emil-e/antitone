@@ -51,7 +51,7 @@ impl Editor {
             && self.project_overwrite.is_none()
             && !self.allow_close
             && !self.export_modal()
-            && !self.document.visit.adjustment_layers.confirming()
+            && !self.document.confirming()
     }
 
     pub(super) fn select_roll_photo(
@@ -60,7 +60,7 @@ impl Editor {
         modifiers: egui::Modifiers,
         cx: &UiContext<'_, Self>,
     ) {
-        if !self.roll_navigation_available() || self.document.removal_pending.is_some() {
+        if !self.roll_navigation_available() {
             return;
         }
         let Some(&id) = self.document.state.project.order.get(index) else {
@@ -136,7 +136,7 @@ impl Editor {
     }
 
     pub(super) fn select_active_photo_only(&mut self) {
-        if !self.roll_edit_available() || self.document.removal_pending.is_some() {
+        if !self.roll_edit_available() || self.document.confirming() {
             return;
         }
         if let Some(id) = self
@@ -151,7 +151,7 @@ impl Editor {
 
     pub(super) fn select_active_shortcut(&mut self, context: &egui::Context) {
         if self.roll_edit_available()
-            && self.document.removal_pending.is_none()
+            && !self.document.confirming()
             && !egui::Popup::is_any_open(context)
             && context.input_mut(|input| {
                 input.consume_key(
@@ -168,7 +168,7 @@ impl Editor {
     pub(super) fn request_removal(&mut self) {
         if !self.roll_edit_available()
             || self.document.auto_crop_edit().is_some()
-            || self.document.removal_pending.is_some()
+            || self.document.confirming()
         {
             return;
         }
@@ -190,12 +190,14 @@ impl Editor {
     }
 
     fn remove_selected_photos(&mut self, cx: &UiContext<'_, Self>) {
-        if !self.roll_edit_available() {
-            return;
-        }
         let Some(ids) = self.document.removal_pending.take() else {
             return;
         };
+        // The confirmed action must not be blocked by its own decision.
+        if !self.roll_edit_available() {
+            self.document.removal_pending = Some(ids);
+            return;
+        }
         let index = self.document.selected;
         let active_removed = self
             .document

@@ -1,2 +1,20 @@
 # Shader sources are compiled text and are compared as text in tests; keep one checkout form.
 *.wgsl text eol=lf
+
+# Component provenance hashes producer and payload bytes, including on Windows checkouts.
+/scripts/spektrafilm/*.py text eol=lf
+/scripts/spektrafilm/requirements.lock text eol=lf
+/native/spektrafilm/*.cpp text eol=lf
+/native/authoring/*.cpp text eol=lf
+/assets/spektrafilm/*.json text eol=lf
+/assets/spektrafilm/index.rs text eol=lf
+/assets/spektrafilm/*.z -text
+/assets/ocio/authoring-reference.json text eol=lf
+/assets/ocio/authoring-reference/*.glsl text eol=lf
+/assets/ocio/authoring-reference/*.json text eol=lf
+/assets/ocio/authoring-reference/*.f32 -text
+/tests/fixtures/spektrafilm/*.json text eol=lf
+/assets/papers/**/*.json text eol=lf
+/assets/papers/**/*.z -text
+/tests/fixtures/papers/*.json text eol=lf
+/native/rendering_transform.h text eol=lf

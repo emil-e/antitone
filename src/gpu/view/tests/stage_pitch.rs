@@ -67,7 +67,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
         ))
         .with_pixel_pipeline(
             crate::pixel_pipeline::PixelPipeline::emulation(
-                crate::film_emulation::FilmEmulationSettings {
+                crate::grain::GrainSettings {
                     enabled: true,
                     size: 0.1,
                     image_sigma: 0.1,

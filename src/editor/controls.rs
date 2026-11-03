@@ -109,15 +109,11 @@ impl Parameter {
             Self::Saturation => 0.0..=2.,
             Self::ColourMix | Self::Density | Self::Strength | Self::Feather => 0.0..=1.,
             Self::CropMargin => 0.0..=crate::auto_crop::MAX_MARGIN_PERCENT,
-            Self::FilmAmount => {
-                crate::film_emulation::MIN_AMOUNT..=crate::film_emulation::MAX_AMOUNT
-            }
-            Self::FilmSize => crate::film_emulation::MIN_SIZE..=crate::film_emulation::MAX_SIZE,
+            Self::FilmAmount => crate::grain::MIN_AMOUNT..=crate::grain::MAX_AMOUNT,
+            Self::FilmSize => crate::grain::MIN_SIZE..=crate::grain::MAX_SIZE,
             Self::HalationStrength => 0. ..=crate::halation::MAX_STRENGTH,
             Self::HalationSize => crate::halation::MIN_SIZE..=crate::halation::MAX_SIZE,
-            Self::FilmColour => {
-                crate::film_emulation::MIN_COLOUR..=crate::film_emulation::MAX_COLOUR
-            }
+            Self::FilmColour => crate::grain::MIN_COLOUR..=crate::grain::MAX_COLOUR,
             _ => -1.0..=1.0,
         }
     }
@@ -139,9 +135,9 @@ impl Parameter {
             Self::Feather => DEFAULT_RADIAL_FEATHER,
             Self::ColourMix | Self::Density => DEFAULT_COLOUR_MIX,
             Self::CropMargin => crate::auto_crop::DEFAULT_MARGIN_PERCENT,
-            Self::FilmAmount => crate::film_emulation::DEFAULT_AMOUNT,
-            Self::FilmSize => crate::film_emulation::DEFAULT_SIZE,
-            Self::FilmColour => crate::film_emulation::DEFAULT_COLOUR,
+            Self::FilmAmount => crate::grain::DEFAULT_AMOUNT,
+            Self::FilmSize => crate::grain::DEFAULT_SIZE,
+            Self::FilmColour => crate::grain::DEFAULT_COLOUR,
             Self::HalationStrength => crate::halation::DEFAULT_STRENGTH,
             Self::HalationSize => crate::halation::DEFAULT_SIZE,
             _ => 0.,

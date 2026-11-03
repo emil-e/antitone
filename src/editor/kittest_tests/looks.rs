@@ -1,5 +1,21 @@
 use super::*;
-use crate::looks::builtin::{Builtin, DEFAULT_GRID};
+use crate::looks::authoring::DEFAULT_GRID;
+use crate::looks::spektrafilm::{Negative, Paper, Selection};
+
+fn constant_asset(value: f32) -> Arc<crate::looks::LookAsset> {
+    Arc::new(
+        crate::looks::LookAsset::new(
+            format!("Constant {value}"),
+            crate::looks::LookOrigin::Imported,
+            Arc::new(
+                crate::looks::Lut3D::new(2, [-0.5; 3], [1.1; 3], vec![[value; 3]; 8]).unwrap(),
+            ),
+        )
+        .unwrap(),
+    )
+}
+
+mod photochemical;
 fn tiff_codes(path: &std::path::Path) -> Vec<u16> {
     let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();
     let tiff::decoder::DecodingResult::U16(codes) = decoder.read_image().unwrap() else {
@@ -86,16 +102,20 @@ fn fixture_editor_gpu<R>(
     })
 }
 
-fn choose(harness: &mut Harness<'_, Editor>, name: &str) {
+fn open_lut(harness: &mut Harness<'_, Editor>) {
     harness
-        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "LUT")
         .scroll_to_me();
     harness.try_run_realtime().unwrap();
     harness
-        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "LUT")
         .click();
     harness.step();
     harness.step();
+}
+
+fn choose(harness: &mut Harness<'_, Editor>, name: &str) {
+    open_lut(harness);
     harness.get_by_label(name).scroll_to_me();
     harness.try_run_realtime().unwrap();
     harness.get_by_label(name).click();
@@ -122,7 +142,7 @@ fn rendering_dropdowns_share_section_geometry_and_target_help() {
                 harness.event(egui::Event::PointerGone);
                 harness.run();
                 let look = harness
-                    .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
+                    .get_by_role_and_label(egui::accesskit::Role::ComboBox, "LUT")
                     .rect();
                 let target = harness
                     .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Target")
@@ -131,7 +151,20 @@ fn rendering_dropdowns_share_section_geometry_and_target_help() {
                 assert_eq!(look.height(), presentation::CONTROL_HEIGHT);
                 assert_eq!(target.height(), look.height());
                 assert!(look.left() >= size.x - width && look.right() <= size.x);
-                for (label, rect) in [("Look", look), ("Target", target)] {
+                let negative = harness
+                    .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Negative")
+                    .rect();
+                let paper = harness
+                    .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Paper")
+                    .rect();
+                for (label, rect) in [
+                    ("Negative", negative),
+                    ("Paper", paper),
+                    ("LUT", look),
+                    ("Target", target),
+                ] {
+                    assert_eq!(rect.x_range(), target.x_range());
+                    assert_eq!(rect.height(), presentation::CONTROL_HEIGHT);
                     let headings: Vec<_> = harness
                         .output()
                         .shapes
@@ -141,7 +174,7 @@ fn rendering_dropdowns_share_section_geometry_and_target_help() {
                             _ => None,
                         })
                         .collect();
-                    assert_eq!(headings.len(), 1, "section heading supplies the label");
+                    assert_eq!(headings.len(), 1, "selector has one visible label");
                     assert!(headings[0].pos.y < rect.top());
                 }
                 if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
@@ -180,7 +213,7 @@ fn rendering_dropdowns_share_section_geometry_and_target_help() {
 }
 
 #[test]
-fn look_browsing_exposes_import_and_attribution_without_accepting_a_change() {
+fn lut_browsing_exposes_import_without_accepting_a_change() {
     fixture_editor(|mut harness, _| {
         let before = harness.read(|editor| editor.document.state.project.clone());
         for (size, name) in [
@@ -189,16 +222,9 @@ fn look_browsing_exposes_import_and_attribution_without_accepting_a_change() {
         ] {
             harness.set_size(size);
             harness.run();
-            harness
-                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
-                .click();
-            harness.step();
-            harness.step();
+            open_lut(&mut harness);
             let load = harness.get_by_label("Load LUT…");
             assert!(!load.accesskit_node().is_disabled());
-            for builtin in Builtin::ALL {
-                assert!(harness.query_by_label(builtin.name()).is_some());
-            }
             if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
                 let output = PathBuf::from(output);
                 std::fs::create_dir_all(&output).unwrap();
@@ -206,23 +232,6 @@ fn look_browsing_exposes_import_and_attribution_without_accepting_a_change() {
                     .render()
                     .unwrap()
                     .save(output.join(format!("look-menu-{name}-offscreen.png")))
-                    .unwrap();
-            }
-            let time = harness.ctx.input(|input| input.time);
-            harness.input_mut().time = Some(time + 0.2);
-            harness.step();
-            harness.get_by_label("Cinema Print").hover();
-            harness.step();
-            let time = harness.ctx.input(|input| input.time);
-            harness.input_mut().time = Some(time + 1.);
-            harness.step();
-            harness.step();
-            assert!(harness.query_by_label("Independent creative interpretation derived from published KODAK VISION Color Print Film 2383 / 3383 data.\nNot affiliated with or endorsed by the manufacturer.").is_some());
-            if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
-                harness
-                    .render()
-                    .unwrap()
-                    .save(PathBuf::from(output).join(format!("look-source-{name}-offscreen.png")))
                     .unwrap();
             }
             harness.event(egui::Event::Key {
@@ -243,23 +252,22 @@ fn look_browsing_exposes_import_and_attribution_without_accepting_a_change() {
 #[test]
 fn cancel_preparation_retires_feedback_and_keeps_the_dropdown_usable_before_cleanup() {
     fixture_editor(|mut harness, _| {
-        choose(&mut harness, Builtin::Kodak2383.name());
+        harness.enter(|e, cx| e.select_look(look::Source::Loaded(constant_asset(0.4)), cx));
         paint_until(&mut harness, positive_ready);
         let accepted = harness.read(|editor| {
             editor
                 .document
                 .project
                 .output
-                .look
+                .lut
                 .as_ref()
                 .unwrap()
                 .lut()
                 .id()
         });
         let paused = crate::background::testing::pause();
-        harness.enter(|editor, cx| {
-            editor.select_look(look::Source::Builtin(Builtin::PortraEndura), cx)
-        });
+        harness
+            .enter(|editor, cx| editor.select_look(look::Source::Loaded(constant_asset(0.6)), cx));
         harness.step();
         harness.read(|editor| assert!(editor.busy && editor.document.look.is_some()));
         harness.get_by_label("Cancel look preparation").click();
@@ -273,7 +281,7 @@ fn cancel_preparation_retires_feedback_and_keeps_the_dropdown_usable_before_clea
                     .document
                     .project
                     .output
-                    .look
+                    .lut
                     .as_ref()
                     .unwrap()
                     .lut()
@@ -282,15 +290,15 @@ fn cancel_preparation_retires_feedback_and_keeps_the_dropdown_usable_before_clea
             );
         });
         choose(&mut harness, "None");
-        harness.read(|editor| assert!(editor.document.project.output.look.is_none()));
+        harness.read(|editor| assert!(editor.document.project.output.lut.is_none()));
         drop(paused);
         paint_until(&mut harness, positive_ready);
-        harness.read(|editor| assert!(editor.document.project.output.look.is_none()));
+        harness.read(|editor| assert!(editor.document.project.output.lut.is_none()));
     });
 }
 
 #[test]
-fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_without_regrading() {
+fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos_without_regrading() {
     fixture_editor(|mut harness, _| {
         let before = harness.read(|editor| editor.document.state.project.clone());
         let original = harness.read(|editor| {
@@ -303,47 +311,43 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                 .unwrap()
                 .clone()
         });
-        for builtin in Builtin::ALL {
-            choose(&mut harness, builtin.name());
+        for selection in [
+            Selection {
+                negative: None,
+                paper: Paper::default(),
+            },
+            Selection {
+                negative: Negative::from_id("kodak_portra_400"),
+                paper: Paper::from_id("kodak_2383").unwrap(),
+            },
+        ] {
+            if let Some(stock) = selection.negative {
+                photochemical::choose_component(&mut harness, "Negative", stock.name());
+            }
+            photochemical::choose_component(&mut harness, "Paper", selection.paper.name());
             paint_until(&mut harness, |editor| {
                 positive_ready(editor)
                     && editor
                         .document
                         .project
                         .output
-                        .look
+                        .film_and_paper
                         .as_ref()
-                        .is_some_and(|asset| asset.origin() == &builtin.origin())
+                        .is_some_and(|asset| asset.origin() == &selection.origin())
             });
-            let asset =
-                harness.read(|editor| editor.document.state.project.output.look.clone().unwrap());
-            assert_eq!(asset.origin(), &builtin.origin());
-            assert_eq!(asset.name(), builtin.name());
-            assert_eq!(
-                harness
-                    .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
-                    .accesskit_node()
-                    .value()
-                    .as_deref(),
-                Some(builtin.name())
-            );
+            let asset = harness.read(|editor| {
+                editor
+                    .document
+                    .state
+                    .project
+                    .output
+                    .film_and_paper
+                    .clone()
+                    .unwrap()
+            });
+            assert_eq!(asset.origin(), &selection.origin());
+            assert_eq!(asset.name(), selection.name());
             assert_eq!(asset.lut().size(), DEFAULT_GRID);
-            if builtin == Builtin::Kodak2383 {
-                let project = harness.read(|editor| editor.document.state.project.clone());
-                let time = harness.ctx.input(|input| input.time);
-                harness.input_mut().time = Some(time + 0.2);
-                harness.step();
-                harness
-                    .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
-                    .hover();
-                harness.step();
-                let time = harness.ctx.input(|input| input.time);
-                harness.input_mut().time = Some(time + 1.);
-                harness.step();
-                harness.step();
-                assert!(harness.query_by_label("Independent creative interpretation derived from published KODAK VISION Color Print Film 2383 / 3383 data.\nNot affiliated with or endorsed by the manufacturer.").is_some());
-                harness.read(|editor| assert_eq!(editor.document.state.project, project));
-            }
             harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
             harness.read(|editor| assert_eq!(editor.document.roll, before.roll));
             harness.read(|editor| {
@@ -392,7 +396,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                             .document
                             .project
                             .output
-                            .look
+                            .film_and_paper
                             .as_ref()
                             .unwrap()
                             .lut()
@@ -436,7 +440,10 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                 harness
                     .render()
                     .unwrap()
-                    .save(output.join(format!("look-{}-reference-offscreen.png", builtin.id())))
+                    .save(output.join(format!(
+                        "film-{}-reference-offscreen.png",
+                        selection.paper.id()
+                    )))
                     .unwrap();
             }
             harness
@@ -445,8 +452,16 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
             harness.step();
             paint_until(&mut harness, positive_ready);
         }
-        let accepted =
-            harness.read(|editor| editor.document.state.project.output.look.clone().unwrap());
+        let accepted = harness.read(|editor| {
+            editor
+                .document
+                .state
+                .project
+                .output
+                .film_and_paper
+                .clone()
+                .unwrap()
+        });
         harness.get_by_label("roll-1.dng").click();
         harness.step();
         wait_for(&mut harness, |editor| !editor.busy);
@@ -457,7 +472,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                     .document
                     .project
                     .output
-                    .look
+                    .film_and_paper
                     .as_ref()
                     .unwrap()
                     .lut()
@@ -484,7 +499,7 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
                     .document
                     .project
                     .output
-                    .look
+                    .film_and_paper
                     .as_ref()
                     .unwrap()
                     .lut()
@@ -495,9 +510,22 @@ fn rendering_widgets_share_builtin_looks_with_views_scopes_and_other_photos_with
         harness.get_by_label("View source").click();
         harness.step();
         paint_until(&mut harness, positive_ready);
-        choose(&mut harness, "None");
+        harness.get_by_label("Reset Film & paper").scroll_to_me();
+        harness.try_run_realtime().unwrap();
+        harness.get_by_label("Reset Film & paper").click();
+        harness.step();
         paint_until(&mut harness, positive_ready);
-        harness.read(|editor| assert!(editor.document.state.project.output.look.is_none()));
+        harness.read(|editor| {
+            assert!(
+                editor
+                    .document
+                    .state
+                    .project
+                    .output
+                    .film_and_paper
+                    .is_none()
+            )
+        });
         for (size, name) in [
             (egui::vec2(1100., 800.), "normal"),
             (egui::vec2(800., 600.), "narrow"),
@@ -775,7 +803,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             });
             std::fs::remove_file(file).unwrap();
             assets.push(
-                harness.read(|editor| editor.document.state.project.output.look.clone().unwrap()),
+                harness.read(|editor| editor.document.state.project.output.lut.clone().unwrap()),
             );
         }
         for (size, name) in [
@@ -785,11 +813,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             harness.set_size(size);
             harness.run();
             let before = harness.read(|editor| editor.document.state.project.clone());
-            harness
-                .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Look")
-                .click();
-            harness.step();
-            harness.step();
+            open_lut(&mut harness);
             assert!(harness.query_by_label("Comparison look").is_some());
             assert!(harness.query_by_label("Comparison look (2)").is_some());
             if let Some(output) = std::env::var_os("ANTITONE_UI_CAPTURE") {
@@ -810,11 +834,9 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
         }
         for (name, expected) in [
-            (Builtin::Kodak2383.name(), None),
             ("Comparison look", Some(0)),
             ("None", None),
             ("Comparison look (2)", Some(1)),
-            (Builtin::PortraEndura.name(), None),
             ("Comparison look", Some(0)),
         ] {
             choose(&mut harness, name);
@@ -826,7 +848,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
                             .document
                             .project
                             .output
-                            .look
+                            .lut
                             .as_ref()
                             .unwrap()
                             .lut()
@@ -835,21 +857,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
                     )
                 });
             } else if name == "None" {
-                harness.read(|editor| assert!(editor.document.state.project.output.look.is_none()));
-            } else {
-                harness.read(|editor| {
-                    assert!(matches!(
-                        editor
-                            .document
-                            .project
-                            .output
-                            .look
-                            .as_ref()
-                            .unwrap()
-                            .origin(),
-                        crate::looks::LookOrigin::Builtin { .. }
-                    ))
-                });
+                harness.read(|editor| assert!(editor.document.state.project.output.lut.is_none()));
             }
             harness.read(|editor| assert_eq!(editor.look.loaded.len(), 2));
             harness.read(|editor| {
@@ -899,9 +907,16 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
 fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapshot() {
     fixture_editor(|mut harness, _| {
         let directory = tempfile::tempdir().unwrap();
-        choose(&mut harness, Builtin::Kodak2383.name());
+        photochemical::choose_component(&mut harness, "Negative", "Kodak Portra 400");
         paint_until(&mut harness, |editor| {
-            positive_ready(editor) && editor.document.state.project.output.look.is_some()
+            positive_ready(editor)
+                && editor
+                    .document
+                    .state
+                    .project
+                    .output
+                    .film_and_paper
+                    .is_some()
         });
         editor_harness_with_thumbnails(true, |mut reopened, _| {
             reopened.run();
@@ -933,7 +948,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                                 .document
                                 .project
                                 .output
-                                .look
+                                .lut
                                 .as_ref()
                                 .is_some_and(|look| {
                                     matches!(look.origin(), crate::looks::LookOrigin::Imported)
@@ -941,12 +956,11 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                     });
                     std::fs::remove_file(file).unwrap();
                 }
-                let asset = harness
-                    .read(|editor| editor.document.state.project.output.look.clone().unwrap());
+                let asset = harness.read(|editor| editor.document.state.project.output.luts());
                 let path = directory.path().join(if imported {
                     "imported.antitone.json"
                 } else {
-                    "builtin.antitone.json"
+                    "film-and-paper.antitone.json"
                 });
                 harness.enter(|editor, cx| {
                     editor.save_project(path.clone(), crate::project::Save::New, None, cx)
@@ -963,20 +977,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                         && editor.document.visit.canvas.ready.is_some()
                 });
                 reopened.read(|editor| assert!(editor.failure.is_none()));
-                reopened.read(|editor| {
-                    assert_eq!(
-                        editor
-                            .document
-                            .project
-                            .output
-                            .look
-                            .as_ref()
-                            .unwrap()
-                            .lut()
-                            .id(),
-                        asset.lut().id()
-                    )
-                });
+                reopened.read(|editor| assert_eq!(editor.document.project.output.luts(), asset));
                 reopened.read(|editor| assert!(editor.document.look.is_none()));
                 reopened.read(|editor| assert!(!editor.document.dirty()));
                 if reopened.read(|editor| editor.document.source) {
@@ -999,7 +1000,7 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                 editor.document.export.operation.is_none()
             });
             harness.read(|editor| assert!(editor.failure.is_none()));
-            harness.read(|editor| assert!(editor.document.state.project.output.look.is_none()));
+            harness.read(|editor| assert!(editor.document.state.project.output.lut.is_none()));
             let cleared = directory.path().join("snapshot-without-look.tif");
             harness.enter(|editor, cx| {
                 editor.export(
@@ -1044,7 +1045,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
                 .document
                 .project
                 .output
-                .look
+                .lut
                 .as_ref()
                 .unwrap()
                 .lut()
@@ -1067,7 +1068,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
                     .document
                     .project
                     .output
-                    .look
+                    .lut
                     .as_ref()
                     .unwrap()
                     .lut()
@@ -1109,7 +1110,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
                     .document
                     .project
                     .output
-                    .look
+                    .lut
                     .as_ref()
                     .unwrap()
                     .lut()
@@ -1138,7 +1139,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
                     .document
                     .project
                     .output
-                    .look
+                    .lut
                     .as_ref()
                     .unwrap()
                     .lut()
@@ -1149,6 +1150,6 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         choose(&mut harness, "None");
         paint_until(&mut harness, positive_ready);
         harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
-        harness.read(|editor| assert!(editor.document.state.project.output.look.is_none()));
+        harness.read(|editor| assert!(editor.document.state.project.output.lut.is_none()));
     });
 }

@@ -683,7 +683,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
 fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_accepted_recipe() {
     setup(|mut h, _directory| {
         h.update(|editor| {
-            editor.document.state.project.output.look = Some(Arc::new(
+            editor.document.state.project.output.lut = Some(Arc::new(
                 crate::looks::LookAsset::new(
                     "Preview look".into(),
                     crate::looks::LookOrigin::Imported,

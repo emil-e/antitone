@@ -71,7 +71,7 @@ fn grade_owner_survives_output_and_ui_changes_but_retires_for_effective_preview_
             );
             let weak = Arc::downgrade(&look);
             let mut looked = (*accepted).clone();
-            looked.look = Some(look);
+            looked.luts = Some(look).into();
             e.observe_grade(Some(Arc::new(looked)));
             weak
         });
@@ -112,14 +112,14 @@ fn disabled_effect_controls_do_not_retire_the_recipe_owner_but_an_active_operati
             e.document.visit.adjustment_layer_settings,
         )
         .unwrap();
-    recipe.film_emulation.enabled = false;
+    recipe.grain.enabled = false;
     recipe.halation.enabled = false;
     let scope = GradeScope::new(Some(Arc::new(recipe.clone())));
-    recipe.film_emulation.image_sigma = 0.05;
-    recipe.film_emulation.amount = 0.;
+    recipe.grain.image_sigma = 0.05;
+    recipe.grain.amount = 0.;
     assert!(recipe.pixel_pipeline().unwrap().stages.is_empty());
     assert!(scope.matches(Some(&recipe)));
-    recipe.film_emulation.enabled = true;
+    recipe.grain.enabled = true;
     assert!(!recipe.pixel_pipeline().unwrap().stages.is_empty());
     assert!(!scope.matches(Some(&recipe)));
     assert!(

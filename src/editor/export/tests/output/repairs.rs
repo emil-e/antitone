@@ -88,11 +88,11 @@ fn film_mtf_includes_repair_support_just_outside_the_crop() {
             .unwrap()
             .is_empty()
     );
-    editor.document.film_emulation = FilmEmulationSettings {
+    editor.document.grain = GrainSettings {
         enabled: true,
         amount: 0.,
-        size: crate::film_emulation::MAX_SIZE,
-        image_sigma: crate::film_emulation::MAX_SIZE,
+        size: crate::grain::MAX_SIZE,
+        image_sigma: crate::grain::MAX_SIZE,
         ..Default::default()
     };
     editor.sync_document();
@@ -144,7 +144,7 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             )
             .unwrap(),
         );
-        editor.document.state.project.output.look = Some(look.clone());
+        editor.document.state.project.output.lut = Some(look.clone());
         let id = editor.document.visit.current_source.unwrap();
         editor
             .document
@@ -230,9 +230,9 @@ fn authored_reopened_cold_exports_apply_all_repairs_and_failed_preparation_prese
             let path = directory.path().join(name);
             editor = wait(editor, |editor, cx| {
                 editor.export(path.clone(), format, Overwrite::Refuse, cx);
-                editor.document.state.project.output.look = None;
+                editor.document.state.project.output.lut = None;
             });
-            editor.document.state.project.output.look = Some(look.clone());
+            editor.document.state.project.output.lut = Some(look.clone());
             assert!(editor.failure.is_none(), "{}", editor.status);
             assert!(path.exists());
             match format {

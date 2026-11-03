@@ -68,7 +68,7 @@ fn deferred_counters_preserve_common_pixels_and_reject_final_collection_before_p
         repairs: &[],
         composition,
         format: Format::Tiff(OutputTarget::Srgb),
-        look: None,
+        luts: (None).into(),
     };
     let gate = SubmissionGate::default();
     let directory = tempfile::tempdir().unwrap();

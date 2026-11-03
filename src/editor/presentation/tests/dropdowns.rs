@@ -1,6 +1,7 @@
 use super::{CONTROL_HEIGHT, frame, key, pointer};
 use crate::editor::presentation::inspector_dropdown;
 use egui::Context;
+mod labels;
 
 #[test]
 fn inspector_dropdowns_fill_the_row_without_losing_names_values_or_disabled_state() {

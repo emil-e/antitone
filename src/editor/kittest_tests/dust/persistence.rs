@@ -345,7 +345,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 toe: 1.,
                 shoulder: 0.,
             });
-            editor.document.state.project.output.look = Some(look.clone());
+            editor.document.state.project.output.lut = Some(look.clone());
         });
         h.step();
         stage(&mut h, "Photo");

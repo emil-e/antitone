@@ -17,7 +17,7 @@ pub(super) struct DocumentScope {
     pub input: super::InputSettings,
     pub input_switch: Option<super::InputSettings>,
     pub roll: super::RollSettings,
-    pub film_emulation: super::FilmEmulationSettings,
+    pub grain: super::GrainSettings,
     pub halation: crate::halation::HalationSettings,
     pub roll_orientation: super::RollOrientation,
     pub auto_crop_requested: Option<super::auto_crop::Action>,
@@ -48,6 +48,7 @@ pub(super) struct DocumentScope {
     pub thumbnail_work: super::thumbnails::ThumbnailWork,
     pub write: super::save::State,
     pub look: Option<super::look::Operation>,
+    pub material_switch: Option<super::look::MaterialSwitch>,
     pub dust: super::dust::State,
     #[cfg(test)]
     pub analysis_preparation_work:
@@ -58,6 +59,12 @@ pub(super) struct DocumentScope {
 }
 
 impl DocumentScope {
+    pub fn confirming(&self) -> bool {
+        self.removal_pending.is_some()
+            || self.material_switch.is_some()
+            || self.visit.adjustment_layers.confirming()
+    }
+
     pub fn replacement(&self, state: Document) -> Self {
         let mut next: Self = state.into();
         next.thumbnails = self.thumbnails.for_document(next.cache.clone());
@@ -172,7 +179,7 @@ impl From<Document> for DocumentScope {
             input,
             input_switch: None,
             roll: super::RollSettings::default(),
-            film_emulation: super::FilmEmulationSettings::default(),
+            grain: super::GrainSettings::default(),
             halation: Default::default(),
             roll_orientation: super::RollOrientation::default(),
             target: super::OutputTarget::DisplayP3,
@@ -192,6 +199,7 @@ impl From<Document> for DocumentScope {
             thumbnail_work: Default::default(),
             write: super::save::State::default(),
             look: None,
+            material_switch: None,
             dust: super::dust::State::default(),
             #[cfg(test)]
             analysis_preparation_work: None,

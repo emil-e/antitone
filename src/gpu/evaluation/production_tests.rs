@@ -134,7 +134,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     );
     let mut input = ProcessingInput::from(pipeline).with_pixel_pipeline(
         crate::pixel_pipeline::PixelPipeline::emulation(
-            crate::film_emulation::FilmEmulationSettings {
+            crate::grain::GrainSettings {
                 enabled: true,
                 size: 0.1,
                 image_sigma: 0.1,
@@ -172,7 +172,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         )
         .unwrap(),
     );
-    input = input.with_look(Some(look.clone()));
+    input = input.with_luts(Some(look.clone()));
     let stages = input.pixel_pipeline();
     let repairs = vec![evaluated];
     let request = || crate::gpu::execution::Request {
@@ -185,7 +185,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         composition: Composition::new(a, Default::default(), Default::default()).unwrap(),
         stages: stages.clone(),
         output: OutputReference::DisplayReferred(OutputTarget::Srgb),
-        look: Some(look.clone()),
+        luts: Some(look.clone()).into(),
         encoding: crate::gpu::execution::SampleEncoding::LinearFloat,
         budget: crate::gpu::execution::WorkBudget::for_device(&device),
     };
@@ -211,7 +211,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
                 .stages
                 .retain(|s| s.get::<crate::image_mtf::ImageMtfParameters>().is_none()),
             "repairs" => control.repairs = &[],
-            "look" => control.look = None,
+            "look" => control.luts = Default::default(),
             _ => unreachable!(),
         }
         let control = canonical(&renderer, &device, &queue, control);

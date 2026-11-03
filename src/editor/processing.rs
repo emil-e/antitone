@@ -153,7 +153,7 @@ impl Editor {
             .project
             .image_recipe_for_source(&candidate, &input, roll)?;
         recipe.neutral.reference = self.document.exposure_value(source);
-        recipe.film_emulation = self.document.film_emulation;
+        recipe.grain = self.document.grain;
         recipe.halation = self.document.halation;
         recipe.neutral.correction = self
             .document
@@ -259,7 +259,7 @@ pub(super) fn image_paint(
 ) -> Result<ImagePaint, Error> {
     if input
         .as_ref()
-        .is_some_and(|input| input.grade().is_some() || input.look().is_some())
+        .is_some_and(|input| input.grade().is_some() || !input.luts().is_empty())
     {
         ImagePaint::with_processing(image, input, mapping)
             .map(|paint| paint.with_context(context.clone()))

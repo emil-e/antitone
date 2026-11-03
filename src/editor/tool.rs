@@ -204,7 +204,7 @@ impl Editor {
                     Some(legacy_tool::Tool::Flat(_))
                 ))
             && !self.export_modal()
-            && self.document.removal_pending.is_none()
+            && !self.document.confirming()
             && self.transition.is_none()
             && self.menus.panel.is_none()
     }

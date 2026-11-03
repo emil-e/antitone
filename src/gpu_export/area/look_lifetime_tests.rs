@@ -59,7 +59,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
         )
         .unwrap(),
     );
-    let request = |look| Request {
+    let request = |look: Option<Arc<crate::looks::LookAsset>>| Request {
         pipeline: Default::default(),
         scan: &scan,
         field: None,
@@ -69,7 +69,7 @@ fn cold_job_retains_one_look_across_source_sizes_and_releases_it_on_success_or_s
         repairs: &[],
         composition,
         format: Format::Tiff(OutputTarget::DisplayP3),
-        look,
+        luts: look.into(),
     };
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("output.tif");

@@ -140,7 +140,7 @@ fn production_repairs_grades_look_and_area_match_independent_scalar_ocio_in_line
                 repairs: std::slice::from_ref(&evaluated),
                 composition,
                 format: Format::Tiff(target),
-                look: look.clone(),
+                luts: (look.clone()).into(),
             };
             let (result, pixels) = crate::export_timing::pixels::capture(|| {
                 super::super::write(

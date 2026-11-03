@@ -4,7 +4,7 @@ use super::*;
 #[cfg(test)]
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 #[cfg(test)]
-use crate::film_emulation::FilmEmulationSettings;
+use crate::grain::GrainSettings;
 #[cfg(test)]
 use crate::scan::Scan;
 use crate::{
@@ -392,8 +392,10 @@ impl RenderedView {
         self.capture.look_id()
     }
 
-    pub(crate) fn look_lut(&self) -> Option<Arc<super::look::Lut>> {
-        self.group.as_ref().and_then(|binding| binding.look_lut())
+    pub(crate) fn lut_resources(&self) -> Vec<Arc<super::lut3d::Lut>> {
+        self.group
+            .as_ref()
+            .map_or_else(Vec::new, |binding| binding.lut_resources())
     }
 
     /// Thumbnail payload beyond the target image, including shared parents and LUT storage.
@@ -548,7 +550,7 @@ impl RenderedView {
                 graded.pixels.clone(),
             )?,
             target,
-            capture.look(),
+            capture.luts(),
             &image.linear,
         )?;
         Ok(Arc::new(Self {

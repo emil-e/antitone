@@ -2750,7 +2750,15 @@ fn structured_controls_fit_normal_and_narrow_widths_without_an_empty_stage() {
                     "White balance",
                 ]
             } else {
-                vec!["Look", "None", "Target", "Display P3"]
+                vec![
+                    "LUT",
+                    "Film & paper",
+                    "Negative",
+                    "Paper",
+                    "None",
+                    "Target",
+                    "Display P3",
+                ]
             };
             for label in &required {
                 let present = if *label == "Layers" {

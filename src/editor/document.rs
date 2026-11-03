@@ -314,10 +314,10 @@ impl Document {
 
     fn validate_structure_with_device(&self, device: Option<&wgpu::Device>) -> Result<()> {
         self.project.require_runtime()?;
-        if let Some(device) = device
-            && let Some(asset) = &self.project.output.look
-        {
-            crate::gpu::look::Lut::require_limits(&device.limits(), asset.lut())?;
+        if let Some(device) = device {
+            for asset in self.project.output.luts().assets() {
+                crate::gpu::lut3d::Lut::require_limits(&device.limits(), asset.lut())?;
+            }
         }
         for source in &self.project.sources {
             if source

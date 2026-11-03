@@ -226,7 +226,7 @@ fn selecting_and_zooming_a_calibrated_photo_paints_proxy_while_acquisition_is_ru
 }
 
 #[test]
-fn film_emulation_navigation_waits_for_rendered_scopes_while_acquisition_is_running() {
+fn grain_navigation_waits_for_rendered_scopes_while_acquisition_is_running() {
     selecting_and_zooming_with_blocked_acquisition(true);
 }
 
@@ -265,7 +265,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         }
         harness.update(|editor| {
             if film {
-                editor.document.film_emulation = FilmPreset::ThirtyFiveMm.settings();
+                editor.document.grain = GrainPreset::ThirtyFiveMm.settings();
                 editor.scopes.visible = true;
             } else {
                 editor.set_dmin(Some(DVec3::splat(0.7)));
@@ -289,7 +289,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                     editor.document.input,
                     crate::processing::InputSettings::Digital
                 );
-                assert!(editor.document.film_emulation.enabled);
+                assert!(editor.document.grain.enabled);
                 let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
                 let proxy = ready.proxy.image(editor.document.target).unwrap();
                 assert!(

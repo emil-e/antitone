@@ -35,7 +35,7 @@ fn independently_defined_effects_have_value_identity_and_declare_their_own_suppo
 
 #[test]
 fn zero_grain_is_absent_from_the_recipe_while_image_mtf_remains() {
-    let settings = FilmEmulationSettings {
+    let settings = GrainSettings {
         enabled: true,
         amount: 0.,
         ..Default::default()
@@ -48,7 +48,7 @@ fn zero_grain_is_absent_from_the_recipe_while_image_mtf_remains() {
     }));
     assert!(!pipeline.stages.iter().any(|s| s.get::<Grain>().is_some()));
     assert!(
-        PixelPipeline::film(FilmEmulationSettings::default(), [6000, 4000], 17)
+        PixelPipeline::film(GrainSettings::default(), [6000, 4000], 17)
             .unwrap()
             .is_empty()
     );

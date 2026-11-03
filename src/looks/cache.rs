@@ -1,10 +1,12 @@
-//! Disposable built-in bake cache. Saved projects never depend on this directory.
-use super::{LookAsset, builtin::Builtin, failure, require};
+//! Disposable generated-treatment cache. Saved projects own their accepted samples.
+use super::{LookAsset, LookOrigin, failure, material::Selection, require};
 use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
+#[cfg(test)]
+mod photochemical_tests;
 const MAX_FILE_BYTES: u64 = 48 * 1024 * 1024;
 const BUDGET: u64 = 64 * 1024 * 1024;
 pub struct Cache {
@@ -20,16 +22,29 @@ impl Cache {
         crate::sys::cache_dir("antitone").map(|root| Self::at(root.join("looks-v1")))
     }
 
-    fn path(&self, builtin: Builtin, size: u32) -> Result<PathBuf, crate::Error> {
-        let key =
-            serde_json::to_vec(&(super::CONTRACT, builtin.origin(), size)).map_err(failure)?;
+    fn path(&self, origin: &LookOrigin, size: u32) -> Result<PathBuf, crate::Error> {
+        let key = serde_json::to_vec(&(super::CONTRACT, origin, size)).map_err(failure)?;
         Ok(self
             .root
             .join(format!("{}.json", blake3::hash(&key).to_hex())))
     }
 
-    pub fn load(&self, builtin: Builtin, size: u32) -> Result<Option<LookAsset>, crate::Error> {
-        let path = self.path(builtin, size)?;
+    pub fn load_photochemical(
+        &self,
+        selection: impl Into<Selection>,
+        size: u32,
+    ) -> Result<Option<LookAsset>, crate::Error> {
+        let selection = selection.into();
+        self.load_origin(&selection.origin(), &selection.name(), size)
+    }
+
+    fn load_origin(
+        &self,
+        origin: &LookOrigin,
+        name: &str,
+        size: u32,
+    ) -> Result<Option<LookAsset>, crate::Error> {
+        let path = self.path(origin, size)?;
         let file = match fs::File::open(&path) {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -45,15 +60,11 @@ impl Cache {
         )?;
         let asset: LookAsset = serde_json::from_slice(&bytes).map_err(failure)?;
         require(
-            asset.origin() == &builtin.origin() && asset.lut().size() == size,
+            asset.origin() == origin && asset.lut().size() == size,
             "cached LUT source/specification mismatch",
         )?;
         // Cache labels follow the current catalog; embedded project assets do not.
-        let asset = LookAsset::new(
-            builtin.name().into(),
-            asset.origin().clone(),
-            asset.lut().clone(),
-        )?;
+        let asset = LookAsset::new(name.into(), asset.origin().clone(), asset.lut().clone())?;
         // Optional recency metadata; failure does not invalidate verified samples.
         if let Ok(file) = fs::OpenOptions::new().write(true).open(&path) {
             let _ = file.set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
@@ -61,12 +72,21 @@ impl Cache {
         Ok(Some(asset))
     }
 
-    pub fn store(&self, builtin: Builtin, asset: &LookAsset) -> Result<(), crate::Error> {
+    pub fn store_photochemical(
+        &self,
+        selection: impl Into<Selection>,
+        asset: &LookAsset,
+    ) -> Result<(), crate::Error> {
+        let selection = selection.into();
+        self.store_origin(&selection.origin(), asset)
+    }
+
+    fn store_origin(&self, origin: &LookOrigin, asset: &LookAsset) -> Result<(), crate::Error> {
         require(
-            asset.origin() == &builtin.origin(),
+            asset.origin() == origin,
             "cache source differs from generated look",
         )?;
-        let path = self.path(builtin, asset.lut().size())?;
+        let path = self.path(origin, asset.lut().size())?;
         let bytes = serde_json::to_vec(asset).map_err(failure)?;
         require(
             bytes.len() as u64 <= MAX_FILE_BYTES,
@@ -115,38 +135,5 @@ impl Cache {
             }
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-
-    #[test]
-    fn cached_assets_are_validated_and_projects_need_no_cache() {
-        let directory = tempfile::tempdir().unwrap();
-        let cache = Cache::at(directory.path().into());
-        let builtin = Builtin::PortraEndura;
-        assert!(cache.load(builtin, 3).unwrap().is_none());
-        let asset = LookAsset::new(
-            "source".into(),
-            builtin.origin(),
-            Arc::new(super::super::tests::identity(3)),
-        )
-        .unwrap();
-        cache.store(builtin, &asset).unwrap();
-        let cached = cache.load(builtin, 3).unwrap().unwrap();
-        assert_eq!(cached.name(), builtin.name());
-        assert_eq!(cached.origin(), asset.origin());
-        assert_eq!(cached.lut(), asset.lut());
-        let restored: LookAsset =
-            serde_json::from_slice(&serde_json::to_vec(&asset).unwrap()).unwrap();
-        assert_eq!(restored, asset);
-        assert_eq!(restored.name(), "source");
-        assert!(cache.load(Builtin::Kodak2383, 3).unwrap().is_none());
-        fs::write(cache.path(builtin, 3).unwrap(), b"corrupt").unwrap();
-        assert!(cache.load(builtin, 3).is_err());
-        assert!(asset.lut().apply(glam::DVec3::splat(0.18)).is_ok());
     }
 }

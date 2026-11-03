@@ -70,7 +70,7 @@ pub(crate) fn write(
         repairs: &repairs,
         composition: job.recipe.composition,
         format: job.format,
-        look: job.recipe.look.clone(),
+        luts: job.recipe.luts.clone(),
         pipeline: stages,
     };
     super::area::write(renderer, device, gpu, request, destination, check).map(|_| ())

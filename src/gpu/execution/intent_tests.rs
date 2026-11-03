@@ -75,7 +75,7 @@ fn request(scan: &Scan, output: OutputReference, encoding: SampleEncoding) -> Re
         .unwrap(),
         stages: Default::default(),
         output,
-        look: Some(look()),
+        luts: (Some(look())).into(),
         encoding,
         budget: WorkBudget {
             source_pixels: u64::MAX,
@@ -121,7 +121,7 @@ fn scene_and_display_float_results_match_scalar_and_ocio_before_reconstruction()
         let source = ImageSource::new(&scan, request.input).unwrap();
         let grading = GradingPipeline::new(request.roll, request.grade.clone()).unwrap();
         let raster = FrameRaster::full(request.composition).unwrap();
-        let look = request.look.clone().unwrap();
+        let look = request.luts.lut.clone().unwrap();
         let cpu = reference
             .display_target()
             .map(|target| crate::rendering::CpuRenderer::new(target).unwrap());

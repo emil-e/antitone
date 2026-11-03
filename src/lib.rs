@@ -31,7 +31,6 @@ mod export_timing;
 #[cfg(feature = "project")]
 pub mod exposure_metadata;
 pub mod exposure_reference;
-pub mod film_emulation;
 pub mod flat_field;
 pub mod frame_raster;
 pub mod geometry;

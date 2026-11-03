@@ -78,11 +78,11 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
             )
             .unwrap(),
         );
-        editor.document.state.project.output.look = Some(look.clone());
+        editor.document.state.project.output.lut = Some(look.clone());
         let directory = tempfile::tempdir().unwrap();
         let mut reference: Option<Vec<u16>> = None;
         for with_look in [true, false] {
-            editor.document.state.project.output.look = with_look.then(|| look.clone());
+            editor.document.state.project.output.lut = with_look.then(|| look.clone());
             let path = directory.path().join(format!("look-{with_look}.tif"));
             assert!(
                 !editor
@@ -98,10 +98,10 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                     cx,
                 );
                 // Change live state after capture; neither file may follow this newer value.
-                editor.document.state.project.output.look = (!with_look).then(|| look.clone());
+                editor.document.state.project.output.lut = (!with_look).then(|| look.clone());
             });
             assert!(editor.failure.is_none(), "{}", editor.status);
-            editor.document.state.project.output.look = Some(look.clone());
+            editor.document.state.project.output.lut = Some(look.clone());
             let pixels = tiff_pixels(&path);
             let (triplets, tail) = pixels.as_chunks::<3>();
             assert!(tail.is_empty());

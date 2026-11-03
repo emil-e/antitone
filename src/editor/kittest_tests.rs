@@ -15,8 +15,8 @@ mod dust;
 mod export;
 #[cfg(feature = "ocio-reference")]
 mod exposure;
-mod film_emulation;
 mod fullscreen;
+mod grain;
 mod guide_shots;
 mod halation;
 mod history;

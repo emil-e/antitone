@@ -5,7 +5,7 @@ use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage};
 fn film_seed_routing_uses_source_identity_not_visit_identity() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
-        editor.document.film_emulation.enabled = true;
+        editor.document.grain.enabled = true;
         let seed = |input: &ProcessingInput| {
             input
                 .pixel_pipeline()

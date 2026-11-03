@@ -244,7 +244,7 @@ fn raf_import_reopen_view_and_bounded_exports() {
                         repairs: &[],
                         composition: crop,
                         format,
-                        look: None,
+                        luts: Default::default(),
                         pipeline: Default::default(),
                     },
                     &output,

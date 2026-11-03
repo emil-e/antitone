@@ -136,7 +136,7 @@ fn legacy(
 ) {
     let looked = look.map(|asset| {
         let lut = renderer.look_resource(device, asset).unwrap();
-        let kernel = pollster::block_on(crate::gpu::look::Kernel::new(device)).unwrap();
+        let kernel = pollster::block_on(crate::gpu::lut3d::Kernel::new(device)).unwrap();
         let pixels = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: source.size(),
@@ -236,7 +236,7 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                         &device,
                         supplied(&source, dimensions),
                         target,
-                        selected,
+                        &(selected).cloned().into(),
                         &output,
                     )
                     .unwrap();
@@ -316,7 +316,7 @@ fn reference_composition_preserves_target_coverage_and_legacy_arithmetic_without
                     &device,
                     &renderer,
                     OutputReference::DisplayReferred(target),
-                    selected,
+                    &(selected).cloned().into(),
                 )
                 .unwrap();
                 let image = reference
@@ -389,7 +389,7 @@ fn repeated_presentation_owns_fresh_admission_and_rejects_only_covered_nonfinite
             &device,
             supplied(&source, [2, 1, 1, 0]),
             OutputTarget::Srgb,
-            Some(&look),
+            &(Some(&look)).cloned().into(),
             &output,
         )
         .unwrap();
@@ -450,7 +450,7 @@ fn display_and_look_values_preserve_sample_flags_and_ignore_uncovered_nonfinite_
                     &device,
                     &renderer,
                     OutputReference::DisplayReferred(target),
-                    selected,
+                    &(selected).cloned().into(),
                 )
                 .unwrap()
                 .compose(argument.definition.clone(), &renderer)
@@ -551,7 +551,11 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
         tile: [1, 1],
         scratch_bytes: 1 << 20,
     };
-    for fails in [false, true] {
+    for (fails, paired) in [(false, false), (true, false), (false, true), (true, true)] {
+        let chain = |first: &Arc<LookAsset>| crate::looks::LutChain {
+            lut: Some(first.clone()),
+            film_and_paper: paired.then(|| different.clone()),
+        };
         let look = asset();
         let input = if fails {
             ImageNode::new(domain, Some(base.clone()), Nonfinite)
@@ -569,7 +573,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
             &device,
             &renderer,
             OutputReference::DisplayReferred(OutputTarget::Srgb),
-            Some(&look),
+            &chain(&look),
         )
         .unwrap();
         let renamed = Arc::new(
@@ -584,15 +588,34 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
             &device,
             &other,
             OutputReference::DisplayReferred(OutputTarget::Srgb),
-            Some(&renamed),
+            &chain(&renamed),
         )
         .unwrap();
         let looked = reference.looked(input.clone());
+        assert_eq!(reference.look_id(), chain(&look).id());
+        assert_eq!(reference.lut_resources().len(), if paired { 2 } else { 1 });
+        if paired {
+            let reversed = Reference::capture(
+                &device,
+                &renderer,
+                OutputReference::DisplayReferred(OutputTarget::Srgb),
+                &crate::looks::LutChain {
+                    lut: Some(different.clone()),
+                    film_and_paper: Some(look.clone()),
+                },
+            )
+            .unwrap();
+            assert!(
+                !looked.same_definition(&reversed.looked(input.clone())),
+                "ordered LUT operands must not alias a reversed calculation"
+            );
+        }
+
         let changed = Reference::capture(
             &device,
             &renderer,
             OutputReference::DisplayReferred(OutputTarget::Srgb),
-            Some(&different),
+            &chain(&different),
         )
         .unwrap();
         assert!(!looked.same_definition(&changed.looked(input.clone())));
@@ -608,7 +631,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
             &device,
             &renderer,
             OutputReference::DisplayReferred(OutputTarget::DisplayP3),
-            Some(&look),
+            &chain(&look),
         )
         .unwrap();
         assert!(!displayed.same_definition(&p3.compose(input.clone(), &renderer).unwrap()));
@@ -659,7 +682,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
                 &device,
                 argument.clone(),
                 OutputTarget::Srgb,
-                Some(&look),
+                &chain(&look),
                 &output,
             )
             .unwrap();
@@ -692,7 +715,7 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
         &device,
         &renderer,
         OutputReference::DisplayReferred(OutputTarget::Srgb),
-        None,
+        &Default::default(),
     )
     .unwrap();
     let budget = Budget {
@@ -788,13 +811,132 @@ fn display_attachment_admission_checks_format_extent_and_complete_grid() {
         &device,
         &renderer,
         OutputReference::SceneReferred,
-        Some(&asset()),
+        &(Some(&asset())).cloned().into(),
     )
     .unwrap();
-    assert!(scene.look().is_none());
+    assert!(scene.lut_resources().is_empty());
     let input = borrowed_input(domain);
     assert!(Arc::ptr_eq(
         &input,
         &scene.compose(input.clone(), &renderer).unwrap()
     ));
+}
+
+#[cfg(feature = "ocio-reference")]
+#[test]
+fn two_lut_operations_apply_in_declared_order_with_independent_bypass_and_shared_resources() {
+    use crate::{looks::LutChain, photographic};
+    use glam::DVec3;
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let make = |swap: bool| {
+        let mut nodes = Vec::new();
+        for b in [-0.5, 1.] {
+            for g in [-0.5, 1.] {
+                for r in [-0.5, 1.] {
+                    nodes.push(if swap { [g, r, b] } else { [0.5 * r, g, b] });
+                }
+            }
+        }
+        Arc::new(
+            LookAsset::new(
+                if swap { "Swap" } else { "Half red" }.into(),
+                LookOrigin::Imported,
+                Arc::new(Lut3D::new(2, [-0.5; 3], [1.; 3], nodes).unwrap()),
+            )
+            .unwrap(),
+        )
+    };
+    let swap = make(true);
+    let half = make(false);
+    let encoded = [DVec3::new(-0.2, 0.4, 0.8), DVec3::new(0.6, 0.3, -0.1)];
+    let pixels: Vec<_> = encoded
+        .iter()
+        .map(|v| {
+            let rgb = v.map(photographic::decode);
+            [rgb.x as f32, rgb.y as f32, rgb.z as f32, 8.]
+        })
+        .collect();
+    let input = buffer(&device, &pixels);
+    let cpu = crate::rendering::CpuRenderer::new(OutputTarget::Srgb).unwrap();
+    for (first, second, reversed) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (true, true, false),
+        (true, true, true),
+    ] {
+        let chain = if reversed {
+            LutChain {
+                lut: Some(half.clone()),
+                film_and_paper: Some(swap.clone()),
+            }
+        } else {
+            LutChain {
+                lut: first.then(|| swap.clone()),
+                film_and_paper: second.then(|| half.clone()),
+            }
+        };
+        let expected: Vec<_> = encoded
+            .iter()
+            .map(|v| {
+                let out = if reversed {
+                    DVec3::new(v.y, v.x * 0.5, v.z)
+                } else {
+                    let v = if first { DVec3::new(v.y, v.x, v.z) } else { *v };
+                    if second {
+                        DVec3::new(v.x * 0.5, v.y, v.z)
+                    } else {
+                        v
+                    }
+                };
+                out.map(photographic::decode)
+            })
+            .collect();
+        let expected = cpu.render(&expected).unwrap();
+        let output = texture(&device, [2, 1], wgpu::TextureFormat::Rgba32Float);
+        let binding = renderer
+            .render_binding(
+                &device,
+                supplied(&input, [2, 1, 0, 0]),
+                OutputTarget::Srgb,
+                &chain,
+                &output,
+            )
+            .unwrap();
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let check = binding.encode(&device, &mut encoder).unwrap();
+        let submission = queue.submit([encoder.finish()]);
+        if let Some(check) = &check {
+            check.begin(|| {});
+        }
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(std::time::Duration::from_secs(10)),
+            })
+            .unwrap();
+        if let Some(check) = check {
+            check.result().unwrap().unwrap();
+        }
+        let actual = read_texture(&device, &queue, &output);
+        for (actual, expected) in actual.iter().zip(expected) {
+            for c in 0..3 {
+                assert!(
+                    (actual[c] - expected[c]).abs() < 2e-5,
+                    "first={first} second={second} reversed={reversed}: {actual:?} {expected:?}"
+                );
+            }
+        }
+        if first && second {
+            let a = renderer.look_resource(&device, &swap).unwrap();
+            let b = renderer.look_resource(&device, &swap).unwrap();
+            assert!(Arc::ptr_eq(&a, &b));
+            assert_ne!(chain.id(), Some(swap.lut().id()));
+            let reverse = LutChain {
+                lut: chain.film_and_paper.clone(),
+                film_and_paper: chain.lut.clone(),
+            };
+            assert_ne!(chain.id(), reverse.id());
+        }
+    }
 }

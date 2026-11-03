@@ -1,5 +1,5 @@
 use super::*;
-use crate::film_emulation::{DEFAULT_SIZE, FilmEmulationSettings, MAX_SIZE, MIN_SIZE};
+use crate::grain::{DEFAULT_SIZE, GrainSettings, MAX_SIZE, MIN_SIZE};
 
 #[test]
 fn pixel_integration_attenuates_intrinsic_green_contrast() {
@@ -33,7 +33,7 @@ fn fixed_frame_footprint_covariance_is_independent_of_native_resolution() {
             for output in [128, 512, 2048] {
                 let mut reference = None;
                 for native in [2048, 3000, 4096, 5500, 8192] {
-                    let model = FilmEmulationSettings {
+                    let model = GrainSettings {
                         enabled: true,
                         size,
                         colour,

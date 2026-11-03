@@ -2,15 +2,9 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{FailureKind, Preparation, TaskRequest, document::Document, tests::fixture},
-    looks::{Lut3D, builtin::Builtin},
+    looks::Lut3D,
 };
-use std::{
-    sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::{sync::Mutex, time::Duration};
 
 use crate::editor::{source, source_loading};
 
@@ -57,7 +51,7 @@ pub(super) fn editor_with_limits(limits: wgpu::Limits) -> (Editor, source_loadin
         device: device.clone(),
         queue: queue.clone(),
     });
-    e.look.services = Some(Services::new(device, queue, e.submissions.clone()));
+    e.look.services = Some(Services::new(device.limits()));
     (e, scheduler)
 }
 
@@ -78,13 +72,13 @@ fn captured_choice_accepts_without_paint_and_records_only_accepted_content() {
             e.select_look(Source::Loaded(selected.clone()), access);
         });
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
-        expected.output.look = Some(selected.clone());
+        expected.output.lut = Some(selected.clone());
         app.read(|e| {
             assert_eq!(e.document.state.project, expected);
             assert_eq!(e.look.loaded, vec![selected]);
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
-                Some("Creative look")
+                Some("LUT")
             );
             assert!(!e.busy && e.tasks.view().is_none());
         });
@@ -109,19 +103,19 @@ fn awaited_choices_keep_a_unique_session_list_and_one_undoable_accepted_selectio
         for chosen in [&first, &second, &renamed] {
             app.enter(|e, cx| e.select_look(Source::Loaded(chosen.clone()), cx));
             app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
-            app.read(|e| assert_eq!(e.document.state.project.output.look.as_ref(), Some(chosen)));
+            app.read(|e| assert_eq!(e.document.state.project.output.lut.as_ref(), Some(chosen)));
         }
         let list = vec![renamed.clone(), second];
         app.read(|e| assert_loaded_assets(e, &list));
         app.update(Editor::clear_look);
         app.read(|e| {
-            assert!(e.document.state.project.output.look.is_none());
+            assert!(e.document.state.project.output.lut.is_none());
             assert_loaded_assets(e, &list);
         });
         app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
-            assert_eq!(e.document.state.project.output.look, Some(renamed));
+            assert_eq!(e.document.state.project.output.lut, Some(renamed));
             assert_loaded_assets(e, &list);
         });
     });
@@ -134,7 +128,7 @@ fn cancelling_a_prepared_value_retires_its_continuation_instead_of_accepting_it(
         let (mut e, scheduler) = editor();
         let accepted = asset(0.2);
         let selected = asset(0.7);
-        e.document.state.project.output.look = Some(accepted.clone());
+        e.document.state.project.output.lut = Some(accepted.clone());
         e.remember_imported_look();
         let before = e.document.state.project.clone();
         let (prepared, ready) = std::sync::mpsc::channel();
@@ -183,11 +177,11 @@ fn cancelling_a_prepared_value_retires_its_continuation_instead_of_accepting_it(
                             .is_none()
                     );
                 } else {
-                    assert_eq!(e.document.state.project.output.look, Some(selected.clone()));
+                    assert_eq!(e.document.state.project.output.lut, Some(selected.clone()));
                     assert_loaded_assets(e, &[accepted, selected]);
                     assert_eq!(
                         e.history_label(crate::editor::history::Direction::Undo),
-                        Some("Creative look")
+                        Some("LUT")
                     );
                 }
             });
@@ -212,7 +206,7 @@ fn device_preflight_rejects_an_unsupported_asset_without_remembering_or_recordin
         1024
     );
     let accepted = asset(0.2);
-    e.document.state.project.output.look = Some(accepted.clone());
+    e.document.state.project.output.lut = Some(accepted.clone());
     e.remember_imported_look();
     let before = e.document.state.project.clone();
     let unsupported = Arc::new(
@@ -241,61 +235,8 @@ fn device_preflight_rejects_an_unsupported_asset_without_remembering_or_recordin
         app.enter(|e, cx| e.select_look(Source::Loaded(supported.clone()), cx));
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
-            assert_eq!(e.document.state.project.output.look, Some(supported));
+            assert_eq!(e.document.state.project.output.lut, Some(supported));
             assert!(e.failure.is_none());
-        });
-    });
-    scheduler.close_and_wait().unwrap();
-}
-
-#[test]
-fn running_builtin_cancel_retires_the_action_while_its_gpu_unit_finishes() {
-    let (mut e, scheduler) = editor();
-    e.document.state.project.output.look = Some(asset(0.2));
-    let before = e.document.state.project.clone();
-    let (entered, started) = std::sync::mpsc::channel();
-    let (release, resume) = std::sync::mpsc::channel();
-    let (completed, done) = std::sync::mpsc::channel();
-    let resume = Mutex::new(resume);
-    let once = AtomicUsize::new(0);
-    e.submissions.observe_submissions(Arc::new(move || {
-        if once.fetch_add(1, Ordering::Relaxed) == 0 {
-            entered.send(()).unwrap();
-            resume
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(20))
-                .unwrap();
-        }
-    }));
-    e.look.services.as_mut().unwrap().prepared = Some(Arc::new(move |valid, stop| {
-        completed.send((valid, stop.is_cancelled())).unwrap();
-    }));
-    with_application(e, |app| {
-        let activity = app.enter(|e, cx| {
-            e.select_look(Source::Builtin(Builtin::Kodak2383), cx);
-            e.document.look.as_ref().unwrap().activity
-        });
-        app.pump();
-        started.recv_timeout(Duration::from_secs(15)).unwrap();
-        app.update(|e| e.cancel_task(TaskRequest::Look(activity)));
-        app.read(|e| {
-            assert!(!e.busy && e.document.look.is_none() && e.tasks.view().is_none());
-            assert_eq!(e.document.state.project, before);
-        });
-        app.pump();
-        release.send(()).unwrap();
-        assert_eq!(
-            done.recv_timeout(Duration::from_secs(20)).unwrap(),
-            (false, true)
-        );
-        app.pump();
-        app.read(|e| {
-            assert_eq!(e.document.state.project, before);
-            assert!(
-                e.history_label(crate::editor::history::Direction::Undo)
-                    .is_none()
-            );
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -321,7 +262,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
                 .state
                 .project
                 .output
-                .look
+                .lut
                 .clone()
                 .expect("valid imported LUT")
         });
@@ -344,7 +285,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         app.read(|e| {
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
             assert!(Arc::ptr_eq(
-                e.document.state.project.output.look.as_ref().unwrap(),
+                e.document.state.project.output.lut.as_ref().unwrap(),
                 &accepted
             ));
         });
@@ -355,7 +296,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
             assert_eq!(
-                e.document.state.project.output.look.as_ref().unwrap(),
+                e.document.state.project.output.lut.as_ref().unwrap(),
                 &accepted
             );
             assert_eq!(e.look.loaded.len(), 1);
@@ -368,7 +309,7 @@ fn import_and_loaded_reselection_need_no_original_file_and_failures_preserve_the
 #[test]
 fn user_cancel_retires_queued_work_without_changing_the_accepted_look() {
     let (mut e, scheduler) = editor();
-    e.document.state.project.output.look = Some(asset(0.2));
+    e.document.state.project.output.lut = Some(asset(0.2));
     let before = e.document.state.project.clone();
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
@@ -412,7 +353,7 @@ fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_r
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
-            assert_eq!(e.document.state.project.output.look, Some(chosen.clone()));
+            assert_eq!(e.document.state.project.output.lut, Some(chosen.clone()));
             assert_eq!(e.look.loaded, vec![chosen]);
             assert!(e.failure.is_none());
         });
@@ -424,7 +365,7 @@ fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_r
 fn document_transition_retires_look_but_keeps_session_comparison_assets() {
     let (mut e, scheduler) = editor();
     let previous = asset(0.2);
-    e.document.state.project.output.look = Some(previous.clone());
+    e.document.state.project.output.lut = Some(previous.clone());
     e.remember_imported_look();
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
@@ -437,12 +378,12 @@ fn document_transition_retires_look_but_keeps_session_comparison_assets() {
         app.read(|e| {
             assert_eq!(e.document_pending, operation);
             assert!(e.busy);
-            assert_eq!(e.document.state.project.output.look, Some(previous.clone()));
+            assert_eq!(e.document.state.project.output.lut, Some(previous.clone()));
         });
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
-            assert!(e.document.state.project.output.look.is_none());
+            assert!(e.document.state.project.output.lut.is_none());
             assert_eq!(e.look.loaded, vec![previous]);
         });
     });
@@ -469,7 +410,7 @@ fn owner_and_application_retirement_release_unpolled_and_queued_inputs() {
                     app.pump();
                 }
                 assert!(weak.upgrade().is_none());
-                app.read(|e| assert!(e.document.state.project.output.look.is_none()));
+                app.read(|e| assert!(e.document.state.project.output.lut.is_none()));
                 drop(hold);
             });
             scheduler.close_and_wait().unwrap();
@@ -478,8 +419,8 @@ fn owner_and_application_retirement_release_unpolled_and_queued_inputs() {
 }
 
 #[test]
-fn retired_running_bake_keeps_inputs_without_blocking_an_independent_look() {
-    let (e, scheduler) = editor();
+fn retired_running_preparation_keeps_its_owner_until_cleanup_without_blocking_a_new_choice() {
+    let (mut e, scheduler) = editor();
     let cache = Arc::downgrade(&e.look.services.as_ref().unwrap().cache);
     let directory = e
         .look
@@ -493,115 +434,43 @@ fn retired_running_bake_keeps_inputs_without_blocking_an_independent_look() {
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     let resume = Mutex::new(resume);
-    let count = Arc::new(AtomicUsize::new(0));
-    let observed = count.clone();
-    e.submissions.observe_submissions(Arc::new(move || {
-        if observed.fetch_add(1, Ordering::Relaxed) == 0 {
-            started.send(()).unwrap();
-            resume
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(20))
-                .unwrap();
-        }
+    e.look.services.as_mut().unwrap().prepared = Some(Arc::new(move |valid, _| {
+        assert!(valid);
+        started.send(()).unwrap();
+        resume
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(20))
+            .unwrap();
     }));
     with_application(e, |app| {
-        app.enter(|e, access| {
-            e.select_look(Source::Builtin(Builtin::Kodak2383), access);
-        });
+        app.enter(|e, cx| e.select_look(Source::Loaded(asset(0.3)), cx));
         app.pump();
         starts.recv_timeout(Duration::from_secs(15)).unwrap();
         let selected = asset(0.6);
-        app.enter(|e, access| {
+        app.enter(|e, cx| {
             e.retire_look_selection();
-            e.look.services = None;
-            let source = e.source_services.as_ref().unwrap();
             e.look.services = Some(Services::new(
-                source.device.clone(),
-                source.queue.clone(),
-                e.submissions.clone(),
+                e.source_services.as_ref().unwrap().device.limits(),
             ));
-            e.select_look(Source::Loaded(selected.clone()), access);
+            e.select_look(Source::Loaded(selected.clone()), cx);
         });
         app.run_until(Duration::from_secs(20), |e| e.document.look.is_none());
         assert!(cache.upgrade().is_some() && directory.exists());
-        app.read(|e| assert_eq!(e.document.state.project.output.look, Some(selected.clone())));
+        app.read(|e| assert_eq!(e.document.project.output.lut, Some(selected.clone())));
         release.send(()).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         while cache.upgrade().is_some() || directory.exists() {
             app.pump();
             assert!(
                 std::time::Instant::now() < deadline,
-                "retired bake kept its inputs"
+                "retired preparation kept its inputs"
             );
             std::thread::sleep(Duration::from_millis(1));
         }
         app.read(|e| {
-            assert_eq!(e.document.state.project.output.look, Some(selected));
+            assert_eq!(e.document.project.output.lut, Some(selected));
             assert!(e.failure.is_none());
-        });
-    });
-    scheduler.close_and_wait().unwrap();
-}
-
-#[test]
-fn builtin_selection_reuses_service_cache_without_initializing_the_photographic_renderer() {
-    let (e, scheduler) = editor();
-    with_application(e, |app| {
-        app.enter(|e, access| {
-            e.select_look(Source::Builtin(Builtin::Kodak2383), access);
-        });
-        app.run_until(Duration::from_secs(30), |e| e.document.look.is_none());
-        let accepted = app.read(|e| {
-            let look = e
-                .document
-                .project
-                .output
-                .look
-                .clone()
-                .expect("cold builtin completed");
-            assert_eq!(look.origin(), &Builtin::Kodak2383.origin());
-            assert_eq!(look.lut().size(), crate::looks::builtin::DEFAULT_GRID);
-            assert!(
-                !e.source_services
-                    .as_ref()
-                    .unwrap()
-                    .renderers
-                    .is_initialized()
-            );
-            look
-        });
-        app.enter(|e, access| {
-            e.start_document(Preparation::New, access);
-        });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
-        app.update(|e| {
-            assert!(e.document.state.project.output.look.is_none());
-            let source = e.source_services.as_ref().unwrap();
-            let services = e.look.services.as_mut().unwrap();
-            Arc::get_mut(&mut services.cache).unwrap().baker = crate::looks::bake::Baker::new(
-                source.device.clone(),
-                source.queue.clone(),
-                e.submissions.clone(),
-            );
-            assert!(!services.cache.baker.is_initialized());
-        });
-        app.enter(|e, access| {
-            e.select_look(Source::Builtin(Builtin::Kodak2383), access);
-        });
-        app.run_until(Duration::from_secs(30), |e| e.document.look.is_none());
-        app.read(|e| assert_eq!(e.document.state.project.output.look, Some(accepted)));
-        app.read(|e| {
-            assert!(
-                !e.look
-                    .services
-                    .as_ref()
-                    .unwrap()
-                    .cache
-                    .baker
-                    .is_initialized(),
-                "the retained cache must satisfy the exact bake specification"
-            )
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -624,4 +493,66 @@ fn unavailable_look_service_restores_idle_feedback_without_changing_the_project(
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
         });
     });
+}
+
+#[test]
+fn opening_either_oversized_colour_slot_preserves_the_current_document() {
+    for slot in [Slot::Lut, Slot::FilmAndPaper] {
+        let (mut e, scheduler) = editor_with_limits(wgpu::Limits {
+            max_storage_buffer_binding_size: 1024,
+            ..Default::default()
+        });
+        e.document.state.project.output.lut = Some(asset(0.2));
+        let before = e.document.state.project.clone();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("candidate.antitone");
+        let make = |size| {
+            let origin = match slot {
+                Slot::Lut => LookOrigin::Imported,
+                Slot::FilmAndPaper => Selection {
+                    negative: None,
+                    paper: Default::default(),
+                }
+                .origin(),
+            };
+            Arc::new(
+                LookAsset::new(
+                    "Device admission".into(),
+                    origin,
+                    Arc::new(
+                        Lut3D::new(
+                            size,
+                            [0.; 3],
+                            [1.; 3],
+                            vec![[0.4; 3]; (size as usize).pow(3)],
+                        )
+                        .unwrap(),
+                    ),
+                )
+                .unwrap(),
+            )
+        };
+        let mut candidate = crate::project::Project::default();
+        slot.set(&mut candidate, Some(make(3)));
+        candidate.save(&path, crate::project::Save::New).unwrap();
+        let device = &e.source_services.as_ref().unwrap().device;
+        assert!(Document::open_with_progress(&path, Some(device), |_, _| {}).is_ok());
+        slot.set(&mut candidate, Some(make(5)));
+        candidate
+            .save(&path, crate::project::Save::Replace)
+            .unwrap();
+        assert!(Document::open_with_progress(&path, Some(device), |_, _| {}).is_err());
+        with_application(e, |app| {
+            app.enter(|e, cx| e.start_document(Preparation::Open(path), cx));
+            app.run_until(Duration::from_secs(15), |e| {
+                !e.busy && e.document_pending.is_none()
+            });
+            app.read(|e| {
+                assert_eq!(e.document.state.project, before);
+                assert!(e.document.path.is_none());
+                assert!(e.status.contains("limits"), "{}", e.status);
+            });
+        });
+        scheduler.close_and_wait().unwrap();
+    }
 }

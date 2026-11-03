@@ -6,16 +6,24 @@ see is what the file contains.
 
 ## The Rendering panel
 
-Two project-wide choices:
+The sections follow processing order:
 
-- **Look** — a creative grade applied after your photographic grading: **None** (a true
-  bypass), one of the built-in looks, or **Load LUT…** to use your own 3D `.cube` LUT.
-  LUTs must be scene-referred (ACEScct/AP1 in and out) — display or camera-conversion
-  LUTs are rejected on purpose, so a look can never silently break colour management.
-- **Target** — the output colour space: **sRGB** or **Display P3**, both 100-nit. This is
-  the *file's* colour space ("output colour space, not the monitor profile"): the
-  photograph is rendered and limited for that target, which is why choosing P3 changes
-  the actual rendering, not just a label.
+- **Film texture** — coupled image softness and grain, with separate halation. Presets
+  populate starting values; edits retain those actual settings rather than a preset identity.
+- **LUT** — **Load LUT…** imports a creative ACEScct/AP1 3D `.cube`, applied before
+  Film & paper. Display and camera-conversion LUTs are not supported.
+- **Film & paper** — **Negative** selects an optional simulated camera-negative stock;
+  None skips synthetic formation, not the Roll panel's inversion of an actual negative.
+  **Paper** selects the print medium independently. Paper None is available only without
+  a selected negative; choosing a negative from bypass also selects Portra Endura.
+  For B&W, choose **Negative: None** and **ILFORD MULTIGRADE RC DELUXE · filter 2**.
+  Paper-only processing works on an already inverted scan or a Digital photograph.
+- **Target** — **sRGB** or **Display P3**, both 100-nit. This is the output colour space,
+  not the monitor profile; choosing P3 changes the actual rendering and gamut limitation.
+
+LUT and Film & paper are independent: use either, both or neither. A LUT can alter the
+working positive before the film/paper response. Changing a stock prepares a new treatment
+in the background; Cancel keeps the accepted choices.
 
 ## TIFF or EXR?
 
@@ -25,13 +33,13 @@ The two formats serve different purposes:
 | --- | --- | --- |
 | What it is | A finished, rendered photograph | The graded image in scene-linear form |
 | Colour | sRGB or Display P3, with an ICC profile | Scene-linear AP0, always |
-| Look / display rendering | Applied | Not applied (by design) |
+| Negative/Paper/LUT colour treatment and display rendering | Applied | Not applied |
 | Use it for | Viewing, printing, delivery, further work in a colour-managed app | Further grading or compositing in HDR/scene-referred tools |
 | Precision | 16-bit RGB, lossless Deflate | Half (16-bit) or full float (32-bit) |
 
 Export TIFF when you want the photograph you see in Antitone. Export EXR when another
-program will continue the grade — it deliberately skips the creative look and display
-rendering so those are not baked in.
+program will continue the grade — it retains normal source inversion, grading and grain,
+but skips the Negative/Paper/LUT colour treatment and display rendering.
 
 ## Exporting
 

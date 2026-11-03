@@ -128,36 +128,37 @@ fn reopened_tiff_and_ap0_exr_include_independent_halation_after_the_full_grade()
     );
     let directory = tempfile::tempdir().unwrap();
     let gate = SubmissionGate::default();
-    let write_file = |name: &str, format, settings, look| {
-        let path = directory.path().join(name);
-        write(
-            &renderer,
-            &device,
-            (&queue, &gate),
-            Request {
-                scan: &scan,
-                field: None,
-                input: InputSettings::Digital,
-                roll: Default::default(),
-                grade: grade.clone(),
-                repairs: &[],
-                composition,
-                format,
-                look,
-                pipeline: crate::pixel_pipeline::PixelPipeline::emulation(
-                    Default::default(),
-                    settings,
-                    composition.crop().size,
-                    17,
-                )
-                .unwrap(),
-            },
-            &path,
-            Overwrite::Refuse,
-        )
-        .unwrap();
-        path
-    };
+    let write_file =
+        |name: &str, format, settings, look: Option<std::sync::Arc<crate::looks::LookAsset>>| {
+            let path = directory.path().join(name);
+            write(
+                &renderer,
+                &device,
+                (&queue, &gate),
+                Request {
+                    scan: &scan,
+                    field: None,
+                    input: InputSettings::Digital,
+                    roll: Default::default(),
+                    grade: grade.clone(),
+                    repairs: &[],
+                    composition,
+                    format,
+                    luts: look.into(),
+                    pipeline: crate::pixel_pipeline::PixelPipeline::emulation(
+                        Default::default(),
+                        settings,
+                        composition.crop().size,
+                        17,
+                    )
+                    .unwrap(),
+                },
+                &path,
+                Overwrite::Refuse,
+            )
+            .unwrap();
+            path
+        };
     let pixel = |x: u32, y: u32| {
         let p = expected[((y - a.y) * a.width + x - a.x) as usize];
         Ok(DVec3::new(p[0], p[1], p[2]))

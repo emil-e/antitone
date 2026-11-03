@@ -1,5 +1,5 @@
 use antitone::{
-    film_emulation::FilmPreset,
+    grain::GrainPreset,
     halation::{HalationParameters, HalationSettings},
     image_mtf::ImageMtfParameters,
     pixel_pipeline::{Grain, PixelPipeline},
@@ -10,7 +10,7 @@ fn tuned_defaults_compose_with_the_shared_size_profile_and_unchanged_image_mtf()
     let defaults = HalationSettings::default();
     defaults.validate().unwrap();
     assert!(!defaults.enabled);
-    let film = FilmPreset::ThirtyFiveMm.settings();
+    let film = GrainPreset::ThirtyFiveMm.settings();
     let frame = [3840, 2160];
     assert_eq!(
         PixelPipeline::emulation(film, defaults, frame, 17).unwrap(),
@@ -71,7 +71,7 @@ fn halation_runs_independently_and_resolves_from_the_logical_crop() {
 
 #[test]
 fn full_emulation_places_halation_after_completed_mtf_before_grain() {
-    let film = FilmPreset::ThirtyFiveMm.settings();
+    let film = GrainPreset::ThirtyFiveMm.settings();
     let halo = HalationSettings {
         enabled: true,
         ..Default::default()
@@ -82,7 +82,7 @@ fn full_emulation_places_halation_after_completed_mtf_before_grain() {
     assert!(pipeline.stages[1].get::<HalationParameters>().is_some());
     assert!(pipeline.stages[2].get::<Grain>().is_some());
     let changed_grain = PixelPipeline::emulation(
-        antitone::film_emulation::FilmEmulationSettings {
+        antitone::grain::GrainSettings {
             enabled: true,
             size: 0.065,
             image_sigma: 0.065,
@@ -105,14 +105,14 @@ fn full_emulation_places_halation_after_completed_mtf_before_grain() {
 fn disabled_and_zero_strength_preserve_existing_mtf_grain_pipeline() {
     for film in [
         Default::default(),
-        antitone::film_emulation::FilmEmulationSettings {
+        antitone::grain::GrainSettings {
             enabled: true,
             size: 0.025,
             image_sigma: 0.025,
             amount: 0.040,
             ..Default::default()
         },
-        antitone::film_emulation::FilmEmulationSettings {
+        antitone::grain::GrainSettings {
             enabled: true,
             size: 0.065,
             image_sigma: 0.065,

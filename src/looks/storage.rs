@@ -125,11 +125,12 @@ mod tests {
     fn asset() -> LookAsset {
         LookAsset::new(
             "Saved look".into(),
-            LookOrigin::Builtin {
-                id: "no-longer-installed".into(),
-                version: 73,
+            LookOrigin::Photochemical {
+                negative: Some("no_longer_installed".into()),
+                paper: "historic_medium".into(),
+                revision: "a".repeat(40),
                 generator: "historic-generator".into(),
-                definition: "a".repeat(64),
+                attribution: "Retained source attribution".into(),
             },
             Arc::new(super::super::tests::identity(3)),
         )

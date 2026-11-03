@@ -381,7 +381,10 @@ fn all_three_stage_controls_are_reachable_at_normal_and_narrow_inspector_sizes()
                     "Density",
                 ],
             ),
-            (2, vec!["Look", "None", "Target", "Display P3"]),
+            (
+                2,
+                vec!["LUT", "Film & paper", "None", "Target", "Display P3"],
+            ),
         ] {
             let mut editor = fixture();
             editor.tab = tab;

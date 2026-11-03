@@ -21,7 +21,7 @@ use std::{
 
 mod json;
 
-pub const SCHEMA_VERSION: u32 = 13;
+pub const SCHEMA_VERSION: u32 = 14;
 /// Negative scanning is independent of the camera's as-shot white balance.
 pub const UNITY_WB: [f64; 4] = [1.; 4];
 // Bump when native/raw_bridge.cpp development or scan.rs matrix/normalization/floor contracts change.
@@ -337,20 +337,29 @@ pub struct Output {
     pub contract: String,
     pub tiff: TiffTarget,
     pub exr: ExrPrecision,
-    #[serde(default)]
-    pub film_preset: crate::film_emulation::FilmPreset,
     #[serde(
         default,
-        skip_serializing_if = "crate::film_emulation::FilmEmulationSettings::is_default"
+        skip_serializing_if = "crate::grain::GrainSettings::is_default"
     )]
-    pub film_emulation: crate::film_emulation::FilmEmulationSettings,
+    pub grain: crate::grain::GrainSettings,
     #[serde(
         default,
         skip_serializing_if = "crate::halation::HalationSettings::is_default"
     )]
     pub halation: crate::halation::HalationSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub look: Option<std::sync::Arc<crate::looks::LookAsset>>,
+    pub lut: Option<std::sync::Arc<crate::looks::LookAsset>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub film_and_paper: Option<std::sync::Arc<crate::looks::LookAsset>>,
+}
+
+impl Output {
+    pub fn luts(&self) -> crate::looks::LutChain {
+        crate::looks::LutChain {
+            lut: self.lut.clone(),
+            film_and_paper: self.film_and_paper.clone(),
+        }
+    }
 }
 
 impl Default for Output {
@@ -359,10 +368,10 @@ impl Default for Output {
             contract: OUTPUT_CONTRACT.into(),
             tiff: TiffTarget::DisplayP3,
             exr: ExrPrecision::Half,
-            film_preset: Default::default(),
-            film_emulation: Default::default(),
+            grain: Default::default(),
             halation: Default::default(),
-            look: None,
+            lut: None,
+            film_and_paper: None,
         }
     }
 }
@@ -890,8 +899,24 @@ impl Project {
         if let Some(negative) = self.input.negative_input() {
             negative.channel_gammas()?;
         }
-        self.output.film_emulation.validate()?;
+        self.output.grain.validate()?;
         self.output.halation.validate()?;
+        require(
+            self.output
+                .lut
+                .as_ref()
+                .is_none_or(|asset| matches!(asset.origin(), crate::looks::LookOrigin::Imported)),
+            "LUT slot requires an imported asset",
+        )?;
+        require(
+            self.output.film_and_paper.as_ref().is_none_or(|asset| {
+                matches!(
+                    asset.origin(),
+                    crate::looks::LookOrigin::Photochemical { .. }
+                )
+            }),
+            "Film & paper slot requires material provenance",
+        )?;
         wb_matrix(self.roll.wb)?;
         exposure_multiplier(self.roll.exposure)?;
         require(

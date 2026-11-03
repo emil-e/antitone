@@ -216,10 +216,10 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
         [64; 2],
     )
     .unwrap();
-    let film = crate::film_emulation::FilmPreset::ThirtyFiveMm.settings();
+    let film = crate::grain::GrainPreset::ThirtyFiveMm.settings();
     let pipeline = |amount, colour, strength| {
         PixelPipeline::emulation(
-            FilmEmulationSettings {
+            GrainSettings {
                 amount,
                 colour,
                 ..film
@@ -410,7 +410,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
             frame.max.0 = composition.size().map(|n| f64::from(n / 64 * 64));
         }
         let pipeline = PixelPipeline::emulation(
-            FilmEmulationSettings {
+            GrainSettings {
                 enabled: true,
                 amount: 0.,
                 ..Default::default()

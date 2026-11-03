@@ -1,4 +1,4 @@
-use super::{film_emulation::painted, workflow::enter_numeric, *};
+use super::{grain::painted, workflow::enter_numeric, *};
 
 #[test]
 fn independent_halation_controls_persist_render_and_undo_at_both_display_scales() {
@@ -51,10 +51,7 @@ fn independent_halation_controls_persist_render_and_undo_at_both_display_scales(
             h.try_run_realtime().unwrap();
             painted(&mut h);
             h.read(|e| {
-                assert!(
-                    !e.document.film_emulation.enabled,
-                    "no MTF/grain master dependency"
-                );
+                assert!(!e.document.grain.enabled, "no MTF/grain master dependency");
                 assert!(e.document.halation.enabled);
                 assert_eq!(e.document.halation.size, 0.103);
                 assert_eq!(e.document.halation.strength, 0.37);

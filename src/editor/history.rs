@@ -41,8 +41,7 @@ struct ControlState {
     roll: RollSettings,
     photo: AdjustmentLayerSettings,
     target: OutputTarget,
-    film_emulation: FilmEmulationSettings,
-    film_preset: FilmPreset,
+    grain: GrainSettings,
     halation: crate::halation::HalationSettings,
     source: Option<SourceId>,
     layer: adjustment_layers::Target,
@@ -55,8 +54,7 @@ impl ControlState {
             roll: editor.document.roll,
             photo: editor.document.visit.adjustment_layer_settings,
             target: editor.document.target,
-            film_emulation: editor.document.film_emulation,
-            film_preset: editor.document.project.output.film_preset,
+            grain: editor.document.grain,
             halation: editor.document.halation,
             source: editor.document.visit.current_source,
             layer: editor.adjustment_layer_target(),
@@ -67,8 +65,7 @@ impl ControlState {
         project.input = self.input;
         project.roll = self.roll;
         project.processing_model = self.input.processing_model();
-        project.output.film_emulation = self.film_emulation;
-        project.output.film_preset = self.film_preset;
+        project.output.grain = self.grain;
         project.output.halation = self.halation;
         project.output.tiff = match self.target {
             OutputTarget::Srgb => crate::project::TiffTarget::Srgb,
@@ -262,8 +259,7 @@ impl Editor {
             && self.after_save.is_none()
             && !self.allow_close
             && self.project_overwrite.is_none()
-            && self.document.removal_pending.is_none()
-            && !self.document.visit.adjustment_layers.confirming()
+            && !self.document.confirming()
             && !self.document.visit.adjustment_layers.dragging()
             && !self.dust_history_draft()
     }

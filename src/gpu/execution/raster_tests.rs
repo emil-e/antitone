@@ -1,5 +1,5 @@
 use super::*;
-use crate::{film_emulation::FilmPreset, gpu::SourceGeometry};
+use crate::{gpu::SourceGeometry, grain::GrainPreset};
 
 #[test]
 fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_source_grid() {
@@ -24,7 +24,7 @@ fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_sourc
     .unwrap()
     .with_pixel_pipeline(
         crate::pixel_pipeline::PixelPipeline::emulation(
-            FilmPreset::ThirtyFiveMm.settings(),
+            GrainPreset::ThirtyFiveMm.settings(),
             Default::default(),
             [2000; 2],
             17,

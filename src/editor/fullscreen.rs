@@ -24,8 +24,7 @@ impl Editor {
             || self.project_overwrite.is_some()
             || self.allow_close
             || self.export_modal()
-            || self.document.removal_pending.is_some()
-            || self.document.visit.adjustment_layers.confirming()
+            || self.document.confirming()
     }
 
     pub(super) fn fullscreen_available(&self) -> bool {
