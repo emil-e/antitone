@@ -23,8 +23,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         [6, 3],
     )
     .unwrap();
-    let base =
-        ViewSourceSpec::new(7, frame, InputSettings::Digital, DMat3::IDENTITY, None).unwrap();
+    let base = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None).unwrap();
     let small = base
         .clone()
         .with_pipeline(PixelPipeline {
@@ -43,8 +42,8 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         .unwrap();
     assert!(small.same_source(&large));
     assert!(!small.same_acquisition(&large));
-    assert!(large.satisfies(&small));
-    assert!(!small.satisfies(&large));
+    assert!(large.plan.can_supply(&small.plan));
+    assert!(!small.plan.can_supply(&large.plan));
     let finer = base
         .clone()
         .with_pipeline(PixelPipeline {
@@ -55,11 +54,11 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         .unwrap();
     assert!(finer.plan.output().output[0] > large.plan.output().output[0]);
     assert!(
-        !large.satisfies(&finer),
+        !large.plan.can_supply(&finer.plan),
         "extra coarse neighbours cannot satisfy a finer sampling request"
     );
     assert!(
-        !large.compatible_processing(&finer),
+        large.processing_plan(finer.plan.pipeline()).is_err(),
         "a coarse fallback must not run a finer effect request"
     );
     let moved = large
@@ -72,11 +71,11 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         .unwrap();
     assert!(large.same_source(&moved));
     assert!(
-        large.compatible_processing(&moved),
+        large.processing_plan(moved.plan.pipeline()).is_ok(),
         "the retained footprint can still be graded as a navigation fallback"
     );
     assert!(
-        !large.satisfies(&moved),
+        !large.plan.can_supply(&moved.plan),
         "fallback coverage is not the newly requested output"
     );
     let proxy = large
@@ -88,7 +87,7 @@ fn source_identity_layout_capacity_and_presentation_footprint_are_distinct() {
         .unwrap();
     assert!(large.same_source(&proxy));
     assert!(
-        !large.compatible_processing(&proxy),
+        !large.plan.can_supply(&proxy.plan),
         "equal source identity does not substitute a different sample representation"
     );
     let other = FrameRaster::full(
@@ -121,7 +120,7 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
             kernels,
             &scan,
             None,
-            ViewSourceSpec::new(7, frame, cal, scan.camera_to_ap1, None).unwrap(),
+            SourceRequest::new(frame, cal, scan.camera_to_ap1, None).unwrap(),
             || false,
         )
         .unwrap()
@@ -153,7 +152,7 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
             .unwrap();
             let input = ProcessingInput::from(Arc::new(
                 ProcessingInput::new(
-                    &device,
+                    &device.limits(),
                     cal,
                     RollSettings::default(),
                     snapshot,
@@ -213,7 +212,7 @@ fn spatial_grades_require_the_input_coordinate_extent_but_global_grades_do_not()
             kernels,
             &scan,
             None,
-            ViewSourceSpec::new(7, frame(&scan), cal, scan.camera_to_ap1, None).unwrap(),
+            SourceRequest::new(frame(&scan), cal, scan.camera_to_ap1, None).unwrap(),
             || false,
         )
         .unwrap()
@@ -234,7 +233,7 @@ fn spatial_grades_require_the_input_coordinate_extent_but_global_grades_do_not()
         let admit = |area, layer| {
             let pipeline = Arc::new(
                 ProcessingInput::new(
-                    &device,
+                    &device.limits(),
                     cal,
                     RollSettings::default(),
                     AdjustmentLayerSnapshot::new(vec![layer]).unwrap(),

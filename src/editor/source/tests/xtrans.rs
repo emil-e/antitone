@@ -5,7 +5,7 @@ use crate::{
     geometry::{Composition, FramePoint},
     gpu::{
         ProcessingInput, SubmissionGate,
-        view::{RenderedView, ViewKernels, ViewSourceSpec},
+        view::{RenderedView, SourceRequest, ViewKernels},
     },
     processing::{Calibration, InputSettings},
     rendering::OutputTarget,
@@ -127,14 +127,20 @@ fn raf_import_reopen_view_and_bounded_exports() {
             let settings = document.project.input;
             let matrix = scan.positive_matrix(&settings).unwrap();
             let grade = expected.grade_snapshot().unwrap();
-            let spec = ViewSourceSpec::new(1, frame, settings, matrix, None).unwrap();
+            let spec = SourceRequest::new(frame, settings, matrix, None).unwrap();
             let source = ready
                 .proxy
-                .view_source(&queue, &gate, kernels.clone(), spec)
+                .view_source(
+                    &queue,
+                    &gate,
+                    kernels.clone(),
+                    &spec.processing_fixture(),
+                    spec,
+                )
                 .unwrap();
             let input: ProcessingInput = Arc::new(
                 ProcessingInput::new(
-                    &device,
+                    &device.limits(),
                     settings,
                     document.project.roll,
                     grade.clone(),

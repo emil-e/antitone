@@ -75,7 +75,7 @@ fn acquisition_execution_resources() {
         let make_input = |ev: f64| {
             ProcessingInput::from(Arc::new(
                 ProcessingInput::new(
-                    device,
+                    &device.limits(),
                     InputSettings::Digital,
                     Default::default(),
                     AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(
@@ -90,14 +90,12 @@ fn acquisition_execution_resources() {
                 )
                 .unwrap(),
             ))
-            .with_film_emulation(settings)
-            .with_frame_size(composition.crop().size)
-            .with_film_seed(17)
+            .with_pixel_pipeline(crate::pixel_pipeline::PixelPipeline::emulation(settings,Default::default(),composition.crop().size,17).unwrap())
         };
         let input = make_input(0.);
-        let spec = ViewSourceSpec::new(1, frame, InputSettings::Digital, matrix, None)
+        let spec = SourceRequest::new( frame, InputSettings::Digital, matrix, None)
             .unwrap()
-            .with_pipeline(input.pixel_pipeline().unwrap())
+            .with_pipeline(input.pixel_pipeline())
             .unwrap();
         let start = Instant::now();
         peak.store(0, Ordering::Relaxed);
@@ -232,8 +230,8 @@ fn neutral_image_retention_resources() {
         let policy=crate::gpu::evaluation::CachePolicy{generated_bytes:std::env::var("ANTITONE_GENERATED_CACHE_BYTES").ok().map(|v|v.parse::<u64>().unwrap()).unwrap_or(crate::gpu::evaluation::CachePolicy::default().generated_bytes)};
         let renderer=pollster::block_on(crate::renderer::GpuRenderer::new_with_cache_policy(device,queue,Default::default(),policy)).unwrap();
         let kernels=pollster::block_on(ViewKernels::new(device)).unwrap();
-        let cache=renderer.evaluation().image_cache(2);
-        let spec=ViewSourceSpec::new(1,frame,InputSettings::Digital,scan.positive_matrix(&InputSettings::Digital).unwrap(),None).unwrap().with_identity(crate::gpu::execution::source::Identity::camera(scan.source().identity()));
+        let cache=renderer.evaluation().test_materializations(true);
+        let spec=SourceRequest::new(frame,InputSettings::Digital,scan.positive_matrix(&InputSettings::Digital).unwrap(),None).unwrap().with_identity(crate::gpu::execution::source::Identity::camera(scan.source().identity()));
         let gate=SubmissionGate::default();
         let peak=Arc::new(AtomicU64::new(0));let observed=peak.clone();let observed_device=device.clone();
         gate.observe_encoded_resources(Arc::new(move||{observed.fetch_max(crate::gpu::allocated_resource_bytes(&observed_device).unwrap() as u64,Ordering::Relaxed);}));
@@ -243,10 +241,9 @@ fn neutral_image_retention_resources() {
             peak.store(0,Ordering::Relaxed);
             let _=crate::gpu::test_support::take_evaluation_buffer_creations();
             let start=Instant::now();
-            let cached=ViewSource::cached_neutral(&cache,renderer.clone(),kernels.clone(),&spec);
+            let cached=ViewSource::cached_neutral(&cache,renderer.clone(),kernels.clone(),&spec,&scan,None);
             let hit=cached.is_some();
-            let source=if let Some(source)=cached{source}else{ViewSource::acquire(device,queue,&gate,renderer.clone(),kernels.clone(),&scan,None,spec.clone(),||monitor.check().is_err()).unwrap().unwrap()};
-            source.retain_neutral(&cache);
+            let source=if let Some(source)=cached{source}else{pollster::block_on(ViewSource::acquire_originals_fixture(device,queue,&gate,renderer.clone(),kernels.clone(),&scan,None,vec![spec.clone()],&cache,||monitor.check().is_err())).unwrap().unwrap().remove(0)};
             let [creations,bytes]=crate::gpu::test_support::take_evaluation_buffer_creations();
             println!("neutral_retention run={run} hit={hit} seconds={:.9} retained_payload={} retained_device={} encoded_device_peak={} evaluation_buffer_creations={creations} evaluation_buffer_bytes={bytes}",start.elapsed().as_secs_f64(),renderer.evaluation().retained_bytes(),crate::gpu::allocated_resource_bytes(device).unwrap(),peak.load(Ordering::Relaxed));
             let pixels=read(device,queue,&source.pixels);

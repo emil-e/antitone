@@ -14,7 +14,6 @@ mod spatial_tests;
 /// Captured documents are data snapshots, not histories or continuation owners.
 pub(super) struct DocumentScope {
     pub thumbnails: super::Thumbnails,
-    pub grades: super::Grades,
     pub input: super::InputSettings,
     pub input_switch: Option<super::InputSettings>,
     pub roll: super::RollSettings,
@@ -62,7 +61,6 @@ impl DocumentScope {
     pub fn replacement(&self, state: Document) -> Self {
         let mut next: Self = state.into();
         next.thumbnails = self.thumbnails.for_document(next.cache.clone());
-        next.grades = self.grades.for_document();
         next.visit.working_view = self.visit.working_view.for_visit();
         next
     }
@@ -102,10 +100,11 @@ impl DocumentScope {
         source: &crate::project::Source,
         input: crate::processing::InputSettings,
     ) -> Result<glam::DMat3, crate::Error> {
-        crate::scan::positive_matrix(
-            &input,
+        input.positive_matrix(
             glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
-            self.exposure_value(source).as_ref(),
+            self.exposure_value(source)
+                .as_ref()
+                .map(|reference| reference.ev()),
         )
     }
 
@@ -163,7 +162,6 @@ impl From<Document> for DocumentScope {
         ));
         Self {
             thumbnails: super::Thumbnails::for_sources(cache.clone()),
-            grades: super::Grades::default(),
             correction: None,
             tool: Default::default(),
             hosted_tool: Default::default(),

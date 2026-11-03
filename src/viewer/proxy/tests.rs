@@ -45,8 +45,8 @@ fn selected_proxy_has_one_immutable_source_and_lazy_active_target_output() {
         assert_ne!(a.working, b.working);
         assert_eq!(
             proxy.byte_len(),
-            source_bytes + u64::from(count) * 32 + std::mem::size_of::<[u32; 4]>() as u64,
-            "one active working/target pair plus its captured dimensions; held consumers are separate"
+            source_bytes + u64::from(count) * 32,
+            "one active working/target pair; rendering constants are prepared with an actual calculation, and held consumers are separate"
         );
         assert!(
             srgb.write_source(&queue, &vec![[0; 4]; count as usize])
@@ -104,6 +104,84 @@ fn selected_proxy_has_one_immutable_source_and_lazy_active_target_output() {
 
 #[cfg(feature = "editor")]
 #[test]
+fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let kernels = pollster::block_on(crate::gpu::view::ViewKernels::new(&device)).unwrap();
+    let proxy = GpuProxy::new(
+        renderer,
+        &device,
+        [2, 2],
+        &[[32000, 22000, 16000, 0]; 4],
+        DMat3::IDENTITY,
+        None,
+        SourceGeometry::new([0, 0, 2, 2], [2, 2]).unwrap(),
+    )
+    .unwrap();
+    let composition = crate::geometry::Composition::new(
+        [0, 0, 2, 2].into(),
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
+    let spec = crate::gpu::view::SourceRequest::inspection(frame).unwrap();
+    let gate = crate::gpu::SubmissionGate::default();
+    let count = Arc::new(AtomicUsize::new(0));
+    let observed = count.clone();
+    gate.observe_submissions(Arc::new(move || {
+        observed.fetch_add(1, Ordering::Relaxed);
+    }));
+    let invalid = ProcessingInput::from(
+        ProcessingParameters::source_preview_with_transform(None, 0., DMat3::ZERO).unwrap(),
+    );
+    assert!(
+        proxy
+            .preview(&queue, &gate, kernels.clone(), &invalid, spec.clone())
+            .is_err()
+    );
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        0,
+        "a late downstream error must not leave native work submitted"
+    );
+    let valid = ProcessingInput::from(ProcessingParameters::source());
+    let (source, processed) = proxy.preview(&queue, &gate, kernels, &valid, spec).unwrap();
+    assert_eq!(count.load(Ordering::Relaxed), 1);
+    assert!(processed.stages.is_none());
+    assert!(*processed.submitted.lock().unwrap());
+    assert!(
+        processed
+            .definition
+            .region_for(
+                &source.definition,
+                processed.definition.domain().finite().unwrap()
+            )
+            .unwrap()
+            .is_some()
+    );
+    let rendered = crate::gpu::view::RenderedView::from_processed(
+        &device,
+        source,
+        crate::gpu::view::Capture::Primitive(valid),
+        OutputTarget::Srgb,
+        processed,
+        None,
+    )
+    .unwrap();
+    rendered.ensure_submitted(&device, &queue, &gate, &egui::Context::default());
+    let pixels = crate::viewer::readback::image_pixels(&device, &queue, &rendered.image);
+    assert_eq!(pixels.len(), 4);
+    assert!(pixels.iter().all(|pixel| {
+        pixel[3] == 1.
+            && pixel[..3]
+                .iter()
+                .all(|value| value.is_finite() && *value > 0.)
+    }));
+}
+
+#[cfg(feature = "editor")]
+#[test]
 fn proxy_view_source_accepts_a_cropped_frame_output() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
@@ -141,8 +219,7 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
         )
         .unwrap();
         let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
-        let spec = crate::gpu::view::ViewSourceSpec::new(
-            1,
+        let spec = crate::gpu::view::SourceRequest::new(
             frame,
             crate::processing::InputSettings::Digital,
             DMat3::IDENTITY,
@@ -155,6 +232,7 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
                 &queue,
                 &crate::gpu::SubmissionGate::default(),
                 kernels,
+                &spec.processing_fixture(),
                 spec,
             )
             .unwrap();

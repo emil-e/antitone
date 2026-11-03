@@ -18,88 +18,19 @@ impl Kernels {
         encoder: &mut wgpu::CommandEncoder,
         graded: &Processed,
     ) {
-        debug_assert_eq!(graded.stages.raster.size(), graded.plan.input().size());
+        let Some(stages) = &graded.stages else {
+            return;
+        };
+        debug_assert_eq!(stages.raster.size(), graded.plan.input().size());
         self.stages
             .encode_from(
                 device,
                 encoder,
-                &graded.stages,
+                stages,
                 &graded.source.pixels,
                 &graded.pixels,
             )
             .expect("validated photographic composition");
-    }
-
-    pub(crate) fn cover_proxy(
-        &self,
-        context: &crate::gpu::evaluation::Context,
-        encoder: &mut wgpu::CommandEncoder,
-        pixels: &wgpu::Buffer,
-    ) -> Result<(), Error> {
-        crate::gpu::evaluation::acquire::cover(context, encoder, pixels)
-    }
-
-    pub(crate) fn copy(
-        &self,
-        context: &crate::gpu::evaluation::Context,
-        encoder: &mut wgpu::CommandEncoder,
-        buffer: &wgpu::Buffer,
-        texture: &wgpu::Texture,
-    ) -> Result<(), Error> {
-        crate::gpu::evaluation::acquire::copy(context, encoder, buffer, texture)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn filter(
-        &self,
-        context: &crate::gpu::evaluation::Context,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &wgpu::Texture,
-        output: &wgpu::Buffer,
-        frame: FrameRaster,
-        origin: [i32; 2],
-        window: crate::resample::windows::Window,
-    ) -> Result<(), Error> {
-        let bounds = frame.processing_bounds()?;
-        self.filter_raster(
-            context,
-            encoder,
-            image,
-            output,
-            [bounds.width, bounds.height],
-            frame.output,
-            frame.affine_in(bounds)?,
-            origin,
-            window,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn filter_raster(
-        &self,
-        context: &crate::gpu::evaluation::Context,
-        encoder: &mut wgpu::CommandEncoder,
-        image: &wgpu::Texture,
-        output: &wgpu::Buffer,
-        source_size: [u32; 2],
-        output_size: [u32; 2],
-        affine: [[f32; 2]; 3],
-        origin: [i32; 2],
-        window: crate::resample::windows::Window,
-    ) -> Result<(), Error> {
-        crate::gpu::evaluation::acquire::filter(
-            context,
-            encoder,
-            image,
-            output,
-            crate::gpu::evaluation::acquire::Footprint {
-                source: source_size,
-                output: output_size,
-                affine,
-                origin,
-                window,
-            },
-        )
     }
 }
 

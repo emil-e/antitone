@@ -7,24 +7,30 @@ use crate::{
 };
 use glam::DVec3;
 
+#[derive(Debug, PartialEq)]
 struct Codes {
     area: SourceRegion,
     pixels: Vec<[f32; 4]>,
 }
 
 impl Source for Codes {
+    fn identity(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new((self.area, self.pixels.clone())))
+    }
+
     fn domain(&self) -> Domain {
         Domain {
-            bounds: self.area,
+            bounds: Some(self.area.try_into().unwrap()),
             grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             meaning: Meaning::CameraCodes,
         }
     }
 
-    fn read(&self, r: SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
-        Ok((r.y..r.y + r.height)
+    fn read(&self, r: crate::gpu::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+        let r = r.source()?;
+        Ok((r.y..r.bottom())
             .flat_map(|y| {
-                (r.x..r.x + r.width).map(move |x| {
+                (r.x..r.right()).map(move |x| {
                     self.pixels[((y - self.area.y) * self.area.width + x - self.area.x) as usize]
                 })
             })
@@ -42,7 +48,7 @@ fn evaluate(
 ) -> (Vec<[f32; 4]>, usize) {
     let plan = Plan::with_policy(
         root,
-        region,
+        region.try_into().unwrap(),
         Budget {
             tile: [17, 13],
             scratch_bytes: 8 << 20,
@@ -61,6 +67,89 @@ fn evaluate(
         .unwrap()
         .unwrap();
     (execute::read(device, queue, &pixels.pixels), computes)
+}
+
+#[test]
+fn photographic_identities_follow_captured_operations_not_physical_fusion() {
+    use crate::adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
+    };
+    use crate::processing::RollSettings;
+    let (device, _queue, _) = crate::gpu::test_support::render_context();
+    let area = SourceRegion::from([0, 0, 2, 2]);
+    let codes = Arc::new(Codes {
+        area,
+        pixels: vec![[20000., 30000., 10000., 0.]; 4],
+    });
+    let settings = InputSettings::negative(Calibration {
+        dmin: DVec3::splat(0.7),
+        dmax: DVec3::splat(0.14),
+        input_floor: 0.1,
+    });
+    let layer = AdjustmentLayer::global(AdjustmentLayerSettings {
+        exposure: 0.25,
+        ..Default::default()
+    });
+    let layers = AdjustmentLayerSnapshot::new(vec![layer]).unwrap();
+    let make = |settings, roll, layers| {
+        let input = ProcessingInput::new(
+            &device.limits(),
+            settings,
+            roll,
+            layers,
+            glam::DMat3::IDENTITY,
+            area,
+        )
+        .unwrap();
+        Photograph::new(
+            &device.limits(),
+            source(codes.clone()),
+            None,
+            &input,
+            glam::DMat3::IDENTITY,
+        )
+        .unwrap()
+    };
+    let original = make(settings, RollSettings::default(), layers.clone());
+    for value in [
+        &original.unrepaired,
+        &original.neutral,
+        &original.roll,
+        &original.graded,
+    ] {
+        assert!(
+            value.identity().is_some(),
+            "each captured photographic value owns its identity"
+        );
+    }
+    let same = make(settings, RollSettings::default(), layers.clone());
+    assert_eq!(original.graded.identity(), same.graded.identity());
+    let exposed = make(
+        settings,
+        RollSettings {
+            exposure: 0.5,
+            ..Default::default()
+        },
+        layers.clone(),
+    );
+    assert_eq!(original.neutral.identity(), exposed.neutral.identity());
+    assert_ne!(original.roll.identity(), exposed.roll.identity());
+    let mut changed_layer = layer;
+    changed_layer.photo.exposure = -0.5;
+    let changed = make(
+        settings,
+        RollSettings::default(),
+        AdjustmentLayerSnapshot::new(vec![changed_layer]).unwrap(),
+    );
+    assert_eq!(original.roll.identity(), changed.roll.identity());
+    assert_ne!(original.graded.identity(), changed.graded.identity());
+    let mut gamma = settings;
+    if let InputSettings::Negative { gamma, .. } = &mut gamma {
+        *gamma = 0.8;
+    }
+    let interpreted = make(gamma, RollSettings::default(), layers);
+    assert_eq!(original.camera.identity(), interpreted.camera.identity());
+    assert_ne!(original.neutral.identity(), interpreted.neutral.identity());
 }
 
 #[test]
@@ -93,8 +182,6 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
     );
     let region = SourceRegion::from([12, 18, 10, 7]);
     let root = Photograph::camera_light(
-        &device,
-        &renderer.camera,
         source(Arc::new(Codes {
             area,
             pixels: pixels.clone(),
@@ -108,7 +195,7 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
         .request(
             root,
             Region {
-                bounds: region,
+                bounds: region.try_into().unwrap(),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
             },
             Budget {
@@ -127,6 +214,7 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
             &evaluation,
             || false,
             |block, actual| {
+                let block = block.source()?;
                 for (index, pixel) in actual.iter().enumerate() {
                     let point = [
                         block.x + index as u32 % block.width,
@@ -164,8 +252,7 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
 }
 
 #[test]
-fn camera_neutral_repair_roll_and_stack_are_requestable_images_with_a_fused_original_implementation()
- {
+fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composition() {
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let area = SourceRegion::from([11, 17, 81, 67]);
@@ -207,7 +294,7 @@ fn camera_neutral_repair_roll_and_stack_are_requestable_images_with_a_fused_orig
     let snapshot = crate::gpu::repairs::Snapshot::logical(vec![repaired.clone()]).unwrap();
     let region = SourceRegion::from([area.x + 7, area.y + 9, 51, 35]);
     let matrix = super::tests::matrix();
-    let (roll, stack) = super::tests::settings(area);
+    let (roll, stack) = super::tests::settings(area.try_into().unwrap());
     let scalar_roll = RollPipeline::new(roll).unwrap();
     let scalar_stack = AdjustmentLayerStack::new(stack.layers().to_vec()).unwrap();
     for settings in [
@@ -220,14 +307,21 @@ fn camera_neutral_repair_roll_and_stack_are_requestable_images_with_a_fused_orig
         }),
     ] {
         let pipeline = Arc::new(
-            ProcessingInput::new(&device, settings, roll, stack.clone(), matrix, area).unwrap(),
+            ProcessingInput::new(
+                &device.limits(),
+                settings,
+                roll,
+                stack.clone(),
+                matrix,
+                area,
+            )
+            .unwrap(),
         );
         let scalar_input = InputPipeline::new(settings, matrix).unwrap();
         let mut input = ProcessingInput::from(pipeline);
         input.repairs = snapshot.clone();
         let photo = Photograph::new(
-            &device,
-            &renderer.camera,
+            &device.limits(),
             source(codes.clone()),
             Some(gpu_field.clone()),
             &input,
@@ -243,7 +337,7 @@ fn camera_neutral_repair_roll_and_stack_are_requestable_images_with_a_fused_orig
             Policy::Composed,
         )
         .0;
-        assert_eq!(camera, codes.read(region).unwrap());
+        assert_eq!(camera, codes.read(region.try_into().unwrap()).unwrap());
         let mut expected = vec![Vec::new(); 4];
         let mut floor_flags = false;
         let mut signed_hdr = [false; 2];
@@ -324,9 +418,10 @@ fn camera_neutral_repair_roll_and_stack_are_requestable_images_with_a_fused_orig
             }
             work.push(counts);
         }
-        assert!(
-            work[3][1] < work[3][0],
-            "addressable photographic boundaries need not add original processing passes"
+        assert_eq!(
+            work[0][1],
+            region.width.div_ceil(17) as usize * region.height.div_ceil(13) as usize,
+            "correction, interpretation and working conversion share one pass per tile"
         );
         let grading = input.grade().unwrap().for_grid(0);
         let doubled = pointwise(
@@ -402,202 +497,12 @@ fn double(p: vec4f, pos: vec2f) -> vec4f {
 }
 
 #[test]
-fn folded_negative_original_does_not_require_a_representable_neutral_intermediate() {
-    use crate::{
-        adjustment_layers::AdjustmentLayerSnapshot,
-        processing::{Pipeline, RollSettings},
-    };
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let area = SourceRegion::from([11, 17, 3, 2]);
-    let mut settings = InputSettings::negative(Calibration {
-        dmin: DVec3::splat(0.7),
-        dmax: DVec3::splat(0.14),
-        input_floor: 1e-6,
-    });
-    if let InputSettings::Negative { gamma, .. } = &mut settings {
-        *gamma = 0.125;
-    }
-    let roll = RollSettings {
-        exposure: -16.,
-        ..Default::default()
-    };
-    let matrix = glam::DMat3::IDENTITY;
-    let pipeline = Arc::new(
-        ProcessingInput::new(
-            &device,
-            settings,
-            roll,
-            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
-            matrix,
-            area,
-        )
-        .unwrap(),
-    );
-    assert!(
-        pipeline.input_program().neutral_parameters().is_err(),
-        "fixture must require folded exposure to stay within f32"
-    );
-    let input = ProcessingInput::from(pipeline);
-    let codes = source(Arc::new(Codes {
-        area,
-        pixels: vec![[0.; 4]; 6],
-    }));
-    let photo = Photograph::new(&device, &renderer.camera, codes, None, &input, matrix).unwrap();
-    let actual = evaluate(
-        &device,
-        &queue,
-        &renderer,
-        photo.graded,
-        area,
-        Policy::Composed,
-    )
-    .0;
-    let expected = Pipeline::new(settings, roll, matrix)
-        .unwrap()
-        .apply(DVec3::ZERO)
-        .unwrap()
-        .rgb;
-    assert!(expected.max_element() > f32::MAX as f64 / 65536.);
-    for pixel in actual {
-        assert!(pixel.iter().all(|v| v.is_finite()));
-        assert_eq!(pixel[3], 7.);
-        for c in 0..3 {
-            assert!(
-                (pixel[c] as f64 / expected[c] - 1.).abs() < 2e-5,
-                "folded original {pixel:?} vs {expected:?}"
-            );
-        }
-    }
-    assert!(
-        Plan::with_policy(
-            photo.neutral,
-            area,
-            Budget {
-                tile: [3, 2],
-                scratch_bytes: 8 << 20
-            },
-            Policy::Composed
-        )
-        .is_err(),
-        "an explicitly requested, unrepresentable intermediate must fail rather than change the photographic model"
-    );
-}
-
-#[test]
-fn equivalent_implementations_keep_the_domain_and_compose_with_downstream_functions() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    struct Traced {
-        function: Function,
-        calls: Arc<AtomicUsize>,
-    }
-
-    impl Operation for Traced {
-        fn input(&self, r: SourceRegion) -> Result<Option<SourceRegion>, Error> {
-            Ok(Some(r))
-        }
-
-        fn pointwise(&self) -> Option<Function> {
-            self.calls.fetch_add(1, Ordering::Relaxed);
-            Some(self.function.clone())
-        }
-
-        fn lower(
-            &self,
-            _: &mut Fragment,
-            _: Option<PlannedImage>,
-            _: PlannedImage,
-        ) -> Result<(), Error> {
-            unreachable!("pointwise contract")
-        }
-    }
-    let (device, queue, renderer) = crate::gpu::test_support::render_context();
-    let area = SourceRegion::from([11, 17, 3, 2]);
-    let input = source(Arc::new(Codes {
-        area,
-        pixels: vec![[0.25, 0.5, 1.25, 0.]; 6],
-    }));
-    let function = |symbol, body: &str| Function {
-        code: format!(
-            r#"
-fn {symbol}(p: vec4f, pos: vec2f) -> vec4f {{
-    return vec4f({body}, p.w);
-}}
-"#
-        )
-        .into(),
-        symbol,
-        bindings: vec![],
-    };
-    let logical = pointwise(
-        pointwise(
-            input.clone(),
-            Meaning::Neutral,
-            function("twice", "p.rgb*2."),
-        ),
-        Meaning::Neutral,
-        function("bias", "p.rgb+3."),
-    );
-    let calls = Arc::new(AtomicUsize::new(0));
-    let physical = ImageNode::new(
-        logical.domain,
-        Some(input),
-        Traced {
-            function: function("combined", "p.rgb*2.+vec3f(3.)"),
-            calls: calls.clone(),
-        },
-    );
-    for domain in [
-        Domain {
-            meaning: Meaning::Graded,
-            ..logical.domain
-        },
-        Domain {
-            bounds: [11, 17, 2, 2].into(),
-            ..logical.domain
-        },
-        Domain {
-            grid: Grid::axis_aligned([0.; 2], [2.; 2]),
-            ..logical.domain
-        },
-    ] {
-        let incompatible = ImageNode::new(
-            domain,
-            physical.input.clone(),
-            Traced {
-                function: function("combined", "p.rgb*2.+vec3f(3.)"),
-                calls: calls.clone(),
-            },
-        );
-        assert!(ImageNode::implemented_by(logical.clone(), incompatible).is_err());
-    }
-    let root = ImageNode::implemented_by(logical, physical).unwrap();
-    let root = pointwise(root, Meaning::Neutral, function("after", "p.rgb*4."));
-    let mut work = Vec::new();
-    for policy in [Policy::Materialized, Policy::Composed] {
-        calls.store(0, Ordering::Relaxed);
-        let (actual, count) = evaluate(&device, &queue, &renderer, root.clone(), area, policy);
-        assert_eq!(actual, vec![[14., 16., 22., 0.]; 6]);
-        assert_eq!(
-            calls.load(Ordering::Relaxed) > 0,
-            policy == Policy::Composed,
-            "only composed planning selects the physical implementation"
-        );
-        work.push(count);
-    }
-    assert!(
-        work[1] <= work[0],
-        "a supplied implementation does not force a downstream pointwise traversal"
-    );
-}
-
-#[test]
 fn keeping_a_neutral_image_does_not_retain_its_downstream_grade() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let area = SourceRegion::from([11, 17, 3, 2]);
     let pipeline = Arc::new(
         ProcessingInput::new(
-            &device,
+            &device.limits(),
             InputSettings::Digital,
             Default::default(),
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -610,8 +515,7 @@ fn keeping_a_neutral_image_does_not_retain_its_downstream_grade() {
     let input = ProcessingInput::from(pipeline);
     let pixels = vec![[0.25 * 65535., 0.5 * 65535., 1.5 * 65535., 0.]; 6];
     let photo = Photograph::new(
-        &device,
-        &renderer.camera,
+        &device.limits(),
         source(Arc::new(Codes { area, pixels })),
         None,
         &input,

@@ -20,7 +20,7 @@ pub(crate) fn resident_plan(
     input: &ProcessingInput,
 ) -> Result<Option<Plan>, Error> {
     input.require_source(source)?;
-    let stages = input.pixel_pipeline()?;
+    let stages = input.pixel_pipeline();
     let Some(geometry) = source.geometry() else {
         return if stages.is_empty() {
             Ok(None)
@@ -49,6 +49,8 @@ pub(crate) struct Request<'a> {
     pub source: &'a ProcessingSource,
     pub input: &'a ProcessingInput,
     pub plan: Option<&'a Plan>,
+    /// Supplied sample arrangement, not a fallback for original-coordinate geometry.
+    pub layout: [u32; 2],
 }
 
 impl<'a> Request<'a> {
@@ -56,11 +58,13 @@ impl<'a> Request<'a> {
         source: &'a ProcessingSource,
         input: &'a ProcessingInput,
         plan: Option<&'a Plan>,
+        layout: [u32; 2],
     ) -> Self {
         Self {
             source,
             input,
             plan,
+            layout,
         }
     }
 
@@ -70,7 +74,7 @@ impl<'a> Request<'a> {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         working: &wgpu::Buffer,
-    ) -> Result<Option<Prepared>, Error> {
+    ) -> Result<Prepared, Error> {
         self.input.require_source(self.source)?;
         if let Some(plan) = self.plan {
             let geometry = self.source.geometry().ok_or(Error::InvalidParameter(
@@ -97,17 +101,23 @@ impl<'a> Request<'a> {
             self.source
                 .geometry()
                 .map(|geometry| Raster::region(geometry.region(), geometry.size()))
-                .unwrap_or_else(|| Raster::native([0, 0, self.source.pixel_count(), 1].into()))
+                .unwrap_or_else(|| Raster::native([0, 0, self.layout[0], self.layout[1]].into()))
         });
         let stages = self
             .plan
             .map(|plan| plan.pipeline().clone())
             .unwrap_or_default();
-        let recipe = crate::gpu::evaluation::Recipe::with_stages(self.input, stages);
-        let root = recipe.resident(device, renderer, self.source, raster)?;
+        let root = crate::gpu::evaluation::Photograph::from_resident_with_stages(
+            &device.limits(),
+            self.source,
+            self.input,
+            raster,
+            &stages,
+        )?
+        .processed;
         let prepared =
-            Prepared::from_composition(device, raster, root, None, renderer.evaluation.clone())?;
+            Prepared::from_composition(device, raster, root, renderer.evaluation.clone())?;
         prepared.encode_from(device, encoder, &self.source.input, working)?;
-        Ok(Some(prepared))
+        Ok(prepared)
     }
 }

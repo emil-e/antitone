@@ -38,8 +38,7 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
             if rgb[0] == 64000 {
                 assert!(expected.max_element() > 1.);
             }
-            let spec = ViewSourceSpec::new(
-                1,
+            let spec = SourceRequest::new(
                 frame(&scan),
                 InputSettings::Digital,
                 scan.positive_matrix(&InputSettings::Digital).unwrap(),
@@ -60,7 +59,19 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
             .unwrap()
             .unwrap();
             let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
-            let navigation = ViewSource::from_camera_proxy(
+            let input = ProcessingInput::new(
+                &device.limits(),
+                InputSettings::Digital,
+                RollSettings {
+                    exposure: 1.,
+                    ..Default::default()
+                },
+                crate::adjustment_layers::AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
+                scan.positive_matrix(&InputSettings::Digital).unwrap(),
+                scan.area,
+            )
+            .unwrap();
+            let (navigation, processed) = ViewSource::camera_preview(
                 &device,
                 &queue,
                 &gate,
@@ -69,10 +80,26 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                 &proxy,
                 None,
                 spec,
+                &input,
             )
             .unwrap();
-            for source in [original, navigation] {
-                let values = read(&device, &queue, &source.pixels);
+            assert!(
+                processed
+                    .definition
+                    .region_for(
+                        &navigation.definition,
+                        processed.definition.domain().finite().unwrap()
+                    )
+                    .unwrap()
+                    .is_some(),
+                "processed pixels retain their actual native calculation"
+            );
+            for (pixels, expected) in [
+                (&original.pixels, expected),
+                (&navigation.pixels, expected),
+                (&processed.pixels, expected * 2.),
+            ] {
+                let values = read(&device, &queue, pixels);
                 let pixel = values[32 + 32 * 64];
                 for channel in 0..3 {
                     assert!(

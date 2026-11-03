@@ -108,7 +108,7 @@ impl Worker {
         proxy: Option<&crate::scan::CameraProxy>,
         metrics: &mut ThumbnailMetrics,
     ) -> Result<Option<Arc<Product>>, Error> {
-        use crate::gpu::view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec};
+        use crate::gpu::view::{RenderedView, SourceRequest, ViewKernels, ViewSource};
         let Some(recipe) = job
             .key
             .recipe
@@ -121,6 +121,12 @@ impl Worker {
         if !self.active(job) {
             return Ok(None);
         }
+        let mut recipe = recipe.clone();
+        if let Some(reference) = job.reference.get()
+            && recipe.neutral.reference.as_ref() != Some(reference)
+        {
+            Arc::make_mut(&mut recipe).neutral.reference = Some(reference.clone());
+        }
         let tick = std::time::Instant::now();
         let renderer = self.renderers.get(&self.device, &self.queue)?;
         metrics.renderer_seconds = tick.elapsed().as_secs_f64();
@@ -129,9 +135,8 @@ impl Worker {
             .previous
             .as_ref()
             .and_then(|product| product.positive.as_ref());
-        let source = if let Some((source, _)) = previous {
-            metrics.neutral_hit = true;
-            source.clone()
+        let (source, produced) = if let Some((source, _)) = previous {
+            (source.clone(), None)
         } else {
             let proxy =
                 proxy.ok_or_else(|| Error::Gpu("thumbnail requires a camera proxy".into()))?;
@@ -142,18 +147,13 @@ impl Worker {
                 Default::default(),
             )?)?;
             frame.output = proxy.dimensions();
-            let spec = ViewSourceSpec::new(
-                job.source.id.0,
-                frame,
-                recipe.neutral.processing_input()?,
-                proxy.positive_matrix(&recipe.neutral.processing_input()?)?,
-                recipe.neutral.correction.clone(),
-            )?;
+            let input = crate::gpu::ProcessingInput::from_recipe(&self.device.limits(), &recipe)?;
+            let spec = SourceRequest::for_processing(frame, &input)?;
             let kernels = self
                 .kernels
                 .get_or_init(|| pollster::block_on(ViewKernels::new(&self.device)))
                 .clone()?;
-            let source = ViewSource::from_camera_proxy(
+            let (source, produced) = ViewSource::camera_preview(
                 &self.device,
                 &self.queue,
                 submissions,
@@ -164,36 +164,38 @@ impl Worker {
                     .as_ref()
                     .map(|correction| correction.gpu.clone()),
                 spec,
+                &input,
             )?;
-            metrics.neutral_seconds = tick.elapsed().as_secs_f64();
-            source
+            metrics.calculation_seconds = tick.elapsed().as_secs_f64();
+            (source, Some(produced))
         };
         let tick = std::time::Instant::now();
-        let grade = Arc::new(crate::gpu::Grading::new(
-            &self.device,
-            recipe.roll,
-            recipe.grade.clone(),
-            recipe.neutral.source_development.active_area.into(),
-        )?);
-        let grade = Arc::new(crate::gpu::ProcessingInput::compose(
-            &self.device,
-            source
-                .input_program()
-                .ok_or(Error::InvalidParameter(
-                    "positive source program unavailable",
-                ))?
-                .clone(),
-            grade,
-            recipe.neutral.source_development.active_area.into(),
-        )?);
-        let input = crate::gpu::ProcessingInput::from(grade).with_recipe_components(recipe)?;
-        let view = RenderedView::new(
-            &self.device,
-            source.clone(),
-            &input,
-            job.key.target,
-            previous.map(|(_, view)| view),
-        )?;
+        let capture = crate::gpu::view::Capture::Photograph(recipe.clone());
+        let (source, view) = if let Some(produced) = produced {
+            let view = RenderedView::from_processed(
+                &self.device,
+                source.clone(),
+                capture,
+                job.key.target,
+                produced,
+                previous.map(|(_, view)| view),
+            )?;
+            (source, view)
+        } else {
+            RenderedView::reprocess(
+                &self.device,
+                &self.queue,
+                submissions,
+                source,
+                capture,
+                job.correction
+                    .as_ref()
+                    .map(|correction| correction.gpu.clone()),
+                job.key.target,
+                previous.map(|(_, view)| view),
+            )?
+        };
+        metrics.neutral_hit = previous.is_some_and(|(prior, _)| Arc::ptr_eq(prior, &source));
         view.ensure_submitted(
             &self.device,
             &self.queue,

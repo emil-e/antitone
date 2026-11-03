@@ -2,35 +2,36 @@ use super::{ProcessingParameters, ProcessingSource};
 use crate::{Error, processing::InputSettings};
 use glam::DMat3;
 
-/// Input-program content identity; captured source identity is supplied by the source owner.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InputSignature {
-    parameters: [u8; ProcessingParameters::BYTE_LEN],
-    matrix: [u64; 9],
-}
-
-#[cfg(test)]
-impl From<[u8; ProcessingParameters::BYTE_LEN]> for InputSignature {
-    fn from(parameters: [u8; ProcessingParameters::BYTE_LEN]) -> Self {
-        Self {
-            parameters,
-            matrix: [0; 9],
-        }
-    }
-}
-
-#[cfg(test)]
-impl Default for InputSignature {
-    fn default() -> Self {
-        [0; ProcessingParameters::BYTE_LEN].into()
-    }
-}
-
 /// Source execution captured separately from photographic controls.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GpuInputProgram {
     pub(super) input: InputSettings,
     pub(super) matrix: DMat3,
+}
+
+#[cfg(feature = "editor")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum SourceInterpretation {
+    Photograph(GpuInputProgram),
+    Inspection(DMat3),
+}
+
+#[cfg(feature = "editor")]
+impl SourceInterpretation {
+    pub(crate) fn matrix(self) -> DMat3 {
+        match self {
+            Self::Photograph(program) => program.matrix,
+            Self::Inspection(matrix) => matrix,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn program(&self) -> Option<&GpuInputProgram> {
+        match self {
+            Self::Photograph(program) => Some(program),
+            Self::Inspection(_) => None,
+        }
+    }
 }
 
 impl GpuInputProgram {
@@ -49,18 +50,15 @@ impl GpuInputProgram {
         Ok(Self { input, matrix })
     }
 
+    #[cfg(all(test, feature = "editor"))]
+    pub(crate) fn matrix(&self) -> DMat3 {
+        self.matrix
+    }
+
     #[cfg(feature = "raw")]
     pub(crate) fn for_scan(scan: &crate::scan::Scan, input: InputSettings) -> Result<Self, Error> {
         let input = scan.refined_input(&input)?;
         Self::new(input, scan.positive_matrix(&input)?)
-    }
-
-    pub fn signature(&self) -> Result<InputSignature, Error> {
-        let parameters = self.neutral_parameters()?;
-        Ok(InputSignature {
-            parameters: bytemuck::bytes_of(&parameters).try_into().unwrap(),
-            matrix: self.matrix.to_cols_array().map(f64::to_bits),
-        })
     }
 
     pub fn source_continuous(
@@ -92,5 +90,40 @@ impl GpuInputProgram {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_content_is_not_the_packed_shader_encoding() {
+        let input = crate::processing::InputSettings::Negative {
+            dmin: Some(glam::DVec3::splat(0.8)),
+            dmax: Some(glam::DVec3::splat(0.02)),
+            input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+            response: crate::processing::Response::film(),
+            gamma: 0.75,
+            balance: Default::default(),
+        };
+        let a = GpuInputProgram::new(input, DMat3::IDENTITY).unwrap();
+        let mut changed = input;
+        if let InputSettings::Negative { gamma, .. } = &mut changed {
+            *gamma = gamma.next_up();
+        }
+        let b = GpuInputProgram::new(changed, DMat3::IDENTITY).unwrap();
+        let packed_a = a.neutral_parameters().unwrap();
+        let packed_b = b.neutral_parameters().unwrap();
+        assert_eq!(
+            bytemuck::bytes_of(&packed_a),
+            bytemuck::bytes_of(&packed_b),
+            "control must collide after packing"
+        );
+        assert_ne!(
+            a, b,
+            "captured input content must distinguish the original parameters"
+        );
+        assert_eq!(a, GpuInputProgram::new(input, DMat3::IDENTITY).unwrap());
     }
 }

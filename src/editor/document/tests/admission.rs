@@ -112,7 +112,7 @@ fn complete_stack_preflight_is_read_only_with_adapter_or_default_limits() {
         uncalibrated.validate().unwrap();
         assert!(
             crate::gpu::ProcessingInput::new(
-                &device,
+                &device.limits(),
                 uncalibrated.project.input,
                 uncalibrated.project.roll,
                 uncalibrated.project.sources[0].grade_snapshot().unwrap(),
@@ -348,7 +348,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
         let epoch = editor
             .source_epoch
             .load(std::sync::atomic::Ordering::Relaxed);
-        let revision = editor.document.visit.canvas.grade.original.revision();
+        let revision = editor.document.visit.canvas.grade.original.continuation();
         let viewport = editor.document.visit.canvas.viewport;
         let path = editor
             .document
@@ -382,7 +382,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
         );
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert_eq!(
-            editor.document.visit.canvas.grade.original.revision(),
+            editor.document.visit.canvas.grade.original.continuation(),
             revision
         );
         assert_eq!(editor.document.state.project, before);
@@ -417,10 +417,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        assert!(std::ptr::eq(
-            accepted.grade().unwrap(),
-            current.grade().unwrap()
-        ));
+        assert_eq!(accepted.clone(), current.clone());
     });
 }
 

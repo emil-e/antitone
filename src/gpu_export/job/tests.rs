@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     dust_repair::{RepairOrigin, SupportMask},
+    gpu::ProcessingInput,
     project::{Development, Project, Source, SourceDevelopment, SourceId},
 };
 use std::cell::Cell;
@@ -65,7 +66,7 @@ fn fixture(scan: &Scan) -> (Project, SourceId) {
 }
 
 #[test]
-fn a_repair_free_output_plan_does_not_require_an_unrepresentable_neutral_image() {
+fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
     let (device, queue, renderer) = super::super::tests::context();
     let file = crate::raw::fixture::bayer_dng();
     let mut scan = Scan::open(file.path(), None).unwrap();
@@ -88,14 +89,14 @@ fn a_repair_free_output_plan_does_not_require_an_unrepresentable_neutral_image()
     if let InputSettings::Negative { gamma, .. } = &mut project.input {
         *gamma = 0.1;
     }
-    project.roll.exposure = -16.;
+    project.roll.exposure = 0.5;
     let mut recipe = project.image_recipe(id).unwrap();
     recipe.neutral.correction = scan.flat_field().cloned();
     let input = recipe.neutral.processing_input().unwrap();
     let matrix = scan.positive_matrix(&input).unwrap();
     assert!(
         ProcessingInput::new(
-            &device,
+            &device.limits(),
             input,
             RollSettings::default(),
             recipe.grade.clone(),
@@ -103,17 +104,8 @@ fn a_repair_free_output_plan_does_not_require_an_unrepresentable_neutral_image()
             area
         )
         .is_err(),
-        "the fixture must require folded exposure for global GPU admission"
+        "the fixture must reject eager parameter-wide neutral admission"
     );
-    ProcessingInput::new(
-        &device,
-        input,
-        recipe.roll,
-        recipe.grade.clone(),
-        matrix,
-        area,
-    )
-    .unwrap();
     let actual_local = crate::scan::ImageSource::new(&scan, input)
         .unwrap()
         .sample([area.x + 16, area.y + 16])

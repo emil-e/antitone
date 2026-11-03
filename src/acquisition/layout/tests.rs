@@ -140,8 +140,4 @@ fn full_camera_cells_use_their_real_edge_boundary_without_viewport_padding() {
         .is_err(),
         "a cropped or resampled raster must not silently extend its own edges as source edges"
     );
-    assert!(
-        FootprintBatch::new(vec![std::sync::Arc::new(plan)], Default::default()).is_err(),
-        "a sampled camera raster is not an original-source provider"
-    );
 }

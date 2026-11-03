@@ -1,7 +1,9 @@
 //! Callable image sampling: virtual images can cross operations without a buffer per node.
 
+use super::CellRegion as Rect;
 use super::*;
-use crate::geometry::SourceRegion as Rect;
+
+mod pointwise;
 
 pub enum SampleInput {
     Raster(PlannedImage),
@@ -19,13 +21,32 @@ pub trait SampleProducer: Send + Sync {
     fn emit(
         &self,
         fragment: &mut Fragment,
-        input: SampleInput,
+        input: Option<SampleInput>,
         domain: Domain,
         region: Rect,
     ) -> Result<Sampled, Error>;
 }
 
+pub trait SampleProduction: Send + Sync {
+    /// Declares a calculation that cannot be represented by one sampled dispatch.
+    fn requires_worker(&self) -> bool {
+        false
+    }
+
+    /// Related roots may share upstream traversal; false leaves each root to ordinary production.
+    fn produce_many(&self, _outputs: &[(&Arc<ImageNode>, Production<'_>)]) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    /// Writes the complete requested output. Cancellation is an error.
+    fn produce(&self, worker: &Production<'_>, input: &Arc<ImageNode>) -> Result<(), Error>;
+}
+
 pub trait SampleConsumer: Send + Sync {
+    fn production(&self) -> Option<&dyn SampleProduction> {
+        None
+    }
+
     fn emit(
         &self,
         fragment: &mut Fragment,
@@ -44,12 +65,11 @@ pub struct Sampled {
 
 impl Sampled {
     pub fn raster(fragment: &mut Fragment, image: PlannedImage) -> Self {
-        let parameters = fragment.uniform(&[
-            image.region.x,
-            image.region.y,
-            image.region.width,
-            image.region.height,
-        ]);
+        Self::buffer(fragment, image.region, Binding::Read(image.resource))
+    }
+
+    pub(super) fn buffer(fragment: &mut Fragment, region: Rect, pixels: Binding) -> Self {
+        let parameters = fragment.uniform(&region.packed());
         Self {
             code: r#"
 @group(0) @binding(32)
@@ -65,17 +85,12 @@ fn sample_buffer(p: vec2i) -> vec4f {
 "#
             .into(),
             symbol: "sample_buffer".into(),
-            bindings: vec![(32, Binding::Read(image.resource)), (33, parameters)],
+            bindings: vec![(32, pixels), (33, parameters)],
         }
     }
 
     pub fn materialize(self, fragment: &mut Fragment, output: PlannedImage) -> Result<(), Error> {
-        let parameters = fragment.uniform(&[
-            output.region.x,
-            output.region.y,
-            output.region.width,
-            output.region.height,
-        ]);
+        let parameters = fragment.uniform(&output.region.packed());
         let call = format!("{}(vec2i(p))", self.symbol);
         let code = format!(
             r#"

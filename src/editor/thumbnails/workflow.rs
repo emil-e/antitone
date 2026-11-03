@@ -98,7 +98,7 @@ impl Editor {
             .then(|| {
                 self.document
                     .thumbnails
-                    .compatible_product(&key)
+                    .source_product(&key)
                     .map(|(_, product)| product.clone())
             })
             .flatten();
@@ -185,7 +185,7 @@ impl Editor {
         let eager =
             allowed && self.document.thumbnails.budgets.pressure == memory::Pressure::Normal;
         let idle = allowed
-            && self.document.visit.canvas.grade.original.refining.is_none()
+            && !self.document.visit.canvas.grade.original.refining()
             && if self.document.visit.working_view.revision().is_some() {
                 self.document.visit.working_view.idle()
             } else {

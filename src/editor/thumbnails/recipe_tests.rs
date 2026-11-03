@@ -281,7 +281,7 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
     let key = tests::key(&document, id);
     let looked = complete(&mut thumbnails, &document, key.clone()).unwrap();
     let view = &looked.positive.as_ref().unwrap().1;
-    assert_eq!(view.processing.look_id(), Some(lut.id()));
+    assert_eq!(view.processing().look_id(), Some(lut.id()));
     assert!(matches!(looked.look_result(), Some(Ok(()))));
     assert!(Arc::ptr_eq(&neutral, &looked.positive.as_ref().unwrap().0));
     #[cfg(feature = "ui-tests")]
@@ -322,7 +322,7 @@ fn thumbnail_looks_reuse_proxy_support_even_when_the_document_has_dust() {
         &restored.positive.as_ref().unwrap().0
     ));
     assert_eq!(
-        restored.positive.as_ref().unwrap().1.processing.look_id(),
+        restored.positive.as_ref().unwrap().1.processing().look_id(),
         None
     );
 }
@@ -532,7 +532,7 @@ fn previous_card_presentation_requires_matching_source_framing_and_target() {
     assert!(original.same_presentation(&graded));
     document.project.set_gamma(1.2);
     let interpreted = tests::key(&document, id);
-    assert!(!original.same_neutral(&interpreted));
+    assert_ne!(original.recipe, interpreted.recipe);
     assert!(
         original.same_presentation(&interpreted),
         "interpretation updates can show an explicitly pending previous grade"
@@ -660,9 +660,10 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
     )
     .unwrap();
     editor.document.visit.working_view.observe(
-        editor.id,
         frame,
-        ProcessingInput::from(ProcessingParameters::source()).signature(),
+        super::super::working_view::Capture::Primitive(ProcessingInput::from(
+            ProcessingParameters::source(),
+        )),
         editor.document.target,
     );
     crate::application::test_support::with_application(editor, |app| {

@@ -51,7 +51,7 @@ fn case(
         .image_mtf_sigma;
     let input = ProcessingInput::from(Arc::new(
         ProcessingInput::new(
-            device,
+            &device.limits(),
             InputSettings::Digital,
             roll,
             snapshot.clone(),
@@ -60,14 +60,20 @@ fn case(
         )
         .unwrap(),
     ))
-    .with_film_emulation(film)
-    .with_frame_size(composition.crop().size)
-    .with_film_seed(19);
+    .with_pixel_pipeline(
+        crate::pixel_pipeline::PixelPipeline::emulation(
+            film,
+            Default::default(),
+            composition.crop().size,
+            19,
+        )
+        .unwrap(),
+    );
     let mut node = interpret(device, source(scan.clone()), matrix).unwrap();
     node = grade(
         node,
         device,
-        Arc::new(Grading::new(device, roll, snapshot, area).unwrap()),
+        Arc::new(Grading::new(&device.limits(), roll, snapshot, area).unwrap()),
     )
     .unwrap();
     node = gaussian(node, sigma).unwrap();
@@ -129,7 +135,7 @@ fn authored_native_source_and_real_grade_mtf_display_match_regional_execution() 
     for policy in [Policy::Materialized, Policy::Composed] {
         let plan = Plan::with_policy(
             case.node.clone(),
-            case.node.domain.bounds,
+            case.node.domain.finite().unwrap(),
             Budget {
                 tile: [29, 19],
                 scratch_bytes: 32 << 20,
@@ -187,7 +193,7 @@ fn native_evaluation_resource_comparison() {
         };
         let plan = Plan::with_policy(
             case.node.clone(),
-            case.node.domain.bounds,
+            case.node.domain.finite().unwrap(),
             Budget {
                 tile: [96, 19],
                 scratch_bytes: 32 << 20,

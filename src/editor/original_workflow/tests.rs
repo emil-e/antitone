@@ -50,24 +50,19 @@ fn demand(
         crate::geometry::Composition::new(view.area, Default::default(), Default::default())
             .unwrap();
     let input = ProcessingInput::from(ProcessingParameters::source_inspection(ev).unwrap());
-    e.observe_grade(&input);
+    e.observe_grade(None);
     e.observe_original(
         Some(OriginalPurpose::Tool),
-        (
-            input.signature(),
+        Some(Demand::fixture(
+            input,
             OutputTarget::Srgb,
             Some(view),
             composition,
-        ),
+            source,
+        )),
     );
     e.active_canvas_mut().grade.original.last_edit = Instant::now() - Duration::from_secs(1);
-    e.request_original(
-        &input,
-        OutputTarget::Srgb,
-        &egui::Context::default(),
-        source,
-        cx,
-    );
+    e.request_original(&egui::Context::default(), cx);
     resource
 }
 
@@ -85,13 +80,13 @@ fn working_reconstruction_can_complete_while_the_reference_view_is_active() {
         app.update(|e| crate::editor::tests::paused_reference_fixture(e, reference, None));
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.canvas.grade.original.settled.is_some()
+            e.document.visit.canvas.grade.original.settled().is_some()
         });
         app.read(|e| {
             assert!(e.document.flat_edit().is_some());
-            assert!(e.active_canvas().grade.original.settled.is_none());
-            assert!(e.active_canvas().grade.original.refining.is_none());
-            assert!(e.document.visit.canvas.grade.original.refining.is_none());
+            assert!(e.active_canvas().grade.original.settled().is_none());
+            assert!(!e.active_canvas().grade.original.refining());
+            assert!(!e.document.visit.canvas.grade.original.refining());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -115,7 +110,7 @@ fn ending_reference_view_retires_only_its_reconstruction_not_the_working_views()
         assert!(working.upgrade().is_some());
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.canvas.grade.original.settled.is_some()
+            e.document.visit.canvas.grade.original.settled().is_some()
         });
         app.read(|e| assert!(e.document.flat_edit().is_none()));
     });
@@ -130,22 +125,13 @@ fn original_reconstruction_finishes_without_backend_or_another_paint() {
             demand(e, 0., access);
         });
         app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.canvas.grade.original.settled.is_some()
+            e.document.visit.canvas.grade.original.settled().is_some()
         });
         app.read(|e| {
-            let (revision, view, image) = e
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .settled
-                .as_ref()
-                .unwrap();
-            assert_eq!(*revision, e.document.visit.canvas.grade.original.revision());
+            let (view, image) = e.document.visit.canvas.grade.original.settled().unwrap();
             assert_eq!(view.output, [16, 12]);
             assert_eq!(image.processing_byte_len(), (0, 0));
-            assert!(e.document.visit.canvas.grade.original.refining.is_none());
+            assert!(!e.document.visit.canvas.grade.original.refining());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -169,24 +155,27 @@ fn rapid_output_demand_drops_queued_inputs_and_only_latest_reconstruction_can_pu
                 .all(|source| source.upgrade().is_none()),
             "queued physical jobs must not retain every slider snapshot"
         );
-        app.read(|e| assert!(e.document.visit.canvas.grade.original.settled.is_none()));
+        app.read(|e| assert!(e.document.visit.canvas.grade.original.settled().is_none()));
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.canvas.grade.original.settled.is_some()
+            e.document.visit.canvas.grade.original.settled().is_some()
         });
         app.read(|e| {
-            assert_eq!(
+            assert!(
                 e.document
                     .visit
                     .canvas
                     .grade
                     .original
-                    .settled
+                    .wanted
                     .as_ref()
                     .unwrap()
-                    .0,
-                e.document.visit.canvas.grade.original.revision()
-            )
+                    .capture
+                    == crate::gpu::view::Capture::Primitive(ProcessingInput::from(
+                        ProcessingParameters::source_inspection(0.39).unwrap()
+                    ))
+            );
+            assert!(!e.document.visit.canvas.grade.original.refining());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -197,10 +186,12 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
     let (e, scheduler) = editor();
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
-        let (old_generation, old, resource) = app.enter(|e, access| {
+        let (departed, resource) = app.enter(|e, access| {
             let resource = demand(e, 0., access);
-            let original = &e.document.visit.canvas.grade.original;
-            (original.generation.clone(), original.revision(), resource)
+            (
+                e.document.visit.canvas.grade.original.continuation(),
+                resource,
+            )
         });
         app.pump();
         app.update(|e| e.replace_photo_scope(8));
@@ -209,58 +200,23 @@ fn leaving_a_photo_retires_queued_original_work_and_cannot_publish_into_a_revisi
         app.enter(|e, access| {
             demand(e, 0.2, access);
             let current = &e.document.visit.canvas.grade.original;
-            assert_eq!(
-                old,
-                current.revision(),
-                "exercise generation identity, not revision inequality"
-            );
-            assert!(!Arc::ptr_eq(&old_generation, &current.generation));
-            e.receive_original_for(&old_generation, old, Err("retired".into()));
-            let current = &e.document.visit.canvas.grade.original;
-            assert!(current.refining.is_some());
-            assert!(current.refinement_error.is_none());
-            assert!(current.settled.is_none());
+            assert_ne!(departed, current.continuation());
+            assert!(departed.receive(Err("retired".into())).is_none());
+            assert!(current.refining() && !current.failed() && current.settled().is_none());
         });
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| {
-            e.document.visit.canvas.grade.original.settled.is_some()
+            e.document.visit.canvas.grade.original.settled().is_some()
         });
-        let image = app.read(|e| {
-            e.document
-                .visit
-                .canvas
-                .grade
-                .original
-                .settled
-                .as_ref()
-                .unwrap()
-                .2
-                .clone()
-        });
-        app.update(|e| e.receive_original_for(&old_generation, old, Err("retired".into())));
+        let image = app.read(|e| e.document.visit.canvas.grade.original.settled().unwrap().1);
+        assert!(departed.receive(Err("retired".into())).is_none());
         app.read(|e| {
             assert_eq!(e.document.visit.view, 8);
             assert!(Arc::ptr_eq(
                 &image,
-                &e.document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .settled
-                    .as_ref()
-                    .unwrap()
-                    .2
+                &e.document.visit.canvas.grade.original.settled().unwrap().1
             ));
-            assert!(
-                e.document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .refinement_error
-                    .is_none()
-            );
+            assert!(!e.document.visit.canvas.grade.original.failed());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -277,8 +233,17 @@ fn leaving_a_purpose_releases_input_before_worker_dispatch() {
         app.pump();
         assert!(source.upgrade().is_none());
         app.read(|e| {
-            assert!(e.document.visit.canvas.grade.original.refining.is_none());
-            assert!(e.document.visit.canvas.grade.task.is_none());
+            assert!(!e.document.visit.canvas.grade.original.refining());
+            assert!(
+                e.document
+                    .visit
+                    .canvas
+                    .grade
+                    .original
+                    .task
+                    .as_ref()
+                    .is_none_or(|task| task.is_finished())
+            );
         });
         drop(hold);
     });
@@ -308,35 +273,24 @@ fn malformed_original_request_latches_error_and_retires_its_demand() {
             view.area.width = u32::MAX;
             e.observe_original(
                 Some(OriginalPurpose::Tool),
-                (
-                    input.signature(),
+                Some(Demand::fixture(
+                    input,
                     OutputTarget::Srgb,
                     Some(view),
                     composition,
-                ),
+                    source,
+                )),
             );
             e.document.visit.canvas.grade.original.last_edit =
                 Instant::now() - Duration::from_secs(1);
-            e.request_original(
-                &input,
-                OutputTarget::Srgb,
-                &egui::Context::default(),
-                source,
-                access,
-            );
+            e.request_original(&egui::Context::default(), access);
         });
         app.run_until(Duration::from_secs(15), |e| {
-            e.document
-                .visit
-                .canvas
-                .grade
-                .original
-                .refinement_error
-                .is_some()
+            e.document.visit.canvas.grade.original.failed()
         });
         app.read(|e| {
-            assert!(e.document.visit.canvas.grade.original.settled.is_none());
-            assert!(e.document.visit.canvas.grade.original.refining.is_none());
+            assert!(e.document.visit.canvas.grade.original.settled().is_none());
+            assert!(!e.document.visit.canvas.grade.original.refining());
             assert!(e.status.starts_with("Original view failed:"));
         });
     });

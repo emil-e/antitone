@@ -144,7 +144,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
                 .any(|shape| matches!(shape.shape, egui::Shape::Mesh(_)))
         );
         assert_eq!(
-            input.signature(),
+            input.clone(),
             editor
                 .positive_processing(
                     editor.document.input,
@@ -152,7 +152,7 @@ fn linear_paint_reverses_effective_endpoints_and_arrow_with_invert_and_coverage_
                     editor.document.visit.adjustment_layer_settings
                 )
                 .unwrap()
-                .signature()
+                .clone()
         );
     });
 }
@@ -204,7 +204,7 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
         assert!(editor.mask_preview_source().is_none());
         assert_eq!(editor.document.state.project, before);
         assert_eq!(
-            input.signature(),
+            input.clone(),
             editor
                 .view_processing(
                     editor.document.input,
@@ -212,7 +212,7 @@ fn cancelling_gradient_interaction_discards_preview_without_resetting_the_select
                     editor.document.visit.adjustment_layer_settings
                 )
                 .unwrap()
-                .signature()
+                .clone()
         );
         let context = egui::Context::default();
         let layout = editor.document.visit.canvas.last_layout.unwrap().0;

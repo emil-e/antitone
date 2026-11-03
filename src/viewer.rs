@@ -1,10 +1,7 @@
 use crate::{
     Error,
     geometry::TextureMapping,
-    gpu::{
-        GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSignature, ProcessingSource,
-        SourceGeometry,
-    },
+    gpu::{GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSource, SourceGeometry},
     renderer::GpuRenderer,
     rendering::OutputTarget,
 };
@@ -73,12 +70,12 @@ struct ImageProcessing {
     target: OutputTarget,
     source: ImageSource,
     working: wgpu::Buffer,
-    aces_group: std::sync::Mutex<(Option<crate::looks::LookId>, crate::renderer::RenderBinding)>,
+    aces_group: std::sync::Mutex<Option<crate::renderer::RenderBinding>>,
 }
 
 pub struct GpuImage {
     device_limits: wgpu::Limits,
-    last_parameters: std::sync::Mutex<Option<ProcessingSignature>>,
+    last_parameters: std::sync::Mutex<Option<ProcessingInput>>,
     source_revision: std::sync::atomic::AtomicU64,
     look_check: std::sync::Mutex<Option<Arc<crate::gpu::look::Check>>>,
     look_projections: std::sync::Mutex<Vec<(TextureMapping, Arc<crate::gpu::look::Check>)>>,
@@ -92,6 +89,11 @@ pub struct GpuImage {
 }
 
 impl GpuImage {
+    #[cfg(feature = "editor")]
+    pub(crate) fn device_limits(&self) -> &wgpu::Limits {
+        &self.device_limits
+    }
+
     pub async fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -243,20 +245,12 @@ impl GpuImage {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
-                let aces_group = renderer.render_binding(
-                    device,
-                    &working,
-                    [width, height, 0, 0],
-                    target,
-                    None,
-                    &linear,
-                )?;
                 Ok(ImageProcessing {
                     renderer,
                     target,
                     source,
                     working,
-                    aces_group: std::sync::Mutex::new((None, aces_group)),
+                    aces_group: std::sync::Mutex::new(None),
                 })
             })
             .transpose()?;
@@ -291,16 +285,26 @@ impl GpuImage {
         self.processing.as_ref().map_or((0, 0), |p| {
             (
                 p.source.byte_len(),
-                p.working.size() + p.aces_group.lock().unwrap().1.reference_bytes(),
+                p.working.size()
+                    + p.aces_group
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .map_or(0, |binding| binding.reference_bytes()),
             )
         })
     }
 
     #[cfg(feature = "editor")]
     pub(crate) fn look_lut(&self) -> Option<Arc<crate::gpu::look::Lut>> {
-        self.processing
-            .as_ref()
-            .and_then(|processing| processing.aces_group.lock().unwrap().1.look_lut())
+        self.processing.as_ref().and_then(|processing| {
+            processing
+                .aces_group
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|binding| binding.look_lut())
+        })
     }
 
     pub fn set_geometry(&mut self, geometry: SourceGeometry) -> Result<(), Error> {
@@ -398,7 +402,7 @@ impl GpuImage {
         input: &ProcessingInput,
     ) -> Result<bool, Error> {
         self.require_processing(input)?;
-        let signature = input.signature();
+        let signature = input.clone();
         let mut previous = self.last_parameters.lock().unwrap();
         if previous.as_ref() == Some(&signature) {
             return Ok(false);
@@ -443,24 +447,29 @@ impl GpuImage {
             .as_ref()
             .expect("validated processing source");
         let plan = crate::gpu::execution::raster::resident_plan(&processing.source, input)?;
-        let _prepared =
-            crate::gpu::execution::raster::Request::new(&processing.source, input, plan.as_ref())
-                .encode(&processing.renderer, device, encoder, &processing.working)?;
+        let prepared = crate::gpu::execution::raster::Request::new(
+            &processing.source,
+            input,
+            plan.as_ref(),
+            [self.presentation.size[0], self.presentation.size[1]],
+        )
+        .encode(&processing.renderer, device, encoder, &processing.working)?;
         let mut binding = processing.aces_group.lock().unwrap();
-        let id = input.look().map(|asset| asset.lut().id());
-        if binding.0 != id {
-            binding.1 = processing.renderer.render_binding(
-                device,
-                &processing.working,
-                self.presentation.size,
-                processing.target,
-                input.look(),
-                &self.linear,
-            )?;
-            binding.0 = id;
-        }
+        let prepared_binding = processing.renderer.render_binding(
+            device,
+            crate::gpu::evaluation::SuppliedImage::from_buffer(
+                prepared.definition.clone(),
+                prepared.definition.domain().finite()?,
+                processing.working.clone().into(),
+            )?,
+            processing.target,
+            input.look(),
+            &self.linear,
+        )?;
+        let check = prepared_binding.encode(device, encoder)?;
+        *binding = Some(prepared_binding);
         self.look_projections.lock().unwrap().clear();
-        *self.look_check.lock().unwrap() = binding.1.encode(device, encoder)?;
+        *self.look_check.lock().unwrap() = check;
         Ok(())
     }
 
@@ -508,7 +517,13 @@ impl GpuImage {
 
     pub(crate) fn look_failure(&self, id: crate::looks::LookId) -> Option<Error> {
         if let Some(processing) = &self.processing
-            && processing.aces_group.lock().unwrap().0 != Some(id)
+            && processing
+                .aces_group
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|binding| binding.look_id())
+                != Some(id)
         {
             return None;
         }

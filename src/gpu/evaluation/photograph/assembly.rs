@@ -8,11 +8,22 @@ mod tests;
 
 use crate::gpu::photograph::{Boundary, Component, Step, definition};
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum Interpretation {
     Program(GpuInputProgram, RollSettings),
     Packed(ProcessingParameters),
     Unavailable,
+}
+
+impl PartialEq for Interpretation {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Program(a, ar), Self::Program(b, br)) => a == b && ar == br,
+            (Self::Packed(a), Self::Packed(b)) => bytemuck::bytes_of(a) == bytemuck::bytes_of(b),
+            (Self::Unavailable, Self::Unavailable) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Interpretation {
@@ -32,10 +43,8 @@ impl Interpretation {
 #[derive(Clone)]
 pub(super) struct Assembly {
     pub capture: Option<Arc<Captured>>,
-    pub photographic: Option<Arc<Photographic>>,
     pub grading: Option<Grading>,
     pub interpretation: Interpretation,
-    pub camera_function: Option<Function>,
     pub encoded: bool,
     pub repairs: crate::gpu::repairs::Snapshot,
     #[cfg(feature = "editor")]
@@ -76,7 +85,7 @@ impl EffectOutput {
         }
         let image = prefix.compose(input)?;
         let image = if image.domain.same_grid(self.domain) {
-            image
+            window(image, self.domain.finite()?)?
         } else {
             reconstruct_cells(image, self.domain, self.offset.map(f64::from), self.scale)?
         };
@@ -99,19 +108,12 @@ impl Images {
 
 impl Assembly {
     pub fn captured(capture: Arc<Captured>) -> Self {
-        let interpretation = match &capture.program {
-            Some(program) => Interpretation::Program(program.clone(), RollSettings::default()),
-            None => capture
-                .source_parameters
-                .map_or(Interpretation::Unavailable, Interpretation::Packed),
-        };
+        let interpretation = capture.interpretation;
 
         Self {
             capture: Some(capture),
-            photographic: None,
             grading: None,
             interpretation,
-            camera_function: None,
             encoded: false,
             repairs: Default::default(),
             #[cfg(feature = "editor")]
@@ -123,10 +125,8 @@ impl Assembly {
     pub fn native(program: GpuInputProgram, encoding: RollSettings) -> Self {
         Self {
             capture: None,
-            photographic: None,
             grading: None,
             interpretation: Interpretation::Program(program, encoding),
-            camera_function: None,
             encoded: encoding.exposure != 0.,
             repairs: Default::default(),
             effect_output: None,
@@ -137,14 +137,27 @@ impl Assembly {
     pub fn filtered(grading: Grading) -> Self {
         Self {
             capture: None,
-            photographic: None,
             grading: Some(grading),
             interpretation: Interpretation::Unavailable,
-            camera_function: None,
             encoded: false,
             repairs: Default::default(),
             effect_output: None,
         }
+    }
+
+    #[cfg(feature = "editor")]
+    pub(super) fn input_program(image: &Arc<ImageNode>) -> Option<crate::gpu::GpuInputProgram> {
+        let mut image = Some(image);
+        while let Some(node) = image {
+            if let Some(native) =
+                (node.operation.as_ref() as &dyn std::any::Any).downcast_ref::<Native>()
+                && let Interpretation::Program(program, _) = native.interpretation
+            {
+                return Some(program);
+            }
+            image = node.input.as_ref();
+        }
+        None
     }
 
     pub fn prefix(
@@ -181,6 +194,93 @@ impl Assembly {
     }
 
     #[cfg(feature = "editor")]
+    pub fn preview(
+        mut self,
+        source: Arc<ImageNode>,
+        stages: &PixelPipeline,
+        frame: crate::frame_raster::FrameRaster,
+        native_grid: Option<crate::frame_raster::FrameRaster>,
+    ) -> Result<(Photograph, crate::acquisition::Plan), Error> {
+        let layout = crate::pixel_pipeline::sampling::ViewSampling::new(
+            frame,
+            stages,
+            crate::acquisition::Sampling::NeutralFootprints,
+        )?;
+        let plan = if let Some(grid) = native_grid {
+            if grid.composition != layout.presentation.composition
+                || grid.min != layout.presentation.min
+                || grid.max != layout.presentation.max
+            {
+                return Err(Error::InvalidParameter(
+                    "view grids describe different footprints",
+                ));
+            }
+            if (0..2).any(|axis| grid.output[axis] < layout.plan.output().output[axis]) {
+                return Err(Error::InvalidParameter(
+                    "acquired view grid is too coarse for processing",
+                ));
+            }
+            crate::acquisition::Plan::new(crate::acquisition::Request {
+                output: grid,
+                stages,
+                sampling: crate::acquisition::Sampling::NeutralFootprints,
+            })?
+        } else {
+            layout.plan
+        };
+        let native = self.clone().build(
+            source.clone(),
+            Boundary::Codes,
+            Boundary::Neutral,
+            &definition(&PixelPipeline::default()),
+        )?;
+        let neutral = reconstruct(
+            native.at(Boundary::Neutral),
+            Domain {
+                bounds: None,
+                grid: Grid {
+                    coverage: 8,
+                    ..Grid::from_frame(plan.output())
+                },
+                meaning: Meaning::Neutral,
+            },
+        )?;
+        let presentation = layout.presentation;
+        self.grading = self.grading.map(|grading| grading.for_grid(8));
+        self.effect_output = Some(EffectOutput {
+            domain: Domain {
+                bounds: Some(CellRegion::new([0, 0], presentation.output)),
+                grid: Grid {
+                    coverage: 8,
+                    ..Grid::from_frame(presentation)
+                },
+                meaning: Meaning::Graded,
+            },
+            offset: [0; 2],
+            scale: std::array::from_fn(|i| {
+                f64::from(plan.output().output[i]) / f64::from(presentation.output[i])
+            }),
+        });
+        let images = self.build(
+            neutral.clone(),
+            Boundary::Neutral,
+            Boundary::Processed,
+            &definition(stages),
+        )?;
+        Ok((
+            Photograph {
+                camera: source,
+                unrepaired: native.at(Boundary::Unrepaired),
+                neutral,
+                roll: images.at(Boundary::Roll),
+                graded: images.at(Boundary::Graded),
+                processed: images.at(Boundary::Processed),
+            },
+            plan,
+        ))
+    }
+
+    #[cfg(feature = "editor")]
     pub fn filtered_image(
         mut self,
         source: Arc<ImageNode>,
@@ -204,20 +304,15 @@ impl Assembly {
             .at(Boundary::Processed))
     }
 
-    fn camera_image(&self, source: Arc<ImageNode>, output: Output) -> Arc<ImageNode> {
+    fn camera_image(&self, source: Arc<ImageNode>) -> Arc<ImageNode> {
         ImageNode::new(
             Domain {
-                meaning: match output {
-                    Output::Camera => Meaning::Camera,
-                    Output::Neutral => Meaning::Neutral,
-                    Output::Roll(_) | Output::Graded(_) => Meaning::Graded,
-                },
+                meaning: Meaning::Camera,
                 ..source.domain
             },
             Some(source),
             Camera {
                 captured: self.capture.as_ref().unwrap().clone(),
-                output,
             },
         )
     }
@@ -238,9 +333,6 @@ impl Assembly {
         let mut image = source.clone();
         let mut started = from == Boundary::Codes;
         let mut interpreted = from == Boundary::Native;
-        // These shortcuts implement only the known camera components. An inserted image
-        // operation breaks the segment, so later fused kernels cannot silently skip it.
-        let mut folded = started && self.capture.is_some() && self.camera_function.is_none();
 
         for step in steps {
             if !started {
@@ -248,112 +340,57 @@ impl Assembly {
                 continue;
             }
 
-            if !step.component.camera_run() {
-                // Encoded light is not an ordinary input to an arbitrary nonlinear
-                // operation. Require a component-aware representation rather than
-                // applying the operation in the wrong light units.
-                if self.encoded && interpreted {
-                    return Err(Error::InvalidParameter(
-                        "readout encoding cannot cross an added image operation",
-                    ));
-                }
-                folded = false;
+            // Encoded readouts cannot cross an arbitrary nonlinear image operation.
+            if self.encoded
+                && interpreted
+                && matches!(&step.component, Component::Effects(effects) if !effects.is_empty())
+            {
+                return Err(Error::InvalidParameter(
+                    "readout encoding cannot cross an added image operation",
+                ));
             }
 
             image = match &step.component {
-                Component::Camera => match &self.camera_function {
-                    Some(function) => pointwise(image, Meaning::Camera, function.clone()),
-                    None => self.camera_image(image, Output::Camera),
-                },
+                Component::Camera => self.camera_image(image),
                 Component::Interpretation => ImageNode::new(
                     Domain {
                         meaning: Meaning::NativePositive,
                         ..image.domain
                     },
                     Some(image),
-                    Native {
-                        parameters: self.interpretation.clone(),
-                    },
+                    Native::new(self.interpretation)?,
                 ),
                 Component::Working => {
                     let capture = self.capture.as_ref().ok_or(Error::InvalidParameter(
                         "working conversion lacks captured camera metadata",
                     ))?;
-                    let parameters = capture
-                        .source_parameters
-                        .unwrap_or_else(ProcessingParameters::source);
-
-                    let function = Function::new(
-                        format!(
-                            "{}\n{}",
-                            crate::gpu::CameraResources::kernel_shader(),
-                            include_str!("working.wgsl")
-                        ),
-                        "native_to_working",
+                    ImageNode::new(
+                        Domain {
+                            meaning: Meaning::Neutral,
+                            ..image.domain
+                        },
+                        Some(image),
+                        Working::new(capture.interpretation, capture.matrix)?,
                     )
-                    .with_uniform(2, &parameters);
-                    let function = if let Some(matrix) = &capture.matrix_buffer {
-                        function.with_shared(3, Shared::Buffer(matrix.clone()))
-                    } else {
-                        function.with_uniform(3, &capture.matrix)
-                    };
-
-                    let logical = pointwise(image, Meaning::Neutral, function);
-
-                    if folded {
-                        ImageNode::implemented_by(
-                            logical,
-                            self.camera_image(source.clone(), Output::Neutral),
-                        )?
-                    } else {
-                        logical
-                    }
                 }
                 Component::Repairs => {
                     if !self.repairs.0.is_empty() {
                         let capture = self.capture.as_ref().unwrap();
-                        image = ImageNode::new(
-                            image.domain,
-                            Some(image),
-                            Repairs {
-                                snapshot: self.repairs.clone(),
-                                code: capture.code.clone(),
-                                mapping: capture.mapping,
-                            },
+                        image = Repairs::image(
+                            image,
+                            self.repairs.clone(),
+                            capture.code.clone(),
+                            capture.mapping,
                         );
                     }
                     image
                 }
                 Component::Roll => match &self.grading {
-                    Some(grading) => {
-                        let logical = grading.roll(image)?;
-
-                        if folded {
-                            let photo = self.photographic.as_ref().unwrap();
-                            ImageNode::implemented_by(
-                                logical,
-                                self.camera_image(source.clone(), Output::Roll(photo.clone())),
-                            )?
-                        } else {
-                            logical
-                        }
-                    }
+                    Some(grading) => grading.roll(image)?,
                     None => image,
                 },
                 Component::Layers => match &self.grading {
-                    Some(grading) => {
-                        let logical = grading.layers(image)?;
-
-                        if folded {
-                            let photo = self.photographic.as_ref().unwrap();
-                            ImageNode::implemented_by(
-                                logical,
-                                self.camera_image(source.clone(), Output::Graded(photo.clone())),
-                            )?
-                        } else {
-                            logical
-                        }
-                    }
+                    Some(grading) => grading.layers(image)?,
                     None => image,
                 },
                 Component::Effects(effects) => {
@@ -389,48 +426,104 @@ impl Assembly {
     }
 }
 
-struct Native {
-    parameters: Interpretation,
+fn native_parameters(interpretation: &Interpretation) -> Result<ProcessingParameters, Error> {
+    let parameters = interpretation.parameters()?;
+    if parameters.graded() {
+        Ok(parameters)
+    } else {
+        ProcessingParameters::digital(Default::default(), glam::DMat3::IDENTITY)
+    }
 }
 
+struct Native {
+    interpretation: Interpretation,
+}
+
+impl Native {
+    fn new(interpretation: Interpretation) -> Result<Self, Error> {
+        native_parameters(&interpretation)?;
+        Ok(Self { interpretation })
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct NativeIdentity(Interpretation);
+
 impl Operation for Native {
-    fn input(
-        &self,
-        region: crate::geometry::SourceRegion,
-    ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
+    fn identity(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new(NativeIdentity(self.interpretation)))
+    }
+
+    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
         Ok(Some(region))
     }
 
-    fn lower(
-        &self,
-        fragment: &mut Fragment,
-        input: Option<PlannedImage>,
-        output: PlannedImage,
-    ) -> Result<(), Error> {
-        let parameters = self.parameters.parameters()?;
+    fn pointwise(&self) -> Option<Function> {
+        let parameters =
+            native_parameters(&self.interpretation).expect("captured interpretation was admitted");
+        Some(
+            Function::new(
+                format!(
+                    "{}\n{}",
+                    crate::gpu::photograph::pixel_shader(),
+                    include_str!("native.wgsl")
+                ),
+                "native_response",
+            )
+            .with_uniform(2, &parameters),
+        )
+    }
+}
 
-        let parameters = if parameters.graded() {
-            parameters
-        } else {
-            ProcessingParameters::digital(Default::default(), glam::DMat3::IDENTITY)?
-        };
-        let parameters = fragment.uniform(&parameters);
+struct Working {
+    interpretation: Interpretation,
+    matrix: glam::DMat3,
+}
 
-        fragment.compute(
-            format!(
-                "{}\n{}",
-                crate::gpu::CameraResources::kernel_shader(),
-                include_str!("native.wgsl")
-            ),
-            "native_response",
-            vec![
-                (2, parameters),
-                (20, Binding::Read(input.unwrap().resource)),
-                (21, Binding::Write(output.resource)),
-            ],
-            output.cells(),
-        );
+impl Working {
+    fn new(interpretation: Interpretation, matrix: glam::DMat3) -> Result<Self, Error> {
+        interpretation.parameters()?;
+        crate::gpu::CameraMatrix::new(matrix)?;
+        Ok(Self {
+            interpretation,
+            matrix,
+        })
+    }
+}
 
-        Ok(())
+#[derive(Debug, PartialEq)]
+struct WorkingIdentity(Interpretation, glam::DMat3);
+
+impl Operation for Working {
+    fn identity(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new(WorkingIdentity(
+            self.interpretation,
+            self.matrix,
+        )))
+    }
+
+    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
+        Ok(Some(region))
+    }
+
+    fn pointwise(&self) -> Option<Function> {
+        let parameters = self
+            .interpretation
+            .parameters()
+            .expect("captured interpretation was admitted");
+        let matrix = crate::gpu::CameraMatrix::new(self.matrix)
+            .expect("captured camera matrix was admitted");
+        Some(
+            Function::new(
+                format!(
+                    "{}\n{}",
+                    crate::gpu::photograph::pixel_shader(),
+                    include_str!("working.wgsl")
+                ),
+                "native_to_working",
+            )
+            .with_uniform(2, &parameters)
+            .with_uniform(3, &matrix),
+        )
     }
 }

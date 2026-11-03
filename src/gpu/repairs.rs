@@ -126,6 +126,24 @@ impl Patch {
 pub(crate) struct Snapshot(pub Vec<Arc<Patch>>);
 
 impl Snapshot {
+    pub(crate) fn content(&self) -> impl std::fmt::Debug + PartialEq + Send + Sync + 'static {
+        #[derive(Debug)]
+        struct Content(Vec<Arc<EvaluatedRepair>>);
+        impl PartialEq for Content {
+            fn eq(&self, other: &Self) -> bool {
+                self.0.len() == other.0.len()
+                    && self.0.iter().zip(&other.0).all(|(a, b)| {
+                        Arc::ptr_eq(a, b)
+                            || a.support() == b.support()
+                                && a.pixels().zip(b.pixels()).all(|(a, b)| {
+                                    a.0 == b.0 && a.1.map(f32::to_bits) == b.1.map(f32::to_bits)
+                                })
+                    })
+            }
+        }
+        Content(self.0.iter().map(|patch| patch.evaluated.clone()).collect())
+    }
+
     /// Offscreen consumers retain logical sparse content and upload only each demanded original unit.
     pub(crate) fn logical(evaluated: Vec<Arc<EvaluatedRepair>>) -> Result<Self, Error> {
         evaluated

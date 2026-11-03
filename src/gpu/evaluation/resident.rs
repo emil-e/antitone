@@ -1,7 +1,7 @@
 //! Resident GPU input is a source component, not another execution loop.
 
+use super::CellRegion as Rect;
 use super::*;
-use crate::geometry::SourceRegion as Rect;
 
 #[cfg(test)]
 pub(crate) fn raster_input(domain: Domain) -> Arc<ImageNode> {
@@ -42,7 +42,8 @@ impl Operation for Resident {
         _: Option<PlannedImage>,
         output: PlannedImage,
     ) -> Result<(), Error> {
-        if output.region == self.domain.bounds {
+        let bounds = self.domain.finite()?;
+        if output.region == bounds {
             f.resources[output.resource.0] = Storage::Input {
                 slot: 0,
                 bytes: u64::from(output.cells()) * 16,
@@ -50,21 +51,11 @@ impl Operation for Resident {
             };
             return Ok(());
         }
-        let source = f.uniform(&[
-            self.domain.bounds.x,
-            self.domain.bounds.y,
-            self.domain.bounds.width,
-            self.domain.bounds.height,
-        ]);
-        let rectangle = f.uniform(&[
-            output.region.x,
-            output.region.y,
-            output.region.width,
-            output.region.height,
-        ]);
+        let source = f.uniform(&bounds.packed());
+        let rectangle = f.uniform(&output.region.packed());
         let pixels = f.resource(Storage::Input {
             slot: 0,
-            bytes: u64::from(self.domain.bounds.width) * u64::from(self.domain.bounds.height) * 16,
+            bytes: u64::from(bounds.width) * u64::from(bounds.height) * 16,
             writable: self.writable,
         });
         f.compute(

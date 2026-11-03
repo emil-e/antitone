@@ -1,5 +1,5 @@
+use super::CellRegion as Rect;
 use super::*;
-use crate::geometry::SourceRegion as Rect;
 
 struct Chart {
     domain: Domain,
@@ -11,10 +11,10 @@ impl Source for Chart {
         self.domain
     }
     fn read(&self, r: Rect) -> Result<Vec<[f32; 4]>, Error> {
-        assert!(self.domain.bounds.contains_region(r));
-        Ok((r.y..r.y + r.height)
+        assert!(self.domain.finite().unwrap().contains_region(r));
+        Ok((r.y..r.bottom())
             .flat_map(|y| {
-                (r.x..r.x + r.width).map(move |x| {
+                (r.x..r.right()).map(move |x| {
                     let sign = if x % 2 == 0 { 1. } else { -1. };
                     [
                         sign * 3e38,
@@ -36,7 +36,7 @@ impl Source for Chart {
 fn rotated_cell_areas_preserve_constant_mass_at_large_coordinates_and_true_source_edges() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let domain = Domain {
-        bounds: [0, 0, 1, 1].into(),
+        bounds: Some([0, 0, 1, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Graded,
     };
@@ -89,7 +89,7 @@ fn aligned_grid_reconstruction_preserves_signed_hdr_flags_and_failed_look_marker
     for marker in [8., -1., -2.] {
         for angle in [0_f64, 0.37, std::f64::consts::FRAC_PI_2] {
             let domain = Domain {
-                bounds: [0, 0, 12, 6].into(),
+                bounds: Some([0, 0, 12, 6].into()),
                 grid: Grid {
                     origin: [123.25, -81.5],
                     axes: [
@@ -102,7 +102,7 @@ fn aligned_grid_reconstruction_preserves_signed_hdr_flags_and_failed_look_marker
                 meaning: Meaning::Graded,
             };
             let mut output = domain;
-            output.bounds = [0, 0, 4, 2].into();
+            output.bounds = Some([0, 0, 4, 2].into());
             output.grid.origin = domain.grid.point([2., 0.]);
             output.grid.axes = domain.grid.axes.map(|v| v.map(|x| x * 2.));
             output.grid.pitch = domain.grid.pitch.map(|v| v * 2.);

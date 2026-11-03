@@ -100,6 +100,7 @@ dependencies = [
  "flate2",
  "futures-channel",
  "futures-lite",
+ "futures-util",
  "glam",
  "half",
  "image",

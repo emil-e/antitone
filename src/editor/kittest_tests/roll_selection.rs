@@ -495,7 +495,7 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
                     .preview_rendered
                     .as_ref()
                     .unwrap()
-                    .2
+                    .1
                     .composition
                     .crop(),
                 crop

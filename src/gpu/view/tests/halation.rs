@@ -33,7 +33,7 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
         strength: 0.4,
     };
     let processing = ProcessingInput::new(
-        &device,
+        &device.limits(),
         InputSettings::Digital,
         Default::default(),
         AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -41,18 +41,19 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
         area,
     )
     .unwrap()
-    .with_halation(halo)
-    .with_frame_size(composition.crop().size);
-    let spec = ViewSourceSpec::new(
-        17,
-        frame,
-        InputSettings::Digital,
-        glam::DMat3::IDENTITY,
-        None,
-    )
-    .unwrap()
-    .with_pipeline(processing.pixel_pipeline().unwrap())
-    .unwrap();
+    .with_pixel_pipeline(
+        crate::pixel_pipeline::PixelPipeline::emulation(
+            Default::default(),
+            halo,
+            composition.crop().size,
+            0,
+        )
+        .unwrap(),
+    );
+    let spec = SourceRequest::new(frame, InputSettings::Digital, glam::DMat3::IDENTITY, None)
+        .unwrap()
+        .with_pipeline(processing.pixel_pipeline())
+        .unwrap();
     let upstream = spec.input_frame().unwrap();
     let offset = spec.plan.output_offset().unwrap();
     let [width, height] = upstream.output;
@@ -83,16 +84,16 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
         halo.strength,
         8,
     );
-    let source = Arc::new(ViewSource {
+    let source = Arc::new(ViewSource::from_neutral_samples(
         spec,
         renderer,
         kernels,
-        pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("padded halation physical input"),
             contents: bytemuck::cast_slice(&values),
             usage: wgpu::BufferUsages::STORAGE,
         }),
-    });
+    ));
     let view = RenderedView::new(&device, source, &processing, OutputTarget::Srgb, None).unwrap();
     view.ensure_submitted(
         &device,

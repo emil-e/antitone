@@ -16,8 +16,6 @@ const BUDGET: evaluation::Budget = evaluation::Budget {
 };
 
 pub(crate) struct CameraSampler<'a> {
-    device: &'a wgpu::Device,
-    renderer: &'a GpuRenderer,
     scan: &'a Scan,
     context: &'a evaluation::Context,
     queue: &'a wgpu::Queue,
@@ -36,7 +34,8 @@ impl evaluation::Source for CameraFootprints {
         self.domain
     }
 
-    fn read(&self, region: crate::geometry::SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
+    fn read(&self, region: evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+        let region = region.source()?;
         let image = self.source.camera_image()?;
         let mut pixels = Vec::with_capacity((region.width * region.height) as usize);
 
@@ -79,8 +78,6 @@ impl<'a> CameraSampler<'a> {
         }
 
         Ok(Self {
-            device,
-            renderer,
             scan,
             context: renderer.evaluation(),
             queue: gpu.0,
@@ -96,7 +93,7 @@ impl<'a> CameraSampler<'a> {
             .filter(|height| *height > 0)
             .ok_or(Error::InvalidParameter("invalid camera footprint batch"))?;
         let domain = evaluation::Domain {
-            bounds: [0, 0, 8, height].into(),
+            bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], [8, height])),
             grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
             meaning: evaluation::Meaning::CameraCodes,
         };
@@ -106,13 +103,7 @@ impl<'a> CameraSampler<'a> {
             domain,
         }));
 
-        evaluation::Photograph::camera_footprints(
-            self.device,
-            &self.renderer.camera,
-            codes,
-            self.field.clone(),
-            &origins,
-        )
+        evaluation::Photograph::camera_footprints(codes, self.field.clone(), &origins)
     }
 
     pub(crate) fn sample(
@@ -142,8 +133,8 @@ impl<'a> CameraSampler<'a> {
         let request = self.context.request(
             image.clone(),
             evaluation::Region {
-                bounds: image.domain.bounds,
-                grid: image.domain.grid,
+                bounds: image.domain().finite()?,
+                grid: image.domain().grid,
             },
             BUDGET,
         )?;
@@ -163,6 +154,7 @@ impl<'a> CameraSampler<'a> {
                 interrupted.get() || (**predicate)()
             },
             |block, pixels| {
+                let block = block.source()?;
                 for (index, pixel) in pixels.iter().enumerate() {
                     let mut predicate = cancelled.borrow_mut();
                     if (**predicate)() {

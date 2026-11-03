@@ -38,12 +38,13 @@ enum Allocation {
     Texture(wgpu::Texture, wgpu::TextureView),
     RenderTarget(wgpu::Texture, wgpu::TextureView),
     Retained(Arc<RetainedBuffer>),
+    Resident(Arc<GpuImage>),
 }
 
 impl Allocation {
     fn bytes(&self) -> u64 {
         match self {
-            Self::Input { .. } | Self::RenderTarget(..) => 0,
+            Self::Input { .. } | Self::Resident(_) | Self::RenderTarget(..) => 0,
             Self::Buffer { buffer, .. } => buffer.size(),
             Self::Retained(value) => value.pixels.size(),
             Self::Texture(texture, _) => {
@@ -98,6 +99,7 @@ impl Allocation {
             (Self::Retained(value), Storage::Retained { key, bytes }) => {
                 value.key == *key && value.pixels.size() == *bytes
             }
+            (Self::Resident(image), Storage::ResidentBuffer(next)) => Arc::ptr_eq(image, next),
             (Self::RenderTarget(texture, _), Storage::RenderTarget(next)) => texture == next,
             (Self::Texture(texture, _), Storage::Texture(size)) => {
                 [texture.width(), texture.height()] == *size
@@ -110,6 +112,7 @@ impl Allocation {
         match self {
             Self::Buffer { buffer, .. } => buffer,
             Self::Retained(value) => &value.pixels,
+            Self::Resident(image) => image.as_buffer().expect("validated resident buffer"),
             _ => unreachable!("validated resource class"),
         }
     }
@@ -131,6 +134,10 @@ impl Allocation {
                 size: std::num::NonZeroU64::new(bytes),
             }),
             Self::Retained(value) => value.pixels.as_entire_binding(),
+            Self::Resident(image) => image
+                .as_buffer()
+                .expect("validated resident buffer")
+                .as_entire_binding(),
             Self::Texture(_, view) | Self::RenderTarget(_, view) => {
                 wgpu::BindingResource::TextureView(view)
             }
@@ -160,12 +167,11 @@ enum Materialization {
     Record,
 }
 
-#[derive(Default)]
 pub struct Executor {
     programs: Arc<Programs>,
     pool: Vec<Option<Allocation>>,
     retained: Vec<Arc<RetainedBuffer>>,
-    retention: cache::Retention,
+    scope: Materializations,
     #[cfg(all(test, target_os = "macos", feature = "export"))]
     pub timestamps: Option<(wgpu::QuerySet, u32)>,
 }
@@ -176,25 +182,38 @@ pub struct ResultImage {
     pub stats: Stats,
 }
 
+#[cfg(test)]
+impl Default for Executor {
+    fn default() -> Self {
+        Self::with_retention(Arc::default(), Default::default())
+    }
+}
+
 impl Executor {
     #[cfg(all(test, feature = "editor"))]
     pub fn with_programs(programs: Arc<Programs>) -> Self {
         Self::with_retention(programs, Default::default())
     }
 
-    pub(super) fn with_retention(programs: Arc<Programs>, retention: cache::Retention) -> Self {
+    #[cfg(test)]
+    pub(super) fn with_retention(programs: Arc<Programs>, retention: cache::Allowance) -> Self {
+        let scope = Materializations::new(programs.clone(), retention);
+        Self::with_scope(programs, scope)
+    }
+
+    pub(super) fn with_scope(programs: Arc<Programs>, scope: Materializations) -> Self {
         Self {
             programs,
             pool: Vec::new(),
             retained: Vec::new(),
-            retention,
+            scope,
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             timestamps: None,
         }
     }
 
     pub fn admit(limits: &wgpu::Limits, plan: &Plan) -> Result<(), Error> {
-        if !plan.domain.bounds.contains_region(plan.region)
+        if !plan.domain.contains_region(plan.region)
             || plan.peak_scratch_bytes > plan.scratch_budget
         {
             return Err(Error::InvalidParameter(
@@ -221,6 +240,11 @@ impl Executor {
                         *bytes > limits.max_buffer_size
                             || *bytes > limits.max_storage_buffer_binding_size
                     }
+                    Storage::ResidentBuffer(image) => image.as_buffer().is_none_or(|buffer| {
+                        !buffer.usage().contains(wgpu::BufferUsages::STORAGE)
+                            || buffer.size() > limits.max_buffer_size
+                            || buffer.size() > limits.max_storage_buffer_binding_size
+                    }),
                     Storage::Data(bytes) => {
                         bytes.len() as u64 > limits.max_storage_buffer_binding_size
                             || bytes.len() as u64 > limits.max_buffer_size
@@ -370,9 +394,10 @@ impl Executor {
             cancelled,
             |encoder, image, buffer| {
                 for row in 0..image.region.height {
-                    let destination = u64::from(image.region.y - plan.region.y + row)
+                    let destination = (u64::from((image.region.y - plan.region.y) as u32)
+                        + u64::from(row))
                         * u64::from(plan.region.width)
-                        + u64::from(image.region.x - plan.region.x);
+                        + u64::from((image.region.x - plan.region.x) as u32);
                     encoder.copy_buffer_to_buffer(
                         buffer,
                         u64::from(row) * u64::from(image.region.width) * 16,
@@ -393,6 +418,7 @@ impl Executor {
 
     /// A bounded tile's GPU sink records into the same submission. It owns publication,
     /// reconstruction or readback, without requiring a retained full-source result buffer.
+    #[cfg(test)]
     pub fn run_sink(
         &mut self,
         device: &wgpu::Device,
@@ -402,27 +428,39 @@ impl Executor {
         cancelled: impl Fn() -> bool,
         sink: impl FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
     ) -> Result<Option<Stats>, Error> {
-        self.run_sink_with(
+        self.run_produced_sink(
             device,
-            queue,
-            gate,
+            (queue, gate),
             plan,
             cancelled,
             Sink {
                 encode: sink,
                 submitted: || {},
             },
+            |_, _, _| {
+                Err(Error::InvalidParameter(
+                    "evaluation requires bounded worker production",
+                ))
+            },
         )
     }
 
-    pub fn run_sink_with<E, S>(
+    pub(in crate::gpu::evaluation) fn materializations(&self) -> Materializations {
+        self.scope.clone()
+    }
+
+    pub(in crate::gpu::evaluation) fn run_produced_sink<E, S>(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        (queue, gate): (&wgpu::Queue, &crate::gpu::SubmissionGate),
         plan: &Plan,
         cancelled: impl Fn() -> bool,
         mut sink: Sink<E, S>,
+        mut produce: impl FnMut(
+            &Arc<ImageNode>,
+            PlannedImage,
+            (&wgpu::Buffer, u64),
+        ) -> Result<(), Error>,
     ) -> Result<Option<Stats>, Error>
     where
         E: FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
@@ -468,6 +506,33 @@ impl Executor {
                 }
             }
 
+            for (index, work) in tile.fragment.work.iter().enumerate() {
+                if let Work::Produce { image, output } = work {
+                    if index != 0 {
+                        return Err(Error::InvalidParameter(
+                            "worker production must precede encoded work",
+                        ));
+                    }
+                    if cancelled() {
+                        return Ok(None);
+                    }
+                    let pixels = self.pool[tile.assignment[output.resource.0]]
+                        .as_ref()
+                        .unwrap()
+                        .buffer();
+                    produce(
+                        image,
+                        *output,
+                        (
+                            pixels,
+                            plan.scratch_budget.saturating_sub(self.pool_bytes()),
+                        ),
+                    )?;
+                }
+            }
+            if cancelled() {
+                return Ok(None);
+            }
             let mut encoder = device.create_command_encoder(&Default::default());
             self.encode_tile(device, Some(queue), &mut encoder, tile, &mut stats, &[])?;
             let output = self.pool[tile.assignment[tile.result.resource.0]]
@@ -540,13 +605,18 @@ impl Executor {
         let work = work.map(|work| ((), work));
         for (_index, work) in work {
             match work {
+                Work::Produce { .. } => {}
                 Work::Upload { source, output } => {
                     let queue = queue.ok_or(Error::InvalidParameter(
                         "record-only execution requires resident input",
                     ))?;
                     let values = timed!(SourcePrepare, source.read(output.region))?;
                     if values.len() != output.cells() as usize
-                        || values.iter().flatten().any(|v| !v.is_finite())
+                        || !values.iter().fold(true, |valid, pixel| {
+                            pixel
+                                .iter()
+                                .fold(valid, |valid, value| valid & value.is_finite())
+                        })
                     {
                         return Err(Error::InvalidParameter(
                             "source differs from admitted evaluation layout",
@@ -642,22 +712,13 @@ impl Executor {
         Ok(())
     }
 
-    pub fn resources(&self) -> Vec<Arc<RetainedBuffer>> {
-        self.retained.clone()
-    }
-
     pub fn submitted(&self) {
         for value in &self.retained {
             value.submitted();
         }
     }
 
-    pub fn prepare(
-        mut self,
-        device: &wgpu::Device,
-        plan: Plan,
-        previous: Vec<Arc<RetainedBuffer>>,
-    ) -> Result<Recorded, Error> {
+    pub fn prepare(mut self, device: &wgpu::Device, plan: Plan) -> Result<Recorded, Error> {
         if plan.tiles.len() != 1 {
             return Err(Error::InvalidParameter(
                 "record-only execution requires one bounded tile",
@@ -667,7 +728,7 @@ impl Executor {
             .fragment
             .work
             .iter()
-            .any(|work| matches!(work, Work::Upload { .. }))
+            .any(|work| matches!(work, Work::Upload { .. } | Work::Produce { .. }))
         {
             return Err(Error::InvalidParameter(
                 "record-only execution requires resident input",
@@ -675,11 +736,6 @@ impl Executor {
         }
 
         self.compile(device, &plan)?;
-        let previous: Vec<_> = previous
-            .into_iter()
-            .filter(|value| value.retained_by(&self.retention))
-            .collect();
-        self.retained = previous.clone();
         self.materialize(
             device,
             &plan.tiles[0],
@@ -688,23 +744,9 @@ impl Executor {
             Materialization::Capture,
         )?;
 
-        let mut dormant = Vec::new();
-        for value in previous {
-            if plan.tiles[0].fragment.resources.iter().any(|storage| {
-                matches!(
-                    storage,
-                    Storage::Retained { key, .. } if key.same_type(&value.key)
-                )
-            }) {
-                continue;
-            }
-            dormant.push(value);
-        }
-
         Ok(Recorded {
             executor: self,
             plan,
-            dormant,
         })
     }
 
@@ -734,7 +776,7 @@ impl Executor {
         }
         self.pool.resize_with(tile.slots.len(), || None);
 
-        let previous = std::mem::take(&mut self.retained);
+        self.retained.clear();
         for (index, storage) in tile.slots.iter().enumerate() {
             if self.pool[index]
                 .as_ref()
@@ -764,6 +806,7 @@ impl Executor {
                     bytes: *bytes,
                     writable: *writable,
                 },
+                Storage::ResidentBuffer(image) => Allocation::Resident(image.clone()),
                 Storage::Buffer(_) | Storage::Uniform(_) | Storage::Data(_) => {
                     let bytes = storage.bytes();
                     let uniform = matches!(storage, Storage::Uniform(_));
@@ -813,27 +856,20 @@ impl Executor {
                     }
                 }
                 Storage::Retained { key, bytes } => {
-                    let value = if let Some(value) = previous.iter().find(|value| {
-                        value.key == *key
-                            && value.pixels.size() == *bytes
-                            && value.retained_by(&self.retention)
-                    }) {
-                        value.clone()
-                    } else {
-                        let lease = if mode == Materialization::Record {
-                            None
-                        } else {
-                            self.retention.acquire(*bytes)
-                        };
-                        if mode == Materialization::Capture && lease.is_none() {
-                            continue;
-                        }
-
+                    let Some(value) = self.scope.generated(
+                        device,
+                        key,
+                        *bytes,
+                        mode != Materialization::Record,
+                        mode != Materialization::Capture,
+                    ) else {
+                        continue;
+                    };
+                    if !value.ready() {
                         stats.buffer_allocations += 1;
                         #[cfg(all(test, feature = "editor"))]
                         crate::gpu::test_support::evaluation_buffer_created(*bytes);
-                        Arc::new(RetainedBuffer::new(device, key.clone(), *bytes, lease))
-                    };
+                    }
                     self.retained.push(value.clone());
                     Allocation::Retained(value)
                 }
@@ -880,7 +916,6 @@ impl Executor {
 pub(crate) struct Recorded {
     executor: Executor,
     plan: Plan,
-    dormant: Vec<Arc<RetainedBuffer>>,
 }
 
 impl Recorded {
@@ -906,6 +941,25 @@ impl Recorded {
         input: &wgpu::Buffer,
         destination: &wgpu::Buffer,
     ) -> Result<(), Error> {
+        self.encode_buffers(device, encoder, &[input], destination)
+    }
+
+    pub(crate) fn encode_result(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        destination: &wgpu::Buffer,
+    ) -> Result<(), Error> {
+        self.encode_buffers(device, encoder, &[], destination)
+    }
+
+    fn encode_buffers(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        inputs: &[&wgpu::Buffer],
+        destination: &wgpu::Buffer,
+    ) -> Result<(), Error> {
         let tile = &self.plan.tiles[0];
         if matches!(
             tile.fragment.resources[tile.result.resource.0],
@@ -915,7 +969,7 @@ impl Recorded {
                 "buffer sink requires raster storage",
             ));
         }
-        if input == destination
+        if inputs.first().is_some_and(|input| *input == destination)
             && tile.slots.iter().any(|slot| {
                 matches!(
                     slot,
@@ -938,20 +992,18 @@ impl Recorded {
                 "recorded output differs from declared storage",
             ));
         }
-        let mut execution = Executor::with_retention(
-            self.executor.programs.clone(),
-            self.executor.retention.clone(),
-        );
+        let mut execution =
+            Executor::with_scope(self.executor.programs.clone(), self.executor.scope.clone());
         execution.pool = self.executor.pool.clone();
         execution.retained = self.executor.retained.clone();
         let output_slot = tile.assignment[tile.result.resource.0];
-        if input != destination
+        if inputs.iter().all(|input| *input != destination)
             && let Storage::Buffer(bytes) = tile.slots[output_slot]
             && bytes <= destination.size()
             && destination.usage().contains(wgpu::BufferUsages::STORAGE)
         {
             execution.pool[output_slot] = Some(Allocation::Input {
-                slot: 1,
+                slot: inputs.len(),
                 bytes,
                 writable: true,
             });
@@ -963,12 +1015,11 @@ impl Recorded {
             &mut Stats::default(),
             Materialization::Record,
         )?;
-        let inputs = [input, destination];
+        let inputs: Vec<_> = inputs.iter().copied().chain([destination]).collect();
         execution.encode_tile(device, None, encoder, tile, &mut Stats::default(), &inputs)?;
-        let allocation = execution.pool[output_slot].as_ref().unwrap();
-        let output = match allocation {
+        let output = match execution.pool[output_slot].as_ref().unwrap() {
             Allocation::Input { slot, .. } => inputs[*slot],
-            _ => allocation.buffer(),
+            allocation => allocation.buffer(),
         };
         if output != destination {
             if !output.usage().contains(wgpu::BufferUsages::COPY_SRC) {
@@ -993,10 +1044,8 @@ impl Recorded {
         encoder: &mut wgpu::CommandEncoder,
         inputs: &[&wgpu::Buffer],
     ) -> Result<(), Error> {
-        let mut execution = Executor::with_retention(
-            self.executor.programs.clone(),
-            self.executor.retention.clone(),
-        );
+        let mut execution =
+            Executor::with_scope(self.executor.programs.clone(), self.executor.scope.clone());
         execution.pool = self.executor.pool.clone();
         execution.retained = self.executor.retained.clone();
         let tile = &self.plan.tiles[0];
@@ -1010,20 +1059,11 @@ impl Recorded {
         execution.encode_tile(device, None, encoder, tile, &mut Stats::default(), inputs)
     }
 
-    pub fn resources(&self) -> Vec<Arc<RetainedBuffer>> {
-        self.executor
-            .resources()
-            .into_iter()
-            .chain(self.dormant.iter().cloned())
-            .collect()
-    }
-
     #[cfg(test)]
     pub fn cached<T: std::any::Any>(&self) -> Option<&Arc<RetainedBuffer>> {
         self.executor
             .retained
             .iter()
-            .chain(&self.dormant)
             .find(|value| value.key.get::<T>().is_some())
     }
 
@@ -1033,11 +1073,6 @@ impl Recorded {
 
     pub fn byte_len(&self) -> u64 {
         self.executor.pool_bytes()
-            + self
-                .dormant
-                .iter()
-                .map(|value| value.pixels.size())
-                .sum::<u64>()
     }
 }
 
@@ -1073,6 +1108,9 @@ fn binding_type(resource: &Binding) -> wgpu::BindingType {
         }
         Binding::Write(_) => buffer(wgpu::BufferBindingType::Storage { read_only: false }),
         Binding::Uniform(_) => buffer(wgpu::BufferBindingType::Uniform),
+        Binding::Shared(Shared::Image { view: None, .. }) => {
+            buffer(wgpu::BufferBindingType::Storage { read_only: true })
+        }
         Binding::Shared(Shared::Buffer(value)) => {
             buffer(if value.usage().contains(wgpu::BufferUsages::UNIFORM) {
                 wgpu::BufferBindingType::Uniform
@@ -1088,7 +1126,22 @@ fn binding_type(resource: &Binding) -> wgpu::BindingType {
         Binding::Shared(Shared::Sampler(_)) => {
             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering)
         }
-        Binding::Texture(_) | Binding::Shared(Shared::Texture(_)) => wgpu::BindingType::Texture {
+        Binding::Shared(
+            Shared::Texture(view)
+            | Shared::Image {
+                view: Some(view), ..
+            },
+        ) => wgpu::BindingType::Texture {
+            sample_type: match view.texture().format().sample_type(None, None) {
+                Some(wgpu::TextureSampleType::Uint) => wgpu::TextureSampleType::Uint,
+                Some(wgpu::TextureSampleType::Sint) => wgpu::TextureSampleType::Sint,
+                Some(wgpu::TextureSampleType::Depth) => wgpu::TextureSampleType::Depth,
+                _ => wgpu::TextureSampleType::Float { filterable: false },
+            },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        Binding::Texture(_) => wgpu::BindingType::Texture {
             sample_type: wgpu::TextureSampleType::Float { filterable: false },
             view_dimension: wgpu::TextureViewDimension::D2,
             multisampled: false,
@@ -1107,10 +1160,20 @@ fn bind<'a>(
         .iter()
         .map(|(binding, resource)| {
             let resource = match resource {
+                Binding::Shared(Shared::Image { image, view: None }) => image
+                    .as_buffer()
+                    .ok_or(Error::InvalidParameter(
+                        "image binding is missing its texture view",
+                    ))?
+                    .as_entire_binding(),
                 Binding::Shared(Shared::Buffer(buffer)) => buffer.as_entire_binding(),
-                Binding::Shared(Shared::Texture(view) | Shared::StorageTexture(view)) => {
-                    wgpu::BindingResource::TextureView(view)
-                }
+                Binding::Shared(
+                    Shared::Texture(view)
+                    | Shared::StorageTexture(view)
+                    | Shared::Image {
+                        view: Some(view), ..
+                    },
+                ) => wgpu::BindingResource::TextureView(view),
                 Binding::Shared(Shared::Sampler(sampler)) => {
                     wgpu::BindingResource::Sampler(sampler)
                 }

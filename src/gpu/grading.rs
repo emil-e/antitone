@@ -9,7 +9,6 @@ use crate::{
 };
 use bytemuck::Zeroable;
 use glam::{DMat3, DVec2, DVec3, Vec4};
-use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -30,16 +29,13 @@ pub(super) struct AdjustmentLayerContext {
 /// Prepared Roll/layer controls and image operations, independent of source interpretation.
 #[derive(Clone)]
 pub struct Grading {
-    pub(super) device: wgpu::Device,
     pub(super) parameters: ProcessingParameters,
     pub(super) roll: RollSettings,
     pub(super) snapshot: AdjustmentLayerSnapshot,
-    pub(super) buffer: wgpu::Buffer,
-    pub(super) context: wgpu::Buffer,
+    pub(super) layers: std::sync::Arc<[u8]>,
+    pub(super) context: AdjustmentLayerContext,
     pub(super) area: SourceRegion,
     pub(super) spatial: bool,
-    pub(super) functions:
-        std::sync::Arc<std::sync::OnceLock<super::evaluation::grading::Functions>>,
     pub(super) coverage: u32,
     pub(super) coordinates: Option<SourceGeometry>,
     pub(super) active_layers: bool,
@@ -57,35 +53,29 @@ impl Grading {
     }
 
     pub fn new(
-        device: &wgpu::Device,
+        limits: &wgpu::Limits,
         roll: RollSettings,
         snapshot: AdjustmentLayerSnapshot,
         area: SourceRegion,
     ) -> Result<Self, Error> {
         let parameters = ProcessingParameters::photographic(roll)?;
         let area = area.validate()?;
-        let packed = prepare_layers(&device.limits(), &snapshot, area)?;
+        let packed = prepare_layers(limits, &snapshot, area)?;
         let active = snapshot.layers().iter().filter(|a| a.is_active()).count() as u32;
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("immutable photographic adjustment layers"),
-            contents: bytemuck::cast_slice(&packed),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let context = context_buffer(device, active, [area.x, area.y, area.width, area.height])?;
+        let layers = bytemuck::cast_slice(&packed).into();
+        let context = context_parameters(active, [area.x, area.y, area.width, area.height])?;
         let spatial = snapshot
             .layers()
             .iter()
             .any(|layer| layer.is_active() && layer.mask != AdjustmentLayerCoverage::Global {});
         Ok(Self {
-            device: device.clone(),
             parameters,
             roll,
             snapshot,
-            buffer,
+            layers,
             context,
             area,
             spatial,
-            functions: Default::default(),
             coverage: 0,
             coordinates: None,
             active_layers: active != 0,
@@ -96,24 +86,17 @@ impl Grading {
     /// identity-valued layer omitted from the active grade traversal.
     #[cfg(feature = "editor")]
     pub(crate) fn weight_image(
-        device: &wgpu::Device,
         input: std::sync::Arc<super::evaluation::ImageNode>,
         mut layer: AdjustmentLayer,
     ) -> Result<std::sync::Arc<super::evaluation::ImageNode>, Error> {
-        use super::evaluation::{Function, Meaning, Shared, pointwise};
+        use super::evaluation::{Function, Meaning, pointwise};
 
         layer.validate()?;
         if !layer.enabled {
             layer.strength = 0.;
         }
 
-        let parameters = AdjustmentLayerParameters::new(layer, input.domain.bounds)?;
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("captured adjustment-layer query weights"),
-            contents: bytemuck::bytes_of(&parameters),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
+        let parameters = AdjustmentLayerParameters::new(layer, input.domain().finite()?.source()?)?;
         let code = format!(
             "{}\n{}",
             Self::shader(),
@@ -123,7 +106,8 @@ impl Grading {
         Ok(pointwise(
             input,
             Meaning::Weight,
-            Function::new(code, "evaluation_layer_weight").with_shared(6, Shared::Buffer(buffer)),
+            Function::new(code, "evaluation_layer_weight")
+                .with_storage(6, bytemuck::bytes_of(&parameters)),
         ))
     }
 
@@ -149,7 +133,7 @@ impl Grading {
     }
 
     pub fn byte_len(&self) -> u64 {
-        self.buffer.size() + self.context.size()
+        self.layers.len() as u64 + std::mem::size_of::<AdjustmentLayerContext>() as u64
     }
 
     pub(super) fn require_extent(&self, area: SourceRegion) -> Result<(), Error> {
@@ -335,32 +319,14 @@ impl AdjustmentLayerParameters {
     }
 }
 
-pub(super) fn empty_buffer(device: &wgpu::Device) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("empty adjustment layer grade"),
-        contents: bytemuck::bytes_of(&AdjustmentLayerParameters::zeroed()),
-        usage: wgpu::BufferUsages::STORAGE,
-    })
-}
-
-pub(super) fn context_buffer(
-    device: &wgpu::Device,
-    count: u32,
-    area: [u32; 4],
-) -> Result<wgpu::Buffer, Error> {
+fn context_parameters(count: u32, area: [u32; 4]) -> Result<AdjustmentLayerContext, Error> {
     let cones = ap1_to_cones();
-    Ok(
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("adjustment layer grade cone basis and source bounds"),
-            contents: bytemuck::bytes_of(&AdjustmentLayerContext {
-                cones: CameraMatrix::new(cones)?,
-                inverse: CameraMatrix::new(cones.inverse())?,
-                area,
-                count: [count, 0, 0, 0],
-            }),
-            usage: wgpu::BufferUsages::UNIFORM,
-        }),
-    )
+    Ok(AdjustmentLayerContext {
+        cones: CameraMatrix::new(cones)?,
+        inverse: CameraMatrix::new(cones.inverse())?,
+        area,
+        count: [count, 0, 0, 0],
+    })
 }
 
 #[cfg(test)]

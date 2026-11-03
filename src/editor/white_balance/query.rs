@@ -39,7 +39,7 @@ pub(super) fn layer(
     let samples = Samples::new(services, scan, coverage, cancelled)?;
     samples.require_precision(cancelled)?;
 
-    let weights = Grading::weight_image(&services.device, samples.source.clone(), input.layer)?;
+    let weights = Grading::weight_image(samples.source.clone(), input.layer)?;
     let mut covered = false;
     samples.read(weights, cancelled, |_, pixel, _| {
         if !pixel[0].is_finite() || !(0. ..=1.).contains(&pixel[0]) {

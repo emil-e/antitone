@@ -3,6 +3,69 @@ use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 
 #[test]
+fn resident_acquisition_inverts_before_fractional_coverage_with_rounded_proxy_dimensions() {
+    pollster::block_on(async {
+        let (device, queue, renderer, kernels) = context().await;
+        let area: SourceRegion = [8, 12, 6000, 4000].into();
+        let size = [31, 21];
+        let codes: Vec<[u16; 4]> = (0..651)
+            .map(|i| {
+                let code = if i % 31 < 15 { 52428 } else { 13107 };
+                [code, code, code, 0]
+            })
+            .collect();
+        let mut source = ProcessingSource::new(&device, &codes, DMat3::IDENTITY).unwrap();
+        source
+            .set_flat_field(
+                None,
+                SourceGeometry::new([8, 12, 6000, 4000], size).unwrap(),
+            )
+            .unwrap();
+        let source = Arc::new(source);
+        let input = InputSettings::negative(Calibration {
+            dmin: DVec3::splat(0.8),
+            dmax: DVec3::splat(0.2),
+            input_floor: 0.01,
+        });
+        for (region, expected) in [
+            (area, 16. / 31.),
+            ([1508, 1012, 3000, 2000].into(), 8.25 / 15.5),
+        ] {
+            let composition = Composition::with_crop(
+                area,
+                Default::default(),
+                Default::default(),
+                Some(crate::crop::Crop::from_region(region)),
+            )
+            .unwrap();
+            let mut frame = FrameRaster::full(composition).unwrap();
+            frame.output = [1, 1];
+            let spec = SourceRequest::new(frame, input, DMat3::IDENTITY, None).unwrap();
+            let image = ViewSource::from_processing(
+                &device,
+                &queue,
+                &SubmissionGate::default(),
+                renderer.clone(),
+                kernels.clone(),
+                source.clone(),
+                &spec.processing_fixture(),
+                spec,
+            )
+            .unwrap();
+            let actual = read(&device, &queue, &image.pixels);
+            // The two source values are the fixed 0/1 calibration anchors. Only area weights vary.
+            for value in &actual[0][..3] {
+                assert!(
+                    (f64::from(*value) - expected).abs() < 2e-6,
+                    "{actual:?} expected={expected}"
+                );
+            }
+            assert_eq!(actual[0][3], 8.);
+        }
+    });
+}
+
+#[test]
 fn digital_source_marks_neutral_coverage() {
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
@@ -24,7 +87,7 @@ fn digital_source_marks_neutral_coverage() {
         source
             .set_flat_field(None, SourceGeometry::new([0, 0, 8, 4], [8, 4]).unwrap())
             .unwrap();
-        let spec = ViewSourceSpec::new(1, frame, InputSettings::Digital, matrix, None).unwrap();
+        let spec = SourceRequest::new(frame, InputSettings::Digital, matrix, None).unwrap();
         let source = ViewSource::from_processing(
             &device,
             &queue,
@@ -32,6 +95,7 @@ fn digital_source_marks_neutral_coverage() {
             renderer,
             kernels,
             Arc::new(source),
+            &spec.processing_fixture(),
             spec,
         )
         .unwrap();
@@ -73,16 +137,16 @@ fn working_positive_applies_roll_and_layer_grading_once_for_every_input_stage() 
                     [rgb.x, rgb.y, rgb.z, 8.]
                 })
                 .collect();
-            let source = Arc::new(ViewSource {
-                spec: ViewSourceSpec::new(1, frame, settings, matrix, None).unwrap(),
-                renderer: renderer.clone(),
-                kernels: kernels.clone(),
-                pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let source = Arc::new(ViewSource::from_neutral_samples(
+                SourceRequest::new(frame, settings, matrix, None).unwrap(),
+                renderer.clone(),
+                kernels.clone(),
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("scalar ungraded working positives"),
                     contents: bytemuck::cast_slice(&pixels),
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 }),
-            });
+            ));
             for (roll_ev, photo_ev) in [(1.5, 0.), (0., -1.), (-0.5, 1.25)] {
                 for colour in [false, true] {
                     let roll = RollSettings {
@@ -184,7 +248,7 @@ fn straightening_preserves_coverage_with_rounded_proxy_dimensions() {
                     .unwrap();
             let mut frame = FrameRaster::full(composition).unwrap();
             frame.output = size;
-            let spec = ViewSourceSpec::inspection(1, frame, DMat3::IDENTITY, None).unwrap();
+            let spec = SourceRequest::inspection_fixture(frame, DMat3::IDENTITY, None).unwrap();
             let composed = ViewSource::from_processing(
                 &device,
                 &queue,
@@ -192,6 +256,7 @@ fn straightening_preserves_coverage_with_rounded_proxy_dimensions() {
                 renderer.clone(),
                 kernels.clone(),
                 source.clone(),
+                &spec.processing_fixture(),
                 spec,
             )
             .unwrap();
@@ -253,7 +318,7 @@ fn crops_sample_both_source_halves_with_a_nonzero_active_origin() {
             )
             .unwrap();
             let frame = FrameRaster::full(composition).unwrap();
-            let spec = ViewSourceSpec::inspection(1, frame, DMat3::IDENTITY, None).unwrap();
+            let spec = SourceRequest::inspection_fixture(frame, DMat3::IDENTITY, None).unwrap();
             let composed = ViewSource::from_processing(
                 &device,
                 &queue,
@@ -261,6 +326,7 @@ fn crops_sample_both_source_halves_with_a_nonzero_active_origin() {
                 renderer.clone(),
                 kernels.clone(),
                 source.clone(),
+                &spec.processing_fixture(),
                 spec,
             )
             .unwrap();

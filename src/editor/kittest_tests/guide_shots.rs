@@ -293,7 +293,7 @@ fn settle_view(harness: &mut Harness<'_, Editor>) {
                 .displayed
                 .as_ref()
                 .is_some_and(|view| {
-                    view.processing == expected.signature() && view.target == e.document.target
+                    view.processing() == expected.clone() && view.target == e.document.target
                 })
     });
     frames(harness);

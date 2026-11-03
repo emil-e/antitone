@@ -13,6 +13,8 @@ mod authoring_tests;
 mod boundary_tests;
 
 mod cache;
+mod cell_region;
+pub use cell_region::CellRegion;
 
 mod context;
 
@@ -23,7 +25,7 @@ mod contract;
 
 pub(crate) use cache::RetainedBuffer;
 pub use cache::RetainedKey;
-pub use context::{CachePolicy, Context, Evaluation, Region};
+pub use context::{CachePolicy, Context, Evaluation, Production, Region};
 pub use execute::{Sink, Stats};
 pub use plan::Budget;
 
@@ -48,13 +50,21 @@ mod grain;
 mod halation;
 pub(crate) use halation::halation;
 
-mod images;
-
-#[cfg(all(test, feature = "editor"))]
-mod images_tests;
+#[cfg(feature = "editor")]
+mod inputs;
+mod materializations;
+mod materialized;
+mod supplied;
+#[cfg(feature = "editor")]
+pub(crate) use inputs::ActiveInput;
+use materialized::Stored;
+pub(crate) use supplied::SuppliedImage;
 
 pub(crate) use crate::gpu::Grading;
-pub use images::{CachedImage, ImageCache};
+pub(crate) use materializations::BufferImage;
+pub use materializations::{
+    GpuImage, Image, ImageBacking, ImageFormat, ImageFuture, ImageLayout, Materializations,
+};
 
 #[cfg(all(test, feature = "editor"))]
 mod native_tests;
@@ -88,8 +98,10 @@ pub(crate) use camera_response::CameraReadout;
 
 mod plan;
 
-#[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
-mod recipe;
+#[cfg(feature = "editor")]
+mod inspection;
+#[cfg(feature = "editor")]
+pub(crate) use inspection::inspect;
 
 #[cfg(feature = "render")]
 mod reference;
@@ -108,8 +120,6 @@ mod resident;
 #[cfg(all(test, feature = "editor"))]
 mod resident_camera_tests;
 
-#[cfg(all(feature = "render", any(feature = "raw", feature = "ui")))]
-pub(crate) use recipe::Recipe;
 #[cfg(feature = "render")]
 pub(crate) use resident::borrowed_input;
 #[cfg(test)]
@@ -133,9 +143,8 @@ use crate::Error;
 pub use contract::*;
 pub(crate) use execute::{Executor, Programs, Recorded};
 pub(crate) use grain::grain;
-pub(crate) use operators::gaussian;
-#[cfg(feature = "editor")]
-pub(crate) use operators::reconstruct_cells;
+pub(crate) use operators::{gaussian, window};
+mod reconstruction;
 #[cfg(feature = "render")]
 use operators::*;
 pub use operators::{pointwise, source};
@@ -144,5 +153,15 @@ pub use original::camera_source;
 #[cfg(all(feature = "raw", feature = "render"))]
 pub(crate) use original::original_chain;
 pub(crate) use plan::{Job, Plan, Policy, Tile};
-pub use sampling::{Access, SampleConsumer, SampleInput, SampleProducer, Sampled};
+#[cfg(test)]
+pub(crate) use reconstruction::{
+    Mapping as ReconstructionMapping, encode_supplied as encode_reconstruction_test,
+    supplied_mask as reconstruction_mask_for_test,
+};
+pub(crate) use reconstruction::{
+    accumulate_supplied, reconstruct, reconstruct_cells, reconstruct_complete,
+};
+pub use sampling::{
+    Access, SampleConsumer, SampleInput, SampleProducer, SampleProduction, Sampled,
+};
 use std::sync::Arc;

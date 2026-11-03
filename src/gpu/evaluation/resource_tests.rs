@@ -1,12 +1,12 @@
+use super::CellRegion as Rect;
 use super::*;
-use crate::geometry::SourceRegion as Rect;
 
 #[test]
 fn resident_linear_work_reaches_pixels_beyond_the_first_dispatch_row() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let (width, height) = (2560, 1800);
     let domain = Domain {
-        bounds: [0, 0, width, height].into(),
+        bounds: Some(CellRegion::new([0, 0], [width, height])),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Graded,
     };
@@ -26,7 +26,7 @@ fn mark(p: vec4f, position: vec2f) -> vec4f {
     );
     let plan = Plan::new(
         root,
-        domain.bounds,
+        domain.finite().unwrap(),
         Budget {
             tile: [width, height],
             scratch_bytes: 128 << 20,
@@ -34,7 +34,7 @@ fn mark(p: vec4f, position: vec2f) -> vec4f {
     )
     .unwrap();
     let prepared = Executor::with_programs(renderer.evaluation.programs.clone())
-        .prepare(&device, plan, vec![])
+        .prepare(&device, plan)
         .unwrap();
     let input = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("large resident image"),
@@ -170,7 +170,7 @@ fn mutate(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) gro
 #[test]
 fn borrowed_storage_is_reusable_only_with_explicit_write_permission() {
     let domain = Domain {
-        bounds: [0, 0, 16, 16].into(),
+        bounds: Some([0, 0, 16, 16].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Graded,
     };
@@ -179,7 +179,7 @@ fn borrowed_storage_is_reusable_only_with_explicit_write_permission() {
         let root = ImageNode::new(domain, Some(source), InPlace);
         let plan = Plan::new(
             root,
-            domain.bounds,
+            domain.finite().unwrap(),
             Budget {
                 tile: [16, 16],
                 scratch_bytes: 1 << 20,

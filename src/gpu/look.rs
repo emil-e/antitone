@@ -222,15 +222,6 @@ impl Check {
         })
     }
 
-    #[cfg(feature = "render")]
-    pub(crate) fn status(&self) -> &wgpu::Buffer {
-        &self.status
-    }
-    #[cfg(feature = "render")]
-    pub(crate) fn encode_readback(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.copy_buffer_to_buffer(&self.status, 0, &self.readback, 0, 8);
-    }
-
     /// Start mapping only after the encoder containing the check has been submitted.
     pub fn begin(&self, ready: impl FnOnce() + Send + 'static) {
         if self.started.swap(true, Ordering::AcqRel) {

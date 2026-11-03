@@ -22,10 +22,14 @@ fn unchanged_logical_chains_can_skip_gaussian_display_and_copy_intermediates() {
                 tile: [13, 11],
                 scratch_bytes: 32 << 20,
             };
-            let baseline = Plan::new(root.clone(), root.domain.bounds, budget).unwrap();
-            let composed =
-                Plan::with_policy(root.clone(), root.domain.bounds, budget, Policy::Composed)
-                    .unwrap();
+            let baseline = Plan::new(root.clone(), root.domain.finite().unwrap(), budget).unwrap();
+            let composed = Plan::with_policy(
+                root.clone(),
+                root.domain.finite().unwrap(),
+                budget,
+                Policy::Composed,
+            )
+            .unwrap();
             assert!(composed.peak_scratch_bytes < baseline.peak_scratch_bytes);
             assert_eq!(baseline.tiles.len(), composed.tiles.len());
             for (before, after) in baseline.tiles.iter().zip(&composed.tiles) {
@@ -97,7 +101,7 @@ fn sampling_an_effect_result_is_not_a_mandatory_image_allocation() {
     let root = chain(&device, &renderer, Arc::new(data.clone()), false, None, 0.9);
     let plan = Plan::with_policy(
         root.clone(),
-        root.domain.bounds,
+        root.domain.finite().unwrap(),
         Budget {
             tile: [13, 11],
             scratch_bytes: 32 << 20,
@@ -115,44 +119,70 @@ fn sampling_an_effect_result_is_not_a_mandatory_image_allocation() {
 }
 
 #[test]
-fn an_independent_sample_component_composes_without_a_planner_pattern_rule() {
-    use crate::geometry::SourceRegion as Rect;
-
-    struct Gain;
-
-    impl SampleProducer for Gain {
-        fn access(&self) -> Access {
-            Access::Callable
-        }
-
-        fn emit(
-            &self,
-            _: &mut Fragment,
-            input: SampleInput,
-            _: Domain,
-            _: Rect,
-        ) -> Result<Sampled, Error> {
-            let SampleInput::Callable(input) = input else {
-                return Err(Error::InvalidParameter("gain requires samples"));
-            };
-            let code = format!(
-                r#"
-{}
-
-fn independent_sample(p: vec2i) -> vec4f {{
-    let value = {}(p);
-    return vec4f(value.rgb * 0.75, value.w);
-}}
-"#,
-                input.code, input.symbol
-            );
-            Ok(Sampled {
-                code: code.into(),
-                symbol: "independent_sample".into(),
-                bindings: input.bindings,
-            })
+fn composed_pixel_functions_keep_private_resources_and_original_positions() {
+    let (device, queue, _renderer) = crate::gpu::test_support::render_context();
+    let data = fixture();
+    let area = data.domain().finite().unwrap();
+    let pixels = data.read(area).unwrap();
+    let module = r#"
+struct Controls { affine: vec4f }
+@group(0) @binding(0) var<uniform> controls: Controls;
+const POSITION_GAIN: f32 = 0.01;
+fn apply(pixel: vec4f, position: vec2f) -> vec4f {
+    return vec4f(pixel.rgb * controls.affine.x + controls.affine.y + position.x * POSITION_GAIN, pixel.w);
+}
+"#;
+    let first = pointwise(
+        source(Arc::new(data)),
+        Meaning::Graded,
+        Function::new(module, "apply").with_uniform(0, &[2.0f32, 1., 0., 0.]),
+    );
+    let root = pointwise(
+        first,
+        Meaning::Graded,
+        Function::new(module, "apply").with_uniform(0, &[-0.5f32, 0.25, 0., 0.]),
+    );
+    let budget = Budget {
+        tile: [13, 11],
+        scratch_bytes: 32 << 20,
+    };
+    let plans = [Policy::Materialized, Policy::Composed]
+        .map(|policy| Plan::with_policy(root.clone(), area, budget, policy).unwrap());
+    assert_eq!(
+        plans[1].tiles[0]
+            .fragment
+            .work
+            .iter()
+            .filter(|work| matches!(work, Work::Compute { .. }))
+            .count(),
+        1
+    );
+    for plan in plans {
+        let result = execute::Executor::default()
+            .run(&device, &queue, &Default::default(), &plan, || false)
+            .unwrap()
+            .unwrap();
+        let actual = execute::read(&device, &queue, &result.pixels);
+        for (i, (input, output)) in pixels.iter().zip(actual).enumerate() {
+            let x = f64::from(area.x) + (i % area.width as usize) as f64 + 0.5;
+            for c in 0..3 {
+                // Apply the two authored affine functions analytically, including source position.
+                let expected = -f64::from(input[c]) - 0.25 + x * 0.005;
+                assert!(
+                    (f64::from(output[c]) - expected).abs() < 1e-6,
+                    "{i}/{c}: {output:?}"
+                );
+            }
+            assert_eq!(output[3], input[3]);
         }
     }
+}
+
+#[test]
+fn an_independently_authored_pixel_function_composes_with_sampling() {
+    use super::CellRegion as Rect;
+
+    struct Gain;
 
     impl Operation for Gain {
         fn input(&self, r: Rect) -> Result<Option<Rect>, Error> {
@@ -171,42 +201,27 @@ fn independent_map(p: vec4f, position: vec2f) -> vec4f {
                 bindings: vec![],
             })
         }
-
-        fn sample_producer(&self) -> Option<&dyn SampleProducer> {
-            Some(self)
-        }
-
-        fn lower(
-            &self,
-            _: &mut Fragment,
-            _: Option<PlannedImage>,
-            _: PlannedImage,
-        ) -> Result<(), Error> {
-            Err(Error::InvalidParameter(
-                "gain requires pointwise or sampling contract",
-            ))
-        }
     }
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let data = fixture();
     let root = chain(&device, &renderer, Arc::new(data.clone()), false, None, 0.9);
     let input = root.input.as_ref().unwrap();
     let extra = ImageNode::new(input.domain, Some(input.clone()), Gain);
-    let changed = Arc::new(ImageNode {
-        domain: root.domain,
-        input: Some(extra),
-        operation: root.operation.clone(),
-        implementation: None,
-    });
+    let changed = ImageNode::captured(root.domain, Some(extra), root.operation.clone());
     let budget = Budget {
         tile: [13, 11],
         scratch_bytes: 32 << 20,
     };
-    let original =
-        Plan::with_policy(root.clone(), root.domain.bounds, budget, Policy::Composed).unwrap();
+    let original = Plan::with_policy(
+        root.clone(),
+        root.domain.finite().unwrap(),
+        budget,
+        Policy::Composed,
+    )
+    .unwrap();
     let modified = Plan::with_policy(
         changed.clone(),
-        changed.domain.bounds,
+        changed.domain.finite().unwrap(),
         budget,
         Policy::Composed,
     )

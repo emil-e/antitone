@@ -32,12 +32,14 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             .canvas
             .grade
             .original
-            .signature
+            .wanted
             .as_ref()
             .expect("review uses original-source tool presentation");
-        assert_eq!(signature.0, source.signature());
+        assert!(
+            signature.capture == super::super::working_view::Capture::Primitive(source.clone())
+        );
         assert_eq!(
-            signature.3,
+            signature.composition,
             Composition::new(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
                 Default::default(),
@@ -698,19 +700,8 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                 .source_epoch
                 .load(std::sync::atomic::Ordering::Relaxed)
         });
-        let (original_generation, original_revision) = harness.read(|editor| {
-            (
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .generation
-                    .clone(),
-                editor.document.visit.canvas.grade.original.revision(),
-            )
-        });
+        let original =
+            harness.read(|editor| editor.document.visit.canvas.grade.original.continuation());
         harness.get_by_label("roll-1.dng").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
@@ -724,12 +715,9 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
             )
         });
         harness.read(|editor| {
-            assert!(!Arc::ptr_eq(
-                &editor.document.visit.canvas.grade.original.generation,
-                &original_generation
-            ));
-            assert!(
-                original_generation.load(std::sync::atomic::Ordering::Relaxed) > original_revision
+            assert_ne!(
+                editor.document.visit.canvas.grade.original.continuation(),
+                original
             );
         });
         harness

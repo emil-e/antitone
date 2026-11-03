@@ -2,10 +2,8 @@ use super::{PickDrag, Ready, Viewport, grade_scope::GradeScope};
 use std::sync::Arc;
 
 pub(super) type Preview = (
-    u64,
-    crate::gpu::ProcessingSignature,
+    crate::viewer::GpuProxy,
     crate::frame_raster::FrameRaster,
-    super::OutputTarget,
     Arc<crate::gpu::view::RenderedView>,
 );
 

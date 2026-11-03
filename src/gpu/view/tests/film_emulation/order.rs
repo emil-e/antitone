@@ -32,7 +32,7 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
         };
         let input = ProcessingInput::from(Arc::new(
             ProcessingInput::new(
-                &device,
+                &device.limits(),
                 InputSettings::Digital,
                 Default::default(),
                 snapshot.clone(),
@@ -41,9 +41,15 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             )
             .unwrap(),
         ))
-        .with_film_emulation(settings)
-        .with_frame_size(source.spec.frame().composition.crop().size)
-        .with_film_seed(17);
+        .with_pixel_pipeline(
+            crate::pixel_pipeline::PixelPipeline::emulation(
+                settings,
+                Default::default(),
+                source.spec.frame().composition.crop().size,
+                17,
+            )
+            .unwrap(),
+        );
         let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None).unwrap();
         view.ensure_submitted(
             &device,
@@ -53,7 +59,11 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
         );
         let graded = view.graded.as_ref().unwrap();
         let actual = read(&device, &queue, &graded.pixels);
-        let field = read(&device, &queue, &graded.stages.field().unwrap().pixels);
+        let field = read(
+            &device,
+            &queue,
+            &graded.stages.as_ref().unwrap().field().unwrap().pixels,
+        );
         assert_eq!(
             field.len(),
             actual.len(),

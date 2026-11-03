@@ -18,7 +18,7 @@ impl EffectDefinition for Square {
     }
 
     fn compose(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
-        let meaning = input.domain.meaning;
+        let meaning = input.domain().meaning;
         Ok(evaluation::pointwise(
             input,
             meaning,

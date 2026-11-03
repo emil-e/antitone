@@ -358,7 +358,7 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
                 !e.analysis_preparing()
                     && !e.analysis_fitting()
                     && !e.document.visit.source.pending()
-                    && e.document.visit.canvas.grade.task.is_none(),
+                    && e.document.visit.canvas.grade.original.task.is_none(),
                 "no hidden Analyze, RAW reload or grading work"
             );
         });

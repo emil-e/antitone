@@ -13,7 +13,7 @@ use crate::processing::Calibration;
 
 #[test]
 fn processing_assembles_shared_photographic_operators_once() {
-    let shader = CameraResources::kernel_shader();
+    let shader = crate::gpu::photograph::kernel_shader();
     assert!(!shader.contains("Triple"));
     assert!(!shader.contains("precise_"));
     // Originals, repairs and working views use the same photographic operators.
@@ -384,6 +384,32 @@ fn native_and_continuous_transport_preserve_normalization_and_source_addressing(
             readback.unmap();
         }
     });
+}
+
+#[test]
+fn camera_sample_validation_checks_each_channel_and_incomplete_vector_tail() {
+    let maximum = crate::processing::MAX_CAMERA_SOURCE_CODE;
+    let mut pixels = vec![[0., maximum, -0., 1.]; 65];
+    assert!(ProcessingSource::validate_continuous(&pixels).is_ok());
+    for index in [0, 7, 64] {
+        for channel in 0..4 {
+            let original = pixels[index][channel];
+            for value in [
+                f32::NAN,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                -1.,
+                maximum.next_up(),
+            ] {
+                pixels[index][channel] = value;
+                assert!(
+                    ProcessingSource::validate_continuous(&pixels).is_err(),
+                    "index={index} channel={channel} value={value}"
+                );
+            }
+            pixels[index][channel] = original;
+        }
+    }
 }
 
 #[test]

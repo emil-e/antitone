@@ -1024,11 +1024,67 @@ impl Developed<'_> {
         }))
     }
 
+    pub(crate) fn copy_samples(
+        &self,
+        area: Rect,
+        output: &mut [[f32; 4]],
+        stride: usize,
+    ) -> Result<(), Error> {
+        if area.width == 0
+            || area.height == 0
+            || area
+                .x
+                .checked_add(area.width)
+                .is_none_or(|v| v > self.width)
+            || area
+                .y
+                .checked_add(area.height)
+                .is_none_or(|v| v > self.height)
+            || stride < area.width as usize
+            || (area.height as usize)
+                .checked_mul(stride)
+                .is_none_or(|n| n > output.len())
+        {
+            return Err(Error::InvalidParameter("invalid camera sample destination"));
+        }
+        for (dy, row) in output
+            .chunks_exact_mut(stride)
+            .take(area.height as usize)
+            .enumerate()
+        {
+            let start = (area.y as usize + dy) * self.width as usize + area.x as usize;
+            let row = &mut row[..area.width as usize];
+            if let Some(pixels) = self.continuous {
+                for (out, rgb) in row
+                    .iter_mut()
+                    .zip(&pixels[start..start + area.width as usize])
+                {
+                    *out = [
+                        rgb[0] * self.sample_scale,
+                        rgb[1] * self.sample_scale,
+                        rgb[2] * self.sample_scale,
+                        0.,
+                    ];
+                }
+            } else {
+                let samples = &self.pixels[start * 4..(start + row.len()) * 4];
+                for (out, codes) in row.iter_mut().zip(samples.as_chunks::<4>().0) {
+                    *out = std::array::from_fn(|c| f32::from(codes[c]) * self.sample_scale);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn pixel(&self, x: u32, y: u32) -> Result<DVec3, Error> {
         let [r, g, b, _] = self.pixel_samples(x, y)?;
         Ok(DVec3::new(r as f64, g as f64, b as f64) / 65535.0)
     }
 }
+
+#[cfg(test)]
+#[path = "raw/copy_samples_tests.rs"]
+mod copy_samples_tests;
 
 #[cfg(feature = "dng-sdk")]
 fn sdk_options(wb: Option<[f64; 4]>) -> Result<crate::dng::Options, Error> {

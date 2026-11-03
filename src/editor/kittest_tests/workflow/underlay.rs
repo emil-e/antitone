@@ -71,7 +71,7 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
                     .displayed
                     .as_ref()
                     .is_some_and(|r| {
-                        Some(&r.processing) == e.document.visit.working_view.processing()
+                        Some(&r.processing()) == e.document.visit.working_view.processing().as_ref()
                             && r.target == e.document.target
                     })
             });

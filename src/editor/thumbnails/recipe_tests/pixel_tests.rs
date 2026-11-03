@@ -83,11 +83,22 @@ fn assert_rendered(actual: &[[f32; 4]], expected: &[Vec3]) {
 }
 
 #[test]
-fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
+fn navigation_reuses_retained_camera_arguments_for_native_and_downstream_edits() {
     let (device, queue) = gpu();
     let renderers = Arc::new(crate::renderer::RendererCache::default());
-    let mut thumbnails =
-        Thumbnails::with_disk(device.clone(), queue.clone(), renderers.clone(), None);
+    let native_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = native_reads.clone();
+    let loader = source_loading::SourceLoader::new_observed(move |_, _, _| {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Err("native source acquisition is forbidden by this control".into())
+    });
+    let mut thumbnails = Thumbnails::with_developments(
+        device.clone(),
+        queue.clone(),
+        renderers.clone(),
+        None,
+        loader.clone(),
+    );
     let mut document: crate::editor::document_scope::DocumentScope = tests::fixture().into();
     document.project.set_dmin(Some([0.8; 3]));
     document.project.set_dmax(Some([0.02; 3]));
@@ -197,8 +208,14 @@ fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
         )
         .unwrap(),
     );
+    let mut changed_gamma = document.project.input;
+    let crate::processing::InputSettings::Negative { gamma, .. } = &mut changed_gamma else {
+        panic!("negative fixture");
+    };
+    *gamma = 0.79;
     for input in [
         document.project.input,
+        changed_gamma,
         crate::processing::InputSettings::Digital,
     ] {
         document.project.input = input;
@@ -240,9 +257,21 @@ fn navigation_pixels_keep_ordered_layer_grades_look_and_target() {
                 let mut key = tests::key(&document, id);
                 key.target = target;
                 let image = complete(&mut thumbnails, &document, key).unwrap();
+                thumbnails.release_selected();
+                thumbnails.set_limits(cache_limits::CacheLimits {
+                    cpu_bytes: 0,
+                    ..thumbnails.limits
+                });
+                assert_eq!(
+                    thumbnails.sources.proxy_count(),
+                    0,
+                    "subsequent calculations must use retained GPU arguments, not a CPU proxy"
+                );
                 let actual = linear_pixels(&device, &queue, renderers.submissions(), &image);
                 assert_rendered(&actual, &expected);
+                assert_eq!(native_reads.load(std::sync::atomic::Ordering::Relaxed), 0);
             }
         }
     }
+    loader.close_and_wait().unwrap();
 }

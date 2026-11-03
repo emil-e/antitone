@@ -787,8 +787,8 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
         let (working_revision, reference_revision) = app.read(|e| {
             assert!(e.canvas_source_context().unwrap().correction.is_none());
             (
-                e.document.visit.canvas.grade.original.revision(),
-                e.active_canvas().grade.original.revision(),
+                e.document.visit.canvas.grade.original.continuation(),
+                e.active_canvas().grade.original.continuation(),
             )
         });
         drop(hold);
@@ -799,10 +799,13 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
         });
         app.read(|e| {
             assert_eq!(
-                e.active_canvas().grade.original.revision(),
+                e.active_canvas().grade.original.continuation(),
                 reference_revision
             );
-            assert!(e.document.visit.canvas.grade.original.revision() > working_revision);
+            assert_ne!(
+                e.document.visit.canvas.grade.original.continuation(),
+                working_revision
+            );
         });
         app.update(Editor::finish_flat_edit);
         app.read(|e| {

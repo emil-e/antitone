@@ -3,89 +3,68 @@
 use super::*;
 use crate::gpu::Grading;
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
-pub(crate) struct Functions {
+struct Functions {
     roll: Function,
     layers: Function,
-    bytes: u64,
 }
 
 impl Grading {
-    fn functions(&self) -> &Functions {
-        self.functions.get_or_init(|| {
-            let parameters = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("captured photographic Roll constants"),
-                    contents: bytemuck::bytes_of(&self.parameters),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-            // Match the filtered-view gain packing rather than changing CPU/GPU rounding.
-            let values = [
-                [self.parameters.anchor.w.exp().to_bits(), 0, 0, 0],
-                [self.coverage, 0, 0, 0],
-            ];
-            let context = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("captured photographic coverage and exposure"),
-                    contents: bytemuck::cast_slice(&values),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-            let bytes = parameters.size() + context.size();
-            let code: Arc<str> = Grading::shader().into();
-            Functions {
-                roll: Function {
-                    code: code.clone(),
-                    symbol: "evaluation_roll",
-                    bindings: vec![
-                        (2, Shared::Buffer(parameters).into()),
-                        (8, Shared::Buffer(context.clone()).into()),
-                    ],
-                },
-                layers: Function {
-                    code,
-                    symbol: "evaluation_adjustments",
-                    bindings: vec![
-                        (6, Shared::Buffer(self.buffer.clone()).into()),
-                        (7, Shared::Buffer(self.context.clone()).into()),
-                        (8, Shared::Buffer(context).into()),
-                    ],
-                },
-                bytes,
-            }
-        })
+    fn functions(&self) -> Functions {
+        // Match the filtered-view gain packing rather than changing CPU/GPU rounding.
+        let context = [
+            [self.parameters.anchor.w.exp().to_bits(), 0, 0, 0],
+            [self.coverage, 0, 0, 0],
+        ];
+        let code: Arc<str> = Grading::shader().into();
+        Functions {
+            roll: Function::new(code.clone(), "evaluation_roll")
+                .with_uniform(2, &self.parameters)
+                .with_uniform(8, &context),
+            layers: Function::new(code, "evaluation_adjustments")
+                .with_storage(6, self.layers.clone())
+                .with_uniform(7, &self.context)
+                .with_uniform(8, &context),
+        }
     }
 }
 
 struct Grade {
-    captured: Arc<Grading>,
-    roll: bool,
-    coordinates: Option<crate::gpu::SourceGeometry>,
+    definition: GradeDefinition,
+    function: Function,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum GradeDefinition {
+    Roll(crate::processing::RollSettings, u32),
+    Layers {
+        layers: crate::adjustment_layers::AdjustmentLayerSnapshot,
+        area: crate::geometry::SourceRegion,
+        coverage: u32,
+        coordinates: Option<crate::gpu::SourceGeometry>,
+    },
+}
+
+impl Grade {
+    fn coordinates(&self) -> Option<crate::gpu::SourceGeometry> {
+        match self.definition {
+            GradeDefinition::Layers { coordinates, .. } => coordinates,
+            GradeDefinition::Roll(..) => None,
+        }
+    }
 }
 
 impl Operation for Grade {
-    fn input(
-        &self,
-        region: crate::geometry::SourceRegion,
-    ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
+    fn identity(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new(self.definition.clone()))
+    }
+
+    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
         Ok(Some(region))
     }
 
     fn pointwise(&self) -> Option<Function> {
-        if !self.roll && self.coordinates.is_some() {
-            return None;
-        }
-        let functions = self.captured.functions();
-        Some(
-            if self.roll {
-                &functions.roll
-            } else {
-                &functions.layers
-            }
-            .clone(),
-        )
+        self.coordinates().is_none().then(|| self.function.clone())
     }
 
     fn lower(
@@ -94,12 +73,11 @@ impl Operation for Grade {
         input: Option<PlannedImage>,
         output: PlannedImage,
     ) -> Result<(), Error> {
-        let geometry = self.coordinates.ok_or(Error::InvalidParameter(
+        let geometry = self.coordinates().ok_or(Error::InvalidParameter(
             "pointwise grading requires shader composition",
         ))?;
         let input = input.unwrap();
-        let functions = self.captured.functions();
-        let mut bindings = functions.layers.lower_bindings(fragment);
+        let mut bindings = self.function.lower_bindings(fragment);
         bindings.extend([
             (
                 5,
@@ -112,8 +90,8 @@ impl Operation for Grade {
             (
                 22,
                 fragment.uniform(&[
-                    output.region.x,
-                    output.region.y,
+                    output.region.x as u32,
+                    output.region.y as u32,
                     output.region.width,
                     geometry.size()[0],
                 ]),
@@ -122,7 +100,7 @@ impl Operation for Grade {
         fragment.compute(
             format!(
                 "{}\n{}",
-                functions.layers.code,
+                self.function.code,
                 include_str!("camera_adjustments.wgsl")
             ),
             "camera_adjustments",
@@ -141,7 +119,7 @@ impl Grading {
         domain: Domain,
     ) -> Result<(), Error> {
         let grade = Self::new(
-            device,
+            &device.limits(),
             Default::default(),
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![])?,
             [0, 0, 1, 1].into(),
@@ -157,17 +135,14 @@ impl Grading {
     pub(crate) fn shader() -> String {
         format!(
             "{}\n{}",
-            crate::gpu::CameraResources::kernel_shader(),
+            crate::gpu::photograph::kernel_shader(),
             include_str!("grading.wgsl")
         )
     }
 
     pub fn for_grid(&self, coverage: u32) -> Self {
         let mut prepared = self.clone();
-        if prepared.coverage != coverage {
-            prepared.coverage = coverage;
-            prepared.functions = Default::default();
-        }
+        prepared.coverage = coverage;
         prepared
     }
 
@@ -190,9 +165,8 @@ impl Grading {
             },
             Some(input),
             Grade {
-                captured: Arc::new(self.clone()),
-                roll: true,
-                coordinates: None,
+                definition: GradeDefinition::Roll(self.roll, self.coverage),
+                function: self.functions().roll.clone(),
             },
         ))
     }
@@ -208,9 +182,13 @@ impl Grading {
                 input.domain,
                 Some(input),
                 Grade {
-                    captured: Arc::new(self.clone()),
-                    roll: false,
-                    coordinates: self.coordinates,
+                    definition: GradeDefinition::Layers {
+                        layers: self.snapshot.clone(),
+                        area: self.area,
+                        coverage: self.coverage,
+                        coordinates: self.coordinates,
+                    },
+                    function: self.functions().layers.clone(),
                 },
             )
         } else {
@@ -220,9 +198,5 @@ impl Grading {
 
     pub fn compose(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
         self.layers(self.roll(input)?)
-    }
-
-    pub fn operation_bytes(&self) -> u64 {
-        self.functions.get().map_or(0, |functions| functions.bytes)
     }
 }

@@ -29,7 +29,7 @@ fn working_pixel(p: vec4f, position: vec2f) -> vec4f {{
             let root = display(input, &renderer, crate::rendering::OutputTarget::Srgb).unwrap();
             let plan = Plan::with_policy(
                 root.clone(),
-                root.domain.bounds,
+                root.domain.finite().unwrap(),
                 Budget {
                     tile: [41, 35],
                     scratch_bytes: 8 << 20,

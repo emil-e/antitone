@@ -1,120 +1,63 @@
+//! Incremental supplied-texture adapter for the shared image reconstruction calculation.
 use crate::gpu::evaluation::{
-    Binding, Domain, Fragment, Grid, Meaning, PlannedImage, Resource, Shared, Storage, Work,
+    self, Binding, Domain, Fragment, Grid, Meaning, PlannedImage, Shared, Storage, Work,
 };
+use std::sync::Arc;
 
 #[cfg(test)]
 mod look_tests;
 
 pub(crate) use crate::acquisition::windows;
 
-const SHADER: &str = r#"
-struct Parameters {
-    source: vec2u,
-    output: vec2u,
-    origin: vec2u,
-    tile: vec2u,
-    output_origin: vec2u,
-    extent: vec2u,
-}
-
-@group(0) @binding(0)
-var image: texture_2d<f32>;
-
-@group(0) @binding(1)
-var<storage, read_write> sums: array<vec4f>;
-
-@group(0) @binding(2)
-var<uniform> p: Parameters;
-
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3u) {
-    if any(id.xy >= p.extent) {
-        return;
-    }
-
-    let xy = id.xy + p.output_origin;
-    let scale = vec2f(p.source) / vec2f(p.output);
-    let start = vec2f(xy) * scale;
-    let end = vec2f(xy + vec2u(1)) * scale;
-    let lo = max(vec2u(floor(start)), p.origin);
-    let hi = min(min(vec2u(ceil(end)), p.origin + p.tile), p.source);
-    if any(lo >= hi) {
-        return;
-    }
-
-    var sum = vec3f(0.);
-    var invalid = 0.;
-    for(var y = lo.y; y < hi.y; y++) {
-        let wy = max(0., min(end.y, f32(y + 1)) - max(start.y, f32(y)));
-        for(var x = lo.x; x < hi.x; x++) {
-            let wx = max(0., min(end.x, f32(x + 1)) - max(start.x, f32(x)));
-            let pixel = textureLoad(image, vec2i(vec2u(x, y) - p.origin), 0);
-            if pixel.a < 0. && wx * wy > 0. {
-                invalid = max(invalid, -pixel.a);
-            }
-            sum += pixel.rgb * wx * wy;
-        }
-    }
-
-    let index = xy.x + xy.y * p.output.x;
-    sums[index] = vec4f(sums[index].rgb + sum / (scale.x * scale.y), max(sums[index].a, invalid));
-}
-"#;
-
 const FINISH: &str = r#"
-@group(0) @binding(0)
-var<storage, read> sums: array<vec4f>;
-
-@group(0) @binding(1)
-var<uniform> size: vec4u;
+@group(0) @binding(0) var<storage,read> means:array<vec4f>;
+@group(0) @binding(1) var<storage,read> flags:array<f32>;
+@group(0) @binding(2) var<uniform> parameters:vec4u;
 
 @vertex
-fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-    let p = array<vec2f, 3>(vec2f(-1., -1.), vec2f(3., -1.), vec2f(-1., 3.))[i];
-    return vec4f(p, 0., 1.);
+fn vertex(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {
+    let p=array<vec2f,3>(vec2f(-1.,-1.),vec2f(3.,-1.),vec2f(-1.,3.))[i];
+    return vec4f(p,0.,1.);
 }
-
 @fragment
-fn fragment(@builtin(position) position: vec4f) -> @location(0) vec4f {
-    let xy = vec2u(position.xy);
-    let value = sums[xy.x + xy.y * size.x];
-    return vec4f(value.rgb, select(1., -value.a, value.a > 0.));
+fn fragment(@builtin(position) position:vec4f)->@location(0) vec4f {
+    let xy=vec2u(position.xy);
+    let index=xy.x+xy.y*parameters.x;
+    let value=means[index];
+    let status=reconstruction_status(flags[index],value.w,0u,0.0);
+    // This incremental adapter leaves as-yet-unsupplied source area black.
+    let fraction=value.w/bitcast<f32>(parameters.z);
+    return vec4f(value.rgb*fraction,select(1.0,status,status<0.0));
 }
 "#;
 
 pub(crate) struct AveragePipelines {
-    evaluation: crate::gpu::evaluation::Context,
-    compute: [std::sync::Arc<str>; 2],
+    evaluation: evaluation::Context,
     finish: wgpu::RenderPipeline,
 }
-
 impl AveragePipelines {
     pub(crate) async fn new(device: &wgpu::Device) -> Result<Self, crate::Error> {
-        Self::with_context(
-            device,
-            crate::gpu::evaluation::Context::new(device, Default::default()),
-        )
-        .await
+        Self::with_context(device, evaluation::Context::new(device, Default::default())).await
     }
-
     pub(crate) async fn with_context(
         device: &wgpu::Device,
-        evaluation: crate::gpu::evaluation::Context,
+        evaluation: evaluation::Context,
     ) -> Result<Self, crate::Error> {
         evaluation.require_device(device)?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let affine = [
-            include_str!("shaders/footprint.wgsl"),
-            include_str!("shaders/affine_area.wgsl"),
-        ]
-        .join("\n");
-        let compute: [std::sync::Arc<str>; 2] = [SHADER.into(), affine.into()];
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("settled image copy"),
-            source: wgpu::ShaderSource::Wgsl(FINISH.into()),
+            label: Some("reconstruction texture delivery"),
+            source: wgpu::ShaderSource::Wgsl(
+                [
+                    include_str!("gpu/evaluation/reconstruction_status.wgsl"),
+                    FINISH,
+                ]
+                .join("\n")
+                .into(),
+            ),
         });
         let finish = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("settled image finish"),
+            label: Some("reconstruction texture delivery"),
             layout: None,
             vertex: wgpu::VertexState {
                 module: &module,
@@ -141,67 +84,46 @@ impl AveragePipelines {
         if let Some(error) = scope.pop().await {
             return Err(crate::Error::Gpu(error.to_string()));
         }
-        evaluation.prewarm(
-            &compute
-                .iter()
-                .map(|code| Work::Compute {
-                    code: code.clone(),
-                    entry: "main",
-                    bindings: vec![
-                        (0, Binding::Texture(Resource(0))),
-                        (1, Binding::Write(Resource(1))),
-                        (2, Binding::Uniform(Resource(2))),
-                    ],
-                    groups: [1, 1, 1],
-                    initialize: None,
-                })
-                .collect::<Vec<_>>(),
-        )?;
-        Ok(Self {
-            evaluation,
-            compute,
-            finish,
-        })
+        Ok(Self { evaluation, finish })
     }
 }
 
 pub struct AreaAverage {
-    pipelines: std::sync::Arc<AveragePipelines>,
-    sums: wgpu::Buffer,
+    pipelines: Arc<AveragePipelines>,
+    means: wgpu::Buffer,
+    flags: wgpu::Buffer,
     dimensions: [u32; 4],
     affine: Option<[[f32; 2]; 3]>,
+    image: Arc<evaluation::ImageNode>,
+    expected: f32,
 }
-
 impl AreaAverage {
     pub async fn new(
         device: &wgpu::Device,
         source: [u32; 2],
         output: [u32; 2],
     ) -> Result<Self, crate::Error> {
-        let pipelines = std::sync::Arc::new(AveragePipelines::new(device).await?);
+        let pipelines = Arc::new(AveragePipelines::new(device).await?);
         Self::new_shared(device, pipelines, source, output)
     }
-
     pub(crate) fn new_shared(
         device: &wgpu::Device,
-        pipelines: std::sync::Arc<AveragePipelines>,
+        pipelines: Arc<AveragePipelines>,
         source: [u32; 2],
         output: [u32; 2],
     ) -> Result<Self, crate::Error> {
         Self::create(device, pipelines, source, output, None)
     }
-
     pub async fn new_affine(
         device: &wgpu::Device,
         raster: crate::frame_raster::FrameRaster,
     ) -> Result<Self, crate::Error> {
-        let pipelines = std::sync::Arc::new(AveragePipelines::new(device).await?);
+        let pipelines = Arc::new(AveragePipelines::new(device).await?);
         Self::new_affine_shared(device, pipelines, raster)
     }
-
     pub(crate) fn new_affine_shared(
         device: &wgpu::Device,
-        pipelines: std::sync::Arc<AveragePipelines>,
+        pipelines: Arc<AveragePipelines>,
         raster: crate::frame_raster::FrameRaster,
     ) -> Result<Self, crate::Error> {
         let area = raster.bounds()?;
@@ -213,44 +135,71 @@ impl AreaAverage {
             Some(raster.affine()?),
         )
     }
-
     fn create(
         device: &wgpu::Device,
-        pipelines: std::sync::Arc<AveragePipelines>,
+        pipelines: Arc<AveragePipelines>,
         source: [u32; 2],
         output: [u32; 2],
         affine: Option<[[f32; 2]; 3]>,
     ) -> Result<Self, crate::Error> {
-        let size = (u64::from(output[0]) * u64::from(output[1]))
+        let bytes = (u64::from(output[0]) * u64::from(output[1]))
             .checked_mul(16)
             .ok_or_else(|| crate::Error::Gpu("area-average size overflow".into()))?;
         if source.contains(&0)
             || output.contains(&0)
             || (affine.is_none() && (output[0] > source[0] || output[1] > source[1]))
-            || size > device.limits().max_storage_buffer_binding_size
-            || affine.is_some_and(|a| {
-                let det = a[1][0] * a[2][1] - a[1][1] * a[2][0];
-                !det.is_finite() || det == 0.
-            })
+            || bytes > device.limits().max_storage_buffer_binding_size
+            || bytes > device.limits().max_buffer_size
         {
             return Err(crate::Error::Gpu(
                 "invalid area-average dimensions or GPU budget".into(),
             ));
         }
-        let sums = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("linear target RGB area sums"),
-            size,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        let mapping = affine.unwrap_or([
+            [0.; 2],
+            [source[0] as f32 / output[0] as f32, 0.],
+            [0., source[1] as f32 / output[1] as f32],
+        ]);
+        let expected = (mapping[1][0] * mapping[2][1] - mapping[1][1] * mapping[2][0]).abs();
+        if !expected.is_finite() || expected == 0. {
+            return Err(crate::Error::Gpu(
+                "invalid area-average dimensions or GPU budget".into(),
+            ));
+        }
+        let input = Domain {
+            bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], source)),
+            grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+            meaning: Meaning::Display,
+        };
+        let domain = Domain {
+            bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], output)),
+            grid: Grid {
+                origin: mapping[0].map(f64::from),
+                axes: [mapping[1].map(f64::from), mapping[2].map(f64::from)],
+                pitch: [mapping[1], mapping[2]].map(|a| f64::from(a[0]).hypot(f64::from(a[1]))),
+                coverage: 8,
+            },
+            meaning: Meaning::Display,
+        };
+        let image = evaluation::reconstruct_complete(evaluation::borrowed_input(input), domain)?;
+        let buffer = |size, label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            })
+        };
         Ok(Self {
             pipelines,
-            sums,
+            means: buffer(bytes, "required reconstruction means"),
+            flags: buffer(bytes / 4, "required reconstruction flags"),
             dimensions: [source[0], source[1], output[0], output[1]],
             affine,
+            image,
+            expected,
         })
     }
-
     pub fn accumulate(
         &self,
         device: &wgpu::Device,
@@ -263,7 +212,6 @@ impl AreaAverage {
         }
         Ok(())
     }
-
     pub(crate) fn windows(&self, tile: &wgpu::Texture, origin: [u32; 2]) -> Vec<windows::Window> {
         let output = [self.dimensions[2], self.dimensions[3]];
         windows::bounded(if let Some(affine) = self.affine {
@@ -277,7 +225,6 @@ impl AreaAverage {
             )
         })
     }
-
     pub(crate) fn accumulate_window(
         &self,
         device: &wgpu::Device,
@@ -304,60 +251,44 @@ impl AreaAverage {
                 "invalid reconstruction window or source texture",
             ));
         }
-        let parameters = [
-            self.dimensions[0],
-            self.dimensions[1],
-            self.dimensions[2],
-            self.dimensions[3],
+        let samples = crate::geometry::SourceRegion::from([
             origin[0],
             origin[1],
             tile.width(),
             tile.height(),
-            output_origin[0],
-            output_origin[1],
-            extent[0],
-            extent[1],
-        ];
-        let mut bytes = if self.affine.is_some() {
-            bytemuck::cast_slice(&parameters[..8]).to_vec()
-        } else {
-            bytemuck::cast_slice(&parameters).to_vec()
-        };
-        if let Some(affine) = self.affine {
-            bytes.extend_from_slice(bytemuck::cast_slice(&affine));
-            bytes.extend_from_slice(bytemuck::cast_slice(&[0_f32; 2]));
-            bytes.extend_from_slice(bytemuck::cast_slice(&parameters[8..]));
-        }
+        ])
+        .validate()?;
+        let affected = [output_origin[0], output_origin[1], extent[0], extent[1]].try_into()?;
         let mut fragment = Fragment::default();
-        let output = Self::image(
-            &mut fragment,
-            [self.dimensions[2], self.dimensions[3]],
-            Storage::Input {
-                slot: 0,
-                bytes: self.sums.size(),
-                writable: true,
-            },
-        );
-        let uniform = fragment.resource(Storage::Uniform(bytes.into()));
-        fragment.work.push(Work::Compute {
-            code: self.pipelines.compute[usize::from(self.affine.is_some())].clone(),
-            entry: "main",
-            bindings: vec![
-                (
-                    0,
-                    Binding::Shared(Shared::Texture(tile.create_view(&Default::default()))),
-                ),
-                (1, Binding::Write(output.resource)),
-                (2, Binding::Uniform(uniform)),
-            ],
-            groups: [extent[0].div_ceil(8), extent[1].div_ceil(8), 1],
-            initialize: None,
+        let output = self.means(&mut fragment);
+        let metadata = fragment.resource(Storage::Input {
+            slot: 1,
+            bytes: self.flags.size(),
+            writable: true,
         });
-        self.pipelines
-            .evaluation
-            .encode_work(fragment, output, encoder, &[&self.sums])
+        let rectangle = fragment.uniform(&[origin[0], origin[1], tile.width(), tile.height()]);
+        let sample=evaluation::Sampled {code:r#"
+@group(0) @binding(32) var supplied_image:texture_2d<f32>;
+@group(0) @binding(33) var<uniform> supplied_rectangle:vec4u;
+fn supplied_sample(p:vec2i)->vec4f {return textureLoad(supplied_image,p-vec2i(supplied_rectangle.xy),0);}
+"#.into(),symbol:"supplied_sample".into(),bindings:vec![
+            (32,Binding::Shared(Shared::Texture(tile.create_view(&Default::default())))),(33,rectangle),
+        ]};
+        evaluation::accumulate_supplied(
+            &self.image,
+            &mut fragment,
+            sample,
+            (samples.try_into()?, affected),
+            output,
+            metadata,
+        )?;
+        self.pipelines.evaluation.encode_work(
+            fragment,
+            output,
+            encoder,
+            &[&self.means, &self.flags],
+        )
     }
-
     pub fn finish(
         &self,
         device: &wgpu::Device,
@@ -372,33 +303,53 @@ impl AreaAverage {
             ));
         }
         let mut fragment = Fragment::default();
-        let sums = fragment.resource(Storage::Input {
+        let means = fragment.resource(Storage::Input {
             slot: 0,
-            bytes: self.sums.size(),
+            bytes: self.means.size(),
             writable: false,
         });
-        let uniform = fragment.uniform(&[size[0], size[1], 0u32, 0]);
-        let image = Self::image(&mut fragment, size, Storage::RenderTarget(output.clone()));
+        let flags = fragment.resource(Storage::Input {
+            slot: 1,
+            bytes: self.flags.size(),
+            writable: false,
+        });
+        let parameters = fragment.uniform(&[size[0], size[1], self.expected.to_bits(), 0]);
+        let image = PlannedImage {
+            resource: fragment.resource(Storage::RenderTarget(output.clone())),
+            domain: self.image.domain(),
+            region: self
+                .image
+                .domain()
+                .finite()
+                .expect("area averaging has a fixed output"),
+        };
         fragment.work.push(Work::Render {
             pipeline: self.pipelines.finish.clone(),
             layout: self.pipelines.finish.get_bind_group_layout(0),
-            bindings: vec![(0, Binding::Read(sums)), (1, uniform)],
+            bindings: vec![
+                (0, Binding::Read(means)),
+                (1, Binding::Read(flags)),
+                (2, parameters),
+            ],
             target: image.resource,
         });
         self.pipelines
             .evaluation
-            .encode_work(fragment, image, encoder, &[&self.sums])
+            .encode_work(fragment, image, encoder, &[&self.means, &self.flags])
     }
-
-    fn image(fragment: &mut Fragment, size: [u32; 2], storage: Storage) -> PlannedImage {
+    fn means(&self, fragment: &mut Fragment) -> PlannedImage {
         PlannedImage {
-            resource: fragment.resource(storage),
-            region: [0, 0, size[0], size[1]].into(),
-            domain: Domain {
-                bounds: [0, 0, size[0], size[1]].into(),
-                grid: Grid::axis_aligned([0.; 2], [1.; 2]),
-                meaning: Meaning::Display,
-            },
+            resource: fragment.resource(Storage::Input {
+                slot: 0,
+                bytes: self.means.size(),
+                writable: true,
+            }),
+            domain: self.image.domain(),
+            region: self
+                .image
+                .domain()
+                .finite()
+                .expect("area averaging has a fixed output"),
         }
     }
 }

@@ -18,108 +18,62 @@ mod repairs;
 
 mod request;
 
-pub(crate) use request::Request;
+pub(crate) use request::SourceRequest;
 
 mod kernels;
 
 pub(crate) use kernels::{Kernels, float_buffer, uniform};
 
 pub(crate) struct Acquired {
-    pub spec: Request,
+    pub spec: SourceRequest,
     pub renderer: Arc<crate::renderer::GpuRenderer>,
     pub kernels: Arc<Kernels>,
-    pub pixels: wgpu::Buffer,
+    pub pixels: crate::gpu::evaluation::BufferImage,
+    pub definition: Arc<crate::gpu::evaluation::ImageNode>,
+    pub basis: Arc<crate::gpu::evaluation::ImageNode>,
 }
 
-pub(crate) enum Input<'a> {
-    Originals {
-        scan: &'a Scan,
-        field: Option<Arc<GpuFlatField>>,
-        requests: Vec<Request>,
-    },
-    Camera {
-        proxy: &'a crate::scan::CameraProxy,
-        field: Option<Arc<GpuFlatField>>,
-        request: Request,
-    },
-    Resident {
-        source: Arc<ProcessingSource>,
-        request: Request,
-    },
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn execute(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    gate: &SubmissionGate,
-    renderer: Arc<crate::renderer::GpuRenderer>,
-    kernels: Arc<Kernels>,
-    input: Input<'_>,
-    cancelled: impl Fn() -> bool,
-) -> Result<Option<Vec<Arc<Acquired>>>, Error> {
-    if cancelled() {
-        return Ok(None);
-    }
-    match input {
-        Input::Originals {
-            scan,
-            field,
-            requests,
-        } => Acquired::acquire_many(
-            device, queue, gate, renderer, kernels, scan, field, requests, cancelled,
-        ),
-        Input::Camera {
-            proxy,
-            field,
-            request,
-        } => {
-            let source = Acquired::from_camera_proxy(
-                device, queue, gate, renderer, kernels, proxy, field, request,
-            )?;
-            Ok((!cancelled()).then_some(vec![source]))
-        }
-        Input::Resident { source, request } => {
-            let source =
-                Acquired::from_processing(device, queue, gate, renderer, kernels, source, request)?;
-            Ok((!cancelled()).then_some(vec![source]))
-        }
-    }
-}
-
-fn encode_neutral(
-    device: &wgpu::Device,
-    renderer: &crate::renderer::GpuRenderer,
+fn neutral_definition(
     source: &ProcessingSource,
-    spec: &Request,
-    output: &wgpu::Buffer,
-    encoder: &mut wgpu::CommandEncoder,
-) -> Result<(), Error> {
+    interpretation: crate::gpu::SourceInterpretation,
+    repairs: crate::gpu::repairs::Snapshot,
+) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
     let geometry = source
         .geometry()
         .ok_or(Error::InvalidParameter("neutral source requires geometry"))?;
     let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
     let root = crate::gpu::evaluation::Neutral {
-        parameters: spec.neutral,
-        matrix: spec.matrix,
+        interpretation,
         field: source.flat_field.clone(),
-        repairs: spec.repairs.clone(),
+        repairs,
     }
-    .resident(device, &renderer.camera, source, raster)?;
-    crate::gpu::pixel_pipeline::Prepared::from_composition(
-        device,
-        raster,
-        root,
-        None,
-        renderer.evaluation.clone(),
-    )?
-    .encode_from(device, encoder, &source.input, output)
+    .resident(source, raster)?;
+    let output_domain = crate::gpu::evaluation::Domain {
+        grid: crate::gpu::evaluation::Grid {
+            coverage: 8,
+            ..root.domain().grid
+        },
+        ..root.domain()
+    };
+    crate::gpu::evaluation::reconstruct(root, output_domain)
 }
 
 impl Acquired {
+    pub(crate) fn supplied(&self) -> Result<crate::gpu::evaluation::SuppliedImage, Error> {
+        let region = match &self.pixels {
+            crate::gpu::evaluation::BufferImage::Produced(value) => value.descriptor.region,
+            crate::gpu::evaluation::BufferImage::Submitted(_) => self.spec.input_region()?,
+        };
+        crate::gpu::evaluation::SuppliedImage::from_buffer(
+            self.definition.clone(),
+            region,
+            self.pixels.clone(),
+        )
+    }
+
     /// Navigation positives process the already-sampled camera raster, not the originals.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_camera_proxy(
+    pub(crate) fn camera_preview(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
@@ -127,8 +81,12 @@ impl Acquired {
         kernels: Arc<Kernels>,
         proxy: &crate::scan::CameraProxy,
         field: Option<Arc<GpuFlatField>>,
-        spec: Request,
-    ) -> Result<Arc<Self>, Error> {
+        spec: SourceRequest,
+        input: &crate::gpu::ProcessingInput,
+    ) -> Result<(Arc<Self>, Arc<Processed>), Error> {
+        let program = input.source_program().ok_or(Error::InvalidParameter(
+            "camera preview requires captured source interpretation",
+        ))?;
         let spec = spec.capture(crate::gpu::execution::source::Identity::proxy(proxy))?;
         let mut frame = FrameRaster::full(Composition::new(
             spec.area,
@@ -140,12 +98,9 @@ impl Acquired {
             || !spec.repairs.0.is_empty()
             || proxy.width.max(proxy.height) > crate::scan::CameraProxy::MAX_EDGE
             || proxy.pixels.len() as u64 != u64::from(proxy.width) * u64::from(proxy.height)
-            || !spec
-                .program
-                .as_ref()
-                .is_some_and(|program| program.matches_proxy(proxy).unwrap_or(false))
+            || !input.repairs.0.is_empty()
+            || !program.matches_proxy(proxy)?
             || spec.frame() != frame
-            || spec.field.as_ref() != field.as_ref().map(|field| field.field())
         {
             return Err(Error::Gpu(
                 "camera proxy does not match thumbnail source raster".into(),
@@ -156,7 +111,7 @@ impl Acquired {
             region: area,
             size: proxy.dimensions(),
         })?;
-        let mut camera = ProcessingSource::new_continuous(device, &proxy.pixels, spec.matrix)?;
+        let mut camera = ProcessingSource::new_continuous(device, &proxy.pixels, program.matrix)?;
         camera.set_flat_field(
             field,
             SourceGeometry::new(
@@ -164,23 +119,59 @@ impl Acquired {
                 proxy.dimensions(),
             )?,
         )?;
-        let pixels = float_buffer(device, proxy.dimensions())?;
-        let mut encoder = device.create_command_encoder(&Default::default());
-        encode_neutral(device, &renderer, &camera, &spec, &pixels, &mut encoder)?;
-        kernels.cover_proxy(&renderer.evaluation, &mut encoder, &pixels)?;
-        renderer
-            .evaluation
-            .submit(queue, submissions, encoder, || false)?;
-        Ok(Arc::new(Self {
-            spec,
+        let definition = neutral_definition(
+            &camera,
+            crate::gpu::SourceInterpretation::Photograph(*program),
+            input.repairs.clone(),
+        )?;
+        let (root, plan) =
+            Processed::definition(&device.limits(), &spec, definition.clone(), input)?;
+        let geometry = camera.geometry().unwrap();
+        let native = crate::gpu::pixel_pipeline::Prepared::from_composition(
+            device,
+            crate::gpu::raster::Raster::region(geometry.region(), geometry.size()),
+            definition.clone(),
+            renderer.evaluation.clone(),
+        )?;
+        let pixels = crate::gpu::evaluation::BufferImage::recorded(
+            &definition,
+            definition.domain().finite()?,
+            float_buffer(device, proxy.dimensions())?,
+        )?;
+        let source = Arc::new(Self {
             pixels,
+            spec,
+            basis: definition.clone(),
+            definition,
             renderer,
             kernels,
-        }))
+        });
+        let processed = Processed::record(device, source.clone(), input, root, plan)?;
+        Self::submit_preview(device, queue, submissions, source, native, processed)
     }
 
-    /// Neutralise and compose an already-decoded camera proxy in original source coordinates.
-    /// Repaired previews use original-coordinate acquisition, not this reduced-raster adapter.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn processing_preview(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: &SubmissionGate,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<Kernels>,
+        source: Arc<ProcessingSource>,
+        input: &crate::gpu::ProcessingInput,
+        spec: SourceRequest,
+    ) -> Result<(Arc<Self>, Arc<Processed>), Error> {
+        let (spec, definition) = Self::processing_definition(&source, input, spec)?;
+        let (root, plan) =
+            Processed::definition(&device.limits(), &spec, definition.clone(), input)?;
+        let (acquired, native) =
+            Self::record_processing(device, renderer, kernels, spec, definition)?;
+        let processed = Processed::record(device, acquired.clone(), input, root, plan)?;
+        Self::submit_preview(device, queue, submissions, acquired, native, processed)
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_processing(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -188,8 +179,27 @@ impl Acquired {
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<Kernels>,
         source: Arc<ProcessingSource>,
-        spec: Request,
+        input: &crate::gpu::ProcessingInput,
+        spec: SourceRequest,
     ) -> Result<Arc<Self>, Error> {
+        let (spec, definition) = Self::processing_definition(&source, input, spec)?;
+        let (acquired, native) =
+            Self::record_processing(device, renderer, kernels, spec, definition)?;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        native.encode_from(device, &mut encoder, &source.input, &acquired.pixels)?;
+        submissions.submit(queue, [encoder.finish()]);
+        native.submitted();
+        acquired
+            .pixels
+            .submitted(&acquired.renderer.evaluation.materializations());
+        Ok(acquired)
+    }
+
+    fn processing_definition(
+        source: &Arc<ProcessingSource>,
+        input: &crate::gpu::ProcessingInput,
+        spec: SourceRequest,
+    ) -> Result<(SourceRequest, Arc<crate::gpu::evaluation::ImageNode>), Error> {
         if !spec.repairs.0.is_empty() {
             return Err(Error::Gpu(
                 "repaired previews require original-coordinate acquisition".into(),
@@ -199,10 +209,14 @@ impl Acquired {
             spec
         } else {
             spec.capture(crate::gpu::execution::source::Identity::Resident(
-                Arc::downgrade(&source),
+                Arc::downgrade(source),
             ))?
         };
-        let source = source.with_matrix(device, spec.matrix)?;
+        let interpretation = input.source_program().map_or(
+            crate::gpu::SourceInterpretation::Inspection(source.camera_to_ap1),
+            |program| crate::gpu::SourceInterpretation::Photograph(*program),
+        );
+        let source = source.with_matrix(interpretation.matrix())?;
         let geometry = source
             .geometry()
             .ok_or_else(|| Error::Gpu("preview source has no geometry".into()))?;
@@ -212,68 +226,120 @@ impl Acquired {
                 "preview source geometry differs from the view frame".into(),
             ));
         }
-        // Map accepted original-source footprints into the proxy's actual raster. Independent
-        // axis scales account for integer-rounded proxy dimensions without re-rounding a crop
-        // or assuming its bounding box starts at the texture origin.
-        let raster = crate::geometry::SourceRaster::new(spec.area, geometry.size())?;
         let area = spec.area;
         let spec = spec.with_sampling(crate::acquisition::Sampling::CameraProxy {
             region: area,
             size: geometry.size(),
         })?;
-        let frame = spec.input_frame()?;
-        let point = |p| raster.raster_point(frame.source_point(p)).0;
-        let start = point([0., 0.]);
-        let x = point([1., 0.]);
-        let y = point([0., 1.]);
-        let affine = [
-            start.map(|v| v as f32),
-            std::array::from_fn(|i| (x[i] - start[i]) as f32),
-            std::array::from_fn(|i| (y[i] - start[i]) as f32),
-        ];
-        let working = float_buffer(device, geometry.size())?;
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("provisional neutral AP1 acquisition"),
-            size: wgpu::Extent3d {
-                width: geometry.size()[0],
-                height: geometry.size()[1],
-                depth_or_array_layers: 1,
+        let input = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
+        let root = crate::gpu::evaluation::Neutral {
+            interpretation,
+            field: source.flat_field.clone(),
+            repairs: spec.repairs.clone(),
+        }
+        .resident(&source, input)?;
+        let output = crate::gpu::evaluation::Domain {
+            bounds: None,
+            grid: crate::gpu::evaluation::Grid {
+                coverage: 8,
+                ..crate::gpu::evaluation::Grid::from_frame(spec.plan.output())
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba32Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let pixels = float_buffer(device, frame.output)?;
-        let mut encoder = device.create_command_encoder(&Default::default());
-        encode_neutral(device, &renderer, &source, &spec, &working, &mut encoder)?;
-        kernels.copy(&renderer.evaluation, &mut encoder, &working, &texture)?;
-        kernels.filter_raster(
-            &renderer.evaluation,
-            &mut encoder,
-            &texture,
-            &pixels,
-            geometry.size(),
-            frame.output,
-            affine,
-            [0, 0],
-            ([0, 0], frame.output),
-        )?;
-        submissions.submit(queue, [encoder.finish()]);
-        Ok(Arc::new(Self {
-            spec,
-            renderer,
-            kernels,
-            pixels,
-        }))
+            meaning: root.domain().meaning,
+        };
+        let root = crate::gpu::evaluation::reconstruct(root, output)?;
+        Ok((spec, root))
     }
 
-    // Borrow the worker's authoritative Scan. Destinations share the original traversal
-    // while filtering independent exact footprints.
+    pub(crate) fn reprocess(
+        self: &Arc<Self>,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: &SubmissionGate,
+        definition: Arc<crate::gpu::evaluation::ImageNode>,
+        input: &crate::gpu::ProcessingInput,
+        previous: Option<&Arc<Processed>>,
+    ) -> Result<(Arc<Self>, Arc<Processed>), Error> {
+        let (root, plan) =
+            Processed::definition(&device.limits(), &self.spec, definition.clone(), input)?;
+        let region = root
+            .region_for(&definition, root.domain().finite()?)?
+            .ok_or(Error::InvalidParameter("preview has no neutral dependency"))?;
+        if self.supplied()?.covers(&definition, region) {
+            let processed =
+                Processed::prepare_calculation(device, self.clone(), input, root, plan, previous)?;
+            return Ok((self.clone(), processed));
+        }
+        let (source, native) = Self::record_processing(
+            device,
+            self.renderer.clone(),
+            self.kernels.clone(),
+            self.spec.clone(),
+            definition,
+        )?;
+        let processed = Processed::record(device, source.clone(), input, root, plan)?;
+        Self::submit_preview(device, queue, submissions, source, native, processed)
+    }
+
+    fn submit_preview(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        submissions: &SubmissionGate,
+        source: Arc<Self>,
+        native: crate::gpu::pixel_pipeline::Prepared,
+        mut processed: Processed,
+    ) -> Result<(Arc<Self>, Arc<Processed>), Error> {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        native.encode_result(device, &mut encoder, &source.pixels)?;
+        source.kernels.grade(device, &mut encoder, &processed);
+        submissions.submit(queue, [encoder.finish()]);
+        native.submitted();
+        processed.stages.as_ref().unwrap().submitted();
+        let scope = source.renderer.evaluation.materializations();
+        source.pixels.submitted(&scope);
+        processed.pixels.submitted(&scope);
+        processed.stages = None;
+        *processed.submitted.get_mut().unwrap() = true;
+        Ok((source, Arc::new(processed)))
+    }
+
+    fn record_processing(
+        device: &wgpu::Device,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<Kernels>,
+        spec: SourceRequest,
+        root: Arc<crate::gpu::evaluation::ImageNode>,
+    ) -> Result<(Arc<Self>, crate::gpu::pixel_pipeline::Prepared), Error> {
+        let raster = crate::gpu::raster::Raster::frame(spec.input_frame()?);
+        let prepared = crate::gpu::pixel_pipeline::Prepared::record_composition(
+            device,
+            raster,
+            root.clone(),
+            spec.input_region()?,
+            renderer.evaluation.clone(),
+            device.limits().max_buffer_size.saturating_mul(4),
+            Vec::new(),
+        )?;
+        let pixels = crate::gpu::evaluation::BufferImage::recorded(
+            &root,
+            spec.input_region()?,
+            float_buffer(device, spec.input_frame()?.output)?,
+        )?;
+        Ok((
+            Arc::new(Self {
+                spec,
+                renderer,
+                kernels,
+                basis: root.clone(),
+                definition: root,
+                pixels,
+            }),
+            prepared,
+        ))
+    }
+
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn acquire_many(
+    pub(crate) async fn acquire_many(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
@@ -281,12 +347,14 @@ impl Acquired {
         kernels: Arc<Kernels>,
         scan: &Scan,
         field: Option<Arc<GpuFlatField>>,
-        specs: Vec<Request>,
+        specs: Vec<SourceRequest>,
+        scope: &crate::gpu::evaluation::Materializations,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<Vec<Arc<Self>>>, Error> {
         if cancelled() {
             return Ok(None);
         }
+        renderer.evaluation.require_device(device)?;
         let identity = crate::gpu::execution::source::Identity::camera(scan.source().identity());
         let specs: Vec<_> = specs
             .into_iter()
@@ -298,159 +366,151 @@ impl Acquired {
         scan.validate_area(spec.area)?;
         if scan.area != spec.area
             || (if spec.is_inspection() {
-                scan.camera_to_ap1 != spec.matrix
+                scan.camera_to_ap1 != spec.matrix()
             } else {
                 !spec
-                    .program
-                    .as_ref()
+                    .program()
                     .is_some_and(|program| program.matches_native(scan).unwrap_or(false))
             })
             || scan.flat_field() != spec.field.as_ref()
             || spec.field.as_ref() != field.as_ref().map(|f| f.field())
-            || specs
-                .iter()
-                .any(|s| !s.same_source(spec) || s.repairs != spec.repairs)
+            || specs.iter().any(|s| {
+                !s.same_source(spec)
+                    || s.repairs != spec.repairs
+                    || s.plan.sampling() != crate::acquisition::Sampling::NeutralFootprints
+            })
         {
             return Err(Error::Gpu(
                 "physical-view source authority differs from originals".into(),
             ));
         }
-        let batch = crate::acquisition::FootprintBatch::new(
-            specs.iter().map(|spec| spec.plan.clone()).collect(),
-            Default::default(),
-        )?;
-        let outputs = specs
+        let roots = Self::definitions(scan, field, &spec.processing_fixture(), &specs)?;
+        let requests = roots
             .iter()
-            .map(|spec| {
-                let crate::acquisition::SourceRead::Originals(bounds) = spec.plan.source_read()
-                else {
-                    unreachable!("validated original footprint batch")
-                };
-                Ok((bounds, float_buffer(device, spec.input_frame()?.output)?))
+            .cloned()
+            .zip(&specs)
+            .map(|(root, spec)| {
+                let domain = root.domain();
+                let region = spec.input_region()?;
+                renderer.evaluation.request(
+                    root,
+                    crate::gpu::evaluation::Region {
+                        bounds: region,
+                        grid: domain.grid,
+                    },
+                    crate::gpu::evaluation::Budget {
+                        tile: [region.width, region.height],
+                        scratch_bytes: 512 << 20,
+                    },
+                )
             })
             .collect::<Result<Vec<_>, Error>>()?;
-        let neutral = crate::gpu::evaluation::Neutral {
-            parameters: spec.neutral,
-            matrix: spec.matrix,
-            field: field.clone(),
-            repairs: spec.repairs.clone(),
-        }
-        .originals(
-            device,
-            &renderer.camera,
-            crate::gpu::evaluation::camera_source(scan)?,
-        )?;
-        let mut executor = renderer.evaluation.executor();
-        // Plans own source traversal and bounded destination submissions; GPU ownership stays
-        // within one admitted original unit, with cancellation between every submission.
-        for unit in batch.units() {
-            if cancelled() {
-                return Ok(None);
-            }
-            let unit = unit?;
-            if unit.submissions.is_empty() {
-                continue;
-            }
-            let region = unit.read;
-            let size = [region.width, region.height];
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("bounded neutral AP1 acquisition unit"),
-                size: wgpu::Extent3d {
-                    width: size[0],
-                    height: size[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba32Float,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
+        Self::materialize_many(
+            queue,
+            submissions,
+            renderer,
+            kernels,
+            specs,
+            requests,
+            scope,
+            cancelled,
+        )
+        .await
+    }
 
-            for (index, windows) in unit.submissions.into_iter().enumerate() {
-                if cancelled() {
-                    return Ok(None);
-                }
-                let filter = |encoder: &mut wgpu::CommandEncoder| -> Result<(), Error> {
-                    for work in &windows {
-                        let destination = work.destination;
-                        kernels.filter(
-                            &renderer.evaluation,
-                            encoder,
-                            &texture,
-                            &outputs[destination].1,
-                            specs[destination].input_frame()?,
-                            [
-                                region.x as i32 - outputs[destination].0.x as i32,
-                                region.y as i32 - outputs[destination].0.y as i32,
-                            ],
-                            work.window,
-                        )?;
-                    }
-                    Ok(())
-                };
-                if index == 0 {
-                    let evaluation = renderer.evaluation.request(
-                        neutral.clone(),
-                        crate::gpu::evaluation::Region {
-                            bounds: region,
-                            grid: neutral.domain.grid,
-                        },
-                        crate::gpu::evaluation::Budget {
-                            tile: size,
-                            scratch_bytes: (32 << 20).min(device.limits().max_buffer_size),
-                        },
-                    )?;
-                    let plan = evaluation
-                        .plans()
-                        .next()
-                        .ok_or(Error::InvalidParameter("empty source acquisition"))??;
-                    if executor
-                        .run_sink(
-                            device,
-                            queue,
-                            submissions,
-                            &plan,
-                            &cancelled,
-                            |encoder, _, pixels| {
-                                kernels.copy(&renderer.evaluation, encoder, pixels, &texture)?;
-                                filter(encoder)
-                            },
-                        )?
-                        .is_none()
-                    {
-                        return Ok(None);
-                    }
-                } else {
-                    let mut encoder = device.create_command_encoder(&Default::default());
-                    filter(&mut encoder)?;
-                    if renderer
-                        .evaluation
-                        .submit(queue, submissions, encoder, &cancelled)?
-                        .is_none()
-                    {
-                        return Ok(None);
-                    }
-                }
-            }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn materialize_many(
+        queue: &wgpu::Queue,
+        submissions: &SubmissionGate,
+        renderer: Arc<crate::renderer::GpuRenderer>,
+        kernels: Arc<Kernels>,
+        specs: Vec<SourceRequest>,
+        requests: Vec<crate::gpu::evaluation::Evaluation>,
+        scope: &crate::gpu::evaluation::Materializations,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Option<Vec<Arc<Self>>>, Error> {
+        if specs.len() != requests.len() {
+            return Err(Error::InvalidParameter("batch omitted a requested image"));
         }
+        let roots: Vec<_> = requests
+            .iter()
+            .map(|request| request.image().clone())
+            .collect();
+        let futures = renderer
+            .evaluation
+            .materialize_many(queue, submissions, scope, requests)?;
+        // Demand retirement drops only these waiters, not independent consumers of shared work.
+        let mut pending = Box::pin(futures_util::future::try_join_all(futures));
+        let result = futures_util::future::poll_fn(|cx| {
+            if cancelled() {
+                return std::task::Poll::Ready(None);
+            }
+            std::future::Future::poll(pending.as_mut(), cx).map(Some)
+        })
+        .await;
+        let Some(result) = result else {
+            return Ok(None);
+        };
+        let images = match result {
+            Ok(images) => images,
+            Err(error) if matches!(error.as_ref(), Error::Cancelled) => return Ok(None),
+            Err(error) => return Err(Error::Gpu(error.to_string())),
+        };
         if cancelled() {
             return Ok(None);
         }
         Ok(Some(
             specs
                 .into_iter()
-                .zip(outputs)
-                .map(|(spec, (_, pixels))| {
-                    Arc::new(Self {
+                .zip(images)
+                .zip(roots)
+                .map(|((spec, image), definition)| {
+                    Ok(Arc::new(Self {
                         spec,
-                        pixels,
+                        basis: definition.clone(),
+                        definition,
+                        pixels: image.try_into()?,
                         renderer: renderer.clone(),
                         kernels: kernels.clone(),
-                    })
+                    }))
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, Error>>()?,
         ))
+    }
+
+    pub(crate) fn definitions(
+        scan: &Scan,
+        field: Option<Arc<GpuFlatField>>,
+        input: &crate::gpu::ProcessingInput,
+        specs: &[SourceRequest],
+    ) -> Result<Vec<Arc<crate::gpu::evaluation::ImageNode>>, Error> {
+        use crate::gpu::evaluation as e;
+        let spec = specs
+            .first()
+            .ok_or(Error::InvalidParameter("empty physical-view acquisition"))?;
+        let neutral = e::Neutral {
+            interpretation: input.source_program().map_or(
+                crate::gpu::SourceInterpretation::Inspection(scan.camera_to_ap1),
+                |program| crate::gpu::SourceInterpretation::Photograph(*program),
+            ),
+            field,
+            repairs: spec.repairs.clone(),
+        }
+        .originals(e::camera_source(scan)?)?;
+        specs
+            .iter()
+            .map(|spec| {
+                let mut grid = e::Grid::from_frame(spec.plan.output());
+                grid.coverage = 8;
+                e::reconstruct(
+                    neutral.clone(),
+                    e::Domain {
+                        bounds: None,
+                        grid,
+                        meaning: e::Meaning::Neutral,
+                    },
+                )
+            })
+            .collect()
     }
 }

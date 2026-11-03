@@ -1,17 +1,25 @@
 use super::tests::{fixture, make_plan, matrix, settings};
 use super::*;
-use crate::{geometry::SourceRegion as Rect, gpu::Grading};
+use crate::{gpu::Grading, gpu::evaluation::CellRegion as Rect};
 
 #[test]
 fn independent_code_reference_can_be_composed_and_replaced_without_planner_changes() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let data = fixture();
     let neutral = interpret(&device, source(Arc::new(data.clone())), matrix()).unwrap();
-    let (roll, snapshot) = settings(data.domain().bounds);
+    let (roll, snapshot) = settings(data.domain().finite().unwrap());
     let graded = grade(
         neutral,
         &device,
-        Arc::new(Grading::new(&device, roll, snapshot, data.domain().bounds).unwrap()),
+        Arc::new(
+            Grading::new(
+                &device.limits(),
+                roll,
+                snapshot,
+                data.domain().finite().unwrap().source().unwrap(),
+            )
+            .unwrap(),
+        ),
     )
     .unwrap();
     let original = make_plan(graded.clone(), [27, 23]);
@@ -65,7 +73,7 @@ fn pure_admission_rejects_insufficient_budget_and_invalid_demands() {
     assert!(
         Plan::new(
             root.clone(),
-            root.domain.bounds,
+            root.domain.finite().unwrap(),
             Budget {
                 tile: [16, 16],
                 scratch_bytes: 1
@@ -76,7 +84,7 @@ fn pure_admission_rejects_insufficient_budget_and_invalid_demands() {
     assert!(
         Plan::new(
             root.clone(),
-            root.domain.bounds,
+            root.domain.finite().unwrap(),
             Budget {
                 tile: [0, 16],
                 scratch_bytes: 1 << 20
@@ -188,7 +196,7 @@ fn fragment_scheduling_rejects_undeclared_production_before_any_gpu_work() {
     let root = ImageNode::new(node.domain, Some(node), Broken);
     let error = Plan::new(
         root.clone(),
-        root.domain.bounds,
+        root.domain.finite().unwrap(),
         Budget {
             tile: [16, 16],
             scratch_bytes: 1 << 20,

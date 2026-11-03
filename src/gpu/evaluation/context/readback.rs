@@ -17,7 +17,7 @@ impl Context {
         gate: &crate::gpu::SubmissionGate,
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
-        mut consume: impl FnMut(SourceRegion, &[[f32; 4]]) -> Result<(), Error>,
+        mut consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
     ) -> Result<Option<Stats>, Error> {
         let mut executor = self.executor();
         let mut total = Stats::default();
@@ -41,7 +41,14 @@ impl Context {
 
             let bytes = u64::from(plan.region.width) * u64::from(plan.region.height) * 16;
             let tile = &plan.tiles[0];
-            if tile.fragment.resources[tile.result.resource.0].bytes() < bytes {
+            let storage = &tile.fragment.resources[tile.result.resource.0];
+            let available = match storage {
+                Storage::ResidentBuffer(image) => {
+                    image.as_buffer().map_or(0, |buffer| buffer.size())
+                }
+                storage => storage.bytes(),
+            };
+            if available < bytes {
                 return Err(Error::InvalidParameter(
                     "host float delivery requires a complete RGBA buffer",
                 ));
@@ -59,12 +66,11 @@ impl Context {
             let buffer = readback.as_ref().unwrap();
             let (send, receive) = mpsc::channel();
 
-            let Some(stats) = executor.run_sink_with(
-                &self.device,
-                queue,
-                gate,
+            let Some(stats) = self.run_sink(
+                &mut executor,
+                (queue, gate),
                 &plan,
-                &cancelled,
+                (&cancelled, &|| {}),
                 Sink {
                     encode: |encoder: &mut wgpu::CommandEncoder,
                              image: PlannedImage,

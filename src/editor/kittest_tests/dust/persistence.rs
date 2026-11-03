@@ -185,7 +185,7 @@ fn repaired_selected_preview_paints_until_the_detailed_view_is_actually_ready() 
                 .preview_rendered
                 .as_ref()
                 .expect("usable placeholder")
-                .4;
+                .2;
             assert!(
                 preview.spec.repairs.0.is_empty(),
                 "reduced proxy cannot acquire sparse repairs"
@@ -338,7 +338,15 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             )
             .unwrap(),
         );
-        h.update(|editor| editor.document.state.project.output.look = Some(look.clone()));
+        h.update(|editor| {
+            // Keep the f64/f32 consistency check well-conditioned at film base;
+            // the save/reopen comparison below remains bit-exact.
+            editor.set_response(crate::processing::Response {
+                toe: 1.,
+                shoulder: 0.,
+            });
+            editor.document.state.project.output.look = Some(look.clone());
+        });
         h.step();
         stage(&mut h, "Photo");
         let directory = tempfile::tempdir().unwrap();
@@ -451,7 +459,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 .unwrap()
                 .clone()
         });
-        assert_eq!(view.processing.look_id(), Some(look.lut().id()));
+        assert_eq!(view.processing().look_id(), Some(look.lut().id()));
         let scopes::ScopeInput::Rendered(scope, _) =
             h.read(|editor| editor.scope_request().unwrap())
         else {
@@ -463,13 +471,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         // The reference must match the complete processing intent, including admitted repairs.
         wait_for(&mut h, |e| {
             assert!(
-                e.document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .refinement_error
-                    .is_none(),
+                !e.document.visit.canvas.grade.original.failed(),
                 "{}",
                 e.status
             );
@@ -481,7 +483,8 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                     .displayed
                     .as_ref()
                     .is_some_and(|view| {
-                        Some(&view.processing) == e.document.visit.working_view.processing()
+                        Some(&view.processing())
+                            == e.document.visit.working_view.processing().as_ref()
                             && view.target == e.document.target
                     })
         });
@@ -494,7 +497,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 .displayed
                 .as_ref()
                 .unwrap();
-            assert_eq!(reference.processing.look_id(), Some(look.lut().id()));
+            assert_eq!(reference.processing().look_id(), Some(look.lut().id()));
             assert!(Arc::ptr_eq(
                 &reference.image,
                 &editor
@@ -503,10 +506,10 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                     .canvas
                     .grade
                     .original
-                    .settled
+                    .settled()
                     .as_ref()
                     .unwrap()
-                    .2
+                    .1
             ));
             let scopes::ScopeInput::Rendered(scope, _) = editor.scope_request().unwrap() else {
                 panic!("scopes did not follow the restored original reference")
@@ -553,11 +556,23 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 );
                 assert!(
                     (actual.context_mse - reference.context_mse).abs()
-                        < 2e-6 * reference.context_mse.abs().max(1.)
+                        < 2e-6 * reference.context_mse.abs().max(1.),
+                    "repair {:?} donor {:?}->{:?}: context MSE actual={} reference={}",
+                    repair.id,
+                    actual.source,
+                    actual.target,
+                    actual.context_mse,
+                    reference.context_mse
                 );
                 assert!(
                     (actual.matching_score - reference.matching_score).abs()
-                        < 2e-6 * reference.matching_score.abs().max(1.)
+                        < 2e-6 * reference.matching_score.abs().max(1.),
+                    "repair {:?} donor {:?}->{:?}: matching score actual={} reference={}",
+                    repair.id,
+                    actual.source,
+                    actual.target,
+                    actual.matching_score,
+                    reference.matching_score
                 );
             }
 

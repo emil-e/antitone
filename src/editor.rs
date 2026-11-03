@@ -9,7 +9,7 @@ use crate::{
     export::ExrPrecision,
     film_emulation::{FilmEmulationSettings, FilmPreset},
     geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu::{ProcessingInput, ProcessingParameters, ProcessingSignature},
+    gpu::{ProcessingInput, ProcessingParameters},
     platform::host,
     processing::{Calibration, InputSettings, RollSettings},
     raw::Rect,
@@ -54,10 +54,9 @@ mod fullscreen;
 use fullscreen::FullscreenView;
 mod thumbnails;
 use thumbnails::Thumbnails;
+mod adjustment_layers;
 mod look;
 mod processing;
-use processing::Grades;
-mod adjustment_layers;
 use adjustment_layers::AdjustmentLayerEditor;
 mod white_balance;
 mod working_view;
@@ -319,7 +318,6 @@ impl Editor {
     }
 
     fn initialize_viewer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.document.grades = Grades::new(device.clone());
         self.document.visit.working_view = WorkingView::new(device.clone(), queue.clone());
         // Preview, thumbnail and viewport rendering share one lazy kernel set; initialising it
         // here avoids a shader-compilation pause when the first provisional view is selected.
@@ -1372,14 +1370,11 @@ impl host::App for Editor {
     }
 
     fn processing_revision(&self) -> Option<(u64, u64)> {
-        Some((
-            self.id,
-            self.document
-                .visit
-                .working_view
-                .revision()
-                .unwrap_or_else(|| self.document.visit.canvas.grade.original.revision()),
-        ))
+        self.document
+            .visit
+            .working_view
+            .revision()
+            .map(|revision| (self.id, revision))
     }
 
     fn on_exit(&mut self) {

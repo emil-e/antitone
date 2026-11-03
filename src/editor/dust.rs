@@ -30,7 +30,7 @@ fn initial_brush_size(active: SourceRegion) -> u32 {
     ((active.width.min(active.height) as f64 * 0.01).round() as u32).clamp(4, 128)
 }
 
-pub(super) type Signature = super::processing::NeutralSourceSignature;
+pub(super) type Signature = crate::gpu::GpuInputProgram;
 
 #[derive(Clone)]
 pub(super) struct Request {
@@ -1387,6 +1387,10 @@ mod tests {
     fn unchanged_failure_is_not_retried_or_allowed_to_block_later_repairs() {
         let mut state = State::default();
         let source = SourceId(1);
+        let signature = |gain| {
+            crate::gpu::GpuInputProgram::new(InputSettings::Digital, glam::DMat3::IDENTITY * gain)
+                .unwrap()
+        };
         let mut committed = RepairSet::default();
         for origin in [[20, 20], [30, 30]] {
             committed
@@ -1404,7 +1408,7 @@ mod tests {
             request: 4,
             loaded: 8,
             source,
-            signature: [3; ProcessingParameters::BYTE_LEN].into(),
+            signature: signature(3.),
             repair: first,
             input: Calibration {
                 dmin: DVec3::splat(0.5),
@@ -1417,24 +1421,14 @@ mod tests {
         let repairs = committed.repairs().to_vec();
         assert_eq!(
             state
-                .next_stale(
-                    source,
-                    8,
-                    [3; ProcessingParameters::BYTE_LEN].into(),
-                    &repairs
-                )
+                .next_stale(source, 8, signature(3.), &repairs)
                 .unwrap()
                 .id,
             RepairId(2)
         );
         assert_eq!(
             state
-                .next_stale(
-                    source,
-                    8,
-                    [4; ProcessingParameters::BYTE_LEN].into(),
-                    &repairs
-                )
+                .next_stale(source, 8, signature(4.), &repairs)
                 .unwrap()
                 .id,
             RepairId(1)

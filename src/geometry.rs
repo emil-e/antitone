@@ -22,6 +22,14 @@ impl SourceRegion {
         Ok(self)
     }
 
+    pub fn right(self) -> u32 {
+        self.x + self.width
+    }
+
+    pub fn bottom(self) -> u32 {
+        self.y + self.height
+    }
+
     /// Constrains an interactive selection to this region, including a one-pixel minimum.
     pub fn clamped_selection(self, start: SourcePoint, end: SourcePoint) -> Self {
         let x = (start.0[0].min(end.0[0]).floor() as u32).clamp(self.x, self.x + self.width - 1);

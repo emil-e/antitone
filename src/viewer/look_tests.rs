@@ -36,7 +36,7 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
             .unwrap(),
         );
         let input = ProcessingInput::new(
-            &device,
+            &device.limits(),
             Calibration {
                 dmin: DVec3::splat(0.7),
                 dmax: DVec3::splat(0.003),

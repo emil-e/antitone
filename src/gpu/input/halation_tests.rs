@@ -1,4 +1,6 @@
 use super::*;
+use crate::{halation::HalationSettings, pixel_pipeline::PixelPipeline};
+
 fn base() -> ProcessingInput {
     ProcessingInput::from(
         ProcessingParameters::interpret(
@@ -9,32 +11,49 @@ fn base() -> ProcessingInput {
         .unwrap(),
     )
 }
+
+fn capture(halo: HalationSettings, frame: [u32; 2]) -> ProcessingInput {
+    base()
+        .with_pixel_pipeline(PixelPipeline::emulation(Default::default(), halo, frame, 0).unwrap())
+}
+
 #[test]
 fn active_halation_invalidates_photographic_content_and_tracks_crop_size() {
-    let clean = base().with_frame_size([6000, 4000]);
-    let halo = clean.clone().with_halation(HalationSettings {
+    let clean = base();
+    let settings = HalationSettings {
         enabled: true,
         ..Default::default()
-    });
-    assert_ne!(clean.signature(), halo.signature());
-    assert!(!clean.signature().same_photographic(&halo.signature()));
-    assert!(!halo.film_emulation().enabled);
+    };
+    let halo = capture(settings, [6000, 4000]);
+    assert_ne!(clean, halo);
+    assert!(!clean.same_photographic(&halo));
+    assert!(
+        halo.pixel_pipeline()
+            .stages
+            .iter()
+            .all(|stage| stage.get::<crate::pixel_pipeline::Grain>().is_none())
+    );
     for changed in [
-        halo.clone().with_frame_size([3000, 2000]),
-        halo.clone().with_halation(HalationSettings {
-            enabled: true,
-            strength: 0.4,
-            ..Default::default()
-        }),
-        halo.clone().with_halation(HalationSettings {
-            enabled: true,
-            size: 0.2,
-            ..Default::default()
-        }),
+        capture(settings, [3000, 2000]),
+        capture(
+            HalationSettings {
+                strength: 0.4,
+                ..settings
+            },
+            [6000, 4000],
+        ),
+        capture(
+            HalationSettings {
+                size: 0.2,
+                ..settings
+            },
+            [6000, 4000],
+        ),
     ] {
-        assert!(!halo.signature().same_photographic(&changed.signature()));
+        assert!(!halo.same_photographic(&changed));
     }
 }
+
 #[test]
 fn disabled_custom_halation_and_zero_strength_do_not_change_content_identity() {
     let clean = base();
@@ -50,23 +69,25 @@ fn disabled_custom_halation_and_zero_strength_do_not_change_content_identity() {
             ..Default::default()
         },
     ] {
-        assert_eq!(
-            clean.signature(),
-            clean
-                .clone()
-                .with_frame_size([3000, 2000])
-                .with_halation(halo)
-                .signature()
-        );
+        assert_eq!(clean, capture(halo, [3000, 2000]));
     }
 }
+
 #[test]
 fn source_inspection_never_adopts_halation() {
     let source = ProcessingInput::from(ProcessingParameters::source());
-    let candidate = source.clone().with_halation(HalationSettings {
-        enabled: true,
-        ..Default::default()
-    });
-    assert_eq!(source.signature(), candidate.signature());
-    assert!(!candidate.halation().enabled);
+    let pipeline = PixelPipeline::emulation(
+        Default::default(),
+        HalationSettings {
+            enabled: true,
+            ..Default::default()
+        },
+        [3000, 2000],
+        0,
+    )
+    .unwrap();
+    assert!(!pipeline.is_empty(), "the attempted effect must be active");
+    let candidate = source.clone().with_pixel_pipeline(pipeline);
+    assert_eq!(source, candidate);
+    assert!(candidate.pixel_pipeline().is_empty());
 }

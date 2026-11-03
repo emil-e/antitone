@@ -451,18 +451,35 @@ impl Editor {
             .and_then(|edit| edit.preview.as_ref())
     }
 
+    pub(super) fn view_recipe(
+        &self,
+        input: impl Into<InputSettings>,
+        roll: RollSettings,
+        photo: AdjustmentLayerSettings,
+    ) -> Result<crate::image_recipe::ImageRecipe, Error> {
+        let input = input.into();
+        if let Some(source) = self.mask_preview_source() {
+            self.positive_recipe_for_source(input, roll, source, photo)
+        } else {
+            self.positive_recipe(input, roll, photo)
+        }
+    }
+
     pub(super) fn view_processing(
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: AdjustmentLayerSettings,
     ) -> Result<ProcessingInput, Error> {
-        let input = input.into();
-        if let Some(source) = self.mask_preview_source() {
-            self.positive_processing_for_source(input, roll, source, photo)
-        } else {
-            self.positive_processing(input, roll, photo)
-        }
+        let recipe = self.view_recipe(input, roll, photo)?;
+        let limits = self
+            .document
+            .visit
+            .working_view
+            .device()
+            .map(|device| device.limits())
+            .unwrap_or_default();
+        ProcessingInput::from_recipe(&limits, &recipe)
     }
 
     pub(super) fn mask_interaction(

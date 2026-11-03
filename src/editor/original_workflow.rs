@@ -2,33 +2,11 @@
 mod tests;
 
 use super::{
-    Editor, OriginalPurpose, OutputTarget, ProcessingInput, UiContext,
-    original_view::{Request, Signature},
+    Editor, OriginalPurpose, UiContext,
+    original_view::{Demand, Request},
     source,
 };
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
-
-/// A departed continuation cancels its own revision, never a newer output demand.
-struct Retire {
-    generation: Arc<AtomicU64>,
-    revision: u64,
-    armed: bool,
-}
-impl Drop for Retire {
-    fn drop(&mut self) {
-        if self.armed {
-            let _ = self.generation.compare_exchange(
-                self.revision,
-                self.revision + 1,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            );
-        }
-    }
-}
+use std::sync::Arc;
 
 impl Request {
     pub async fn prepare(
@@ -36,24 +14,25 @@ impl Request {
         services: source::Services,
         submissions: crate::platform::SubmissionGate,
     ) -> Result<Option<Arc<crate::viewer::GpuImage>>, String> {
-        crate::background::run(move |_| {
-            if self.generation.load(Ordering::Relaxed) != self.revision {
+        let demand = self.demand;
+        crate::background::run(move |stop| {
+            if stop.is_cancelled() {
                 return Ok(None);
             }
-            let scan = self.source.scan()?;
+            let source = &demand.source;
+            let scan = source.scan()?;
+            let input = demand
+                .capture
+                .processing(&services.device.limits(), &demand.repairs)?;
             let renderer = services.renderers.get(&services.device, &services.queue)?;
-            crate::refinement::refine(
+            crate::refinement::refine_cancellable(
                 &renderer,
                 &services.device,
                 (&services.queue, &submissions),
-                (
-                    &scan,
-                    self.source.correction.as_ref().map(|c| c.gpu.clone()),
-                ),
-                self.input,
-                self.target,
-                (&self.generation, self.revision),
-                self.view,
+                (&scan, source.correction.as_ref().map(|c| c.gpu.clone())),
+                input,
+                (demand.target, demand.view.expect("requested original view")),
+                || stop.is_cancelled(),
             )
         })
         .await
@@ -64,138 +43,71 @@ impl Request {
 
 impl Editor {
     pub(super) fn invalidate_original(&mut self) {
-        let grade = &mut self.document.visit.canvas.grade;
-        grade.original.invalidate();
-        grade.task = None;
+        self.document.visit.canvas.grade.original.invalidate();
     }
-
     pub(super) fn discard_original(&mut self) {
-        let grade = &mut self.document.visit.canvas.grade;
-        grade.original.discard();
-        grade.task = None;
+        self.document.visit.canvas.grade.original.discard();
     }
-
     pub(super) fn cancel_original_pending(&mut self) {
-        let grade = &mut self.document.visit.canvas.grade;
-        grade.original.cancel_pending();
-        grade.task = None;
+        self.document.visit.canvas.grade.original.cancel_pending();
     }
-
     pub(super) fn leave_original(&mut self) {
-        let grade = &mut self.active_canvas_mut().grade;
-        grade.original.leave();
-        grade.task = None;
+        self.active_canvas_mut().grade.original.leave();
     }
 
     pub(super) fn observe_original(
         &mut self,
         purpose: Option<OriginalPurpose>,
-        signature: Signature,
+        demand: Option<Demand>,
     ) {
-        match purpose {
-            Some(purpose) => self
+        match (purpose, demand) {
+            (Some(purpose), Some(demand)) => self
                 .active_canvas_mut()
                 .grade
                 .original
-                .observe(purpose, signature),
-            None => self.leave_original(),
-        }
-        if self.active_canvas().grade.original.refining.is_none() {
-            self.active_canvas_mut().grade.task = None;
+                .observe(purpose, demand),
+            _ => self.leave_original(),
         }
     }
 
-    pub(super) fn request_original(
-        &mut self,
-        input: &ProcessingInput,
-        target: OutputTarget,
-        context: &egui::Context,
-        source: source::Context,
-        cx: &UiContext<'_, Self>,
-    ) {
-        if let Some(request) = self
-            .active_canvas()
-            .grade
-            .original
-            .request(input, target, source)
-        {
-            let revision = request.revision;
-            let generation = request.generation.clone();
-            self.active_canvas_mut().grade.original.refining = Some((revision, request.view));
+    pub(super) fn request_original(&mut self, context: &egui::Context, cx: &UiContext<'_, Self>) {
+        if let Some(request) = self.active_canvas().grade.original.request() {
+            let Some(completion) = request.begin() else {
+                return;
+            };
             let Some(services) = self.source_services.clone() else {
-                self.original_result(
-                    revision,
-                    Err("Original reconstruction services unavailable".into()),
-                );
+                if let Some(error) =
+                    completion.receive(Err("Original reconstruction services unavailable".into()))
+                {
+                    self.status = error;
+                }
                 return;
             };
             let submissions = self.submissions.clone();
-            let retire = Retire {
-                generation: generation.clone(),
-                revision,
-                armed: true,
-            };
+            let completion_on_shutdown = completion.clone();
             let Some(task) = cx.spawn(move |cx| async move {
-                let mut retire = retire;
                 let result = request.prepare(services, submissions).await;
-                retire.armed = false;
-                cx.update(|editor| editor.receive_original_for(&generation, revision, result));
+                cx.update(|editor| {
+                    let visible = completion.belongs_to(&editor.active_canvas().grade.original);
+                    if let Some(error) = completion.receive(result)
+                        && visible
+                    {
+                        editor.status = error;
+                    }
+                });
             }) else {
-                self.original_result(revision, Err("Application stopped".into()));
+                if let Some(error) =
+                    completion_on_shutdown.receive(Err("Application stopped".into()))
+                {
+                    self.status = error;
+                }
                 return;
             };
-            self.active_canvas_mut().grade.task = Some(task);
+            self.active_canvas_mut().grade.original.task = Some(task);
         }
         let original = &self.active_canvas().grade.original;
-        if original.refining.is_some()
-            || original.settled.is_none() && original.refinement_error != Some(original.revision())
-        {
+        if original.refining() || original.settled().is_none() && !original.failed() {
             context.request_repaint_after(std::time::Duration::from_millis(50));
-        }
-    }
-
-    pub(super) fn original_result(
-        &mut self,
-        revision: u64,
-        result: Result<Option<Arc<crate::viewer::GpuImage>>, String>,
-    ) {
-        let generation = self.active_canvas().grade.original.generation.clone();
-        self.receive_original_for(&generation, revision, result);
-    }
-
-    fn receive_original_for(
-        &mut self,
-        generation: &Arc<AtomicU64>,
-        revision: u64,
-        result: Result<Option<Arc<crate::viewer::GpuImage>>, String>,
-    ) {
-        let visible = Arc::ptr_eq(generation, &self.active_canvas().grade.original.generation);
-        let view = if Arc::ptr_eq(
-            generation,
-            &self.document.visit.canvas.grade.original.generation,
-        ) {
-            Some(&mut self.document.visit.canvas)
-        } else {
-            self.document
-                .flat_edit_mut()
-                .filter(|flat| Arc::ptr_eq(generation, &flat.view.grade.original.generation))
-                .map(|flat| &mut flat.view)
-        };
-        let Some(view) = view else {
-            return;
-        };
-        if view
-            .grade
-            .original
-            .refining
-            .is_some_and(|(running, _)| running == revision)
-        {
-            view.grade.task = None;
-        }
-        if let Some(error) = view.grade.original.receive(revision, result)
-            && visible
-        {
-            self.status = error;
         }
     }
 }

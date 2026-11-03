@@ -5,10 +5,22 @@ use crate::{
 };
 use std::sync::atomic::Ordering;
 
+mod coalescing;
+mod inputs;
+
+fn request_working(
+    e: &mut Editor,
+    spec: SourceRequest,
+    pixels: source::Context,
+    cx: &UiContext<'_, Editor>,
+) {
+    e.request_working(Demand::fixture(spec, pixels), cx);
+}
+
 fn fixture() -> (
     Editor,
     source::Context,
-    ViewSourceSpec,
+    SourceRequest,
     source_loading::SourceLoader,
 ) {
     let mut e = crate::editor::tests::fixture();
@@ -36,7 +48,7 @@ fn fixture() -> (
         [64, 48],
     )
     .unwrap();
-    let spec = ViewSourceSpec::inspection(e.id, frame, scan.camera_to_ap1, None)
+    let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None)
         .unwrap()
         .with_identity(crate::gpu::execution::source::Identity::camera(
             scan.source().identity(),
@@ -54,19 +66,18 @@ fn fixture() -> (
         renderers: Arc::default(),
     });
     e.document.visit.working_view = WorkingView::new(device, queue.clone());
+    e.document
+        .visit
+        .working_view
+        .mailbox
+        .pressure(memory::Pressure::Normal);
     e.source_epoch.store(e.id, Ordering::Relaxed);
     (e, input, spec, scheduler)
 }
 
-fn positive_spec(
-    authority: u64,
-    frame: FrameRaster,
-    input: &source::Context,
-    sigma: f64,
-) -> ViewSourceSpec {
+fn positive_spec(frame: FrameRaster, input: &source::Context, sigma: f64) -> SourceRequest {
     let scan = input.scan().unwrap();
-    ViewSourceSpec::new(
-        authority,
+    SourceRequest::new(
         frame,
         crate::processing::InputSettings::Digital,
         scan.positive_matrix(&crate::processing::InputSettings::Digital)
@@ -90,11 +101,11 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
     let (e, input, inspection, scheduler) = fixture();
     let mut frame = inspection.frame();
     frame.output = std::array::from_fn(|i| (frame.max.0[i] - frame.min.0[i]).ceil() as u32);
-    let small = positive_spec(e.id, frame, &input, 0.25);
-    let queued = positive_spec(e.id, frame, &input, 0.5);
-    let latest = positive_spec(e.id, frame, &input, 0.75);
+    let small = positive_spec(frame, &input, 0.25);
+    let queued = positive_spec(frame, &input, 0.5);
+    let latest = positive_spec(frame, &input, 0.75);
     assert!(
-        !small.compatible_processing(&latest),
+        small.processing_plan(latest.plan.pipeline()).is_err(),
         "fixture must actually increase required raster support"
     );
     assert!(
@@ -102,34 +113,47 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
         "support is not upstream content identity"
     );
     with_application(e, |app| {
-        app.enter(|e, access| e.request_working(small.clone(), input.clone(), access));
+        app.enter(|e, access| request_working(e, small.clone(), input.clone(), access));
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.working_view.support_ready()
         });
-        let old = app.read(|e| {
-            e.document
-                .visit
-                .working_view
-                .source
-                .as_ref()
-                .unwrap()
-                .clone()
-        });
+        let old = app.read(|e| e.document.visit.working_view.source().unwrap().clone());
         let hold = crate::background::testing::pause();
-        app.enter(|e, access| e.request_working(queued.clone(), input.clone(), access));
+        app.enter(|e, access| request_working(e, queued.clone(), input.clone(), access));
         app.pump();
-        app.enter(|e, access| e.request_working(latest.clone(), input.clone(), access));
+        app.enter(|e, access| request_working(e, latest.clone(), input.clone(), access));
         app.pump();
         app.update(|e| {
             assert!(!e.document.visit.working_view.support_ready());
+            let underlay = e.document.visit.working_view.underlay().unwrap();
             assert!(
-                e.document.visit.working_view.underlay.is_none(),
-                "old underlay lacks the new neighbourhood"
+                !Demand::fixture(latest.clone(), input.clone())
+                    .can_use(underlay)
+                    .unwrap_or(false),
+                "retained old pixels cannot supply the new neighbourhood"
+            );
+            assert!(
+                e.document
+                    .visit
+                    .working_view
+                    .frame
+                    .as_ref()
+                    .unwrap()
+                    .processing(&Default::default())
+                    .unwrap()
+                    == small.processing_fixture(),
+                "fallback presentation retains its own processing, not the newer pipeline"
             );
             assert!(e.document.visit.working.task.is_some());
             e.document.visit.working_view.acquired(Completion {
-                spec: queued.clone(),
-                result: Ok(old.clone()),
+                owner: Arc::downgrade(&e.document.visit.working_view.mailbox),
+                demand: Completion::fixture_demand(&e.document.visit.working_view, queued.clone()),
+                result: Ok(Arc::new(Frame {
+                    source: old.clone(),
+                    underlay: None,
+                    request: Arc::new(Demand::fixture(small.clone(), input.clone())),
+                    processed: Vec::new(),
+                })),
             });
             assert!(
                 e.document.visit.working_view.error.is_none(),
@@ -137,14 +161,20 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
             );
             // Publication must validate actual coverage as well as the completion ticket.
             e.document.visit.working_view.acquired(Completion {
-                spec: latest.clone(),
-                result: Ok(old.clone()),
+                owner: Arc::downgrade(&e.document.visit.working_view.mailbox),
+                demand: Completion::fixture_demand(&e.document.visit.working_view, latest.clone()),
+                result: Ok(Arc::new(Frame {
+                    source: old.clone(),
+                    underlay: None,
+                    request: Arc::new(Demand::fixture(small.clone(), input.clone())),
+                    processed: Vec::new(),
+                })),
             });
             assert!(!e.document.visit.working_view.support_ready());
             assert!(e.document.visit.working_view.error.is_some());
             assert!(Arc::ptr_eq(
                 &old,
-                e.document.visit.working_view.source.as_ref().unwrap()
+                e.document.visit.working_view.source().unwrap()
             ));
         });
         drop(hold);
@@ -157,53 +187,39 @@ fn parked_support_growth_rejects_stale_layouts_and_smaller_demand_reuses_acquire
                 e.document
                     .visit
                     .working_view
-                    .source
+                    .frame
                     .as_ref()
                     .unwrap()
-                    .spec
-                    .satisfies(&latest)
+                    .satisfies(&Demand::fixture(latest.clone(), input.clone()))
             );
             assert!(
                 e.document
                     .visit
                     .working_view
-                    .underlay
-                    .as_ref()
-                    .unwrap()
-                    .spec
-                    .compatible_processing(&latest)
+                    .underlay()
+                    .is_some_and(|underlay| Demand::fixture(latest.clone(), input.clone())
+                        .can_use(underlay)
+                        .unwrap())
             );
-            e.document
-                .visit
-                .working_view
-                .source
-                .as_ref()
-                .unwrap()
-                .clone()
+            e.document.visit.working_view.source().unwrap().clone()
         });
-        app.enter(|e, access| e.request_working(small.clone(), input, access));
-        app.pump();
+        app.enter(|e, access| request_working(e, small.clone(), input, access));
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working.task.is_none()
+        });
         app.read(|e| {
             assert!(e.document.visit.working_view.support_ready());
             assert!(
-                e.document.visit.working.task.is_none(),
-                "smaller support does not reacquire an already sufficient input"
+                acquired.same_pixels_as(e.document.visit.working_view.source().unwrap()),
+                "the new downstream calculation must reuse the sufficient native value"
             );
-            assert!(Arc::ptr_eq(
-                &acquired,
-                e.document.visit.working_view.source.as_ref().unwrap()
-            ));
         });
     });
     scheduler.close_and_wait().unwrap();
 }
 
 #[test]
-fn support_growth_during_submission_cancels_obsolete_units_before_publishing_latest_support() {
-    use crate::{
-        acquisition::{FootprintBatch, Plan, Request, Sampling},
-        pixel_pipeline::{PixelPipeline, PixelStage},
-    };
+fn support_growth_during_input_submission_reuses_source_and_publishes_only_latest_support() {
     let (e, _, _, scheduler) = fixture();
     let fixture = crate::dng_fixture::Fixture {
         side: 768,
@@ -225,38 +241,79 @@ fn support_growth_during_submission_cancels_obsolete_units_before_publishing_lat
         source: scan.source().clone(),
         correction: None,
     };
-    let small = positive_spec(e.id, frame, &input, 0.25);
-    let latest = positive_spec(e.id, frame, &input, 0.75);
-    let count_work = |spec: &ViewSourceSpec, sigma| {
-        let stages = PixelPipeline {
-            stages: vec![PixelStage::new(crate::image_mtf::ImageMtfParameters {
-                sigma,
-            })],
-        };
-        let plans = [spec.frame(), spec.underlay().unwrap().frame()]
-            .into_iter()
-            .map(|output| {
-                Arc::new(
-                    Plan::new(Request {
-                        output,
-                        stages: &stages,
-                        sampling: Sampling::NeutralFootprints,
-                    })
-                    .unwrap(),
+    let small = positive_spec(frame, &input, 0.25);
+    let latest = positive_spec(frame, &input, 0.75);
+    let services = e.source_services.as_ref().unwrap();
+    let renderer = services
+        .renderers
+        .get(&services.device, &services.queue)
+        .unwrap();
+    let kernels = pollster::block_on(ViewKernels::new(&services.device)).unwrap();
+    let count_work = |spec: &SourceRequest| {
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = count.clone();
+        let gate = crate::gpu::SubmissionGate::default();
+        gate.observe_submissions(Arc::new(move || {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }));
+        let scope = renderer.evaluation().test_materializations(false);
+        let active = pollster::block_on(renderer.evaluation().prepare_input(
+            &services.queue,
+            &gate,
+            &scope,
+            crate::gpu::evaluation::camera_source(&scan).unwrap(),
+            || false,
+        ))
+        .unwrap()
+        .unwrap();
+        let input_submissions = count.load(Ordering::Relaxed);
+        let images = pollster::block_on(ViewSource::acquire_originals_fixture(
+            &services.device,
+            &services.queue,
+            &gate,
+            renderer.clone(),
+            kernels.clone(),
+            &scan,
+            None,
+            vec![spec.clone(), spec.underlay().unwrap()],
+            &scope,
+            || false,
+        ))
+        .unwrap()
+        .unwrap();
+        let processing = spec.processing_fixture();
+        let requests = images
+            .iter()
+            .map(|image| {
+                let (root, _) = crate::gpu::execution::footprints::Processed::definition(
+                    &services.device.limits(),
+                    &image.spec,
+                    image.definition.clone(),
+                    &processing,
                 )
+                .unwrap();
+                crate::gpu::execution::footprints::Processed::request(renderer.evaluation(), root)
+                    .unwrap()
             })
             .collect();
-        FootprintBatch::new(plans, Default::default())
-            .unwrap()
-            .units()
-            .map(|unit| unit.unwrap().submissions.len())
-            .sum::<usize>()
+        let processed = pollster::block_on(futures_util::future::try_join_all(
+            renderer
+                .evaluation()
+                .materialize_many(&services.queue, &gate, &scope, requests)
+                .unwrap(),
+        ))
+        .unwrap();
+        let total = count.load(Ordering::Relaxed);
+        drop((processed, images, active));
+        scope.clear();
+        (input_submissions, total - input_submissions)
     };
     assert!(
-        count_work(&small, 0.25) > 1,
-        "fixture must leave obsolete work after the parked submission"
+        count_work(&small).1 > 0,
+        "control: neutral production must follow input preparation"
     );
-    let expected = 1 + count_work(&latest, 0.75);
+    let (input_work, latest_work) = count_work(&latest);
+    let expected = input_work + latest_work;
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     let resume = Mutex::new(resume);
@@ -273,17 +330,27 @@ fn support_growth_during_submission_cancels_obsolete_units_before_publishing_lat
         }
     }));
     with_application(e, |app| {
-        app.enter(|e, access| e.request_working(small.clone(), input.clone(), access));
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(10)).unwrap();
-        app.enter(|e, access| e.request_working(latest.clone(), input, access));
+        app.enter(|e, access| request_working(e, small.clone(), input.clone(), access));
+        // Submission observers do not wake the application executor; advance its preparation awaits.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            app.pump();
+            match starts.recv_timeout(Duration::from_millis(1)) {
+                Ok(()) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => assert!(
+                    std::time::Instant::now() < deadline,
+                    "submission did not start"
+                ),
+                Err(error) => panic!("submission observer disconnected: {error}"),
+            }
+        }
+        app.enter(|e, access| request_working(e, latest.clone(), input.clone(), access));
         app.pump();
         app.read(|e| {
             assert!(!e.document.visit.working_view.support_ready());
             let state = e.document.visit.working_view.mailbox.0.lock().unwrap();
             assert!(
-                state.neutral.as_ref().is_none_or(|cache| cache.is_empty())
-                    && state.underlay.is_none(),
+                state.completed.is_none() && e.document.visit.working_view.source().is_none(),
                 "partially acquired buffers must remain private"
             );
             assert!(
@@ -300,74 +367,96 @@ fn support_growth_during_submission_cancels_obsolete_units_before_publishing_lat
                 e.document
                     .visit
                     .working_view
-                    .source
+                    .frame
                     .as_ref()
                     .unwrap()
-                    .spec
-                    .satisfies(&latest)
+                    .satisfies(&Demand::fixture(latest.clone(), input.clone()))
             );
             assert!(
                 e.document
                     .visit
                     .working_view
-                    .underlay
-                    .as_ref()
-                    .unwrap()
-                    .spec
-                    .compatible_processing(&latest)
+                    .underlay()
+                    .is_some_and(|underlay| Demand::fixture(latest.clone(), input.clone())
+                        .can_use(underlay)
+                        .unwrap())
             );
             assert!(e.document.visit.working.task.is_none());
         });
     });
-    // The planner's geometry is protected by independent coverage oracles; this separately
-    // checks that execution follows its declared work without completing superseded units.
+    // Input preparation remains useful across layout changes. The obsolete calculation
+    // must not run; compare with measured input plus complete latest work, not fixed tiling.
     assert_eq!(count.load(Ordering::Relaxed), expected);
     scheduler.close_and_wait().unwrap();
 }
 
 #[test]
-fn current_ticket_reuses_captured_support_and_rejects_the_previous_ticket_completion() {
+fn departed_working_owner_cannot_publish_equal_captured_pixels_or_fail_a_revisit() {
     let (e, input, spec, scheduler) = fixture();
     with_application(e, |app| {
-        app.enter(|e, cx| e.request_working(spec.clone(), input.clone(), cx));
+        app.enter(|e, cx| request_working(e, spec.clone(), input.clone(), cx));
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.working_view.support_ready()
         });
-        let mut current = spec.clone();
-        current.authority += 1;
+        let (departed, frame) = app.read(|e| {
+            (
+                Arc::downgrade(&e.document.visit.working_view.mailbox),
+                e.document
+                    .visit
+                    .working_view
+                    .frame
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
+            )
+        });
         app.update(|e| {
+            e.replace_photo_scope(e.id);
             e.document
                 .visit
                 .working_view
-                .request(current.clone(), input);
-            assert!(e.document.visit.working_view.support_ready());
-            assert!(
-                e.document
-                    .visit
-                    .working_view
-                    .acquisition(current.authority)
-                    .is_none(),
-                "new rights do not reacquire equal content"
-            );
-            assert_eq!(
-                e.document
-                    .visit
-                    .working_view
-                    .source
-                    .as_ref()
-                    .unwrap()
-                    .spec
-                    .authority,
-                current.authority
-            );
+                .request(Demand::fixture(spec.clone(), input.clone()));
+            assert!(!e.document.visit.working_view.support_ready());
             e.document.visit.working_view.acquired(Completion {
-                spec,
-                result: Err("departed owner".into()),
+                owner: departed.clone(),
+                demand: Completion::fixture_demand(&e.document.visit.working_view, spec.clone()),
+                result: Ok(frame.clone()),
             });
             assert!(
-                e.document.visit.working_view.error.is_none(),
-                "equal content cannot restore a departed continuation's rights"
+                e.document.visit.working_view.source().is_none(),
+                "even a complete matching calculation must arrive through its live owner"
             );
+            e.document.visit.working_view.acquired(Completion {
+                owner: departed.clone(),
+                demand: Completion::fixture_demand(&e.document.visit.working_view, spec.clone()),
+                result: Err("departed failure".into()),
+            });
+            assert!(e.document.visit.working_view.error.is_none());
+        });
+        app.enter(|e, cx| e.acquire_working(cx));
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
+        app.update(|e| {
+            let accepted = e
+                .document
+                .visit
+                .working_view
+                .frame
+                .as_ref()
+                .unwrap()
+                .clone();
+            assert!(accepted.source.spec == frame.source.spec);
+            e.document.visit.working_view.acquired(Completion {
+                owner: departed,
+                demand: Completion::fixture_demand(&e.document.visit.working_view, spec),
+                result: Err("late departed failure".into()),
+            });
+            assert!(e.document.visit.working_view.error.is_none());
+            assert!(Arc::ptr_eq(
+                e.document.visit.working_view.frame.as_ref().unwrap(),
+                &accepted
+            ));
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -378,14 +467,14 @@ fn physical_support_completes_without_backend_or_another_paint() {
     let (e, input, spec, scheduler) = fixture();
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.request_working(spec.clone(), input, access);
+            request_working(e, spec.clone(), input, access);
         });
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.working_view.support_ready()
         });
         app.read(|e| {
-            assert!(e.document.visit.working_view.source.as_ref().unwrap().spec == spec);
-            assert!(e.document.visit.working_view.underlay.is_some());
+            assert!(e.document.visit.working_view.source().unwrap().spec == spec);
+            assert!(e.document.visit.working_view.underlay().is_some());
             assert!(e.document.visit.working.task.is_none());
             assert!(
                 e.document.visit.working_view.displayed.is_none(),
@@ -397,7 +486,283 @@ fn physical_support_completes_without_backend_or_another_paint() {
 }
 
 #[test]
-fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_output_changes() {
+fn recipe_request_produces_complete_graph_values_and_presents_them_without_recompiling_the_photograph()
+ {
+    let mut e = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    e.set_dmin(Some(DVec3::splat(0.8)));
+    e.set_dmax(Some(DVec3::splat(0.2)));
+    e.document.roll.exposure = 1.;
+    let recipe = Arc::new(
+        e.view_recipe(
+            e.input(),
+            e.document.roll,
+            e.document.visit.adjustment_layer_settings,
+        )
+        .unwrap(),
+    );
+    let pixels = e.source_context().unwrap();
+    let device = e.document.visit.working_view.device().unwrap().clone();
+    let input = ProcessingInput::from_recipe(&device.limits(), &recipe).unwrap();
+    let mut frame = FrameRaster::full(recipe.composition).unwrap();
+    frame.output = [32, 24];
+    let spec = SourceRequest::for_processing(frame, &input).unwrap();
+    let demand = Demand {
+        spec,
+        pixels,
+        capture: Capture::Photograph(recipe.clone()),
+    };
+    with_application(e, |app| {
+        app.enter(|e, cx| e.request_working(demand, cx));
+        app.update(|e| e.document.roll.exposure = 2.);
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
+        app.update(|e| {
+            let working = &mut e.document.visit.working_view;
+            let ready = working.frame.as_ref().unwrap().clone();
+            let Capture::Photograph(captured) = &ready.request.capture else {
+                panic!("recipe capture was replaced");
+            };
+            assert!(Arc::ptr_eq(captured, &recipe));
+            assert_eq!(ready.processed.len(), 2);
+            let mut different = (*recipe).clone();
+            different.roll.exposure = 2.;
+            let changed = ProcessingInput::from_recipe(&device.limits(), &different).unwrap();
+            for value in &ready.processed {
+                assert!(matches!(
+                    value.pixels,
+                    crate::gpu::evaluation::BufferImage::Produced(_)
+                ));
+                assert!(
+                    value.stages.is_none(),
+                    "publication owns a completed value, not unsubmitted grading work"
+                );
+                assert!(value.matches(&device.limits(), &input));
+                assert!(
+                    !value.matches(&device.limits(), &changed),
+                    "the requested snapshot must not read subsequent document edits"
+                );
+            }
+            working
+                .render(&input, OutputTarget::Srgb, &egui::Context::default())
+                .unwrap();
+            assert!(
+                working
+                    .rendered
+                    .as_ref()
+                    .unwrap()
+                    .uses_processed(&ready.processed[0])
+            );
+            assert!(
+                working
+                    .underlay_rendered
+                    .as_ref()
+                    .unwrap()
+                    .uses_processed(&ready.processed[1])
+            );
+        });
+        let (mut wanted, context) = app.read(|e| {
+            let ready = e.document.visit.working_view.frame.as_ref().unwrap();
+            (
+                (*ready.request).clone(),
+                ready.source.renderer.evaluation.clone(),
+            )
+        });
+        let scope = context.materializations();
+        scope.set_retention_enabled(false);
+        let mut edited = (*recipe).clone();
+        edited.roll.exposure = 2.;
+        wanted.capture = Capture::Photograph(Arc::new(edited));
+        let input = wanted.processing(&device.limits()).unwrap();
+        app.enter(|e, cx| e.request_working(wanted, cx));
+        let definition = app.read(|e| {
+            let working = &e.document.visit.working_view;
+            assert!(working.support_ready());
+            let value = &working.frame.as_ref().unwrap().processed[0];
+            assert!(
+                value.stages.is_some(),
+                "control: the resident edit must create recorded work"
+            );
+            assert!(matches!(
+                value.pixels,
+                crate::gpu::evaluation::BufferImage::Produced(_)
+            ));
+            value.definition.clone()
+        });
+        assert!(
+            scope
+                .find_ready::<crate::gpu::evaluation::ImageLayout>(
+                    definition.identity().unwrap(),
+                    |_| true
+                )
+                .is_none()
+        );
+        app.update(|e| {
+            e.document
+                .visit
+                .working_view
+                .render(&input, OutputTarget::Srgb, &egui::Context::default())
+                .unwrap()
+        });
+        let (rendered, queue, submissions) = app.read(|e| {
+            (
+                e.document.visit.working_view.rendered.clone().unwrap(),
+                e.source_services.as_ref().unwrap().queue.clone(),
+                e.submissions.clone(),
+            )
+        });
+        rendered.ensure_submitted(&device, &queue, &submissions, &egui::Context::default());
+        drop(rendered);
+        let layout = definition.domain();
+        let evaluation = context
+            .request(
+                definition.clone(),
+                crate::gpu::evaluation::Region {
+                    bounds: layout.finite().unwrap(),
+                    grid: layout.grid,
+                },
+                crate::gpu::evaluation::Budget {
+                    tile: [32, 24],
+                    scratch_bytes: 1 << 20,
+                },
+            )
+            .unwrap();
+        let held = pollster::block_on(
+            context
+                .materialize(
+                    &queue,
+                    &submissions,
+                    &scope,
+                    evaluation.clone(),
+                    crate::gpu::evaluation::ImageFormat::Rgba32Float,
+                    crate::gpu::evaluation::ImageBacking::Buffer,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(held.identity, *definition.identity().unwrap());
+        app.update(|e| e.document.visit.working_view.clear());
+        assert!(
+            scope
+                .find_ready::<crate::gpu::evaluation::ImageLayout>(
+                    definition.identity().unwrap(),
+                    |_| true
+                )
+                .is_some(),
+            "a separate generic consumer survives view departure"
+        );
+        let mut pixels = Vec::new();
+        let stats = context
+            .read(
+                &queue,
+                &submissions,
+                &evaluation,
+                || false,
+                |_, values| {
+                    pixels.extend_from_slice(values);
+                    Ok(())
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(stats.source_cells, 0);
+        assert_eq!(pixels.len(), 32 * 24);
+        assert!(
+            pixels
+                .iter()
+                .any(|pixel| pixel[..3].iter().any(|value| *value > 0.))
+        );
+        assert_eq!(context.retained_bytes(), 0);
+    });
+}
+
+#[test]
+fn resolved_repair_arguments_require_new_values_even_when_the_recipe_is_unchanged() {
+    let mut e = crate::editor::tests::authored_fixture(&["patches.dng"]);
+    e.set_dmin(Some(DVec3::splat(0.8)));
+    e.set_dmax(Some(DVec3::splat(0.2)));
+    let id = e.document.visit.current_source.unwrap();
+    e.document
+        .state
+        .project
+        .source_mut(id)
+        .unwrap()
+        .repairs
+        .insert(
+            crate::dust_repair::SupportMask::new([90, 30], [2, 2], vec![true; 4]).unwrap(),
+            crate::dust_repair::RepairOrigin::Manual,
+            [-40, 0],
+        )
+        .unwrap();
+    let recipe = Arc::new(
+        e.view_recipe(
+            e.input(),
+            e.document.roll,
+            e.document.visit.adjustment_layer_settings,
+        )
+        .unwrap(),
+    );
+    assert_eq!(recipe.repairs().len(), 1);
+    let pixels = e.source_context().unwrap();
+    let scan = pixels.scan().unwrap();
+    let source =
+        crate::scan::ImageSource::new(&scan, recipe.neutral.processing_input().unwrap()).unwrap();
+    let evaluated =
+        Arc::new(crate::repair_source::evaluate(&source, &recipe.repairs()[0]).unwrap());
+    let device = e.document.visit.working_view.device().unwrap();
+    let resolved = crate::gpu::repairs::Snapshot(vec![
+        crate::gpu::repairs::Patch::new(device, evaluated).unwrap(),
+    ]);
+    let processing = ProcessingInput::from_recipe(&device.limits(), &recipe).unwrap();
+    let mut frame = FrameRaster::full(recipe.composition).unwrap();
+    frame.output = [32, 24];
+    let initial = Demand {
+        spec: SourceRequest::for_processing(frame, &processing).unwrap(),
+        pixels,
+        capture: Capture::Photograph(recipe),
+    };
+    assert!(initial.spec.repairs.0.is_empty());
+    with_application(e, |app| {
+        app.enter(|e, cx| e.request_working(initial, cx));
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
+        let old = app.read(|e| {
+            e.document
+                .visit
+                .working_view
+                .frame
+                .as_ref()
+                .unwrap()
+                .clone()
+        });
+        let mut hydrated = (*old.request).clone();
+        hydrated.spec = hydrated.spec.with_repairs(resolved.clone());
+        assert!(old.request.capture == hydrated.capture);
+        assert!(!old.satisfies(&hydrated));
+        assert!(
+            !old.supports(&hydrated),
+            "matching intent cannot substitute missing resolved arguments"
+        );
+        app.enter(|e, cx| e.request_working(hydrated.clone(), cx));
+        app.read(|e| assert!(!e.document.visit.working_view.support_ready()));
+        app.run_until(Duration::from_secs(15), |e| {
+            e.document.visit.working_view.support_ready()
+        });
+        app.read(|e| {
+            let ready = e.document.visit.working_view.frame.as_ref().unwrap();
+            assert!(ready.request.same_calculation(&hydrated));
+            for source in std::iter::once(&ready.source).chain(ready.underlay.as_ref()) {
+                let calculation = hydrated.calculation(source).unwrap();
+                assert!(source.definition.same_definition(&calculation.native));
+                assert!(!source.definition.same_definition(&source.basis));
+            }
+        });
+    });
+}
+
+#[test]
+fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_changes() {
     let (e, input, mut spec, scheduler) = fixture();
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
@@ -407,7 +772,7 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
             moved_frame.max.0[0] += 1.;
             spec = spec.with_frame(moved_frame).unwrap();
             app.enter(|e, access| {
-                e.request_working(spec.clone(), input.clone(), access);
+                request_working(e, spec.clone(), input.clone(), access);
             });
             app.pump();
             app.read(|e| {
@@ -419,28 +784,69 @@ fn queued_navigation_uses_latest_demand_and_reuses_neutral_support_after_grade_o
         app.run_until(Duration::from_secs(15), |e| {
             e.document.visit.working_view.support_ready()
         });
-        let neutral = app.read(|e| {
-            assert!(e.document.visit.working_view.source.as_ref().unwrap().spec == spec);
-            e.document.visit.working_view.neutral_source().unwrap()
+        let (neutral, before) = app.read(|e| {
+            assert!(e.document.visit.working_view.source().unwrap().spec == spec);
+            (
+                e.document.visit.working_view.neutral_source().unwrap(),
+                e.document
+                    .visit
+                    .working_view
+                    .frame
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
+            )
         });
+        let processing = ProcessingInput::from(
+            crate::gpu::ProcessingParameters::source_inspection(1.2).unwrap(),
+        );
+        let edited = Demand {
+            spec: spec.clone(),
+            pixels: input,
+            capture: Capture::Primitive(processing.clone()),
+        };
+        assert!(
+            before.request.capture != edited.capture,
+            "this phase must submit genuinely changed processing"
+        );
         app.enter(|e, access| {
             e.document.target = OutputTarget::Srgb;
-            e.source_exposure = 1.2;
-            let processing =
-                ProcessingInput::from(ProcessingParameters::source_inspection(1.2).unwrap());
-            e.observe_grade(&processing);
-            e.request_working(spec.clone(), input, access);
+            e.request_working(edited.clone(), access);
         });
         app.pump();
-        app.read(|e| {
+        let ui = egui::Context::default();
+        let (rendered, device, queue, gate) = app.update(|e| {
             assert!(
                 e.document.visit.working.task.is_none(),
                 "output-only demand must not reacquire originals"
             );
-            assert!(
-                neutral.same_pixels_as(&e.document.visit.working_view.neutral_source().unwrap())
+            let services = e.source_services.as_ref().unwrap();
+            let (device, queue, gate) = (
+                services.device.clone(),
+                services.queue.clone(),
+                e.submissions.clone(),
             );
+            let target = e.document.target;
+            let working = &mut e.document.visit.working_view;
+            assert!(neutral.same_pixels_as(&working.neutral_source().unwrap()));
+            let frame = working.frame.as_ref().unwrap();
+            assert!(frame.request.same_calculation(&edited));
+            assert_eq!(before.processed.len(), frame.processed.len());
+            for (old, new) in before.processed.iter().zip(&frame.processed) {
+                assert!(
+                    !old.definition.same_definition(&new.definition),
+                    "both native consumers must apply the changed output calculation"
+                );
+            }
+            working.render(&processing, target, &ui).unwrap();
+            let rendered = working.present(spec.frame(), None).unwrap().unwrap();
+            assert!(rendered.processing() == processing);
+            assert_eq!(rendered.target, OutputTarget::Srgb);
+            (rendered, device, queue, gate)
         });
+        rendered.ensure_submitted(&device, &queue, &gate, &ui);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        assert!(!rendered.in_flight());
     });
     scheduler.close_and_wait().unwrap();
 }
@@ -476,24 +882,34 @@ fn retiring_running_support_keeps_its_native_lease_through_submission() {
     }));
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.request_working(spec.clone(), input, access);
+            request_working(e, spec.clone(), input, access);
         });
-        app.pump();
-        starts.recv_timeout(Duration::from_secs(10)).unwrap();
+        // Submission observers do not wake the application executor; advance its preparation awaits.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            app.pump();
+            match starts.recv_timeout(Duration::from_millis(1)) {
+                Ok(()) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => assert!(
+                    std::time::Instant::now() < deadline,
+                    "submission did not start"
+                ),
+                Err(error) => panic!("submission observer disconnected: {error}"),
+            }
+        }
         let mut moved_frame = spec.frame();
         moved_frame.min.0[0] += 1.;
         moved_frame.max.0[0] += 1.;
         spec = spec.with_frame(moved_frame).unwrap();
         app.enter(|e, access| {
             e.replace_photo_scope(8);
-            e.request_working(spec.clone(), next, access);
+            request_working(e, spec.clone(), next, access);
         });
         app.pump();
         assert!(source.upgrade().is_some());
-        assert_eq!(
-            count.load(Ordering::Relaxed),
-            1,
-            "a running acquisition keeps its source lease"
+        assert!(
+            count.load(Ordering::Relaxed) > 0,
+            "the source lease must cover submitted work"
         );
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |e| {
@@ -509,7 +925,7 @@ fn retiring_running_support_keeps_its_native_lease_through_submission() {
             std::thread::yield_now();
         }
         app.read(|e| {
-            assert!(e.document.visit.working_view.source.as_ref().unwrap().spec == spec);
+            assert!(e.document.visit.working_view.source().unwrap().spec == spec);
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -522,7 +938,7 @@ fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
     let hold = crate::background::testing::pause();
     with_application(e, |app| {
         app.enter(|e, access| {
-            e.request_working(spec, input, access);
+            request_working(e, spec, input, access);
         });
         app.pump();
         app.update(|e| e.replace_photo_scope(8));
@@ -532,8 +948,8 @@ fn visit_retirement_drops_queued_support_and_cannot_restore_the_old_source() {
         app.pump();
         app.read(|e| {
             assert!(
-                e.document.visit.working_view.source.is_none()
-                    && e.document.visit.working_view.underlay.is_none()
+                e.document.visit.working_view.source().is_none()
+                    && e.document.visit.working_view.underlay().is_none()
             );
             assert!(e.document.visit.working.task.is_none());
         });
@@ -549,7 +965,7 @@ fn save_completion_readmits_existing_working_demand_without_another_paint() {
     with_application(e, |app| {
         app.enter(|e, cx| {
             e.save_project(path.clone(), crate::project::Save::New, None, cx);
-            e.request_working(spec.clone(), input, cx);
+            request_working(e, spec.clone(), input, cx);
             assert!(e.document_pending.is_some());
             assert!(
                 e.document.visit.working.task.is_none(),
@@ -560,7 +976,7 @@ fn save_completion_readmits_existing_working_demand_without_another_paint() {
             e.document_pending.is_none() && e.document.visit.working_view.support_ready()
         });
         app.read(|e| {
-            assert!(e.document.visit.working_view.source.as_ref().unwrap().spec == spec);
+            assert!(e.document.visit.working_view.source().unwrap().spec == spec);
             assert!(e.document.visit.working.task.is_none() && !e.busy);
             assert!(e.failure.is_none(), "{}", e.status);
         });
@@ -582,7 +998,7 @@ fn guarded_save_close_does_not_readmit_waiting_working_demand() {
                 Some(crate::editor::Transition::Close),
                 cx,
             );
-            e.request_working(spec, input, cx);
+            request_working(e, spec, input, cx);
             assert!(e.document.visit.working.task.is_none());
         });
         app.run_until(Duration::from_secs(15), |e| e.allow_close);
@@ -591,7 +1007,7 @@ fn guarded_save_close_does_not_readmit_waiting_working_demand() {
             assert!(e.document_pending.is_none() && !e.busy);
             assert!(e.document.visit.working.task.is_none());
             assert!(
-                e.document.visit.working_view.source.is_none(),
+                e.document.visit.working_view.source().is_none(),
                 "close must not start another acquisition"
             );
         });

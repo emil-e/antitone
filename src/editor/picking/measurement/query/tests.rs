@@ -13,7 +13,8 @@ fn precision_eligibility_keeps_the_strict_floor_boundary_in_the_evaluated_repres
             self.domain
         }
 
-        fn read(&self, region: crate::geometry::SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
+        fn read(&self, region: crate::gpu::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+            let region = region.source()?;
             Ok(vec![
                 [self.value, self.value, self.value, 0.];
                 (region.width * region.height) as usize
@@ -24,8 +25,8 @@ fn precision_eligibility_keeps_the_strict_floor_boundary_in_the_evaluated_repres
     impl evaluation::Operation for Codes {
         fn input(
             &self,
-            _: crate::geometry::SourceRegion,
-        ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
+            _: crate::gpu::evaluation::CellRegion,
+        ) -> Result<Option<crate::gpu::evaluation::CellRegion>, Error> {
             Ok(None)
         }
 
@@ -61,10 +62,10 @@ fn precision_eligibility_keeps_the_strict_floor_boundary_in_the_evaluated_repres
 
     for value in [0.5, 1., 2.] {
         samples.source = evaluation::ImageNode::new(
-            samples.source.domain,
+            samples.source.domain(),
             None,
             Codes {
-                domain: samples.source.domain,
+                domain: samples.source.domain(),
                 value,
             },
         );

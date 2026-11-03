@@ -6,11 +6,11 @@ pub(crate) struct Kernels {
 }
 
 impl Kernels {
-    pub async fn new(device: &wgpu::Device, _resources: &CameraResources) -> Result<Self, Error> {
+    pub async fn new(device: &wgpu::Device) -> Result<Self, Error> {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("repair component fixture"),
-            source: wgpu::ShaderSource::Wgsl(CameraResources::module_shader().into()),
+            source: wgpu::ShaderSource::Wgsl(crate::gpu::photograph::module_shader().into()),
         });
         let pipeline = |entry| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

@@ -23,14 +23,7 @@ impl Editor {
     }
 
     pub(super) fn receive_frame(&mut self) {
-        if self.document.visit.canvas.ready.is_none()
-            || self
-                .document
-                .visit
-                .working_view
-                .authority()
-                .is_some_and(|id| id != self.id)
-        {
+        if self.document.visit.canvas.ready.is_none() {
             self.document.visit.working_view.clear();
         }
         self.stash_review_region();

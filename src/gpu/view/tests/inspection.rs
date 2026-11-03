@@ -40,7 +40,7 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
                 .as_ref()
                 .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
             let spec =
-                ViewSourceSpec::inspection(91, frame(&scan), scan.camera_to_ap1, field.clone())
+                SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, field.clone())
                     .unwrap();
             let source = ViewSource::acquire(
                 &device,
@@ -98,9 +98,8 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
         let context = egui::Context::default();
         let mut scan = scan();
         let frame = frame(&scan);
-        let spec = ViewSourceSpec::inspection(21, frame, scan.camera_to_ap1, None).unwrap();
-        let positive =
-            ViewSourceSpec::new(21, frame, calibration(), scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None).unwrap();
+        let positive = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
         assert!(!spec.same_source(&positive));
         let codes = scan
             .tile_region(scan.area, 0, 0, scan.area.width, scan.area.height)
@@ -129,7 +128,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
             let gpu_field = field
                 .as_ref()
                 .map(|f| Arc::new(GpuFlatField::new(&device, f.clone()).unwrap()));
-            let spec = ViewSourceSpec::inspection(21, frame, scan.camera_to_ap1, field).unwrap();
+            let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, field).unwrap();
             let source = ViewSource::acquire(
                 &device,
                 &queue,
@@ -190,7 +189,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                         "no calibration, inversion, WB, contrast, saturation or layers"
                     );
                     if let Some(old) = &previous
-                        && old.processing == input.signature()
+                        && old.processing() == input.clone()
                         && old.spec == source.spec
                     {
                         assert!(Arc::ptr_eq(
@@ -275,7 +274,8 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
         let gate = SubmissionGate::default();
         let ctx = egui::Context::default();
         let scan = scan();
-        let spec = ViewSourceSpec::inspection(27, frame(&scan), scan.camera_to_ap1, None).unwrap();
+        let spec =
+            SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, None).unwrap();
         let source = ViewSource::acquire(
             &device,
             &queue,
@@ -335,7 +335,7 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
             [full.output[0] / 2, full.output[1]],
         )
         .unwrap();
-        let spec = ViewSourceSpec::inspection(23, regional, scan.camera_to_ap1, None).unwrap();
+        let spec = SourceRequest::inspection_fixture(regional, scan.camera_to_ap1, None).unwrap();
         let mut coarse = spec.underlay().unwrap();
         let resized_frame = FrameRaster {
             output: [31, 23],

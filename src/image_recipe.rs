@@ -107,7 +107,17 @@ impl ImageRecipe {
                 .sum::<usize>()
     }
 
-    pub fn same_neutral_content(&self, other: &Self) -> bool {
+    /// Effective photograph before the creative look and consumer framing.
+    #[cfg(feature = "editor")]
+    pub(crate) fn same_photographic(&self, other: &Self) -> bool {
+        self.roll == other.roll
+            && self.grade == other.grade
+            && self.same_neutral_content(other)
+            && matches!((self.pixel_pipeline(), other.pixel_pipeline()),
+                (Ok(a), Ok(b)) if a == b)
+    }
+
+    fn same_neutral_content(&self, other: &Self) -> bool {
         self.neutral == other.neutral
             && self.repairs.len() == other.repairs.len()
             && self

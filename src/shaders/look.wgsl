@@ -49,6 +49,12 @@ fn main(@builtin(global_invocation_id) invocation: vec3u, @builtin(num_workgroup
         return;
     }
     let pixel = source[i];
+    if pixel.w < 0.0 {
+        atomicOr(&status.flags, u32(-pixel.w));
+        atomicMin(&status.first, i);
+        destination[i] = pixel;
+        return;
+    }
     if p.dimensions.w != 0u && (u32(pixel.a) & 8u) == 0u {
         destination[i] = vec4f(0.);
         return;

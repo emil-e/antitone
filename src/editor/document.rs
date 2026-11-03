@@ -215,10 +215,10 @@ impl Document {
         source: &Source,
         input: crate::processing::InputSettings,
     ) -> Result<glam::DMat3> {
-        crate::scan::positive_matrix(
-            &input,
+        input.positive_matrix(
             glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1),
-            self.reference_exposure(source),
+            self.reference_exposure(source)
+                .map(|reference| reference.ev()),
         )
     }
 

@@ -13,8 +13,8 @@ pub(crate) struct Kernels {
 
 pub(crate) struct Prepared {
     pub raster: Raster,
+    pub definition: Arc<evaluation::ImageNode>,
     execution: Option<evaluation::Recorded>,
-    context: evaluation::Context,
 }
 
 impl Prepared {
@@ -23,13 +23,13 @@ impl Prepared {
         device: &wgpu::Device,
         pipeline: &PixelPipeline,
         raster: Raster,
-        previous: Option<&Self>,
     ) -> Result<Self, Error> {
-        let context = previous.map_or_else(
-            || evaluation::Context::new(device, Default::default()),
-            |p| p.context.clone(),
-        );
-        Self::with_context(device, pipeline, raster, previous, context)
+        Self::with_context(
+            device,
+            pipeline,
+            raster,
+            evaluation::Context::new(device, Default::default()),
+        )
     }
 
     #[cfg(test)]
@@ -37,38 +37,44 @@ impl Prepared {
         device: &wgpu::Device,
         pipeline: &PixelPipeline,
         raster: Raster,
-        previous: Option<&Self>,
         context: evaluation::Context,
     ) -> Result<Self, Error> {
-        if pipeline.is_empty() {
-            return Ok(Self {
-                raster,
-                execution: None,
-                context,
-            });
-        }
         let domain = evaluation::Domain {
-            bounds: [0, 0, raster.size()[0], raster.size()[1]].into(),
+            bounds: Some(crate::gpu::evaluation::CellRegion::new(
+                [0, 0],
+                raster.size(),
+            )),
             grid: evaluation::Grid::from_raster(raster),
             meaning: evaluation::Meaning::Graded,
         };
         let root = pipeline.compose(evaluation::raster_input(domain))?;
-        Self::from_composition(device, raster, root, previous, context)
+        if pipeline.is_empty() {
+            return Ok(Self {
+                raster,
+                definition: root,
+                execution: None,
+            });
+        }
+        Self::from_composition(device, raster, root, context)
     }
 
     pub fn from_composition(
         device: &wgpu::Device,
         raster: Raster,
         root: Arc<evaluation::ImageNode>,
-        previous: Option<&Self>,
         context: evaluation::Context,
     ) -> Result<Self, Error> {
+        let mut raster = raster;
+        raster.dimensions[2] = root.domain().grid.coverage;
         let expected = evaluation::Domain {
-            bounds: [0, 0, raster.size()[0], raster.size()[1]].into(),
+            bounds: Some(crate::gpu::evaluation::CellRegion::new(
+                [0, 0],
+                raster.size(),
+            )),
             grid: evaluation::Grid::from_raster(raster),
-            meaning: root.domain.meaning,
+            meaning: root.domain().meaning,
         };
-        if !root.domain.same_grid(expected) {
+        if root.domain().bounds != expected.bounds || !root.domain().same_grid(expected) {
             return Err(Error::InvalidParameter(
                 "recorded composition differs from raster",
             ));
@@ -77,9 +83,10 @@ impl Prepared {
             device,
             raster,
             root,
-            previous,
+            expected.finite()?,
             context,
             device.limits().max_buffer_size.saturating_mul(4),
+            Vec::new(),
         )
     }
 
@@ -88,33 +95,29 @@ impl Prepared {
         device: &wgpu::Device,
         raster: Raster,
         root: Arc<evaluation::ImageNode>,
-        previous: Option<&Self>,
+        region: evaluation::CellRegion,
         context: evaluation::Context,
         scratch_bytes: u64,
+        supplied: Vec<evaluation::SuppliedImage>,
     ) -> Result<Self, Error> {
         context.require_device(device)?;
-        let output = root.domain;
+        let output = root.domain();
         let evaluation = context.request(
-            root,
+            root.clone(),
             evaluation::Region {
-                bounds: output.bounds,
+                bounds: region,
                 grid: output.grid,
             },
             evaluation::Budget {
-                tile: [output.bounds.width, output.bounds.height],
+                tile: [region.width, region.height],
                 scratch_bytes,
             },
         )?;
-        let resources = previous
-            .filter(|p| Arc::ptr_eq(&p.context.programs, &context.programs))
-            .and_then(|p| p.execution.as_ref())
-            .map(|p| p.resources())
-            .unwrap_or_default();
-        let execution = context.record(evaluation, resources)?;
+        let execution = context.record(evaluation, context.materializations(), supplied)?;
         Ok(Self {
             raster,
+            definition: root,
             execution: Some(execution),
-            context,
         })
     }
 
@@ -134,6 +137,18 @@ impl Prepared {
             .as_ref()
             .ok_or(Error::InvalidParameter("missing recorded composition"))?
             .encode_into(device, encoder, input, destination)
+    }
+
+    pub(crate) fn encode_result(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        destination: &wgpu::Buffer,
+    ) -> Result<(), Error> {
+        self.execution
+            .as_ref()
+            .ok_or(Error::InvalidParameter("missing recorded composition"))?
+            .encode_result(device, encoder, destination)
     }
 
     pub fn submitted(&self) {

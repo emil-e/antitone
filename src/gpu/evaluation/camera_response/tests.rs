@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    geometry::SourceRegion,
-    processing::{Calibration, Inversion, Response},
-};
+use crate::processing::{Calibration, Inversion, Response};
 use glam::DVec3;
 
 struct CameraLight {
@@ -15,8 +12,9 @@ impl Source for CameraLight {
         self.domain
     }
 
-    fn read(&self, region: SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
-        assert_eq!(region, self.domain.bounds);
+    fn read(&self, region: crate::gpu::evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+        let region = region.source()?;
+        assert_eq!(region, self.domain.finite().unwrap().source().unwrap());
 
         Ok(self.pixels.clone())
     }
@@ -28,7 +26,7 @@ fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let gate = crate::gpu::SubmissionGate::default();
     let domain = Domain {
-        bounds: [9, 13, 4, 1].into(),
+        bounds: Some([9, 13, 4, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
         meaning: Meaning::Camera,
     };
@@ -56,7 +54,10 @@ fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
     let readout = CameraReadout::normalized(camera, negative).unwrap();
 
     assert_eq!(readout.image.domain.meaning, Meaning::NativePositive);
-    assert_eq!(readout.image.domain.bounds, domain.bounds);
+    assert_eq!(
+        readout.image.domain.finite().unwrap(),
+        domain.finite().unwrap()
+    );
     assert_eq!(readout.image.domain.grid, domain.grid);
     assert!(
         readout.decode_gain > 1.,
@@ -68,7 +69,7 @@ fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
         .request(
             readout.image,
             Region {
-                bounds: domain.bounds,
+                bounds: domain.finite().unwrap(),
                 grid: domain.grid,
             },
             Budget {
@@ -86,7 +87,7 @@ fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
             &request,
             || false,
             |region, block| {
-                assert_eq!(region, domain.bounds);
+                assert_eq!(region, domain.finite().unwrap());
                 actual.extend_from_slice(block);
 
                 Ok(())

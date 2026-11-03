@@ -20,10 +20,9 @@ impl RenderedView {
             || underlay.composite.is_some()
             || detail.graded.is_none()
             || underlay.graded.is_none()
-            || detail.spec.authority != underlay.spec.authority
             || !detail.spec.same_source(&underlay.spec)
             || frame.composition.area() != detail.spec.area
-            || detail.processing != underlay.processing
+            || detail.capture != underlay.capture
             || detail.target != underlay.target
         {
             return Err(Error::Gpu(
@@ -47,7 +46,7 @@ impl RenderedView {
         if let Some(old) = previous.filter(|p| {
             p.composite.is_some()
                 && p.in_flight()
-                && p.spec.authority == detail.spec.authority
+                && p.spec.identity == detail.spec.identity
                 && p.target == detail.target
         }) {
             return Ok(old.clone());
@@ -102,7 +101,7 @@ impl RenderedView {
         Ok(Arc::new(Self {
             image,
             spec,
-            processing: detail.processing.clone(),
+            capture: detail.capture.clone(),
             target: detail.target,
             graded: None,
             group: None,

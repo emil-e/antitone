@@ -123,7 +123,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     let snapshot = Snapshot::logical(vec![evaluated.clone()]).unwrap();
     let pipeline = Arc::new(
         ProcessingInput::new(
-            &device,
+            &device.limits(),
             settings,
             roll,
             grade.clone(),
@@ -132,16 +132,21 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         )
         .unwrap(),
     );
-    let mut input = ProcessingInput::from(pipeline)
-        .with_frame_size([a.width, a.height])
-        .with_film_seed((1 << 60) + 17)
-        .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
-            enabled: true,
-            size: 0.1,
-            image_sigma: 0.1,
-            amount: 0.12,
-            colour: 0.7,
-        });
+    let mut input = ProcessingInput::from(pipeline).with_pixel_pipeline(
+        crate::pixel_pipeline::PixelPipeline::emulation(
+            crate::film_emulation::FilmEmulationSettings {
+                enabled: true,
+                size: 0.1,
+                image_sigma: 0.1,
+                amount: 0.12,
+                colour: 0.7,
+            },
+            Default::default(),
+            [a.width, a.height],
+            (1 << 60) + 17,
+        )
+        .unwrap(),
+    );
     input.repairs = snapshot;
     let look = Arc::new(
         crate::looks::LookAsset::new(
@@ -168,7 +173,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         .unwrap(),
     );
     input = input.with_look(Some(look.clone()));
-    let stages = input.pixel_pipeline().unwrap();
+    let stages = input.pixel_pipeline();
     let repairs = vec![evaluated];
     let request = || crate::gpu::execution::Request {
         scan: &scan,
@@ -291,13 +296,13 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
     impl Source for Header {
         fn domain(&self) -> Domain {
             Domain {
-                bounds: [0, 0, 11648, 8736].into(),
+                bounds: Some([0, 0, 11648, 8736].into()),
                 grid: Grid::axis_aligned([0.; 2], [1.; 2]),
                 meaning: Meaning::CameraCodes,
             }
         }
 
-        fn read(&self, _: crate::geometry::SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
+        fn read(&self, _: CellRegion) -> Result<Vec<[f32; 4]>, Error> {
             panic!("planning must not read camera data")
         }
     }
@@ -308,10 +313,7 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
     }
 
     impl Operation for Observed {
-        fn input(
-            &self,
-            output: crate::geometry::SourceRegion,
-        ) -> Result<Option<crate::geometry::SourceRegion>, Error> {
+        fn input(&self, output: CellRegion) -> Result<Option<CellRegion>, Error> {
             self.inner.input(output)
         }
 
@@ -338,7 +340,7 @@ fn large_source_jobs_plan_tiles_lazily_without_reading_or_retaining_a_full_image
     );
     let job = Job::new(
         root.clone(),
-        root.domain.bounds,
+        root.domain.finite().unwrap(),
         Budget {
             tile: [512, 128],
             scratch_bytes: 8 << 20,
@@ -376,7 +378,7 @@ fn immutable_programs_are_reused_without_retaining_the_native_source() {
     for exposure in [0., 0.5] {
         let input = ProcessingInput::from(Arc::new(
             ProcessingInput::new(
-                &device,
+                &device.limits(),
                 InputSettings::Digital,
                 RollSettings {
                     exposure,

@@ -51,6 +51,31 @@ impl FrameRaster {
         )
     }
 
+    /// A window on this grid, including processing cells beyond the accepted composition.
+    pub(crate) fn processing_region(
+        self,
+        origin: [f64; 2],
+        output: [u32; 2],
+    ) -> Result<Self, Error> {
+        if output.contains(&0) {
+            return Err(Error::InvalidParameter("invalid frame raster"));
+        }
+        let point = |offset: [f64; 2]| {
+            FramePoint(std::array::from_fn(|i| {
+                self.min.0[i]
+                    + offset[i] * (self.max.0[i] - self.min.0[i]) / f64::from(self.output[i])
+            }))
+        };
+        let raster = Self {
+            composition: self.composition,
+            min: point(origin),
+            max: point(std::array::from_fn(|i| origin[i] + f64::from(output[i]))),
+            output,
+        };
+        raster.processing_bounds()?;
+        Ok(raster)
+    }
+
     pub fn source_point(self, point: [f64; 2]) -> SourcePoint {
         self.composition
             .frame_to_source(FramePoint(std::array::from_fn(|i| {

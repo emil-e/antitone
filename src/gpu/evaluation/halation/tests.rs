@@ -12,13 +12,10 @@ impl Source for Authored {
         self.domain
     }
     fn read(&self, r: Rect) -> Result<Vec<[f32; 4]>, Error> {
-        let a = self.domain.bounds;
+        let a = self.domain.finite().unwrap();
         assert!(a.contains_region(r));
-        Ok((r.y..r.y + r.height)
-            .flat_map(|y| {
-                (r.x..r.x + r.width)
-                    .map(move |x| self.pixels[((y - a.y) * a.width + x - a.x) as usize])
-            })
+        Ok((r.y..r.bottom())
+            .flat_map(|y| (r.x..r.right()).map(move |x| self.pixels[a.index([x, y])]))
             .collect())
     }
 }
@@ -38,7 +35,7 @@ fn fixture(size: [u32; 2], pitch: [f64; 2], coverage: u32, pixels: Vec<[f32; 4]>
     grid.coverage = coverage;
     Authored {
         domain: Domain {
-            bounds: [11, 17, size[0], size[1]].into(),
+            bounds: Some(crate::gpu::evaluation::CellRegion::new([11, 17], size)),
             grid,
             meaning: Meaning::Graded,
         },
@@ -51,7 +48,7 @@ fn render(
     root: Arc<ImageNode>,
     tile: [u32; 2],
 ) -> Vec<[f32; 4]> {
-    let region = root.domain.bounds;
+    let region = root.domain.finite().unwrap();
     let plan = Plan::with_policy(
         root,
         region,
@@ -77,8 +74,7 @@ fn render(
             || false,
             |encoder, image, buffer| {
                 for row in 0..image.region.height {
-                    let dest = ((image.region.y - region.y + row) * region.width + image.region.x
-                        - region.x) as u64;
+                    let dest = region.index([image.region.x, image.region.y + row as i32]) as u64;
                     encoder.copy_buffer_to_buffer(
                         buffer,
                         u64::from(row * image.region.width) * 16,
@@ -126,8 +122,8 @@ fn assert_reference(actual: &[[f32; 4]], data: &Authored, parameters: HalationPa
             .map(|p| p.map(f64::from))
             .collect::<Vec<_>>(),
         [
-            data.domain.bounds.width as usize,
-            data.domain.bounds.height as usize,
+            data.domain.finite().unwrap().width as usize,
+            data.domain.finite().unwrap().height as usize,
         ],
         sigma,
         parameters.strength,
@@ -444,7 +440,7 @@ fn zero_strength_bypasses_and_abandoned_recordings_leave_input_unchanged() {
     .unwrap();
     let plan = Plan::with_policy(
         root,
-        data.domain.bounds,
+        data.domain.finite().unwrap(),
         Budget {
             tile: [19, 17],
             scratch_bytes: 1 << 20,
@@ -452,7 +448,7 @@ fn zero_strength_bypasses_and_abandoned_recordings_leave_input_unchanged() {
         Policy::Composed,
     )
     .unwrap();
-    let prepared = Executor::default().prepare(&device, plan, vec![]).unwrap();
+    let prepared = Executor::default().prepare(&device, plan).unwrap();
     let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytemuck::cast_slice(&data.pixels),

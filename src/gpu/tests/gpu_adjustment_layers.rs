@@ -354,7 +354,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
             )
             .unwrap();
             let grade = ProcessingInput::new(
-                &device,
+                &device.limits(),
                 calibration(),
                 RollSettings::default(),
                 snapshot.clone(),
@@ -424,7 +424,7 @@ fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
     ])
     .unwrap();
     let grade = ProcessingInput::new(
-        &device,
+        &device.limits(),
         calibration(),
         roll,
         snapshot.clone(),
@@ -520,12 +520,17 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
         )
         .unwrap();
         for matrix in [DMat3::IDENTITY, matrix()] {
-            let grade = ProcessingInput::new(&device, input, roll, snapshot.clone(), matrix, area)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "gamma={gamma} global={global:?} count={count} matrix={matrix:?}: {error}"
-                    )
-                });
+            let grade = ProcessingInput::new(
+                &device.limits(),
+                input,
+                roll,
+                snapshot.clone(),
+                matrix,
+                area,
+            )
+            .unwrap_or_else(|error| {
+                panic!("gamma={gamma} global={global:?} count={count} matrix={matrix:?}: {error}")
+            });
             let (source, pixels) = source(&device, area, size, matrix, None);
             let actual = read(
                 &device,
@@ -637,7 +642,8 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                 .collect(),
             )
             .unwrap();
-            let grade = ProcessingInput::new(&device, cal, roll, snapshot, matrix(), area).unwrap();
+            let grade = ProcessingInput::new(&device.limits(), cal, roll, snapshot, matrix(), area)
+                .unwrap();
             let actual = read(
                 &device,
                 &queue,
@@ -708,7 +714,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
         )])
         .unwrap();
     let prepared = ProcessingInput::new(
-        &device,
+        &device.limits(),
         calibration(),
         RollSettings::default(),
         empty.clone(),
@@ -772,7 +778,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
         ])
         .unwrap();
         let prepared = ProcessingInput::new(
-            &device,
+            &device.limits(),
             calibration(),
             RollSettings::default(),
             snapshot,
@@ -845,7 +851,7 @@ fn source_centres_at_nonzero_origins_preserve_fractional_mask_geometry() {
             ])
             .unwrap();
         let grade = ProcessingInput::new(
-            &device,
+            &device.limits(),
             calibration(),
             RollSettings::default(),
             snapshot.clone(),
@@ -915,7 +921,7 @@ fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
     ])
     .unwrap();
     let grade = ProcessingInput::new(
-        &device,
+        &device.limits(),
         calibration(),
         RollSettings::default(),
         snapshot.clone(),
@@ -1002,9 +1008,15 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
                 adjustment(mask, photo),
             ])
             .unwrap();
-            let prepared =
-                ProcessingInput::new(&device, input, roll, snapshot.clone(), camera_matrix, area)
-                    .unwrap();
+            let prepared = ProcessingInput::new(
+                &device.limits(),
+                input,
+                roll,
+                snapshot.clone(),
+                camera_matrix,
+                area,
+            )
+            .unwrap();
             let actual = read(
                 &device,
                 &queue,
@@ -1056,7 +1068,7 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
     )
     .unwrap();
     let grade = ProcessingInput::new(
-        &device,
+        &device.limits(),
         calibration(),
         RollSettings::default(),
         snapshot,
@@ -1065,7 +1077,7 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
     )
     .unwrap();
     let identity = ProcessingInput::new(
-        &device,
+        &device.limits(),
         calibration(),
         RollSettings::default(),
         AdjustmentLayerSnapshot::new(vec![antitone::adjustment_layers::AdjustmentLayer::global(
@@ -1120,7 +1132,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     let stack = AdjustmentLayerSnapshot::new(vec![active; 16]).unwrap();
     assert!(
         ProcessingInput::new(
-            &device,
+            &device.limits(),
             calibration(),
             RollSettings::default(),
             stack,
@@ -1148,7 +1160,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     .unwrap();
     assert!(
         ProcessingInput::new(
-            &device,
+            &device.limits(),
             calibration(),
             RollSettings::default(),
             snapshot,
@@ -1159,7 +1171,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     );
     let grade =
         ProcessingInput::new(
-            &device,
+            &device.limits(),
             calibration(),
             RollSettings::default(),
             AdjustmentLayerSnapshot::new(vec![

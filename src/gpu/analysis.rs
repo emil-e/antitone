@@ -43,12 +43,13 @@ impl evaluation::Source for CameraSamples {
         self.domain
     }
 
-    fn read(&self, region: crate::geometry::SourceRegion) -> Result<Vec<[f32; 4]>, Error> {
+    fn read(&self, region: evaluation::CellRegion) -> Result<Vec<[f32; 4]>, Error> {
+        let region = region.source()?;
         let mut pixels = Vec::with_capacity((region.width * region.height) as usize);
         for y in region.y..region.y + region.height {
             for x in region.x..region.x + region.width {
                 let index =
-                    (u64::from(y) * u64::from(self.domain.bounds.width) + u64::from(x)) as usize;
+                    (u64::from(y) * u64::from(self.domain.finite()?.width) + u64::from(x)) as usize;
                 let point = self.points.get(index).copied().unwrap_or_default();
                 let rgb = point.as_vec3();
                 // These vectors already include residual correction; the developed-source
@@ -85,7 +86,10 @@ impl ForwardModel for ResponseModel<'_> {
         // This is an index grid over captured camera vectors, not a reconstructed photograph.
         // Only pointwise interpretation runs here; physical source support was selected earlier.
         let domain = evaluation::Domain {
-            bounds: [0, 0, width, height].into(),
+            bounds: Some(crate::gpu::evaluation::CellRegion::new(
+                [0, 0],
+                [width, height],
+            )),
             grid: evaluation::Grid::axis_aligned([0.; 2], [1.; 2]),
             meaning: evaluation::Meaning::Camera,
         };
@@ -97,7 +101,7 @@ impl ForwardModel for ResponseModel<'_> {
         let request = self.context.request(
             readout.image.clone(),
             evaluation::Region {
-                bounds: domain.bounds,
+                bounds: domain.finite()?,
                 grid: domain.grid,
             },
             evaluation::Budget {
@@ -117,6 +121,7 @@ impl ForwardModel for ResponseModel<'_> {
                 interrupted.get() || (**predicate)()
             },
             |block, pixels| {
+                let block = block.source()?;
                 for (index, pixel) in pixels.iter().enumerate() {
                     let mut predicate = cancelled.borrow_mut();
                     if (**predicate)() {

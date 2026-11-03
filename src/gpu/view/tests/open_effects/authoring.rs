@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     frame_raster::FrameRaster,
-    gpu::view::{RenderedView, ViewKernels, ViewSource, ViewSourceSpec},
+    gpu::view::{RenderedView, SourceRequest, ViewKernels, ViewSource},
     pixel_pipeline::authoring_examples::{SignedCurve, TentConvolution},
 };
 
@@ -99,8 +99,7 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
         &scan,
         None,
         vec![
-            ViewSourceSpec::new(
-                7,
+            SourceRequest::new(
                 frame,
                 InputSettings::Digital,
                 scan.positive_matrix(&InputSettings::Digital).unwrap(),

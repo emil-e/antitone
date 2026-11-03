@@ -34,7 +34,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
         let snapshot = AdjustmentLayerSnapshot::new(vec![]).unwrap();
         let grade = Arc::new(
             ProcessingInput::new(
-                &device,
+                &device.limits(),
                 InputSettings::Digital,
                 Default::default(),
                 snapshot.clone(),
@@ -43,32 +43,19 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
             )
             .unwrap(),
         );
-        let input = ProcessingInput::from(grade)
-            .with_film_emulation(FilmEmulationSettings {
-                enabled: true,
-                size: 2. / 6000. * 100.,
-                image_sigma: 2. / 6000. * 100.,
-                amount: 0.,
-                colour: 0.5,
-            })
-            .with_frame_size([6000; 2])
-            .with_film_seed(17);
+        // Resolve sigma directly to isolate boundary handling from crop-relative recipe assembly.
+        let input = ProcessingInput::from(grade).with_pixel_pipeline(
+            crate::pixel_pipeline::PixelPipeline {
+                stages: vec![crate::pixel_pipeline::PixelStage::new(
+                    crate::image_mtf::ImageMtfParameters { sigma: 2. },
+                )],
+            },
+        );
         let make = |frame: FrameRaster, padded: bool| {
-            // Hold the resolved sigma at two source pixels to isolate boundary handling.
-            let dimensions = frame.composition.crop().size;
-            let input = input
-                .clone()
-                .with_frame_size(dimensions)
-                .with_film_emulation(FilmEmulationSettings {
-                    size: 2. / f64::from(dimensions[0].min(dimensions[1])) * 100.,
-                    image_sigma: 2. / f64::from(dimensions[0].min(dimensions[1])) * 100.,
-                    ..input.film_emulation()
-                });
             let spec =
-                ViewSourceSpec::new(17, frame, InputSettings::Digital, DMat3::IDENTITY, None)
-                    .unwrap();
+                SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None).unwrap();
             let spec = if padded {
-                spec.with_pipeline(input.pixel_pipeline().unwrap()).unwrap()
+                spec.with_pipeline(input.pixel_pipeline()).unwrap()
             } else {
                 spec
             };
@@ -80,16 +67,16 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
                     values.push([if p[0] >= 1008. { 0.4 } else { -0.03 }, 0.18, 0.05, 8.]);
                 }
             }
-            let source = Arc::new(ViewSource {
+            let source = Arc::new(ViewSource::from_neutral_samples(
                 spec,
-                renderer: renderer.clone(),
-                kernels: kernels.clone(),
-                pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                renderer.clone(),
+                kernels.clone(),
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: None,
                     contents: bytemuck::cast_slice(&values),
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 }),
-            });
+            ));
             let view = RenderedView::new(&device, source, &input, OutputTarget::Srgb, None)?;
             view.ensure_submitted(
                 &device,

@@ -519,7 +519,7 @@ fn performance_input(
             .set_geometry(SourceGeometry::new([r.x, r.y, r.width, r.height], size).unwrap())
             .unwrap();
         let grade = ProcessingInput::new(
-            device,
+            &device.limits(),
             calibration,
             RollSettings::default(),
             edited("global-photographic", 0),

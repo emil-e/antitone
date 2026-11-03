@@ -193,7 +193,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
     .unwrap();
     let grade = Arc::new(
         ProcessingInput::new(
-            &device,
+            &device.limits(),
             InputSettings::Digital,
             Default::default(),
             stack.clone(),
@@ -202,9 +202,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
         )
         .unwrap(),
     );
-    let input = crate::gpu::ProcessingInput::from(grade)
-        .with_film_emulation(film)
-        .with_film_seed(seed);
+    let input = crate::gpu::ProcessingInput::from(grade);
     let gate = SubmissionGate::default();
     let generation = AtomicU64::new(1);
     let directory = tempfile::tempdir().unwrap();
@@ -223,7 +221,10 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
             Composition::with_crop(scan.area, Default::default(), Default::default(), crop)
                 .unwrap();
         let frame = FrameRaster::full(composition).unwrap();
-        let input = input.clone().with_frame_size(composition.crop().size);
+        let input = input.clone().with_pixel_pipeline(
+            crate::pixel_pipeline::PixelPipeline::film(film, composition.crop().size, seed)
+                .unwrap(),
+        );
         let view = crate::refinement::refine(
             &renderer,
             &device,

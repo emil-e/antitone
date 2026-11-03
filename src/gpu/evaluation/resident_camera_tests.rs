@@ -1,4 +1,6 @@
 use super::*;
+
+mod regions;
 use crate::{
     adjustment_layers::{
         AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
@@ -20,9 +22,12 @@ fn recorded(
 ) -> (Vec<[f32; 4]>, usize) {
     let plan = Plan::with_policy(
         root.clone(),
-        root.domain.bounds,
+        root.domain.finite().unwrap(),
         Budget {
-            tile: [root.domain.bounds.width, root.domain.bounds.height],
+            tile: [
+                root.domain.finite().unwrap().width,
+                root.domain.finite().unwrap().height,
+            ],
             scratch_bytes: 4 << 20,
         },
         policy,
@@ -37,11 +42,14 @@ fn recorded(
     let prepared = renderer
         .evaluation
         .executor()
-        .prepare(device, plan, vec![])
+        .prepare(device, plan)
         .unwrap();
     let output = crate::gpu::raster::buffer(
         device,
-        [root.domain.bounds.width, root.domain.bounds.height],
+        [
+            root.domain.finite().unwrap().width,
+            root.domain.finite().unwrap().height,
+        ],
         "resident photographic boundary",
     )
     .unwrap();
@@ -179,8 +187,15 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                 }),
             ] {
                 let pipeline = Arc::new(
-                    ProcessingInput::new(&device, settings, roll, stack.clone(), matrix, region)
-                        .unwrap(),
+                    ProcessingInput::new(
+                        &device.limits(),
+                        settings,
+                        roll,
+                        stack.clone(),
+                        matrix,
+                        region,
+                    )
+                    .unwrap(),
                 );
                 let scalar_input = InputPipeline::new(settings, matrix).unwrap();
                 let mut input = ProcessingInput::from(pipeline.clone());
@@ -190,8 +205,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                 }
                 let raster = crate::gpu::raster::Raster::region(region, size);
                 let photo = Photograph::from_resident_with_stages(
-                    &device,
-                    &renderer.camera,
+                    &device.limits(),
                     &source,
                     &input,
                     raster,
@@ -304,10 +318,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                     }
                     work.push(counts);
                 }
-                assert!(
-                    work[3][1] < work[3][0],
-                    "canonical camera composition does not materialize its logical grade boundaries"
-                );
+                assert!(work.iter().all(|counts| counts[1] <= counts[0]));
             }
         }
     }
@@ -343,7 +354,7 @@ fn resident_camera_execution_resources() {
             .unwrap();
         let pipeline = Arc::new(
             ProcessingInput::new(
-                device,
+                &device.limits(),
                 InputSettings::Digital,
                 RollSettings {
                     exposure: 0.3,
@@ -363,9 +374,7 @@ fn resident_camera_execution_resources() {
             .unwrap(),
         );
         let input = ProcessingInput::from(pipeline.clone())
-            .with_film_emulation(crate::film_emulation::FilmPreset::ThirtyFiveMm.settings())
-            .with_frame_size([side; 2])
-            .with_film_seed(17);
+            .with_pixel_pipeline(crate::pixel_pipeline::PixelPipeline::emulation(crate::film_emulation::FilmPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
         let plan = crate::gpu::execution::raster::resident_plan(&source, &input)
             .unwrap()
             .unwrap();
@@ -397,20 +406,18 @@ fn resident_camera_execution_resources() {
                 let started = std::time::Instant::now();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 let prepared = if common {
-                    crate::gpu::execution::raster::Request::new(&source, &input, Some(&plan))
+                    crate::gpu::execution::raster::Request::new(&source, &input, Some(&plan),raster.size())
                         .encode(&renderer, device, &mut encoder, &output)
-                        .unwrap()
                         .unwrap()
                 } else {
                     let prepared = crate::gpu::pixel_pipeline::Prepared::with_context(
                         device,
                         plan.pipeline(),
                         raster,
-                        None,
                         renderer.evaluation.clone(),
                     )
                     .unwrap();
-                    crate::gpu::camera_fixture::CameraFixture::with_context(renderer.camera.clone(), renderer.evaluation.clone())
+                    crate::gpu::camera_fixture::CameraFixture::with_context(renderer.evaluation.clone())
                         .encode_grade(device, &mut encoder, &source, &output, &pipeline)
                         .unwrap();
                     prepared

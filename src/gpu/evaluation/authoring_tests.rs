@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    geometry::SourceRegion as Rect,
+    gpu::evaluation::CellRegion as Rect,
     pixel_pipeline::{
         EffectDefinition, PixelPipeline, PixelStage,
         authoring_examples::{SignedCurve, TentConvolution},
@@ -22,12 +22,10 @@ impl Source for Pattern {
 
     fn read(&self, region: Rect) -> Result<Vec<[f32; 4]>, Error> {
         self.reads.fetch_add(1, Ordering::Relaxed);
-        let bounds = self.domain.bounds;
-        Ok((region.y..region.y + region.height)
+        let bounds = self.domain.finite().unwrap();
+        Ok((region.y..region.bottom())
             .flat_map(|y| {
-                (region.x..region.x + region.width).map(move |x| {
-                    self.pixels[((y - bounds.y) * bounds.width + x - bounds.x) as usize]
-                })
+                (region.x..region.right()).map(move |x| self.pixels[bounds.index([x, y])])
             })
             .collect())
     }
@@ -37,7 +35,7 @@ fn pattern(coverage: u32) -> Pattern {
     let angle = 0.37f64;
     let (c, s) = (angle.cos(), angle.sin());
     let domain = Domain {
-        bounds: [11, 17, 13, 11].into(),
+        bounds: Some([11, 17, 13, 11].into()),
         grid: Grid {
             origin: [127.25, 83.5],
             axes: [[2. * c, 2. * s], [-3. * s, 3. * c]],
@@ -157,9 +155,9 @@ fn render(
             || false,
             |encoder, image, pixels| {
                 for row in 0..image.region.height {
-                    let offset = u64::from(image.region.y - region.y + row)
+                    let offset = (u64::from((image.region.y - region.y) as u32) + u64::from(row))
                         * u64::from(region.width)
-                        + u64::from(image.region.x - region.x);
+                        + u64::from((image.region.x - region.x) as u32);
                     encoder.copy_buffer_to_buffer(
                         pixels,
                         u64::from(row * image.region.width) * 16,
@@ -213,7 +211,7 @@ fn pointwise_definitions_capture_cpu_uniforms_without_shader_specialization_or_a
         &queue,
         &context,
         first.clone(),
-        data.domain.bounds,
+        data.domain.finite().unwrap(),
         [5, 4],
     );
     assert_pixels(&actual, &expected);
@@ -223,7 +221,7 @@ fn pointwise_definitions_capture_cpu_uniforms_without_shader_specialization_or_a
         &queue,
         &context,
         changed,
-        data.domain.bounds,
+        data.domain.finite().unwrap(),
         [13, 11],
     );
     assert_pixels(&other, &curve(&data.pixels, 1, 0.7, 0.4));
@@ -246,7 +244,7 @@ fn pointwise_definitions_capture_cpu_uniforms_without_shader_specialization_or_a
             &queue,
             &context,
             first,
-            data.domain.bounds,
+            data.domain.finite().unwrap(),
             [13, 11]
         ),
         "captured old values survive another definition"
@@ -321,7 +319,7 @@ fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_
             &queue,
             renderer.evaluation(),
             image.clone(),
-            data.domain.bounds,
+            data.domain.finite().unwrap(),
             size,
         );
         assert_pixels(&whole, &expected);
@@ -331,7 +329,7 @@ fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_
             &queue,
             &off,
             image.clone(),
-            data.domain.bounds,
+            data.domain.finite().unwrap(),
             [5, 4],
         );
         assert_eq!(
@@ -339,10 +337,11 @@ fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_
             "working tiles and optional retention cannot change results"
         );
         let crop: Rect = [13, 19, 8, 6].into();
-        let expected_crop = (crop.y..crop.y + crop.height)
-            .flat_map(|y| (crop.x..crop.x + crop.width).map(move |x| [x, y]))
+        let expected_crop = (crop.y..crop.bottom())
+            .flat_map(|y| (crop.x..crop.right()).map(move |x| [x, y]))
             .map(|[x, y]| {
-                expected[((y - data.domain.bounds.y) * 13 + x - data.domain.bounds.x) as usize]
+                expected[((y - data.domain.finite().unwrap().y) * 13 + x
+                    - data.domain.finite().unwrap().x) as usize]
             })
             .collect::<Vec<_>>();
         assert_pixels(
@@ -365,7 +364,7 @@ fn a_convolution_definition_owns_two_passes_and_halos_across_tiled_rotated_grid_
 }
 
 #[test]
-fn uniform_fusion_requires_identical_captured_values_and_rejects_invalid_authoring_inputs() {
+fn uniform_fusion_keeps_private_captures_and_rejects_invalid_authoring_inputs() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let data = pattern(0);
     let domain = data.domain;
@@ -378,7 +377,7 @@ fn uniform_fusion_requires_identical_captured_values_and_rejects_invalid_authori
         let image = pipeline.compose(source(Arc::new(data.clone()))).unwrap();
         let plan = Plan::new(
             image.clone(),
-            domain.bounds,
+            domain.finite().unwrap(),
             Budget {
                 tile: [13, 11],
                 scratch_bytes: 1 << 20,
@@ -392,18 +391,8 @@ fn uniform_fusion_requires_identical_captured_values_and_rejects_invalid_authori
             .filter(|w| matches!(w, Work::Compute { .. }))
             .count();
         assert_eq!(
-            compute,
-            if first == second { 1 } else { 2 },
-            "conflicting captures need separate uniforms/passes"
-        );
-        assert_eq!(
-            fragment
-                .resources
-                .iter()
-                .filter(|r| matches!(r, Storage::Uniform(_)))
-                .count(),
-            compute * 2,
-            "one parameter block and grid mapping per pass"
+            compute, 1,
+            "private captures may share a pass without sharing their values"
         );
         let expected = curve(&data.pixels, 0, 1.2, 0.15)
             .iter()
@@ -419,7 +408,7 @@ fn uniform_fusion_requires_identical_captured_values_and_rejects_invalid_authori
                 &queue,
                 renderer.evaluation(),
                 image,
-                domain.bounds,
+                domain.finite().unwrap(),
                 [13, 11],
             ),
             &expected,
@@ -444,7 +433,7 @@ fn choose(p: vec4f, pos: vec2f) -> vec4f {
     );
     let plan = Plan::new(
         oversized,
-        domain.bounds,
+        domain.finite().unwrap(),
         Budget {
             tile: [13, 11],
             scratch_bytes: 1 << 20,
@@ -486,7 +475,7 @@ fn identity(p: vec4f, pos: vec2f) -> vec4f {
     assert!(
         Plan::new(
             invalid,
-            domain.bounds,
+            domain.finite().unwrap(),
             Budget {
                 tile: [13, 11],
                 scratch_bytes: 1 << 20

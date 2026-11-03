@@ -29,7 +29,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         .await
         .unwrap();
         let grade = ProcessingInput::new(
-            &device,
+            &device.limits(),
             InputSettings::Digital,
             Default::default(),
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -38,11 +38,15 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         )
         .unwrap();
         let clean = ProcessingInput::from(Arc::new(grade));
-        let film = clean
-            .clone()
-            .with_film_emulation(FilmPreset::ThirtyFiveMm.settings())
-            .with_frame_size([1200; 2])
-            .with_film_seed(17);
+        let film = clean.clone().with_pixel_pipeline(
+            crate::pixel_pipeline::PixelPipeline::emulation(
+                FilmPreset::ThirtyFiveMm.settings(),
+                Default::default(),
+                [1200; 2],
+                17,
+            )
+            .unwrap(),
+        );
         image.require_processing(&clean).unwrap();
         assert!(
             image.require_processing(&film).is_err(),
@@ -132,8 +136,9 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
                 ..Default::default()
             })])
             .unwrap();
-        let shared = Arc::new(Grading::new(&device, roll, snapshot.clone(), small).unwrap());
-        let fresh = Arc::new(Grading::new(&device, roll, snapshot, large).unwrap());
+        let shared =
+            Arc::new(Grading::new(&device.limits(), roll, snapshot.clone(), small).unwrap());
+        let fresh = Arc::new(Grading::new(&device.limits(), roll, snapshot, large).unwrap());
         let mut image = GpuImage::new_continuous_shared(
             &renderer,
             &device,
@@ -150,22 +155,27 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
             .unwrap();
         let render = |grade, area, frame_size| {
             let pipeline = ProcessingInput::compose(
-                &device,
+                &device.limits(),
                 GpuInputProgram::new(InputSettings::Digital, DMat3::IDENTITY).unwrap(),
                 grade,
                 area,
             )
             .unwrap();
-            let input = ProcessingInput::from(Arc::new(pipeline))
-                .with_film_emulation(crate::film_emulation::FilmEmulationSettings {
-                    enabled: true,
-                    size: 0.065,
-                    image_sigma: 0.065,
-                    amount: 0.065,
-                    ..Default::default()
-                })
-                .with_frame_size(frame_size)
-                .with_film_seed(17);
+            let input = ProcessingInput::from(Arc::new(pipeline)).with_pixel_pipeline(
+                crate::pixel_pipeline::PixelPipeline::emulation(
+                    crate::film_emulation::FilmEmulationSettings {
+                        enabled: true,
+                        size: 0.065,
+                        image_sigma: 0.065,
+                        amount: 0.065,
+                        ..Default::default()
+                    },
+                    Default::default(),
+                    frame_size,
+                    17,
+                )
+                .unwrap(),
+            );
             let mut encoder = device.create_command_encoder(&Default::default());
             image
                 .encode_processing(&device, &mut encoder, &input)

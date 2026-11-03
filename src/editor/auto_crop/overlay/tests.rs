@@ -187,13 +187,13 @@ fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_au
     );
     editor.document.visit.canvas.last_layout = Some((layout, 1.));
     let viewport = editor.document.visit.canvas.viewport;
-    let revision = editor.document.visit.canvas.grade.original.revision();
+    let revision = editor.document.visit.canvas.grade.original.continuation();
     let outline = editor.auto_crop_outline(layout).unwrap();
     editor.adjust_auto_crop_margin(2.);
     assert_ne!(editor.auto_crop_outline(layout).unwrap(), outline);
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
     assert_eq!(
-        editor.document.visit.canvas.grade.original.revision(),
+        editor.document.visit.canvas.grade.original.continuation(),
         revision,
         "the full-scan reference remains valid when only an overlay moves"
     );
@@ -204,7 +204,7 @@ fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_au
         "artwork visibility is not a second tool lifecycle"
     );
     assert_eq!(
-        editor.document.visit.canvas.grade.original.revision(),
+        editor.document.visit.canvas.grade.original.continuation(),
         revision
     );
     editor.begin_crop();
@@ -213,7 +213,7 @@ fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_au
     assert!(!editor.auto_crop_context());
     assert_eq!(editor.document.state.project, project);
     assert_ne!(
-        editor.document.visit.canvas.grade.original.revision(),
+        editor.document.visit.canvas.grade.original.continuation(),
         revision,
         "leaving the tool changes the view domain"
     );

@@ -21,7 +21,10 @@ pub(super) fn wait_context(h: &mut Harness<'_, Editor>) {
                 .displayed
                 .as_ref()
                 .is_some_and(|v| {
-                    v.spec.authority == e.id
+                    v.spec.identity
+                        == crate::gpu::execution::source::Identity::camera(
+                            ready.developed.identity(),
+                        )
                         && v.spec.frame().composition.crop() == Crop::from_region(ready.area)
                 })
     });
@@ -106,7 +109,8 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                     .clone()
                     .unwrap()
             });
-            let revision = h.read(|editor| editor.document.visit.canvas.grade.original.revision());
+            let revision =
+                h.read(|editor| editor.document.visit.canvas.grade.original.continuation());
             workflow::enter_numeric(&mut h, "Margin", "1.25");
             wait_context(&mut h);
             h.read(|editor| assert_ne!(editor.auto_crop_outline(layout).unwrap(), outline));
@@ -132,7 +136,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             });
             h.read(|editor| {
                 assert_eq!(
-                    editor.document.visit.canvas.grade.original.revision(),
+                    editor.document.visit.canvas.grade.original.continuation(),
                     revision
                 )
             });

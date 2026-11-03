@@ -566,8 +566,6 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
     let expected_signature = crate::scan::ImageSource::new(&scan, InputSettings::Digital)
         .unwrap()
         .gpu_program()
-        .unwrap()
-        .signature()
         .unwrap();
     assert_eq!(
         editor

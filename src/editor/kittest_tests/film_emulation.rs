@@ -14,7 +14,7 @@ pub(super) fn painted(harness: &mut Harness<'_, Editor>) {
                 .displayed
                 .as_ref()
                 .is_some_and(|view| {
-                    view.processing
+                    view.processing()
                         == editor
                             .positive_processing(
                                 editor.document.input,
@@ -22,7 +22,7 @@ pub(super) fn painted(harness: &mut Harness<'_, Editor>) {
                                 editor.document.visit.adjustment_layer_settings,
                             )
                             .unwrap()
-                            .signature()
+                            .clone()
                         && !view.in_flight()
                 })
         });

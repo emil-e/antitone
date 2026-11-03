@@ -6,6 +6,105 @@ use std::sync::atomic::AtomicU64;
 #[cfg(feature = "ocio-reference")]
 mod adjustment_layers;
 
+#[test]
+fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_owners() {
+    use crate::gpu::evaluation::{GpuImage as StoredImage, RetainedKey};
+    pollster::block_on(async {
+        let instance = crate::gpu::instance();
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let renderers = Arc::new(RendererCache::default());
+        let mut thumbnails = Thumbnails {
+            gpu: Some((device.clone(), queue.clone(), renderers.clone())),
+            ..Default::default()
+        };
+        let limits = cache_limits::CacheLimits {
+            cpu_bytes: 0,
+            gpu_bytes: 8 << 20,
+        };
+        // Bind preferences before lazy renderer initialization as the editor does.
+        thumbnails.set_limits(limits);
+        let renderer = renderers.get(&device, &queue).unwrap();
+        let store = renderer.evaluation.materializations();
+        let bytes = 2 << 20;
+        let key = RetainedKey::new(("zero-filled storage", bytes));
+        let produce = || {
+            let device = device.clone();
+            let store = store.clone();
+            let key = key.clone();
+            async move {
+                store
+                    .obtain(key, Arc::new(bytes), bytes, move || async move {
+                        Ok(StoredImage::new(device.create_buffer(
+                            &wgpu::BufferDescriptor {
+                                label: None,
+                                size: bytes,
+                                usage: wgpu::BufferUsages::STORAGE,
+                                mapped_at_creation: false,
+                            },
+                        )))
+                    })
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 8 << 20);
+        drop(produce().await);
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_some(),
+            "nonzero optional space must actually retain a completed value"
+        );
+
+        let live = produce().await;
+        assert!(thumbnails.reserve_view(7 << 20));
+        assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 1 << 20);
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_some()
+        );
+        drop(live);
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_none(),
+            "presentation retention and calculation retention share the configured allowance"
+        );
+
+        let live = produce().await;
+        thumbnails.set_limits(cache_limits::CacheLimits {
+            gpu_bytes: 0,
+            ..limits
+        });
+        assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 0);
+        assert_eq!(renderer.evaluation.retained_bytes(), 0);
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_some(),
+            "a consumer still owns its value at zero optional retention"
+        );
+        drop(live);
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_none()
+        );
+
+        thumbnails.reserve_view(0);
+        thumbnails.set_limits(limits);
+        drop(produce().await);
+        assert!(
+            store
+                .find_ready(&key, |size: &u64| *size == bytes)
+                .is_some(),
+            "restoring optional space must readmit regenerated values"
+        );
+    });
+}
+
 #[cfg(feature = "ocio-reference")]
 #[test]
 #[ignore = "read-only local RAW/Metal corrected affine shared-renderer integration"]
@@ -60,7 +159,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
         })
         .unwrap();
         let parameters = crate::gpu::ProcessingInput::new(
-            &device,
+            &device.limits(),
             calibration,
             roll,
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -244,7 +343,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         use egui_wgpu::CallbackTrait;
         let image = ready.proxy.image(OutputTarget::DisplayP3).unwrap();
         let parameters = crate::gpu::ProcessingInput::new(
-            &device,
+            &device.limits(),
             Calibration {
                 dmin: DVec3::new(0.28, 0.23, 0.25),
                 dmax: DVec3::new(0.01, 0.005, 0.001),

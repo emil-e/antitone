@@ -32,3 +32,31 @@ pub(crate) use imp::{GpuMemory, config_dir, gpu_memory};
 pub(crate) use imp::{MemoryPressure, memory_pressure};
 #[cfg(feature = "gpu")]
 pub(crate) use imp::{backend_options, backends};
+
+#[cfg(feature = "raw")]
+pub(crate) struct MemoryPressureWatch {
+    _alive: std::sync::Arc<()>,
+}
+
+#[cfg(feature = "raw")]
+impl MemoryPressureWatch {
+    pub(crate) fn observe(notify: impl Fn(MemoryPressure) + Send + 'static) -> Self {
+        let alive = std::sync::Arc::new(());
+        let weak = std::sync::Arc::downgrade(&alive);
+        let mut previous = memory_pressure();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                if weak.upgrade().is_none() {
+                    break;
+                }
+                let current = memory_pressure();
+                if current != previous {
+                    previous = current;
+                    notify(current);
+                }
+            }
+        });
+        Self { _alive: alive }
+    }
+}

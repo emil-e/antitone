@@ -37,8 +37,6 @@ impl<'a> Source<'a> {
             .map(|field| GpuFlatField::new(device, field).map(Arc::new))
             .transpose()?;
         let readout = evaluation::Photograph::neutral_readout(
-            device,
-            renderer,
             evaluation::camera_source(scan)?,
             field,
             program,
@@ -107,8 +105,8 @@ impl BaseImage for Source<'_> {
         let evaluation = self.context.request(
             self.image.clone(),
             evaluation::Region {
-                bounds: region,
-                grid: self.image.domain.grid,
+                bounds: region.try_into()?,
+                grid: self.image.domain().grid,
             },
             self.budget,
         )?;
@@ -120,6 +118,7 @@ impl BaseImage for Source<'_> {
             &evaluation,
             cancelled,
             |block, values| {
+                let block = block.source()?;
                 for (index, pixel) in values.iter().enumerate() {
                     let x = block.x + index as u32 % block.width - region.x;
                     let y = block.y + index as u32 / block.width - region.y;

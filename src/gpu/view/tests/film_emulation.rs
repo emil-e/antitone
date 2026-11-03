@@ -107,7 +107,7 @@ fn configured_probe(
             * (100. / f64::from(config.frame_extent)),
         ..settings
     };
-    let spec = ViewSourceSpec::new(seed, frame, InputSettings::Digital, DMat3::IDENTITY, None)
+    let spec = SourceRequest::new(frame, InputSettings::Digital, DMat3::IDENTITY, None)
         .unwrap()
         .with_pipeline(
             crate::pixel_pipeline::PixelPipeline::film(acquisition, [config.frame_extent; 2], seed)
@@ -133,20 +133,20 @@ fn configured_probe(
             }
         }
     }
-    let source = Arc::new(ViewSource {
+    let source = Arc::new(ViewSource::from_neutral_samples(
         spec,
-        renderer: renderer.clone(),
-        kernels: kernels.clone(),
-        pixels: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        renderer.clone(),
+        kernels.clone(),
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("flat field and impulse"),
             contents: bytemuck::cast_slice(&values),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         }),
-    });
+    ));
     let snapshot = AdjustmentLayerSnapshot::new(vec![]).unwrap();
     let grade = Arc::new(
         ProcessingInput::new(
-            device,
+            &device.limits(),
             InputSettings::Digital,
             RollSettings::default(),
             snapshot.clone(),
@@ -155,10 +155,15 @@ fn configured_probe(
         )
         .unwrap(),
     );
-    let input = ProcessingInput::from(grade)
-        .with_film_emulation(settings)
-        .with_frame_size(composition.crop().size)
-        .with_film_seed(seed);
+    let input = ProcessingInput::from(grade).with_pixel_pipeline(
+        crate::pixel_pipeline::PixelPipeline::emulation(
+            settings,
+            Default::default(),
+            composition.crop().size,
+            seed,
+        )
+        .unwrap(),
+    );
     RenderedView::new(device, source, &input, OutputTarget::Srgb, None).unwrap()
 }
 

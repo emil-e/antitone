@@ -94,7 +94,7 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             let pipeline = Pipeline::new(input, roll, matrix).unwrap();
             cases.push((
                 ProcessingInput::new(
-                    &device,
+                    &device.limits(),
                     input,
                     roll,
                     AdjustmentLayerSnapshot::new(vec![]).unwrap(),
@@ -113,10 +113,7 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
                 .await
                 .unwrap();
             image.set_flat_field(Some(gpu.clone()), geometry).unwrap();
-            assert_eq!(
-                image.processing_byte_len(),
-                (64 * 8, 64 * 16 + std::mem::size_of::<[u32; 4]>() as u64)
-            );
+            assert_eq!(image.processing_byte_len(), (64 * 8, 64 * 16));
             for (parameters, working) in &cases {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 image
@@ -251,7 +248,7 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
             let parameters = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                 .and_then(|snapshot| {
                     ProcessingInput::new(
-                        &device,
+                        &device.limits(),
                         calibration,
                         roll,
                         snapshot,
@@ -522,7 +519,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                 AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                     .and_then(|snapshot| {
                         ProcessingInput::new(
-                            &device,
+                            &device.limits(),
                             settings.negative_input().unwrap(),
                             roll,
                             snapshot,
@@ -542,10 +539,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                 .unwrap();
             assert_eq!(
                 image.processing_byte_len(),
-                (
-                    pixels.len() as u64 * 8,
-                    pixels.len() as u64 * 16 + std::mem::size_of::<[u32; 4]>() as u64
-                )
+                (pixels.len() as u64 * 8, pixels.len() as u64 * 16)
             );
             assert!(image.write_source(&queue, &pixels[..7]).is_err());
             let rendered = GpuImage::new_rendered(&device, &queue, 4, 2, target)
@@ -562,7 +556,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                     AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                         .and_then(|snapshot| {
                             ProcessingInput::new(
-                                &device,
+                                &device.limits(),
                                 input.negative_input().unwrap(),
                                 roll,
                                 snapshot,

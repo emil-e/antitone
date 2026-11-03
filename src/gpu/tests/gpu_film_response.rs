@@ -161,7 +161,7 @@ fn shaped_responses_recover_declared_positives_before_matrix_wb_and_exposure() {
                     ..Default::default()
                 };
                 let input = match ProcessingInput::new(
-                    &device,
+                    &device.limits(),
                     interpretation,
                     roll,
                     AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)]).unwrap(),
@@ -264,7 +264,7 @@ fn valid_floor_anchor_is_rejected_or_stays_finite_with_packed_parameters() {
         let source =
             ProcessingSource::new_continuous(&device, &[[0.; 4]], DMat3::IDENTITY).unwrap();
         let grade = ProcessingInput::new(
-            &device,
+            &device.limits(),
             interpretation,
             RollSettings::default(),
             AdjustmentLayerSnapshot::new(vec![]).unwrap(),
