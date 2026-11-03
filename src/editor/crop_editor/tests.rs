@@ -11,12 +11,12 @@ impl DocumentScope {
     pub(in crate::editor) fn crop_edit(&self) -> Option<Ref<'_, CropEdit>> {
         let tool = self.visit.hosted_tool.installed()?;
         let crop = (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>()?;
-        Some(crop.edit.as_ref()?.borrow())
+        Some(crop.edit.borrow())
     }
     pub(in crate::editor) fn crop_edit_mut(&mut self) -> Option<RefMut<'_, CropEdit>> {
         let tool = self.visit.hosted_tool.installed()?;
         let crop = (tool as &dyn Any).downcast_ref::<crop_editor::CropTool>()?;
-        Some(crop.edit.as_ref()?.borrow_mut())
+        Some(crop.edit.borrow_mut())
     }
     pub(in crate::editor) fn set_crop_edit(&mut self, edit: Option<CropEdit>) {
         if let Some(edit) = edit {
@@ -32,10 +32,12 @@ impl DocumentScope {
         &self,
     ) -> Option<std::rc::Rc<std::cell::RefCell<CropEdit>>> {
         let tool = self.visit.hosted_tool.installed()?;
-        (tool as &dyn Any)
-            .downcast_ref::<crop_editor::CropTool>()?
-            .edit
-            .clone()
+        Some(
+            (tool as &dyn Any)
+                .downcast_ref::<crop_editor::CropTool>()?
+                .edit
+                .clone(),
+        )
     }
     pub(in crate::editor) fn crop_auto_crop_pending(&self) -> bool {
         self.visit
@@ -63,8 +65,9 @@ impl CropTool {
 
     fn from_edit(edit: CropEdit) -> Self {
         Self {
-            edit: Some(Rc::new(RefCell::new(edit))),
-            ..Default::default()
+            edit: Rc::new(RefCell::new(edit)),
+            viewport: Viewport::default(),
+            auto_crop_task: None,
         }
     }
 }
@@ -165,7 +168,7 @@ fn painting_uses_the_pass_frame_even_after_a_different_draft_has_been_staged() {
 }
 
 #[test]
-fn composition_seeds_the_draft_once_and_viewport_access_keeps_normal_navigation_independent() {
+fn construction_seeds_the_draft_and_projection_keeps_the_draft_and_navigation_unchanged() {
     let base = Composition::with_crop(
         AREA,
         RollOrientation {
@@ -182,20 +185,58 @@ fn composition_seeds_the_draft_once_and_viewport_access_keeps_normal_navigation_
     let mut editor = Editor::state();
     editor.document.visit.canvas.viewport.zoom = Some(1.75);
     let before = editor.document.visit.canvas.viewport;
-    let mut crop = CropTool::default();
-    assert!(crop.edit.is_none());
-    assert_eq!(tool::Tool::composition(&mut crop, base), base);
+    let mut crop = CropTool::new(base);
+    assert_eq!(crop.edit.borrow().draft, base.crop());
+    assert_eq!(tool::Tool::composition(&crop, base), base);
     let changed = Crop {
         size: [42, 28],
         ..base.crop()
     };
-    crop.edit.as_ref().unwrap().borrow_mut().draft = changed;
+    crop.edit.borrow_mut().draft = changed;
     crop.viewport.zoom = Some(2.5);
+    let other_view = Composition::new(
+        AREA,
+        RollOrientation::default(),
+        PhotoOrientation::default(),
+    )
+    .unwrap();
+    assert_ne!(other_view, base);
     for _ in 0..3 {
-        assert_eq!(tool::Tool::composition(&mut crop, base).crop(), changed);
+        assert_eq!(tool::Tool::composition(&crop, other_view).crop(), changed);
+        assert_eq!(
+            crop.edit.borrow().base,
+            base,
+            "a projection must not retarget the edit"
+        );
+        assert_eq!(tool::Tool::composition(&crop, base).crop(), changed);
         assert_eq!(tool::Tool::viewport(&mut crop, &mut editor).zoom, Some(2.5));
         assert_eq!(editor.document.visit.canvas.viewport, before);
     }
+}
+
+#[test]
+fn crop_can_accept_its_draft_before_any_projection_query_or_paint() {
+    let mut editor = Editor::state();
+    crate::editor::tests::add_ready_fixture(&mut editor);
+    editor.sync_document();
+    let source = editor.document.visit.current_source.unwrap();
+    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+    let draft = Crop {
+        size: [area.width / 2, area.height / 2],
+        ..Crop::from_region(area)
+    };
+    editor.begin_crop();
+    editor.document.crop_edit_mut().unwrap().draft = draft;
+    editor.hosted_action(tool::Action::Primary);
+    assert!(!editor.has_hosted_tool());
+    assert_eq!(
+        editor.document.state.project.source(source).unwrap().crop,
+        Some(draft)
+    );
+    assert_eq!(
+        editor.history_label(crate::editor::history::Direction::Undo),
+        Some("Crop")
+    );
 }
 
 #[test]

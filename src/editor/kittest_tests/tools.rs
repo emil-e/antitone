@@ -68,7 +68,13 @@ fn capture_tool(harness: &mut Harness<'_, Editor>, name: &str, size: egui::Vec2)
         assert!(rect.top() >= 0. && rect.bottom() <= size.y);
     }
     let timing = harness.read(|editor| Arc::new(SelectionTiming::new(editor.id, Instant::now())));
-    harness.update(|editor| editor.active_canvas_mut().selection_timing = Some(timing.clone()));
+    harness.update(|editor| {
+        if let Some(mut state) = editor.document.flat_edit_mut() {
+            state.view.paint_observer = Some(timing.clone());
+        } else {
+            editor.document.visit.canvas.selection_timing = Some(timing.clone());
+        }
+    });
     harness.step();
     let png = harness.render().unwrap();
     assert_eq!(png.dimensions(), (size.x as u32, size.y as u32));
@@ -510,11 +516,8 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
             harness.step();
             harness.read(|editor| assert_eq!(editor.test_pick(), Some(flat::DISPLAY)));
             harness.read(|editor| assert!(editor.document.flat_edit().is_some()));
-            wait_for(&mut harness, |e| {
-                assert!(!e.active_canvas().grade.original.failed(), "{}", e.status);
-                e.active_canvas().grade.original.settled().is_some()
-            });
-            let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
+            workflow::wait_settled(&mut harness);
+            let geometry = harness.read(|editor| editor.canvas_frame.layout.unwrap().0);
             let support =
                 harness.read(|editor| editor.test_pick_region().expect("proposed support"));
             assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));

@@ -8,6 +8,7 @@ fn crop_omits_shared_navigation_during_its_drag_and_resumes_it_afterward() {
     let normal = editor.document.visit.canvas.viewport;
     crate::application::test_support::with_application(editor, |app| {
         let context = egui::Context::default();
+        presentation::configure_fonts(&context);
         let canvas = egui::Rect::from_min_size(egui::pos2(20., 20.), egui::vec2(400., 300.));
         let render = |events| {
             app.enter(|editor, cx| {
@@ -27,9 +28,7 @@ fn crop_omits_shared_navigation_during_its_drag_and_resumes_it_afterward() {
                             ui.id().with("crop-navigation"),
                             egui::Sense::click_and_drag(),
                         );
-                        let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-                        let composition = editor.normal_canvas_composition(area, None);
-                        result = editor.hosted_canvas(ui, &response, composition, None, true, cx);
+                        result = editor.hosted_viewer(ui, &response, None, true, cx);
                     },
                 );
                 output.textures_delta.clear();

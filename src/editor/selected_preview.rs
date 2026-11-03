@@ -88,9 +88,6 @@ impl CallbackTrait for SelectionPaint {
 
 impl Editor {
     pub(super) fn validate_pending_preview(&mut self) {
-        if self.document.flat_edit().is_some() {
-            return;
-        }
         if self
             .document
             .visit
@@ -100,7 +97,6 @@ impl Editor {
                 self.document.visit.working_view.displayed.is_some()
                     || self.document_pending.is_some()
                     || self.picking()
-                    || self.document.flat_edit().is_some()
                     || self.cropping()
                     || !preview.current_source(
                         &self.document,
@@ -114,13 +110,6 @@ impl Editor {
     }
 
     pub(super) fn selected_view(&self) -> Option<(Rect, crate::viewer::GpuProxy, bool)> {
-        if let Some(flat) = &self.document.flat_edit() {
-            return flat
-                .view
-                .ready
-                .as_ref()
-                .map(|ready| (ready.area, ready.proxy.clone(), false));
-        }
         if let Some(ready) = &self.document.visit.canvas.ready
             && (self.document.visit.working_view.displayed.is_some()
                 || self.document.visit.pending_preview.is_none())

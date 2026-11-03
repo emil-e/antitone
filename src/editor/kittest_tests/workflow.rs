@@ -173,8 +173,21 @@ pub(super) fn calibrated_workflow<R>(
 
 pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
     wait_for(harness, |e| {
-        assert!(!e.active_canvas().grade.original.failed(), "{}", e.status);
-        if e.document.flat_edit().is_none() && e.document.visit.working_view.revision().is_some() {
+        if let Some(state) = e.document.flat_edit() {
+            let original = state.view.test_original();
+            assert!(!original.failed(), "{}", e.status);
+            return original
+                .wanted
+                .as_ref()
+                .is_some_and(|demand| demand.target == e.document.target)
+                && original.settled().is_some();
+        }
+        assert!(
+            !e.document.visit.canvas.grade.original.failed(),
+            "{}",
+            e.status
+        );
+        if e.document.visit.working_view.revision().is_some() {
             let expected = if e.document.source {
                 e.source_parameters(e.source_exposure)
                     .map(ProcessingInput::from)
@@ -449,7 +462,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
             assert!(view.spec.is_inspection());
             assert!(Arc::ptr_eq(
                 &view,
-                &editor.active_canvas().displayed.as_ref().unwrap().view
+                &editor.canvas_frame.displayed.as_ref().unwrap().view
             ));
         });
         harness.get_by_label("View source").click();

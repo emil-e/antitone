@@ -393,7 +393,7 @@ fn ending_reference_fullscreen_does_not_restore_its_view_over_the_working_photo(
     let working = editor.document.visit.canvas.viewport;
     let reference = editor.document.visit.canvas.ready.as_ref().unwrap().clone();
     super::super::tests::paused_reference_fixture(&mut editor, reference, None);
-    editor.active_canvas_mut().viewport.zoom = Some(3.);
+    editor.with_tool_viewport(|viewport| viewport.zoom = Some(3.));
     frame(&mut editor, &context, Some(false), key(egui::Key::F));
     assert!(editor.fullscreen.is_some());
     editor.finish_flat_edit();
@@ -416,6 +416,67 @@ fn a_changed_source_retires_fullscreen_without_restoring_the_old_source_view() {
     assert!(!editor.fullscreen_requested());
     assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(3.));
     assert_eq!(editor.source_exposure, 5.);
+}
+
+#[test]
+fn completed_new_cannot_reuse_the_departed_photos_fullscreen_evidence_before_a_paint() {
+    let editor = super::super::tests::authored_fixture(&["patches.dng"]);
+    crate::application::test_support::with_application(editor, |app| {
+        let context = egui::Context::default();
+        frame(app, &context, Some(false), vec![]);
+        app.read(|editor| {
+            assert!(editor.canvas_frame.layout.is_some());
+            assert!(editor.fullscreen_available());
+        });
+        app.enter(|editor, cx| editor.start_document(Preparation::New, cx));
+        app.run_until(Duration::from_secs(20), |editor| {
+            editor.document_pending.is_none()
+        });
+        app.update(|editor| {
+            assert!(!editor.busy && editor.document.project.order.is_empty());
+            assert!(editor.selected_view().is_none());
+            assert!(!editor.fullscreen_available());
+            editor.toggle_fullscreen(&context);
+            assert!(editor.fullscreen.is_none());
+        });
+    });
+}
+
+#[test]
+fn cold_photo_switch_cannot_reuse_the_previous_photos_fullscreen_evidence_before_a_paint() {
+    let editor = super::super::tests::authored_fixture(&["patches.dng", "roll-0.dng"]);
+    crate::application::test_support::with_application(editor, |app| {
+        let hold = crate::background::testing::pause();
+        let context = egui::Context::default();
+        frame(app, &context, Some(false), vec![]);
+        let before = app.read(|editor| {
+            assert!(editor.canvas_frame.layout.is_some());
+            assert!(editor.fullscreen_available());
+            editor.document.visit.current_source
+        });
+        app.enter(|editor, cx| editor.select_roll_photo(1, egui::Modifiers::NONE, cx));
+        app.update(|editor| {
+            assert_ne!(editor.document.visit.current_source, before);
+            assert!(editor.document.visit.canvas.ready.is_none());
+            assert!(
+                editor.selected_view().is_none(),
+                "fixture must exercise a cold switch without a usable placeholder"
+            );
+            assert!(!editor.fullscreen_available());
+            editor.toggle_fullscreen(&context);
+            assert!(editor.fullscreen.is_none());
+        });
+        drop(hold);
+        app.run_until(Duration::from_secs(20), |editor| {
+            editor.document.visit.canvas.ready.is_some()
+        });
+        app.read(|editor| {
+            assert!(
+                editor.fullscreen_available(),
+                "the prepared successor may be viewed fullscreen"
+            )
+        });
+    });
 }
 
 #[test]

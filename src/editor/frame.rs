@@ -231,12 +231,12 @@ impl Editor {
                 .primary
                 .is_some_and(|primary| primary.enabled);
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                self.hosted_action(tool::Action::Dismiss);
+                self.dispatch_tool(tool::Action::Dismiss, cx);
                 ui.ctx().request_repaint();
             } else if primary
                 && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
             {
-                self.hosted_action(tool::Action::Primary);
+                self.dispatch_tool(tool::Action::Primary, cx);
                 ui.ctx().request_repaint();
             }
         }

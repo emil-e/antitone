@@ -29,7 +29,6 @@ impl Drop for Probe {
 impl Tool for Probe {
     fn presentation(&self, _editor: &Editor) -> Presentation {
         Presentation {
-            show_viewer: true,
             identity: presentation::ToolIdentity {
                 icon: icons::Icon::Crop,
                 title: "Probe",
@@ -42,7 +41,7 @@ impl Tool for Probe {
             navigation_help: None,
         }
     }
-    fn composition(&mut self, normal: Composition) -> Composition {
+    fn composition(&self, normal: Composition) -> Composition {
         if self.first_config.get().is_none() {
             self.first_config.set(Some(self.dropped.get()));
         }
@@ -84,7 +83,7 @@ impl Tool for Probe {
     fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
         self.activity
     }
-    fn action(&mut self, _action: Action, editor: &mut Editor) {
+    fn action(&mut self, _action: Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         self.actions.set(self.actions.get() + 1);
         editor.end_tool();
     }
@@ -191,7 +190,6 @@ struct Candidate(Crop);
 impl Tool for Candidate {
     fn presentation(&self, _editor: &Editor) -> Presentation {
         Presentation {
-            show_viewer: true,
             identity: presentation::ToolIdentity {
                 icon: icons::Icon::Crop,
                 title: "Candidate",
@@ -204,7 +202,7 @@ impl Tool for Candidate {
             navigation_help: None,
         }
     }
-    fn action(&mut self, action: Action, editor: &mut Editor) {
+    fn action(&mut self, action: Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         if matches!(action, Action::Dismiss) || editor.accept_crop(self.0).is_ok() {
             editor.end_tool();
         }
@@ -253,6 +251,32 @@ fn photo_geometry_edit_rejects_before_mutation_and_records_valid_acceptance() {
         Some(valid)
     );
     assert_eq!(editor.history_label(history::Direction::Undo), Some("Crop"));
+}
+
+#[test]
+fn activation_does_not_query_composition_or_require_a_projection_to_initialize_the_tool() {
+    for placement in [Placement::Document, Placement::Photo] {
+        let mut editor = Editor::state();
+        crate::editor::tests::add_ready_fixture(&mut editor);
+        let dropped = Rc::new(Cell::new(0));
+        let actions = Rc::new(Cell::new(0));
+        let probe = Probe::new(&dropped, &actions);
+        let projected = probe.first_config.clone();
+        assert!(editor.activate_tool(placement, Box::new(probe)));
+        assert_eq!(
+            projected.get(),
+            None,
+            "activation must not calculate a view"
+        );
+        let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+        let normal = editor.normal_canvas_composition(area, None);
+        assert_eq!(editor.canvas_composition(area, None), normal);
+        assert_eq!(
+            projected.get(),
+            Some(0),
+            "the explicit query must reach the tool"
+        );
+    }
 }
 
 #[test]
@@ -498,7 +522,7 @@ fn ordinary_photo_orientation_and_crop_acceptance_share_geometry_history() {
     let mut editor = Editor::state();
     super::super::tests::add_ready_fixture(&mut editor);
     let before = editor.document.visit.photo_orientation;
-    editor.apply_photo_action(editing::PhotoAction::TurnRight);
+    editor.apply_photo_action(editing::PhotoAction::TurnRight, &UiContext::render_only());
     assert_ne!(editor.document.visit.photo_orientation, before);
     assert_eq!(
         editor.history_label(history::Direction::Undo),

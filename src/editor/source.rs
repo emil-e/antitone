@@ -39,19 +39,6 @@ impl Editor {
             correction: self.document.correction.clone(),
         })
     }
-
-    pub(super) fn canvas_source_context(&self) -> Option<Context> {
-        if let Some(flat) = &self.document.flat_edit() {
-            let ready = flat.view.ready.as_ref()?;
-            Some(Context {
-                source: ready.developed.clone(),
-                reference: ready.reference.clone(),
-                correction: None,
-            })
-        } else {
-            self.source_context()
-        }
-    }
 }
 
 impl PartialEq for Context {

@@ -212,7 +212,6 @@ impl Editor {
         !self.busy
             && self.document.input.ready()
             && !self.picking()
-            && self.document.flat_edit().is_none()
             && !self.masking()
             && self.document.analysis_review().is_none()
             && !self.document.visit.adjustment_layers.confirming()
@@ -459,7 +458,6 @@ impl Editor {
         self.tab == 1
             && !self.dusting()
             && !self.picking()
-            && self.document.flat_edit().is_none()
             && !self.masking()
             && self.document.analysis_review().is_none()
             && self.document.visit.adjustment_layers.owns_delete

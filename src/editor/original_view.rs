@@ -211,17 +211,47 @@ impl OriginalView {
     }
 }
 
-impl Editor {
-    /// Both comparison and precision tools present the same accepted reconstruction product.
-    pub(super) fn original_rendered(
+impl OriginalView {
+    pub(super) fn request_with(
+        &mut self,
+        services: source::Services,
+        submissions: crate::platform::SubmissionGate,
+        context: &egui::Context,
+        cx: &UiContext<'_, Editor>,
+    ) {
+        if let Some(request) = self.request() {
+            let Some(completion) = request.begin() else {
+                return;
+            };
+            let stopped = completion.clone();
+            self.task = cx.spawn(move |cx| async move {
+                let result = request.prepare(services, submissions).await;
+                cx.update(|editor| {
+                    if let Some(error) = completion.receive(result) {
+                        editor.status = error;
+                    }
+                });
+            });
+            if self.task.is_none() {
+                stopped.receive(Err("Application stopped".into()));
+            }
+        }
+        if self.refining() || self.settled().is_none() && !self.failed() {
+            context.request_repaint_after(Duration::from_millis(50));
+        }
+    }
+
+    /// Present a completed original-sample reconstruction without another image calculation.
+    pub(super) fn rendered(
         &mut self,
         purpose: OriginalPurpose,
+        limits: &wgpu::Limits,
     ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
         use crate::{
             frame_raster::FrameRaster,
             gpu::view::{RenderedView, SourceRequest},
         };
-        let owner = &self.active_canvas().grade.original;
+        let owner = &*self;
         let Some((view, image)) = owner.settled() else {
             return Ok(None);
         };
@@ -242,14 +272,7 @@ impl Editor {
                 frame
             }
         };
-        let limits = self
-            .document
-            .visit
-            .working_view
-            .device()
-            .map(|device| device.limits())
-            .unwrap_or_default();
-        let input = wanted.capture.processing(&limits, &wanted.repairs)?;
+        let input = wanted.capture.processing(limits, &wanted.repairs)?;
         let identity =
             crate::gpu::execution::source::Identity::camera(wanted.source.source.identity());
         let spec = if input.grade().is_none() {
@@ -268,7 +291,26 @@ impl Editor {
             return Ok(Some(rendered.clone()));
         }
         let rendered = RenderedView::reference(image, spec, wanted.capture.clone(), wanted.target);
-        self.active_canvas_mut().grade.original.rendered = Some(rendered.clone());
+        self.rendered = Some(rendered.clone());
         Ok(Some(rendered))
+    }
+}
+
+impl Editor {
+    pub(super) fn original_rendered(
+        &mut self,
+        purpose: OriginalPurpose,
+    ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
+        let limits = self
+            .document
+            .visit
+            .working_view
+            .device()
+            .map(|device| device.limits())
+            .unwrap_or_default();
+        self.active_canvas_mut()
+            .grade
+            .original
+            .rendered(purpose, &limits)
     }
 }

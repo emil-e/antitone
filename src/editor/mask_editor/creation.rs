@@ -64,7 +64,6 @@ impl CreationTool {
 impl tool::Tool for CreationTool {
     fn presentation(&self, editor: &Editor) -> tool::Presentation {
         tool::Presentation {
-            show_viewer: true,
             identity: self.identity(),
             primary: None,
             dismiss: "Cancel",
@@ -100,89 +99,101 @@ impl tool::Tool for CreationTool {
 
     fn canvas(
         &mut self,
-        canvas: &mut canvas::Canvas<'_>,
+        viewer: &mut canvas::Viewer<'_>,
         editor: &mut Editor,
         cx: &UiContext<'_, Editor>,
-    ) -> CanvasLayout {
-        let (pressed, released, down, space, origin, point) = canvas.ui.input(|input| {
-            (
-                input.pointer.button_pressed(egui::PointerButton::Primary),
-                input.pointer.button_released(egui::PointerButton::Primary),
-                input.pointer.button_down(egui::PointerButton::Primary),
-                input.key_down(egui::Key::Space),
-                input.pointer.press_origin(),
-                input.pointer.interact_pos(),
-            )
-        });
-        let active = editor.tab == 1 && !editor.document.source;
-        let allowed = active && canvas.ui.is_enabled() && !editor.busy;
-        let captured = self.edit.borrow().dragging();
-        let rect = canvas.response.rect;
-        let composition = canvas.composition;
-        let ppp = canvas.ui.ctx().pixels_per_point();
-        let relayout =
-            |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
-        let layout = canvas.layout(&mut editor.active_canvas_mut().viewport, relayout);
-        let (layout, panning) = if captured {
-            (layout, false)
-        } else {
-            let mut response = canvas.response.clone();
-            if active {
-                navigation::consume_primary(&mut response);
-            }
-            navigation::navigate_view(
-                &mut editor.active_canvas_mut().viewport,
-                canvas.ui,
-                &response,
-                layout,
-                relayout,
-            )
-        };
-        if captured && ((!allowed && released) || (!down && !released)) {
-            editor.status = "Mask gesture cancelled".into();
-            editor.end_tool();
-        } else if allowed && !panning {
-            if pressed
-                && !space
-                && canvas.response.is_pointer_button_down_on()
-                && let Some(origin) = origin.filter(|point| layout.canvas.contains(*point))
-            {
-                let mut edit = self.edit.borrow_mut();
-                edit.begin_drag(layout, origin);
-                edit.error = None;
-            }
-            {
-                let mut edit = self.edit.borrow_mut();
-                if let (Some(drag), Some(point)) = (&edit.drag, point) {
-                    edit.mask = Some(drag.update(point));
-                    canvas.ui.ctx().request_repaint();
+    ) -> Option<CanvasLayout> {
+        viewer.show(
+            self,
+            editor,
+            cx,
+            Editor::photograph_controls,
+            |tool, surface, editor, cx| {
+                if editor.fullscreen.is_some() {
+                    return surface.photograph(editor, cx);
                 }
-            }
-            if released && self.edit.borrow().dragging() {
-                self.finish(editor);
-            }
-        }
-        canvas.paint_image(editor, layout, false, cx);
-        if active {
-            let edit = self.edit.borrow();
-            if let Some(mask) = edit.mask {
-                paint_geometry(
-                    canvas.ui,
-                    layout,
-                    mask,
-                    false,
-                    editor.document.visit.adjustment_layers.show_coverage,
-                    edit.dragging(),
-                );
-            }
-            if allowed && !panning && !space && canvas.response.hovered() {
-                canvas.ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-            }
-        }
-        layout
+                let mut canvas = surface.selected()?;
+                let (pressed, released, down, space, origin, point) = canvas.ui.input(|input| {
+                    (
+                        input.pointer.button_pressed(egui::PointerButton::Primary),
+                        input.pointer.button_released(egui::PointerButton::Primary),
+                        input.pointer.button_down(egui::PointerButton::Primary),
+                        input.key_down(egui::Key::Space),
+                        input.pointer.press_origin(),
+                        input.pointer.interact_pos(),
+                    )
+                });
+                let active = editor.tab == 1 && !editor.document.source;
+                let allowed = active && canvas.ui.is_enabled() && !editor.busy;
+                let captured = tool.edit.borrow().dragging();
+                let rect = canvas.response.rect;
+                let composition = canvas.composition;
+                let ppp = canvas.ui.ctx().pixels_per_point();
+                let relayout =
+                    |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
+                let layout = canvas.layout(&mut editor.active_canvas_mut().viewport, relayout);
+                let (layout, panning) = if captured {
+                    (layout, false)
+                } else {
+                    let mut response = canvas.response.clone();
+                    if active {
+                        navigation::consume_primary(&mut response);
+                    }
+                    navigation::navigate_view(
+                        &mut editor.active_canvas_mut().viewport,
+                        canvas.ui,
+                        &response,
+                        layout,
+                        relayout,
+                    )
+                };
+                if captured && ((!allowed && released) || (!down && !released)) {
+                    editor.status = "Mask gesture cancelled".into();
+                    editor.end_tool();
+                } else if allowed && !panning {
+                    if pressed
+                        && !space
+                        && canvas.response.is_pointer_button_down_on()
+                        && let Some(origin) = origin.filter(|point| layout.canvas.contains(*point))
+                    {
+                        let mut edit = tool.edit.borrow_mut();
+                        edit.begin_drag(layout, origin);
+                        edit.error = None;
+                    }
+                    {
+                        let mut edit = tool.edit.borrow_mut();
+                        if let (Some(drag), Some(point)) = (&edit.drag, point) {
+                            edit.mask = Some(drag.update(point));
+                            canvas.ui.ctx().request_repaint();
+                        }
+                    }
+                    if released && tool.edit.borrow().dragging() {
+                        tool.finish(editor);
+                    }
+                }
+                canvas.paint_image(editor, layout, false, cx);
+                if active {
+                    let edit = tool.edit.borrow();
+                    if let Some(mask) = edit.mask {
+                        paint_geometry(
+                            canvas.ui,
+                            layout,
+                            mask,
+                            false,
+                            editor.document.visit.adjustment_layers.show_coverage,
+                            edit.dragging(),
+                        );
+                    }
+                    if allowed && !panning && !space && canvas.response.hovered() {
+                        canvas.ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+                    }
+                }
+                Some(layout)
+            },
+        )
     }
 
-    fn action(&mut self, action: tool::Action, editor: &mut Editor) {
+    fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         if matches!(action, tool::Action::Dismiss) {
             editor.status = "Mask creation cancelled".into();
             editor.end_tool();

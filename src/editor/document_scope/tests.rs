@@ -21,7 +21,6 @@ struct OwnedInteraction {
 impl crate::editor::tool::Tool for OwnedInteraction {
     fn presentation(&self, _editor: &crate::editor::Editor) -> crate::editor::tool::Presentation {
         crate::editor::tool::Presentation {
-            show_viewer: false,
             identity: crate::editor::presentation::ToolIdentity {
                 icon: crate::editor::icons::Icon::Pick,
                 title: "Owned interaction",
@@ -38,6 +37,7 @@ impl crate::editor::tool::Tool for OwnedInteraction {
         &mut self,
         _action: crate::editor::tool::Action,
         _editor: &mut crate::editor::Editor,
+        _cx: &crate::application::UiContext<'_, crate::editor::Editor>,
     ) {
     }
 }
@@ -116,7 +116,7 @@ fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifet
         app.update(|scope| {
             assert!(scope.crop_edit().is_none());
             assert!(scope.take_mask_edit().is_none());
-            assert!(scope.take_flat_edit().is_none());
+            assert!(scope.flat_edit().is_none());
             scope.set_crop_edit(None);
             scope.set_mask_edit(None);
             scope.set_flat_edit(None);

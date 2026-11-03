@@ -63,11 +63,7 @@ impl Editor {
         }
     }
     pub(in crate::editor) fn look_rendering_error(&self) -> Option<Error> {
-        if self.document.source
-            || self.picking()
-            || self.document.flat_edit().is_some()
-            || self.document.analysis_review().is_some()
-        {
+        if self.document.source || self.picking() || self.document.analysis_review().is_some() {
             return None;
         }
         let id = self.document.state.project.output.luts().id()?;
@@ -90,7 +86,6 @@ impl Editor {
 
     fn lut_controls_allowed(&self, slot: Slot) -> bool {
         self.look_request_allowed(slot)
-            && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()
             && !self.masking()
     }

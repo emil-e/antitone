@@ -33,7 +33,6 @@ impl From<&'static str> for Primary {
 
 #[derive(Clone)]
 pub(super) struct Presentation {
-    pub show_viewer: bool,
     pub identity: presentation::ToolIdentity<'static>,
     pub primary: Option<Primary>,
     pub dismiss: &'static str,
@@ -45,7 +44,7 @@ pub(super) struct Presentation {
 
 pub(super) trait Tool: Any {
     fn presentation(&self, editor: &Editor) -> Presentation;
-    fn composition(&mut self, normal: Composition) -> Composition {
+    fn composition(&self, normal: Composition) -> Composition {
         normal
     }
     fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
@@ -57,24 +56,38 @@ pub(super) trait Tool: Any {
     }
     fn canvas(
         &mut self,
-        canvas: &mut canvas::Canvas<'_>,
+        viewer: &mut canvas::Viewer<'_>,
         editor: &mut Editor,
         cx: &UiContext<'_, Editor>,
-    ) -> CanvasLayout {
-        let composition = self.composition(canvas.composition);
-        let rect = canvas.response.rect;
-        let ppp = canvas.ui.ctx().pixels_per_point();
-        let relayout =
-            |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
-        let viewport = self.viewport(editor);
-        let layout = canvas.layout(viewport, relayout);
-        let (layout, _) =
-            navigation::navigate_view(viewport, canvas.ui, canvas.response, layout, relayout);
-        canvas.paint_image(editor, layout, false, cx);
-        layout
+    ) -> Option<CanvasLayout> {
+        viewer.show(
+            self,
+            editor,
+            cx,
+            Editor::photograph_controls,
+            |tool, surface, editor, cx| {
+                let mut canvas = surface.selected()?;
+                let composition = tool.composition(canvas.composition);
+                let rect = canvas.response.rect;
+                let ppp = canvas.ui.ctx().pixels_per_point();
+                let relayout =
+                    |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
+                let viewport = tool.viewport(editor);
+                let layout = canvas.layout(viewport, relayout);
+                let (layout, _) = navigation::navigate_view(
+                    viewport,
+                    canvas.ui,
+                    canvas.response,
+                    layout,
+                    relayout,
+                );
+                canvas.paint_image(editor, layout, false, cx);
+                Some(layout)
+            },
+        )
     }
     fn shortcuts(&mut self, _ui: &mut egui::Ui, _editor: &mut Editor) {}
-    fn action(&mut self, action: Action, editor: &mut Editor);
+    fn action(&mut self, action: Action, editor: &mut Editor, cx: &UiContext<'_, Editor>);
     // Compatibility with the existing foreground activity owner; the operation
     // remains responsible for its task and cancellation semantics.
     fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
@@ -202,11 +215,7 @@ impl Editor {
     pub(super) fn tool_start_available(&self) -> bool {
         (!self.busy || self.tool_activity().is_some())
             && !self.document.gamma_pivot.pending()
-            && (self.document_pending.is_none()
-                || matches!(
-                    self.document.tool.as_ref(),
-                    Some(legacy_tool::Tool::Flat(_))
-                ))
+            && self.document_pending.is_none()
             && !self.export_modal()
             && !self.document.confirming()
             && self.transition.is_none()
@@ -218,6 +227,7 @@ impl Editor {
             return false;
         }
         self.cancel_active_tool();
+        self.canvas_frame = Default::default();
         self.finish_adjustment_layer_interaction();
         true
     }
@@ -231,7 +241,6 @@ impl Editor {
         match self.document.tool.as_ref() {
             Some(legacy_tool::Tool::Mask(_)) => self.finish_mask(false),
             Some(legacy_tool::Tool::Analyze(_)) => self.close_analysis(),
-            Some(legacy_tool::Tool::Flat(_)) => self.finish_flat_edit(),
             None => {}
         }
         if let Some(activity) = activity
@@ -266,7 +275,9 @@ impl Editor {
     }
     pub(super) fn retire_hosted_tool(&mut self) {
         let activity = self.hosted_tool_activity();
+        self.retire_fullscreen();
         self.document.clear_hosted_tools();
+        self.canvas_frame = Default::default();
         self.document.visit.canvas.last_layout = None;
         if let Some(activity) = activity
             && self.tasks.finish(activity)
@@ -278,19 +289,16 @@ impl Editor {
         self.cancel_active_tool();
     }
 
-    pub(super) fn activate_tool(&mut self, placement: Placement, mut tool: Box<dyn Tool>) -> bool {
+    pub(super) fn activate_tool(&mut self, placement: Placement, tool: Box<dyn Tool>) -> bool {
         if !self.prepare_tool() {
             return false;
-        }
-        if let Some(ready) = &self.document.visit.canvas.ready {
-            tool.composition(self.normal_canvas_composition(ready.area, self.legacy_pick()));
         }
         self.document.set_hosted_tool(placement, tool);
         true
     }
 
     pub(super) fn with_tool_viewport<R>(&mut self, body: impl FnOnce(&mut Viewport) -> R) -> R {
-        if self.fullscreen.is_some() || self.current_tool().is_none() {
+        if self.current_tool().is_none() {
             return body(&mut self.active_canvas_mut().viewport);
         }
         self.with_current_tool(|tool, editor| body(tool.viewport(editor)))
@@ -323,9 +331,14 @@ impl Editor {
         }
         Some(result)
     }
-    pub(super) fn hosted_action(&mut self, action: Action) {
-        self.with_current_tool(|tool, editor| tool.action(action, editor));
+    pub(super) fn dispatch_tool(&mut self, action: Action, cx: &UiContext<'_, Self>) {
+        self.with_current_tool(|tool, editor| tool.action(action, editor, cx));
     }
+    #[cfg(test)]
+    pub(super) fn hosted_action(&mut self, action: Action) {
+        self.dispatch_tool(action, &UiContext::render_only());
+    }
+
     pub(super) fn hosted_drawer(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
         self.with_current_tool(|tool, editor| tool.drawer(ui, editor, cx));
     }

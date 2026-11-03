@@ -647,7 +647,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                 assert!(scope.spec.is_inspection());
                 assert!(Arc::ptr_eq(
                     &scope,
-                    &editor.active_canvas().displayed.as_ref().unwrap().view
+                    &editor.canvas_frame.displayed.as_ref().unwrap().view
                 ));
             });
             harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));

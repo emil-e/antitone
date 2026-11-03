@@ -2,7 +2,6 @@ use super::*;
 
 pub(super) struct FullscreenView {
     id: u64,
-    reference: bool,
     viewport: Viewport,
     layout: Option<(crate::viewport::CanvasLayout, f32)>,
     source: bool,
@@ -31,8 +30,8 @@ impl Editor {
         !self.fullscreen_blocked()
             && self.document.analysis_review().is_none()
             && (self.fullscreen.is_some()
-                || self.selected_view().is_some()
-                    && !(self.busy && (self.picking() || self.document.flat_edit().is_some())))
+                || (self.canvas_frame.layout.is_some() || self.selected_view().is_some())
+                    && !(self.busy && self.picking()))
     }
 
     pub(super) fn toggle_fullscreen(&mut self, context: &egui::Context) {
@@ -45,20 +44,15 @@ impl Editor {
             }
         } else {
             let inspection = self.canvas_inspection();
-            let picker_viewport = self
-                .document
-                .visit
-                .picker
-                .display()
-                .is_some()
-                .then(|| self.with_tool_viewport(|viewport| *viewport));
+            let picker_viewport = (self.document.visit.picker.display().is_some()
+                && self.document.visit.hosted_tool.occupied())
+            .then(|| self.with_tool_viewport(|viewport| *viewport));
             let normal_viewport = std::ptr::from_ref(&self.active_canvas().viewport);
             let normal_layout =
                 self.with_tool_viewport(|viewport| std::ptr::eq(viewport, normal_viewport));
             let native_before = context.input(|input| input.viewport().fullscreen == Some(true));
             self.fullscreen = Some(FullscreenView {
                 id: self.id,
-                reference: self.document.flat_edit().is_some(),
                 viewport: self.active_canvas().viewport,
                 layout: self.active_canvas().last_layout,
                 source: self.document.source,
@@ -93,6 +87,21 @@ impl Editor {
         context.request_repaint();
     }
 
+    pub(super) fn retire_fullscreen(&mut self) {
+        let Some(view) = self.fullscreen.take() else {
+            return;
+        };
+        if view.id == self.id {
+            self.document.visit.canvas.viewport = view.viewport;
+            self.document.visit.canvas.last_layout = view.layout;
+            if self.document.input.ready() == view.calibrated {
+                self.document.source = view.source;
+            }
+            self.source_exposure = view.source_exposure;
+            self.source_white_balance = view.source_white_balance;
+        }
+    }
+
     pub(super) fn fullscreen_requested(&self) -> bool {
         self.fullscreen.as_ref().is_some_and(|view| !view.exiting)
     }
@@ -108,8 +117,7 @@ impl Editor {
         let Some(view) = &self.fullscreen else {
             return;
         };
-        let context_changed =
-            view.id != self.id || view.reference != self.document.flat_edit().is_some();
+        let context_changed = view.id != self.id;
         let native_exit = !view.exiting && view.native_before && native == Some(false);
         let returned = view.exiting && view.restored;
         if context_changed || native_exit || returned {
@@ -151,7 +159,7 @@ impl Editor {
         } else if self.fullscreen.is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
         {
-            self.active_canvas_mut().viewport.fit();
+            self.with_tool_viewport(Viewport::fit);
         }
     }
 }

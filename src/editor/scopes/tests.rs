@@ -578,7 +578,7 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
                 mapping,
                 ..
             } = &input;
-            let actual = editor.active_canvas().displayed.as_ref().unwrap();
+            let actual = editor.canvas_frame.displayed.as_ref().unwrap();
             assert!(
                 Arc::ptr_eq(view, &actual.view),
                 "scopes must consume the painted product, not another available image"

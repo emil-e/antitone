@@ -82,6 +82,112 @@ fn batch_owns_its_global_drawer_keeps_grading_live_and_is_replaced_by_crop_at_bo
 }
 
 #[test]
+fn preparation_keeps_footer_cancel_available_and_apply_waits_for_ready_proposals() {
+    for cancel in [true, false] {
+        for (size, width) in [
+            (egui::vec2(1100., 800.), 315.),
+            (egui::vec2(800., 600.), 270.),
+        ] {
+            setup(|mut h, _| {
+                set_layout(&mut h, size, width);
+                stage(&mut h, "Roll");
+                let (before, metadata, history) = h.read(|editor| {
+                    (
+                        editor.document.state.project.clone(),
+                        editor.document.spatial.ready(),
+                        editor.history_label(crate::editor::history::Direction::Undo),
+                    )
+                });
+                // Hold region publication while the real tool continuation waits for it.
+                let reply = h.update(|editor| {
+                    let (reply, receive) = futures_channel::oneshot::channel();
+                    editor.document.spatial_reply = Some(receive);
+                    reply
+                });
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Auto-crop roll")
+                    .scroll_to_me();
+                h.try_run_realtime().unwrap();
+                h.get_by_role_and_label(egui::accesskit::Role::Button, "Auto-crop roll")
+                    .click();
+                h.step();
+                h.step();
+                h.read(|editor| {
+                    assert!(editor.busy && editor.document.spatial_preparing.is_some());
+                    assert!(
+                        editor.document.auto_crop.active()
+                            && !editor.document.auto_crop.reviewing()
+                    );
+                });
+                let identity = h.get_by_label("Active tool: Auto-crop · Working").rect();
+                assert!(h.ctx.content_rect().contains_rect(identity));
+                assert!(
+                    !h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+                        .accesskit_node()
+                        .is_disabled()
+                );
+                assert!(
+                    h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
+                        .accesskit_node()
+                        .is_disabled()
+                );
+                save_capture(
+                    &h.render().unwrap(),
+                    &format!("auto-crop-preparing-footer-{width}-offscreen"),
+                );
+                if cancel {
+                    h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+                        .click();
+                    h.step();
+                    h.read(|editor| {
+                        assert!(!editor.document.auto_crop.active());
+                        assert!(
+                            editor.document.spatial_preparing.is_some(),
+                            "shared preparation outlives its consumer"
+                        );
+                        assert_eq!(editor.document.state.project, before);
+                    });
+                }
+                reply.send(Ok(Some((*metadata).clone()))).unwrap();
+                wait_for(&mut h, |editor| {
+                    editor.document.spatial_preparing.is_none()
+                        && (cancel || editor.document.auto_crop.reviewing())
+                });
+                h.read(|editor| assert_eq!(editor.document.state.project, before));
+                if cancel {
+                    h.read(|editor| {
+                        assert!(!editor.document.auto_crop.active());
+                        assert_eq!(
+                            editor.history_label(crate::editor::history::Direction::Undo),
+                            history
+                        );
+                    });
+                } else {
+                    assert!(
+                        !h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
+                            .accesskit_node()
+                            .is_disabled()
+                    );
+                    h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
+                        .click();
+                    h.step();
+                    h.read(|editor| {
+                        assert!(!editor.document.auto_crop.active());
+                        assert_ne!(
+                            editor.document.state.project, before,
+                            "the prepared proposals must be accepted"
+                        );
+                        assert_eq!(
+                            editor.history_label(crate::editor::history::Direction::Undo),
+                            Some("Auto-crop")
+                        );
+                    });
+                }
+            });
+        }
+    }
+}
+
+#[test]
 fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
     for accept in [false, true] {
         for (size, width) in [

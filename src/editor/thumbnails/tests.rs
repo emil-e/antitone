@@ -1092,7 +1092,7 @@ fn filmstrip_frame(
             )),
             ..Default::default()
         },
-        |ui| editor.filmstrip_with_budgets(ui, budgets, cx),
+        |ui| editor.filmstrip_with_budgets(ui, budgets, true, cx),
     );
     output.textures_delta.clear();
 }

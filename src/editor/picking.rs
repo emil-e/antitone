@@ -71,7 +71,7 @@ impl Interaction {
     }
 }
 
-/// Read-only workspace observation. Only the tool retains the interaction.
+/// Read-only observation of the measurement picker; the tool owns the interaction.
 #[derive(Default)]
 pub(super) struct State {
     active: Weak<RefCell<Interaction>>,

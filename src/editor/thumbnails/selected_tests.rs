@@ -613,7 +613,7 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                 let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
                 assert!(Arc::ptr_eq(
                     &view,
-                    &editor.active_canvas().displayed.as_ref().unwrap().view
+                    &editor.canvas_frame.displayed.as_ref().unwrap().view
                 ));
             });
         });

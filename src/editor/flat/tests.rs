@@ -100,7 +100,7 @@ fn reference_rejection_and_cancel_preserve_document_and_working_context() {
                 e.failure.as_ref().unwrap().details,
                 "Reference services unavailable"
             );
-            e.finish_pick(cx);
+            e.end_tool();
             assert_eq!(e.document.roll, roll);
             assert_eq!(e.document.state.project, original);
             assert!(!e.document.source);
@@ -244,7 +244,22 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
         |ui| crate::editor::tests::paint_controller(&mut editor, ui),
     );
     output.textures_delta.clear();
-    let layout = editor.active_canvas().last_layout.unwrap().0;
+    let layout = editor.canvas_frame.layout.unwrap().0;
+    let layout_state = |saved: Option<(crate::viewport::CanvasLayout, f32)>| {
+        saved.map(|(layout, ppp)| {
+            (
+                layout.composition,
+                layout.canvas,
+                layout.image,
+                layout.scale,
+                ppp,
+            )
+        })
+    };
+    assert_eq!(
+        layout_state(editor.document.visit.canvas.last_layout),
+        layout_state(working_layout)
+    );
     assert_eq!(
         layout.composition,
         Composition::new(
@@ -275,7 +290,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     );
     with_application(editor, |app| {
         app.enter(|e, cx| {
-            e.finish_pick(cx);
+            e.end_tool();
             assert_eq!(e.document.state.project, original);
             assert_eq!(
                 e.document.visit.crop,
@@ -287,23 +302,10 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
             assert_eq!(e.document.roll_orientation, original.orientation);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert!(!e.document.source && e.document.flat_edit().is_none());
-            let (shown, shown_ppp) = e.document.visit.canvas.last_layout.unwrap();
-            let (saved, saved_ppp) = working_layout.unwrap();
-            assert_eq!(
-                (
-                    shown.composition,
-                    shown.canvas,
-                    shown.image,
-                    shown.scale,
-                    shown_ppp
-                ),
-                (
-                    saved.composition,
-                    saved.canvas,
-                    saved.image,
-                    saved.scale,
-                    saved_ppp
-                )
+            assert_eq!(e.normal_canvas_composition(area, None), composition);
+            assert!(
+                e.canvas_frame.layout.is_none(),
+                "retirement cannot leave reference navigation metadata"
             );
             e.begin_crop();
             let request = e.id;
@@ -397,12 +399,12 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 assert_eq!(e.document.state.project, original);
             });
             app.run_until(Duration::from_secs(60), |e| !e.busy);
-            app.enter(|e, cx| {
+            app.update(|e| {
                 e.sync_document();
                 assert_eq!(e.document.state.project, original);
                 assert_eq!(e.test_pick(), Some(flat::DISPLAY));
                 assert!(e.test_pick_region().is_some());
-                e.finish_pick(cx);
+                e.end_tool();
                 assert_eq!(e.document.state.project, original);
                 assert_eq!(e.document.visit.current_source, selected);
                 assert_eq!(

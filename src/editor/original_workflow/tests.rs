@@ -30,11 +30,7 @@ fn editor() -> (Editor, source_loading::SourceLoader) {
     (e, scheduler)
 }
 
-fn demand(
-    e: &mut Editor,
-    ev: f64,
-    cx: &UiContext<'_, Editor>,
-) -> std::sync::Weak<crate::scan::DevelopedSource> {
+fn demand_input(ev: f64) -> (Demand, std::sync::Weak<crate::scan::DevelopedSource>) {
     let source = source::Context {
         reference: None,
         source: crate::editor::tests::developed_fixture(),
@@ -50,19 +46,41 @@ fn demand(
         crate::geometry::Composition::new(view.area, Default::default(), Default::default())
             .unwrap();
     let input = ProcessingInput::from(ProcessingParameters::source_inspection(ev).unwrap());
+    (
+        Demand::fixture(input, OutputTarget::Srgb, Some(view), composition, source),
+        resource,
+    )
+}
+
+fn demand(
+    e: &mut Editor,
+    ev: f64,
+    cx: &UiContext<'_, Editor>,
+) -> std::sync::Weak<crate::scan::DevelopedSource> {
+    let (wanted, resource) = demand_input(ev);
     e.observe_grade(None);
-    e.observe_original(
-        Some(OriginalPurpose::Tool),
-        Some(Demand::fixture(
-            input,
-            OutputTarget::Srgb,
-            Some(view),
-            composition,
-            source,
-        )),
-    );
+    e.observe_original(Some(OriginalPurpose::Tool), Some(wanted));
     e.active_canvas_mut().grade.original.last_edit = Instant::now() - Duration::from_secs(1);
     e.request_original(&egui::Context::default(), cx);
+    resource
+}
+
+fn reference_demand(
+    e: &mut Editor,
+    ev: f64,
+    cx: &UiContext<'_, Editor>,
+) -> std::sync::Weak<crate::scan::DevelopedSource> {
+    let (wanted, resource) = demand_input(ev);
+    let mut state = e.document.flat_edit_mut().unwrap();
+    let original = state.view.test_original_mut();
+    original.observe(OriginalPurpose::Tool, wanted);
+    original.last_edit = Instant::now() - Duration::from_secs(1);
+    original.request_with(
+        e.source_services.clone().unwrap(),
+        e.submissions.clone(),
+        &egui::Context::default(),
+        cx,
+    );
     resource
 }
 
@@ -84,8 +102,9 @@ fn working_reconstruction_can_complete_while_the_reference_view_is_active() {
         });
         app.read(|e| {
             assert!(e.document.flat_edit().is_some());
-            assert!(e.active_canvas().grade.original.settled().is_none());
-            assert!(!e.active_canvas().grade.original.refining());
+            let state = e.document.flat_edit().unwrap();
+            assert!(state.view.test_original().settled().is_none());
+            assert!(!state.view.test_original().refining());
             assert!(!e.document.visit.canvas.grade.original.refining());
         });
     });
@@ -102,7 +121,7 @@ fn ending_reference_view_retires_only_its_reconstruction_not_the_working_views()
         let working = app.enter(|e, cx| demand(e, 0., cx));
         app.pump();
         app.update(|e| crate::editor::tests::paused_reference_fixture(e, reference, None));
-        let temporary = app.enter(|e, cx| demand(e, 0.5, cx));
+        let temporary = app.enter(|e, cx| reference_demand(e, 0.5, cx));
         app.pump();
         app.update(Editor::finish_flat_edit);
         app.pump();

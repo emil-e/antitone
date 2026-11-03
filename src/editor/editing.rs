@@ -22,8 +22,6 @@ impl Editor {
         if self.document.analysis_review().is_some() {
             self.status = "Analysis review cancelled; areas and grade unchanged".into();
             self.end_analysis_review(cx);
-        } else if self.document.flat_edit().is_some() {
-            self.finish_flat_edit();
         } else if self.document.visit.picker.display().is_some() {
             self.end_tool();
         } else {
@@ -66,13 +64,11 @@ impl Editor {
 
     pub(super) fn apply_pick(&mut self, cx: &UiContext<'_, Self>) {
         if self.current_tool().is_some() {
-            self.hosted_action(tool::Action::Primary);
+            self.dispatch_tool(tool::Action::Primary, cx);
             return;
         }
         if self.document.analysis_review().is_some() {
             self.confirm_analysis_review(cx);
-        } else if self.document.flat_edit().is_some() {
-            self.apply_flat_edit(cx);
         }
     }
 }
@@ -224,18 +220,18 @@ pub(super) enum Command {
 }
 
 impl Editor {
-    pub(super) fn apply_photo_action(&mut self, action: PhotoAction) {
+    pub(super) fn apply_photo_action(&mut self, action: PhotoAction, cx: &UiContext<'_, Self>) {
         match action {
             PhotoAction::Crop => {
                 if self.cropping() {
-                    self.hosted_action(tool::Action::Dismiss);
+                    self.dispatch_tool(tool::Action::Dismiss, cx);
                 } else {
                     self.begin_crop();
                 }
             }
             PhotoAction::Dust => {
                 if self.dusting() {
-                    self.hosted_action(tool::Action::Dismiss);
+                    self.dispatch_tool(tool::Action::Dismiss, cx);
                 } else {
                     self.begin_dust_cleanup();
                 }
@@ -470,7 +466,7 @@ impl Editor {
                 drop,
                 finish,
             } => self.adjustment_layer_order_input(start, drop, finish),
-            Command::Photo(action) => self.apply_photo_action(action),
+            Command::Photo(action) => self.apply_photo_action(action, cx),
             Command::Roll(action) => self.apply_roll_orientation(action),
             Command::Adjustment(action) => self.apply_adjustment_layer_action(action),
 
@@ -499,7 +495,7 @@ impl Editor {
                     cx,
                 );
             }
-            Command::FlatEdit(path, region) => self.begin_flat_edit(path, region, cx),
+            Command::FlatEdit(path, region) => flat::FlatTool::open(self, path, region, cx),
         }
     }
 }

@@ -20,7 +20,7 @@ Setup uses untransformed source with automatic embedded lens development. Adjust
 
 The estimator compares local full-resolution camera statistics with a centre-luminance, AP1-neutral target and smooths the resulting field, validating positive finite means and representable gains. Capture the reference without clipping: saturation erases the illumination differences needed for correction. Lighting, aperture, focus and positioning must match the scanning setup. Developed values above one after embedded shading are valid headroom, not evidence of capture clipping.
 
-Apply estimates the map from the prepared uncorrected reference and validates the corrected working source before acceptance. Cancel or failure closes the reference view, leaving the working photo and accepted state unchanged; preparation failures use [acknowledged feedback](editor.md#decisions-are-not-operation-failures). The document-owned [setup task](../src/editor/flat/operation.rs) awaits region selection between preparation and acceptance, independently of temporary photo visits; a newly registered reference source stays out of the filmstrip as a reference-only record. [Architecture](architecture.md) describes that lifecycle.
+The [reference tool](../src/editor/flat/interaction.rs) owns preparation, selection and viewing; Cancel or replacement discards it. Apply captures the prepared uncorrected source and rectangle, then closes the reference view immediately. A [correction task](../src/editor/flat/operation.rs) stays with the document while it estimates the map and validates the corrected working source before publishing correction and history together. Failure preserves the previous correction and working photo, with [acknowledged feedback](editor.md#decisions-are-not-operation-failures). A newly registered reference stays out of the filmstrip as a reference-only record.
 
 ## Apply gains before inversion
 
@@ -40,6 +40,6 @@ Projects save the map and its development identity, allowing correction to be us
 
 ## Working on this area
 
-[Scan](../src/scan.rs) gathers reference statistics; [flat-field](../src/flat_field.rs) owns estimation, interpolation and precision; [GPU evaluation](../src/gpu/flat.rs) shares the source mapping. [Editor correction](../src/editor/flat.rs) owns the temporary reference transaction, and [project correction](../src/project/flat.rs) owns saved-map validation.
+[Scan](../src/scan.rs) gathers reference statistics; [flat-field](../src/flat_field.rs) owns estimation, interpolation and precision; [GPU evaluation](../src/gpu/flat.rs) shares the source mapping. [Editor correction](../src/editor/flat.rs) connects reference interaction to document acceptance, and [project correction](../src/project/flat.rs) owns saved-map validation.
 
 Start with [project tests](../tests/flat_field_project.rs), [export tests](../tests/flat_field_export.rs) and [editor tests](../src/editor/flat/tests.rs). [Diagnostics](diagnostics.md#flat-field-correction) provides sample-dependent exercises.

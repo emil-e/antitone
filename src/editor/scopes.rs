@@ -221,7 +221,7 @@ impl ScopeInput {
 impl Editor {
     pub(super) fn scope_request(&self) -> Result<ScopeInput, &'static str> {
         let displayed = self
-            .active_canvas()
+            .canvas_frame
             .displayed
             .as_ref()
             .ok_or("Waiting for view")?;
@@ -272,14 +272,14 @@ impl Editor {
         };
         // The plotted codes belong to the painted image, even while a new target is pending.
         slot.settings.target = self
-            .active_canvas()
+            .canvas_frame
             .displayed
             .as_ref()
             .map_or(self.document.target, |image| image.view.target);
         slot.painter
             .rect_filled(slot.plot, 3., egui::Color32::from_gray(6));
         if let Some(error) = self
-            .active_canvas()
+            .canvas_frame
             .displayed
             .as_ref()
             .and_then(|image| image.view.image.look_result())

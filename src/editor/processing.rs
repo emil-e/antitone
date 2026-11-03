@@ -51,6 +51,59 @@ pub(super) fn validate_source_with_matrix(
 }
 
 impl Editor {
+    pub(super) fn positive_parameters(
+        &self,
+        input: impl Into<InputSettings>,
+        roll: RollSettings,
+    ) -> Result<ProcessingParameters, Error> {
+        let basis = self
+            .document
+            .project
+            .camera_basis()
+            .ok_or(Error::UnusableSample("no native-camera basis identity"))?;
+        let matrix = glam::DMat3::from_cols_array_2d(&basis.camera_to_ap1);
+        self.positive_parameters_for_matrix(input, roll, matrix)
+    }
+
+    pub(super) fn positive_parameters_for_matrix(
+        &self,
+        input: impl Into<InputSettings>,
+        roll: RollSettings,
+        camera_to_ap1: glam::DMat3,
+    ) -> Result<ProcessingParameters, Error> {
+        let input = input.into();
+        let input = match input.calibration() {
+            Some(base) => input.with_calibration(self.processing_calibration(base)?),
+            None => input,
+        };
+        ProcessingParameters::interpret(input, roll, camera_to_ap1)
+    }
+
+    pub(super) fn processing_calibration(
+        &self,
+        calibration: Calibration,
+    ) -> Result<Calibration, Error> {
+        let source_floor = self
+            .document
+            .visit
+            .current_source
+            .map(|id| {
+                self.document
+                    .state
+                    .project
+                    .source(id)
+                    .map(|s| s.development.input_floor)
+            })
+            .transpose()?
+            .unwrap_or(crate::processing::CAMERA_INPUT_FLOOR);
+        let residual_gain = self
+            .document
+            .correction
+            .as_ref()
+            .map_or(1., |c| c.maximum_gain);
+        calibration.for_source(source_floor, residual_gain)
+    }
+
     pub(super) fn neutral_source_signature(
         &self,
         input: &InputSettings,

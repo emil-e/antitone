@@ -51,7 +51,8 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
             let reference = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/raw/bare-light.dng");
             editor.begin_flat_edit(reference, None, cx);
-            assert!(matches!(editor.document.tool.as_ref(), Some(Tool::Flat(_))));
+            assert!(editor.current_tool().unwrap().is::<flat::FlatTool>());
+            assert!(editor.document.tool.is_none());
             editor.begin_crop();
             assert!(editor.document.crop_edit().is_some());
             assert_eq!(editor.document.project, before);

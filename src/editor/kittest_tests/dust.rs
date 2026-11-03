@@ -426,6 +426,45 @@ fn accepted_repairs_remain_in_the_painted_image_after_crop_replaces_dust() {
 }
 
 #[test]
+fn source_view_keeps_dust_identity_and_done_available_without_applying_repairs() {
+    tools::calibrated_harness(|mut h| {
+        stage(&mut h, "Photo");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
+            .click();
+        h.step();
+        ready(&mut h, 0);
+        let (before, history) = h.read(|editor| {
+            (
+                editor.document.state.project.clone(),
+                editor.history_label(Direction::Undo),
+            )
+        });
+        h.update(|editor| editor.document.source = true);
+        wait_for(&mut h, |editor| {
+            editor
+                .canvas_frame
+                .displayed
+                .as_ref()
+                .is_some_and(|painted| painted.view.spec.is_inspection())
+        });
+        h.read(|editor| assert!(editor.dusting()));
+        let identity = h.get_by_label("Active tool: Dust cleanup").rect();
+        let done = h.get_by_role_and_label(egui::accesskit::Role::Button, "Done");
+        assert!(!done.accesskit_node().is_disabled());
+        assert!(h.ctx.content_rect().contains_rect(identity));
+        save_capture(&h.render().unwrap(), "dust-source-footer-offscreen");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Done")
+            .click();
+        h.step();
+        h.read(|editor| {
+            assert!(!editor.dusting());
+            assert_eq!(editor.document.state.project, before);
+            assert_eq!(editor.history_label(Direction::Undo), history);
+        });
+    });
+}
+
+#[test]
 fn fullscreen_suspends_dust_interaction_without_changing_committed_repairs() {
     tools::calibrated_harness(|mut h| {
         stage(&mut h, "Photo");
@@ -476,6 +515,8 @@ fn navigating_back_to_a_repaired_photo_keeps_inactive_dust_artwork_hidden() {
     std::fs::copy(fixture("patches.dng"), &other).unwrap();
     let artwork = |h: &Harness<'_, Editor>| {
         let context = egui::Context::default();
+        presentation::configure_fonts(&context);
+        let mut canvas = None;
         let mut output = context.run_ui(
             egui::RawInput {
                 screen_rect: Some(h.ctx.content_rect()),
@@ -489,15 +530,17 @@ fn navigating_back_to_a_repaired_photo_keeps_inactive_dust_artwork_hidden() {
                         ui.id().with("artwork-probe"),
                         egui::Sense::hover(),
                     );
-                    editor.hosted_canvas(ui, &response, layout.composition, None, false, cx);
+                    canvas = editor
+                        .hosted_viewer(ui, &response, None, false, cx)
+                        .map(|layout| layout.canvas);
                 })
             },
         );
         output.textures_delta.clear();
-        output
-            .shapes
-            .iter()
-            .any(|shape| !matches!(shape.shape, egui::Shape::Noop | egui::Shape::Callback(_)))
+        output.shapes.iter().any(|shape| {
+            canvas.is_some_and(|canvas| shape.clip_rect == canvas)
+                && matches!(shape.shape, egui::Shape::LineSegment { .. })
+        })
     };
     tools::calibrated_harness(|mut h| {
         h.enter(|editor, cx| editor.add_raws(vec![other], cx));

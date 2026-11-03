@@ -32,6 +32,7 @@ pub(super) struct DocumentScope {
     pub removal_pending: Option<Vec<super::SourceId>>,
     pub export: super::export::State,
     pub correction: Option<Arc<super::Correction>>,
+    pub flat_correction: Option<async_executor::Task<()>>,
     pub tool: super::tool::LegacySlot,
     pub hosted_tool: super::tool::Slot,
     pub state: Document,
@@ -90,6 +91,7 @@ impl DocumentScope {
     }
 
     pub fn install(&mut self, document: Document) {
+        self.flat_correction = None;
         self.exposures.restore(&document.exposure_metadata, |id| {
             document.exposure_origin(id)
         });
@@ -174,6 +176,7 @@ impl From<Document> for DocumentScope {
         Self {
             thumbnails: super::Thumbnails::for_sources(cache.clone()),
             correction: None,
+            flat_correction: None,
             tool: Default::default(),
             hosted_tool: Default::default(),
             selected: 0,

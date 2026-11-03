@@ -45,6 +45,7 @@ impl PhotoScope {
 
 impl Editor {
     pub(super) fn replace_photo_scope(&mut self, view: u64) {
+        self.canvas_frame = Default::default();
         if self.document.is_photo_bound() {
             self.cancel_active_tool();
         }

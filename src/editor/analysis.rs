@@ -229,7 +229,6 @@ impl Editor {
             && self.document.visit.canvas.ready.is_some()
             && !self.picking()
             && !self.cropping()
-            && self.document.flat_edit().is_none()
             && !self.masking()
             && !reviewing
             && !self.document.confirming();

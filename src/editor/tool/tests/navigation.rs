@@ -10,7 +10,6 @@ struct AroundCanvas {
 impl Tool for AroundCanvas {
     fn presentation(&self, _editor: &Editor) -> Presentation {
         Presentation {
-            show_viewer: true,
             identity: presentation::ToolIdentity {
                 icon: icons::Icon::Pick,
                 title: "Canvas probe",
@@ -32,35 +31,44 @@ impl Tool for AroundCanvas {
 
     fn canvas(
         &mut self,
-        canvas: &mut canvas::Canvas<'_>,
+        viewer: &mut canvas::Viewer<'_>,
         editor: &mut Editor,
-        _cx: &UiContext<'_, Editor>,
-    ) -> CanvasLayout {
-        let trace = self.trace.clone();
-        let call_shared = self.call_shared;
-        let rect = canvas.response.rect;
-        let composition = canvas.composition;
-        let ppp = canvas.ui.ctx().pixels_per_point();
-        let relayout =
-            |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
-        let viewport = self.viewport(editor);
-        let mut layout = canvas.layout(viewport, relayout);
-        trace.borrow_mut().push(("before", layout.scale));
-        if call_shared {
-            layout = crate::editor::navigation::navigate_view(
-                viewport,
-                canvas.ui,
-                canvas.response,
-                layout,
-                relayout,
-            )
-            .0;
-        }
-        trace.borrow_mut().push(("after", layout.scale));
-        layout
+        cx: &UiContext<'_, Editor>,
+    ) -> Option<CanvasLayout> {
+        viewer.show(
+            self,
+            editor,
+            cx,
+            Editor::photograph_controls,
+            |tool, surface, editor, _cx| {
+                let canvas = surface.selected()?;
+                let trace = tool.trace.clone();
+                let call_shared = tool.call_shared;
+                let rect = canvas.response.rect;
+                let composition = canvas.composition;
+                let ppp = canvas.ui.ctx().pixels_per_point();
+                let relayout =
+                    |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
+                let viewport = tool.viewport(editor);
+                let mut layout = canvas.layout(viewport, relayout);
+                trace.borrow_mut().push(("before", layout.scale));
+                if call_shared {
+                    layout = crate::editor::navigation::navigate_view(
+                        viewport,
+                        canvas.ui,
+                        canvas.response,
+                        layout,
+                        relayout,
+                    )
+                    .0;
+                }
+                trace.borrow_mut().push(("after", layout.scale));
+                Some(layout)
+            },
+        )
     }
 
-    fn action(&mut self, _action: Action, editor: &mut Editor) {
+    fn action(&mut self, _action: Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         editor.end_tool();
     }
 }
@@ -86,6 +94,7 @@ fn tool_composes_layout_and_wraps_or_omits_navigation_with_its_chosen_viewport()
                 ));
                 crate::application::test_support::with_application(editor, |app| {
                     let context = egui::Context::default();
+                    presentation::configure_fonts(&context);
                     let canvas =
                         egui::Rect::from_min_size(egui::pos2(20., 20.), egui::vec2(200., 150.));
                     let render = |events| {
@@ -106,17 +115,7 @@ fn tool_composes_layout_and_wraps_or_omits_navigation_with_its_chosen_viewport()
                                         ui.id().with("navigation"),
                                         egui::Sense::click_and_drag(),
                                     );
-                                    let area =
-                                        editor.document.visit.canvas.ready.as_ref().unwrap().area;
-                                    let composition = editor.normal_canvas_composition(area, None);
-                                    result = editor.hosted_canvas(
-                                        ui,
-                                        &response,
-                                        composition,
-                                        None,
-                                        enabled,
-                                        cx,
-                                    );
+                                    result = editor.hosted_viewer(ui, &response, None, enabled, cx);
                                 },
                             );
                             output.textures_delta.clear();

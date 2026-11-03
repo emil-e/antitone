@@ -80,7 +80,6 @@ impl tool::Tool for PickTool {
     fn presentation(&self, editor: &Editor) -> tool::Presentation {
         let state = self.state.borrow();
         tool::Presentation {
-            show_viewer: true,
             identity: presentation::ToolIdentity {
                 icon: if state.display.area { icons::Icon::Crop } else { icons::Icon::Pick },
                 title: state.display.label,
@@ -94,7 +93,7 @@ impl tool::Tool for PickTool {
         }
     }
 
-    fn composition(&mut self, normal: Composition) -> Composition {
+    fn composition(&self, normal: Composition) -> Composition {
         match self.state.borrow().display.view {
             View::Working => normal,
             View::Source => Composition::new(normal.area(), self.orientation.0, self.orientation.1)
@@ -109,7 +108,7 @@ impl tool::Tool for PickTool {
     }
 
     fn viewport<'a>(&'a mut self, editor: &'a mut Editor) -> &'a mut Viewport {
-        if self.state.borrow().display.view == View::Working {
+        if editor.fullscreen.is_some() || self.state.borrow().display.view == View::Working {
             &mut editor.document.visit.canvas.viewport
         } else {
             &mut self.viewport
@@ -118,58 +117,78 @@ impl tool::Tool for PickTool {
 
     fn canvas(
         &mut self,
-        canvas: &mut canvas::Canvas<'_>,
+        viewer: &mut canvas::Viewer<'_>,
         editor: &mut Editor,
         cx: &UiContext<'_, Editor>,
-    ) -> CanvasLayout {
-        let composition = self.composition(canvas.composition);
-        let rect = canvas.response.rect;
-        let ppp = canvas.ui.ctx().pixels_per_point();
-        self.initialise_view(composition.area(), rect, ppp);
-        let relayout =
-            |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
-        let mut response = canvas.response.clone();
-        navigation::consume_primary(&mut response);
-        let (layout, panning) = {
-            let viewport = self.viewport(editor);
-            let layout = canvas.layout(viewport, relayout);
-            navigation::navigate_view(viewport, canvas.ui, &response, layout, relayout)
-        };
-        let space = canvas.ui.input(|input| input.key_down(egui::Key::Space));
-        if canvas.ui.is_enabled() && !editor.busy && !panning && !space {
-            self.select(canvas.ui, canvas.response, layout);
-            if (canvas.response.hovered() || canvas.response.dragged())
-                && let Some(point) = canvas.ui.input(|input| input.pointer.hover_pos())
-            {
-                let state = self.state.borrow();
-                canvas.ui.ctx().set_cursor_icon(navigation::picker_cursor(
-                    layout,
-                    point,
-                    state.region,
-                    state.drag,
-                    canvas.response.dragged_by(egui::PointerButton::Primary),
-                ));
-            }
-        }
-        if !canvas
-            .ui
-            .input(|input| input.pointer.button_down(egui::PointerButton::Primary))
-        {
-            self.state.borrow_mut().drag = None;
-        }
-        canvas.paint_sample(
+    ) -> Option<CanvasLayout> {
+        let source = self.state.borrow().display.view != View::Working;
+        let fullscreen = editor.fullscreen.is_some();
+        viewer.show(
+            self,
             editor,
-            layout,
-            self.state.borrow().display.view != View::Working,
             cx,
-        );
-        if let Some(region) = self.state.borrow().region {
-            paint_selection(canvas.ui, layout, region);
-        }
-        layout
+            move |editor, ui, navigating| {
+                if fullscreen {
+                    editor.photograph_controls(ui, navigating);
+                } else if source {
+                    editor.source_controls(ui, navigating);
+                }
+            },
+            |tool, surface, editor, cx| {
+                if editor.fullscreen.is_some() {
+                    return surface.photograph(editor, cx);
+                }
+                let mut canvas = surface.selected()?;
+                let composition = tool.composition(canvas.composition);
+                let rect = canvas.response.rect;
+                let ppp = canvas.ui.ctx().pixels_per_point();
+                tool.initialise_view(composition.area(), rect, ppp);
+                let relayout =
+                    |viewport: &mut Viewport| viewport.layout_composition(rect, composition, ppp);
+                let mut response = canvas.response.clone();
+                navigation::consume_primary(&mut response);
+                let (layout, panning) = {
+                    let viewport = tool.viewport(editor);
+                    let layout = canvas.layout(viewport, relayout);
+                    navigation::navigate_view(viewport, canvas.ui, &response, layout, relayout)
+                };
+                let space = canvas.ui.input(|input| input.key_down(egui::Key::Space));
+                if canvas.ui.is_enabled() && !editor.busy && !panning && !space {
+                    tool.select(canvas.ui, canvas.response, layout);
+                    if (canvas.response.hovered() || canvas.response.dragged())
+                        && let Some(point) = canvas.ui.input(|input| input.pointer.hover_pos())
+                    {
+                        let state = tool.state.borrow();
+                        canvas.ui.ctx().set_cursor_icon(navigation::picker_cursor(
+                            layout,
+                            point,
+                            state.region,
+                            state.drag,
+                            canvas.response.dragged_by(egui::PointerButton::Primary),
+                        ));
+                    }
+                }
+                if !canvas
+                    .ui
+                    .input(|input| input.pointer.button_down(egui::PointerButton::Primary))
+                {
+                    tool.state.borrow_mut().drag = None;
+                }
+                canvas.paint_sample(
+                    editor,
+                    layout,
+                    tool.state.borrow().display.view != View::Working,
+                    cx,
+                );
+                if let Some(region) = tool.state.borrow().region {
+                    paint_selection(canvas.ui, layout, region);
+                }
+                Some(layout)
+            },
+        )
     }
 
-    fn action(&mut self, action: tool::Action, editor: &mut Editor) {
+    fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         match action {
             tool::Action::Primary if !editor.busy => {
                 self.state.borrow_mut().submit(editor);
