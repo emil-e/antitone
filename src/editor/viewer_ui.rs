@@ -58,7 +58,7 @@ impl Editor {
         if self.document.auto_crop_edit().is_some() {
             return Some((icons::Icon::Crop, "Auto-crop"));
         }
-        self.active_pick().map(|display| {
+        self.legacy_pick().map(|display| {
             (
                 if display.area {
                     icons::Icon::Crop
@@ -173,7 +173,7 @@ impl Editor {
                 navigating
                     && review_ready
                     && hosted.as_ref().map_or_else(
-                        || self.pick_region().is_some(),
+                        || self.legacy_pick_region().is_some(),
                         |tool| tool.primary.is_none_or(|primary| primary.enabled),
                     )
             },
@@ -184,7 +184,8 @@ impl Editor {
             .and_then(|tool| tool.warning.clone())
             .or_else(|| self.viewer_warning());
         let look_error = self.look_rendering_error();
-        let normal_controls = tool.is_none() || hosted.is_some() && !self.hosted_picker();
+        let normal_controls =
+            tool.is_none() || hosted.is_some() && self.document.visit.picker.display().is_none();
         let inspecting = navigating && calibrated && tool.is_none() && !masking;
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
@@ -448,7 +449,7 @@ impl Editor {
                             !fullscreen
                                 && self.tab == 1
                                 && hosted.is_none()
-                                && self.active_pick().is_none()
+                                && self.legacy_pick().is_none()
                         }) {
                             ui.separator();
                             ui.small(help);
@@ -476,7 +477,7 @@ impl Editor {
                                 "Drag either area's corners to resize, or its interior to move. Click a label when outlines coincide.",
                             );
                             ui.small("Enter analyzes · Escape cancels");
-                        } else if !fullscreen && let Some(kind) = self.active_pick() {
+                        } else if !fullscreen && let Some(kind) = self.legacy_pick() {
                             ui.separator();
                             ui.small(
                                 "Click a patch or drag an area; drag its edges/corners to resize.",

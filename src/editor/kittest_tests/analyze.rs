@@ -115,13 +115,13 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
         (area.x + area.width) as f32,
         (area.y + area.height) as f32,
     ));
-    let region = harness.read(|editor| editor.pick_region());
+    let region = harness.read(|editor| editor.test_pick_region());
     if let Some(region) = region {
         let bounds = geometry.screen_coverage(region);
         if bounds.min.distance(start) > 0.01 {
             drag(harness, bounds.min, start);
         }
-        let region = harness.read(|editor| editor.pick_region().unwrap());
+        let region = harness.read(|editor| editor.test_pick_region().unwrap());
         drag(harness, geometry.screen_coverage(region).max, end);
     } else {
         drag(harness, start, end);
@@ -129,7 +129,7 @@ fn draw_picture(harness: &mut Harness<'_, Editor>, area: Rect) {
     harness.read(|editor| {
         assert_eq!(
             editor
-                .pick_region()
+                .test_pick_region()
                 .unwrap()
                 .exact_rectangle(editor.document.visit.canvas.ready.as_ref().unwrap().area),
             Some(area)
@@ -671,7 +671,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         harness.run();
         let prior = harness.read(|editor| editor.review_areas(first.unwrap()).unwrap().clone());
         assert!(prior.picture_geometry.is_some() && !prior.picture_edited);
-        let q = harness.read(|editor| editor.pick_region().unwrap().corners().map(|p| p.0));
+        let q = harness.read(|editor| editor.test_pick_region().unwrap().corners().map(|p| p.0));
         let p = prior.picture.unwrap()[0];
         let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         drag(
@@ -687,7 +687,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         harness.run();
         harness.read(|editor| {
             assert_eq!(
-                editor.pick_region().unwrap().corners().map(|p| p.0),
+                editor.test_pick_region().unwrap().corners().map(|p| p.0),
                 editor
                     .review_areas(first.unwrap())
                     .unwrap()

@@ -229,7 +229,7 @@ impl Editor {
             return;
         }
         self.sync_document();
-        let Some(coverage) = self.pick_region() else {
+        let Some(coverage) = self.legacy_pick_region() else {
             return;
         };
         let Some(reference) = self

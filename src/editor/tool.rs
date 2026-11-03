@@ -227,7 +227,7 @@ impl Editor {
         match self.document.tool.as_ref() {
             Some(legacy_tool::Tool::Mask(_)) => self.finish_mask(false),
             Some(legacy_tool::Tool::Area) => {
-                self.cancel_picker();
+                self.cancel_legacy_picker();
                 self.document.tool.clear();
             }
             Some(legacy_tool::Tool::Analyze(_)) => self.close_analysis(),
@@ -284,7 +284,7 @@ impl Editor {
             return false;
         }
         if let Some(ready) = &self.document.visit.canvas.ready {
-            tool.composition(self.normal_canvas_composition(ready.area, self.active_pick()));
+            tool.composition(self.normal_canvas_composition(ready.area, self.legacy_pick()));
         }
         self.document.set_hosted_tool(placement, tool);
         true

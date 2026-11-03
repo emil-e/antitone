@@ -92,7 +92,7 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
         app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
         app.pump();
         app.enter(|editor, access| {
-            editor.set_pick_region(Some(Coverage::rectangle(
+            editor.set_test_pick_region(Some(Coverage::rectangle(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(access);
@@ -169,7 +169,7 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
         app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
         app.pump();
         app.enter(|editor, access| {
-            editor.set_pick_region(Some(Coverage::rectangle(
+            editor.set_test_pick_region(Some(Coverage::rectangle(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(access);
@@ -241,7 +241,7 @@ fn successful_source_revisit_cannot_restore_departed_measurement_results() {
         app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
         app.pump();
         app.enter(|editor, access| {
-            editor.set_pick_region(Some(Coverage::rectangle(
+            editor.set_test_pick_region(Some(Coverage::rectangle(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(access);
@@ -339,7 +339,7 @@ fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs
         app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
         app.pump();
         app.enter(|editor, cx| {
-            editor.set_pick_region(Some(Coverage::rectangle(
+            editor.set_test_pick_region(Some(Coverage::rectangle(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(cx);
@@ -352,7 +352,7 @@ fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs
             source.upgrade().is_some(),
             "running work retains its source after visit teardown"
         );
-        assert!(app.read(|editor| editor.active_pick().is_none() && !editor.measurement_pending()));
+        assert!(app.read(|editor| editor.test_pick().is_none() && !editor.measurement_pending()));
         call.run();
         let deadline = Instant::now() + Duration::from_secs(5);
         while source.upgrade().is_some() {
@@ -366,7 +366,7 @@ fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs
         app.run_until(Duration::from_secs(5), |editor| !editor.busy);
         app.read(|editor| {
             assert!(!editor.measurement_pending());
-            assert!(editor.active_pick().is_none());
+            assert!(editor.test_pick().is_none());
             assert!(!editor.document.visit.source.pending());
             assert!(editor.document.visit.canvas.ready.is_none());
             assert!(editor.tasks.view().is_none());

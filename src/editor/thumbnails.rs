@@ -1005,7 +1005,7 @@ impl Editor {
     fn thumbnail_work_allowed(&self) -> bool {
         !self.busy
             && self.document.thumbnails.budgets.pressure != memory::Pressure::Critical
-            && (self.active_pick().is_none() || self.document.analysis_review().is_some())
+            && (!self.picking() || self.document.analysis_review().is_some())
             && !self.cropping()
             && !self.masking()
             && self.document_pending.is_none()
@@ -1070,13 +1070,13 @@ impl Editor {
         let selected_loading = self.document.visit.canvas.ready.is_none()
             && self.document.visit.canvas.selection_timing.is_some()
             && self.document_pending.is_none()
-            && self.active_pick().is_none();
+            && !self.picking();
         let reviewing = self.document.analysis_review().is_some() && !self.analysis_fitting();
         let selection_enabled = (!self.busy || selected_loading || reviewing)
             && self.document.flat_edit().is_none()
             && !self.cropping()
             && !self.masking()
-            && (self.active_pick().is_none() || reviewing)
+            && (!self.picking() || reviewing)
             && self.document.removal_pending.is_none();
         let height = self
             .preferences
@@ -1123,7 +1123,7 @@ impl Editor {
                         .expect("filmstrip source");
                     let path = self.document.source_path(id).expect("filmstrip locator");
                     let active = self.document.visit.current_source == Some(id);
-                    let selected = if self.active_pick().is_some() {
+                    let selected = if self.picking() {
                         active
                     } else {
                         active || self.document.roll_selection.contains(id)

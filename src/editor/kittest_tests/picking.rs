@@ -39,7 +39,7 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
                             .unwrap()
                             .is::<super::super::picking::PickTool>()
                     );
-                    assert_eq!(editor.active_pick(), Some(kind.display()));
+                    assert_eq!(editor.test_pick(), Some(kind.display()));
                     assert_eq!(
                         editor.document.source, source_preference,
                         "mode does not commandeer the normal source preference"
@@ -68,7 +68,7 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
                         .is_disabled()
                 );
                 h.read(|editor| {
-                    assert!(editor.pick_region().is_some());
+                    assert!(editor.test_pick_region().is_some());
                     assert_eq!(editor.document.state.project, before);
                 });
                 h.event(egui::Event::PointerGone);
@@ -93,7 +93,7 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
                 h.try_run_realtime().unwrap();
                 h.read(|editor| {
                     assert!(editor.current_tool().is_none());
-                    assert!(editor.active_pick().is_none());
+                    assert!(editor.test_pick().is_none());
                     assert_eq!(editor.document.source, source_preference);
                     assert_eq!(editor.canvas_inspection(), source_preference);
                     assert_eq!(editor.document.visit.canvas.viewport, viewport);

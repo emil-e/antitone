@@ -332,7 +332,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                 editor.set_dmax(None);
                 editor.document.source = true;
                 editor.document.visit.picking.display = Some(display);
-                editor.set_pick_region(Some(Coverage::rectangle(Rect {
+                editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
                     x: 46,
                     y: 46,
                     width: 8602,
@@ -496,7 +496,7 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
     assert_eq!(editor.document.state.project, project);
 
     editor.preview_picker(Pick::Dmin);
-    editor.set_pick_region(Some(patch()));
+    editor.set_test_pick_region(Some(patch()));
     let actual = picking::measurement::capture_scan(&editor)
         .unwrap()
         .reference_coverage(patch())
@@ -600,7 +600,7 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
     for (kind, invalid) in [(Pick::Dmin, 0.001), (Pick::Dmax, 1.)] {
         editor.preview_picker(kind);
         assert!(editor.canvas_inspection());
-        editor.set_pick_region(Some(patch()));
+        editor.set_test_pick_region(Some(patch()));
         assert!(
             (match kind {
                 Pick::Dmin => calibration::set_dmin(&mut editor, DVec3::splat(invalid)),
@@ -612,8 +612,8 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
         editor.finish_pick(&crate::application::UiContext::render_only());
         assert!(!editor.document.source);
         assert!(!editor.busy);
-        assert!(editor.active_pick().is_none());
-        assert!(editor.pick_region().is_none());
+        assert!(editor.test_pick().is_none());
+        assert!(editor.test_pick_region().is_none());
         assert_eq!(
             (
                 editor.dmin(),
@@ -661,7 +661,7 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
             for (index, kind) in order.into_iter().enumerate() {
                 editor.preview_picker(kind);
                 assert!(editor.canvas_inspection());
-                editor.set_pick_region(Some(patch()));
+                editor.set_test_pick_region(Some(patch()));
                 let value = DVec3::splat(if kind == Pick::Dmin { 0.2 } else { 0.005 });
                 (match kind {
                     Pick::Dmin => calibration::set_dmin(&mut editor, value),
@@ -680,9 +680,9 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
                     initial_source.is_some() || index == 1
                 );
                 assert!(
-                    editor.active_pick().is_none() && !editor.busy,
+                    editor.test_pick().is_none() && !editor.busy,
                     "pick={:?} busy={} status={}",
-                    editor.active_pick(),
+                    editor.test_pick(),
                     editor.busy,
                     editor.status
                 );
@@ -720,7 +720,7 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
         assert!(editor.document.source);
         {
             editor.preview_picker(kind);
-            editor.set_pick_region(Some(patch()));
+            editor.set_test_pick_region(Some(patch()));
             assert!(
                 (match kind {
                     Pick::Dmin => calibration::set_dmin(
@@ -737,9 +737,7 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
             );
             editor.finish_pick(&crate::application::UiContext::render_only());
             assert!(editor.document.source);
-            assert!(
-                editor.active_pick().is_none() && !editor.busy && editor.calibration().is_none()
-            );
+            assert!(editor.test_pick().is_none() && !editor.busy && editor.calibration().is_none());
             assert_eq!(
                 (
                     editor.dmin(),
@@ -822,7 +820,11 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
     let roll = editor.document.roll;
     editor.preview_picker(Pick::Wb);
-    (white_balance::set_layer(&mut editor, balance)).unwrap();
+    let target = (
+        editor.document.visit.current_source.unwrap(),
+        editor.adjustment_layer_target(),
+    );
+    (white_balance::set_layer(&mut editor, balance, target)).unwrap();
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.roll, roll);
     assert_eq!(
@@ -860,7 +862,7 @@ fn closed_application_does_not_leave_a_pick_busy() {
         app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
         app.pump();
         app.enter(|editor, access| {
-            editor.set_pick_region(Some(patch()));
+            editor.set_test_pick_region(Some(patch()));
             editor.apply_pick(access);
             assert!(!editor.busy);
             assert!(editor.status.contains("stopped"));
@@ -873,12 +875,52 @@ fn closed_application_does_not_leave_a_pick_busy() {
 // Numerical measurement checks instead load coherent authored sources through production paths.
 impl Editor {
     pub(super) fn preview_picker(&mut self, kind: Pick) {
-        if self.prepare_pick(&crate::application::UiContext::render_only()) {
+        if self.prepare_tool() {
             if kind == Pick::Analysis {
                 self.document.set_legacy_tool(legacy_tool::Tool::Area);
             }
-            self.show_picker(kind.display());
+            if kind == Pick::Analysis {
+                self.show_legacy_picker(kind.display());
+            } else {
+                picking::preview(self, kind.display());
+            }
         }
+    }
+
+    pub(super) fn test_pick(&self) -> Option<picking::Display> {
+        self.document
+            .visit
+            .picker
+            .display()
+            .or_else(|| self.legacy_pick())
+    }
+
+    pub(super) fn test_picker_active(&self) -> bool {
+        self.document.visit.picker.display().is_some()
+    }
+
+    pub(super) fn test_pick_region(&self) -> Option<Coverage> {
+        if self.test_picker_active() {
+            self.document.visit.picker.region()
+        } else {
+            self.legacy_pick_region()
+        }
+    }
+
+    pub(super) fn set_test_pick_region(&mut self, region: Option<Coverage>) {
+        if self.test_picker_active() {
+            self.document.visit.picker.set_region(region);
+        } else {
+            self.set_legacy_pick_region(region);
+        }
+    }
+
+    pub(super) fn submit_test_picker(&mut self) -> bool {
+        if !self.test_picker_active() {
+            return false;
+        }
+        self.hosted_action(tool::Action::Primary);
+        true
     }
 }
 
@@ -1696,7 +1738,7 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     let bounds = coverage.bounds(area).unwrap();
     assert!(bounds.width * bounds.height > 32 * 32);
     assert!((coverage.pixels(area).unwrap().map(|(_, w)| w).sum::<f64>() - 1024.).abs() < 1e-8);
-    editor.set_pick_region(Some(coverage));
+    editor.set_test_pick_region(Some(coverage));
     let input = white_balance::LayerInput::capture(&editor).unwrap();
     assert_eq!(
         (input.roll, input.layer.photo),
@@ -1869,7 +1911,7 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
             assert!(!editor.document.visit.source.pending());
             assert_eq!(editor.document.visit.current_source, source_id);
             assert_eq!(editor.document.selected, 0);
-            assert!(editor.active_pick().is_none());
+            assert!(editor.test_pick().is_none());
             assert_eq!(editor.document.roll_orientation, roll_orientation);
             assert_eq!(editor.document.visit.photo_orientation, photo_orientation);
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
@@ -2454,10 +2496,10 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     editor.document.selected = 1;
     editor.document.visit.current_source =
         Some(editor.document.state.project.order[editor.document.selected]);
-    editor.set_pick_region(Some(patch()));
+    editor.set_test_pick_region(Some(patch()));
     editor.preview_picker(Pick::Dmin);
     assert_eq!(editor.document.selected, 1);
-    assert!(editor.pick_region().is_none());
+    assert!(editor.test_pick_region().is_none());
     assert!(!editor.measurement_pending());
     let value = DVec3::new(0.3, 0.2, 0.15);
     (calibration::set_dmin(&mut editor, value)).unwrap();
@@ -2466,7 +2508,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     editor.document.state.project.order.clear();
     assert!(editor.calibration().is_some());
     editor.preview_picker(Pick::Dmax);
-    assert!(editor.pick_region().is_none());
+    assert!(editor.test_pick_region().is_none());
     assert!(!editor.measurement_pending());
 }
 

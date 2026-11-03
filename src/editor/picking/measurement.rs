@@ -1,7 +1,6 @@
-use super::{Display, Editor, Selection, UiContext};
+use super::{Display, Editor, UiContext};
 use crate::{Error, cancellation::Cancellation, coverage::Coverage, scan::Scan};
 use futures_channel::oneshot;
-use std::rc::Rc;
 
 pub(in crate::editor) mod query;
 
@@ -38,31 +37,7 @@ pub(in crate::editor) fn query_services(
     services.ok_or_else(|| Error::Gpu("image-query services unavailable".into()))
 }
 
-struct Retire<'scope> {
-    selection: Rc<Selection>,
-    cx: UiContext<'scope, Editor>,
-    armed: bool,
-}
-
-impl Drop for Retire<'_> {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        self.selection.cancelled.cancel();
-        self.selection.reply.borrow_mut().take();
-        let selection = self.selection.clone();
-        // A caller may drop its future while the UI state is borrowed. Cleanup
-        // runs on the host executor and retains no pixel or document lease.
-        if let Some(cleanup) = self.cx.spawn(move |cx| async move {
-            cx.update(|editor| editor.finish_selection(&selection));
-        }) {
-            cleanup.detach();
-        }
-    }
-}
-
-/// Open the interaction now; await selection and measurement without retaining the Editor borrow.
+/// Open a picker-owned operation and await its typed result independently of the tool.
 pub(in crate::editor) fn pick<'scope, T, F>(
     editor: &mut Editor,
     display: Display,
@@ -73,57 +48,60 @@ where
     T: Send + 'static,
     F: FnOnce(Coverage, Cancellation) -> Result<T, Error> + Send + 'static,
 {
-    let (reply, receive) = oneshot::channel();
-    let selection = Rc::new(Selection {
-        id: editor.request_id(),
-        reply: std::cell::RefCell::new(Some(reply)),
-        cancelled: Cancellation::default(),
-    });
-    let prepared = editor
-        .install_picker(display, Some(selection.clone()))
-        .map(|_| Retire {
-            selection: selection.clone(),
-            cx: cx.clone(),
-            armed: true,
-        });
-    #[cfg(test)]
-    let gate = editor.document.visit.picking.measurement_gate.clone();
-    async move {
-        let mut retire = prepared?;
-        if selection.cancelled.is_cancelled() {
-            return None;
-        }
-        let region = receive.await.ok()?;
-        if selection.cancelled.is_cancelled() {
-            return None;
-        }
-        let measured = async {
-            crate::background::run(move |cancelled| {
-                #[cfg(test)]
-                if let Some(gate) = gate {
-                    gate.wait(cancelled.clone())?;
-                }
-                measure(region, cancelled).map_err(|error| error.to_string())
-            })
-            .await
-            .map_err(|_| "Measurement worker panicked".to_owned())
-            .and_then(|result| result)
-        };
-        let stopped = async {
-            selection.cancelled.wait().await;
-            None
-        };
-        let result = futures_lite::future::or(async { Some(measured.await) }, stopped).await?;
-        if selection.cancelled.is_cancelled() {
-            return None;
-        }
-        cx.update(|editor| {
-            if let Err(error) = &result {
-                editor.status = error.clone();
+    let (mut reply, receive) = oneshot::channel();
+    let previous = editor.document.visit.canvas.last_layout;
+    if editor.prepare_tool() {
+        editor.retire_pick_actions();
+        let (submit, selected) = oneshot::channel();
+        let id = editor.request_id();
+        #[cfg(test)]
+        let gate = editor.document.visit.picker.measurement_gate.clone();
+        // The task retains work and communication endpoints, never its tool/UI owner.
+        let task = cx.spawn(move |cx| async move {
+            let measured = async {
+                let region = selected.await.ok()?;
+                Some(
+                    crate::background::run(move |cancelled| {
+                        #[cfg(test)]
+                        if let Some(gate) = gate {
+                            gate.wait(cancelled.clone())?;
+                        }
+                        measure(region, cancelled).map_err(|error| error.to_string())
+                    })
+                    .await
+                    .map_err(|_| "Measurement worker panicked".to_owned())
+                    .and_then(|result| result),
+                )
+            };
+            let stopped = async {
+                reply.cancellation().await;
+                None
+            };
+            let result = futures_lite::future::or(stopped, measured).await;
+            let value = cx
+                .update(|editor| {
+                    if let Some(Err(error)) = &result {
+                        editor.status = error.clone();
+                    }
+                    editor.document.visit.support = Default::default();
+                    editor.end_tool();
+                    result.and_then(Result::ok)
+                })
+                .flatten();
+            if let Some(value) = value {
+                let _ = reply.send(value);
             }
-            editor.finish_selection(&selection);
-        })?;
-        retire.armed = false;
-        result.ok()
+        });
+        if let Some(task) = task {
+            super::install(
+                editor,
+                display,
+                previous,
+                Some(submit),
+                Some(id),
+                Some(task),
+            );
+        }
     }
+    async move { receive.await.ok() }
 }

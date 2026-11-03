@@ -80,7 +80,7 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
             app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
             app.pump();
             app.update(|editor| {
-                editor.set_pick_region(Some(region));
+                editor.set_test_pick_region(Some(region));
                 editor.apply_pick(&tasks);
                 assert!(editor.measurement_pending() && editor.busy);
                 editor.document.visit.canvas.ready = None;
@@ -102,7 +102,7 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
                     "{}: {actual:?} != {expected:?}",
                     editor.status
                 );
-                assert!(editor.active_pick().is_none() && !editor.measurement_pending());
+                assert!(editor.test_pick().is_none() && !editor.measurement_pending());
                 assert_eq!(
                     editor.history_label(crate::editor::history::Direction::Undo),
                     Some("Calibration pick")
@@ -137,7 +137,7 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
         app.update(|editor| editor.begin_pick(Pick::Dmin, &tasks));
         app.pump();
         app.update(|editor| {
-            editor.set_pick_region(Some(Coverage::rectangle(
+            editor.set_test_pick_region(Some(Coverage::rectangle(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(&tasks);
@@ -193,14 +193,14 @@ fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
         app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
         app.pump();
         app.update(|editor| {
-            editor.set_pick_region(Some(region));
+            editor.set_test_pick_region(Some(region));
             editor.apply_pick(&tasks);
             assert!(editor.busy && editor.measurement_pending());
         });
         app.run_until(Duration::from_secs(5), |editor| !editor.busy);
         app.read(|editor| {
             assert_eq!(editor.status, expected_error);
-            assert!(editor.active_pick().is_none() && !editor.measurement_pending());
+            assert!(editor.test_pick().is_none() && !editor.measurement_pending());
             assert!(editor.tasks.view().is_none());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(
@@ -245,7 +245,7 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
             app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
             app.pump();
             app.enter(|editor, access| {
-                editor.set_pick_region(Some(Coverage::rectangle(Rect {
+                editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
                     x: 12,
                     y: 7,
                     width: 32,
@@ -314,7 +314,7 @@ fn cancelling_a_running_measurement_retains_its_source_until_physical_cleanup() 
         app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
         app.pump();
         app.enter(|editor, cx| {
-            editor.set_pick_region(Some(Coverage::rectangle(
+            editor.set_test_pick_region(Some(Coverage::rectangle(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(cx);
@@ -332,7 +332,7 @@ fn cancelling_a_running_measurement_retains_its_source_until_physical_cleanup() 
         );
         app.read(|editor| {
             assert!(!editor.measurement_pending() && !editor.busy);
-            assert!(editor.active_pick().is_none());
+            assert!(editor.test_pick().is_none());
             assert_eq!(editor.document.state.project, before);
         });
         call.run();

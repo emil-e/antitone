@@ -44,7 +44,7 @@ fn loaded_lut_labels(assets: &[Arc<LookAsset>]) -> Vec<String> {
 impl Editor {
     pub(in crate::editor) fn look_rendering_error(&self) -> Option<Error> {
         if self.document.source
-            || self.active_pick().is_some()
+            || self.picking()
             || self.document.flat_edit().is_some()
             || self.document.analysis_review().is_some()
         {

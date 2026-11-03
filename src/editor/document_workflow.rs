@@ -37,6 +37,7 @@ impl Editor {
             self.status = "Wait for donor selection before changing the document".into();
             return;
         }
+        self.retire_pick_actions();
         self.cancel_spatial();
         self.document.history.finish_group();
         self.history_pending = match &work {

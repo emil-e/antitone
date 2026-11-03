@@ -3,6 +3,7 @@ use crate::viewport::CanvasLayout;
 
 pub(in crate::editor) struct PickTool {
     state: Rc<RefCell<Interaction>>,
+    _task: Option<async_executor::Task<()>>,
     viewport: Viewport,
     orientation: (RollOrientation, PhotoOrientation),
     crop: Option<Crop>,
@@ -14,10 +15,12 @@ impl PickTool {
         editor: &Editor,
         state: Rc<RefCell<Interaction>>,
         previous: Option<(CanvasLayout, f32)>,
+        task: Option<async_executor::Task<()>>,
     ) -> Self {
         let temporary_view = state.borrow().display.view != View::Working;
         let mut tool = Self {
             state,
+            _task: task,
             crop: editor.document.visit.crop,
             initial_view: temporary_view.then_some(editor.document.visit.canvas.viewport),
             viewport: editor.document.visit.canvas.viewport,
@@ -154,7 +157,12 @@ impl tool::Tool for PickTool {
         {
             self.state.borrow_mut().drag = None;
         }
-        canvas.paint_image(editor, layout, false, cx);
+        canvas.paint_sample(
+            editor,
+            layout,
+            self.state.borrow().display.view != View::Working,
+            cx,
+        );
         if let Some(region) = self.state.borrow().region {
             paint_selection(canvas.ui, layout, region);
         }
@@ -164,7 +172,7 @@ impl tool::Tool for PickTool {
     fn action(&mut self, action: tool::Action, editor: &mut Editor) {
         match action {
             tool::Action::Primary if !editor.busy => {
-                editor.submit_picker();
+                self.state.borrow_mut().submit(editor);
             }
             tool::Action::Dismiss => editor.end_tool(),
             _ => {}

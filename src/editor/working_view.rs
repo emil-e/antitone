@@ -947,12 +947,14 @@ impl Editor {
         &mut self,
         frame: FrameRaster,
         input: &ProcessingInput,
+        image: super::canvas::ImageMode,
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         if self.document.flat_edit().is_some() {
             return Ok(None);
         }
+        let inspection = image.inspection(self.canvas_inspection());
         let previous = self.document.visit.working_view.displayed.take();
         if self
             .document
@@ -960,7 +962,7 @@ impl Editor {
             .working_view
             .wanted
             .as_ref()
-            .is_some_and(|wanted| wanted.spec.is_inspection() != self.canvas_inspection())
+            .is_some_and(|wanted| wanted.spec.is_inspection() != inspection)
         {
             self.document.visit.working_view.retire_support();
         }
@@ -970,7 +972,7 @@ impl Editor {
 
         if self.busy
             && self.document_pending.is_none()
-            && self.active_pick().is_none()
+            && !image.is_sample()
             && !self.cropping()
             && self.document.flat_edit().is_none()
         {
@@ -978,7 +980,7 @@ impl Editor {
             mailbox.demand = None;
             drop(mailbox);
 
-            if self.canvas_inspection() && self.document.visit.working_view.wanted.is_some() {
+            if inspection && self.document.visit.working_view.wanted.is_some() {
                 self.document
                     .visit
                     .working_view
@@ -1013,7 +1015,7 @@ impl Editor {
         }
 
         if input.repairs.0.is_empty()
-            && (self.active_pick().is_some()
+            && (image.is_sample()
                 || self.fullscreen.is_none() && self.cropping()
                 || self.document.flat_edit().is_some())
         {
@@ -1027,7 +1029,7 @@ impl Editor {
         }
 
         let source_input = self.source_context().expect("ready working source");
-        if self.canvas_inspection() {
+        if inspection {
             let spec = SourceRequest::inspection(frame)?;
             self.request_working(
                 Demand {

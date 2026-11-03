@@ -38,9 +38,14 @@ impl super::Editor {
             || if self.fullscreen.is_some() {
                 self.document.source
             } else {
-                self.active_pick().map_or(self.document.source, |display| {
-                    display.view != super::picking::View::Working
-                })
+                self.document
+                    .visit
+                    .picker
+                    .display()
+                    .or_else(|| self.legacy_pick())
+                    .map_or(self.document.source, |display| {
+                        display.view != super::picking::View::Working
+                    })
             }
     }
 }

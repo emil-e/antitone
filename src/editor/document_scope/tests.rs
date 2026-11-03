@@ -64,7 +64,7 @@ fn document_retirement_drops_child_continuations_and_cache_despite_captured_snap
             })
             .unwrap();
         app.update(|scope| {
-            scope.visit.picking.actions.push(task);
+            scope.visit.calibration_action = Some(task);
         });
         app.pump();
         app.update(|scope| *scope = Document::default().into());

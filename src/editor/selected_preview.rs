@@ -99,7 +99,7 @@ impl Editor {
             .is_some_and(|preview| {
                 self.document.visit.working_view.displayed.is_some()
                     || self.document_pending.is_some()
-                    || self.active_pick().is_some()
+                    || self.picking()
                     || self.document.flat_edit().is_some()
                     || self.cropping()
                     || !preview.current_source(

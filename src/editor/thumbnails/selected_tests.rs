@@ -225,7 +225,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                     Overwrite::Refuse,
                     &UiContext::render_only(),
                 );
-                assert!(editor.active_pick().is_none());
+                assert!(editor.test_pick().is_none());
                 assert!(editor.document.crop_edit().is_none());
                 assert!(editor.document.export.operation.is_none());
                 assert!(

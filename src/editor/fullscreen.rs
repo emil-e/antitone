@@ -33,8 +33,7 @@ impl Editor {
             && self.document.analysis_review().is_none()
             && (self.fullscreen.is_some()
                 || self.selected_view().is_some()
-                    && !(self.busy
-                        && (self.active_pick().is_some() || self.document.flat_edit().is_some())))
+                    && !(self.busy && (self.picking() || self.document.flat_edit().is_some())))
     }
 
     pub(super) fn toggle_fullscreen(&mut self, context: &egui::Context) {
@@ -48,7 +47,11 @@ impl Editor {
         } else {
             let inspection = self.canvas_inspection();
             let picker_viewport = self
-                .hosted_picker()
+                .document
+                .visit
+                .picker
+                .display()
+                .is_some()
                 .then(|| self.with_tool_viewport(|viewport| *viewport));
             let normal_viewport = std::ptr::from_ref(&self.active_canvas().viewport);
             let normal_layout =

@@ -10,7 +10,7 @@ fn pick_patch(harness: &mut Harness<'_, Editor>, action: &str, area: Rect) {
     harness.get_by_label("Apply").click();
     harness.step();
     wait_for(harness, |e| !e.busy);
-    harness.read(|editor| assert!(editor.active_pick().is_none(), "{}", editor.status));
+    harness.read(|editor| assert!(editor.test_pick().is_none(), "{}", editor.status));
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         wait_for(&mut harness, |e| !e.busy);
         wait_settled(&mut harness);
         let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
-        let original = harness.read(|editor| editor.pick_region().unwrap());
+        let original = harness.read(|editor| editor.test_pick_region().unwrap());
         assert!(geometry.canvas.expand(0.1).contains_rect(geometry.image));
         assert!(
             geometry
@@ -314,7 +314,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
             center,
             center + egui::vec2(geometry.scale * 8., 0.),
         );
-        let moved = harness.read(|editor| editor.pick_region().unwrap());
+        let moved = harness.read(|editor| editor.test_pick_region().unwrap());
         assert_ne!(moved, original);
         let corner = geometry.screen_coverage(moved).right_bottom();
         drag(
@@ -324,7 +324,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         );
         let shrunk = harness.read(|editor| {
             editor
-                .pick_region()
+                .test_pick_region()
                 .unwrap()
                 .exact_rectangle(editor.active_canvas().ready.as_ref().unwrap().area)
                 .unwrap()
@@ -342,7 +342,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
         wait_for(&mut harness, |e| !e.busy);
         let geometry = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
-        let region = harness.read(|editor| editor.pick_region().unwrap());
+        let region = harness.read(|editor| editor.test_pick_region().unwrap());
         drag(
             &mut harness,
             geometry.screen_coverage(region).right_bottom(),
@@ -351,7 +351,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         );
         let accepted = harness.read(|editor| {
             editor
-                .pick_region()
+                .test_pick_region()
                 .unwrap()
                 .exact_rectangle(editor.active_canvas().ready.as_ref().unwrap().area)
                 .unwrap()
@@ -370,8 +370,8 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
-        wait_for(&mut harness, |editor| editor.active_pick().is_some());
-        harness.read(|editor| assert_eq!(editor.active_pick(), Some(Pick::Dmin.display())));
+        wait_for(&mut harness, |editor| editor.test_pick().is_some());
+        harness.read(|editor| assert_eq!(editor.test_pick(), Some(Pick::Dmin.display())));
         harness.step();
         assert!(
             harness
@@ -733,7 +733,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                 geometry
                     .canvas
                     .expand(0.1)
-                    .contains_rect(geometry.screen_coverage(editor.pick_region().unwrap()))
+                    .contains_rect(geometry.screen_coverage(editor.test_pick_region().unwrap()))
             )
         });
         let png = harness.render().unwrap();

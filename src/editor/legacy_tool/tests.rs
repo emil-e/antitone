@@ -37,11 +37,11 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
             );
             assert!(editor.document.tool.is_none());
             editor.begin_pick(Pick::Dmin, cx);
-            assert!(editor.hosted_picker());
+            assert!(editor.test_picker_active());
             assert!(editor.document.tool.is_none());
         });
         app.pump();
-        app.read(|editor| assert_eq!(editor.active_pick(), Some(Pick::Dmin.display())));
+        app.read(|editor| assert_eq!(editor.test_pick(), Some(Pick::Dmin.display())));
         app.enter(|editor, cx| {
             editor.request_analysis(cx);
             assert!(matches!(
@@ -92,12 +92,12 @@ fn changing_input_from_review_retires_its_projection_on_success_and_failure() {
                 }
                 editor.apply_input(target, cx);
                 assert!(editor.document.analysis_operation().is_none());
-                assert!(editor.active_pick().is_none());
+                assert!(editor.test_pick().is_none());
                 assert!(editor.scopes.visible);
             });
             app.run_until(LIMIT, |editor| !editor.busy);
             app.read(|editor| {
-                assert!(editor.active_pick().is_none());
+                assert!(editor.test_pick().is_none());
                 assert!(editor.scopes.visible && editor.preferences.scopes_visible);
                 if fail {
                     assert_eq!(editor.document.project, before);

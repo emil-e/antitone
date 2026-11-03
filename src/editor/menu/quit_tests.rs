@@ -139,7 +139,7 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
         assert!(!editor.allow_close && editor.menus.pending.is_empty());
         assert_eq!(editor.document.state.project, before);
         assert_eq!(
-            editor.active_pick(),
+            editor.test_pick(),
             (gate == 1).then_some(Pick::Dmin.display())
         );
         assert_eq!(editor.transition, (gate == 2).then_some(Transition::New));

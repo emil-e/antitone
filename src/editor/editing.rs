@@ -22,31 +22,33 @@ impl Editor {
             self.end_analysis_review(cx);
         } else if self.document.flat_edit().is_some() {
             self.finish_flat_edit();
+        } else if self.document.visit.picker.display().is_some() {
+            self.end_tool();
         } else {
-            self.cancel_picker();
+            self.cancel_legacy_picker();
         }
     }
 
-    pub(super) fn prepare_pick(&mut self, cx: &UiContext<'_, Self>) -> bool {
-        let _ = cx;
-        if !self.prepare_tool() {
-            return false;
+    pub(super) fn retire_pick_actions(&mut self) {
+        if self.document.visit.picker.display().is_some() {
+            self.end_tool();
         }
-        true
+        self.document.visit.calibration_action = None;
+        self.document.visit.white_balance_action = None;
     }
 
     pub(super) fn begin_pick(&mut self, kind: Pick, cx: &UiContext<'_, Self>) {
         if kind == Pick::Analysis && self.document.analysis_review().is_some() {
-            self.show_picker(kind.display());
+            self.show_legacy_picker(kind.display());
             self.refresh_review_region();
             return;
         }
-        if !self.prepare_pick(cx) {
+        if !self.prepare_tool() {
             return;
         }
         if kind == Pick::Analysis {
             self.document.set_legacy_tool(legacy_tool::Tool::Area);
-            self.show_picker(kind.display());
+            self.show_legacy_picker(kind.display());
             if self.document.analysis_review().is_some() {
                 self.refresh_review_region();
             } else {
@@ -63,29 +65,29 @@ impl Editor {
             Pick::Analysis => return,
         };
         match result {
-            Ok(task) => {
-                let actions = &mut self.document.visit.picking.actions;
-                actions.retain(|action| !action.is_finished());
-                actions.push(task);
-            }
-            Err(error) => {
-                if self.active_pick().is_some() {
-                    self.cancel_picker();
+            Ok(task) => match kind {
+                Pick::Dmin | Pick::Dmax | Pick::Gamma => {
+                    self.document.visit.calibration_action = Some(task)
                 }
+                Pick::RollWb | Pick::Wb => self.document.visit.white_balance_action = Some(task),
+                Pick::Analysis => unreachable!(),
+            },
+            Err(error) => {
                 self.status = error;
             }
         }
     }
 
     pub(super) fn apply_pick(&mut self, cx: &UiContext<'_, Self>) {
-        if self.submit_picker() {
+        if self.current_tool().is_some() {
+            self.hosted_action(tool::Action::Primary);
             return;
         }
         if self.document.analysis_review().is_some() {
             self.confirm_analysis_review(cx);
         } else if self.document.flat_edit().is_some() {
             self.apply_flat_edit(cx);
-        } else if self.active_pick() == Some(analysis::AREA_DISPLAY) {
+        } else if self.legacy_pick() == Some(analysis::AREA_DISPLAY) {
             self.apply_analysis_area(cx);
         }
     }

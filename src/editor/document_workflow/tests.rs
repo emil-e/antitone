@@ -45,6 +45,146 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
 }
 
 #[test]
+fn new_work_admission_withdraws_queued_feature_acceptance_after_the_picker_finishes() {
+    use crate::editor::{Balance, adjustment_layers::Target, calibration, picking, white_balance};
+    use std::{cell::Cell, rc::Rc};
+    #[derive(Clone, Copy)]
+    enum Admission {
+        Publish,
+        Import,
+        OtherPicker,
+    }
+    for layer_pick in [false, true] {
+        for admission in [
+            Admission::Publish,
+            Admission::Import,
+            Admission::OtherPicker,
+        ] {
+            let import = matches!(admission, Admission::Import);
+            let publish = matches!(admission, Admission::Publish);
+            let replacement = if layer_pick {
+                crate::editor::Pick::Gamma
+            } else {
+                crate::editor::Pick::Wb
+            };
+            let directory = tempfile::tempdir().unwrap();
+            let added = directory.path().join("added.dng");
+            std::fs::copy(path("patches.dng"), &added).unwrap();
+            let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+            editor.sync_document();
+            let source = editor.document.visit.current_source.unwrap();
+            let Target::Layer(layer) = editor.adjustment_layer_target() else {
+                panic!("fixture layer");
+            };
+            let target = (source, Target::Layer(layer));
+            let undo = editor
+                .history_label(crate::editor::history::Direction::Undo)
+                .map(str::to_owned);
+            let before = if layer_pick {
+                editor.document.visit.adjustment_layer_settings.wb
+            } else {
+                editor.balance()
+            };
+            let value = Balance {
+                warmth: 0.2,
+                tint: -0.1,
+            };
+            assert_ne!(value, before);
+            let published = Rc::new(Cell::new(false));
+            with_application(editor, |app| {
+                let reading = app.enter(|editor, cx| {
+                    let display = if layer_pick {
+                        white_balance::LAYER
+                    } else {
+                        calibration::GAMMA
+                    };
+                    let reading = picking::measurement::pick(
+                        editor,
+                        display,
+                        move |_, _| Ok(value),
+                        cx.clone(),
+                    );
+                    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+                    editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(area)));
+                    editor.hosted_action(crate::editor::tool::Action::Primary);
+                    reading
+                });
+                app.run_until(Duration::from_secs(5), |editor| {
+                    !editor.test_picker_active()
+                });
+                let resumed = published.clone();
+                app.enter(|editor, cx| {
+                    // The real picker has completed; deliberately defer its feature's consumption.
+                    let action = cx
+                        .spawn(move |cx| async move {
+                            let Some(value) = reading.await else {
+                                return;
+                            };
+                            resumed.set(true);
+                            cx.update(|editor| {
+                                if layer_pick {
+                                    white_balance::set_layer(editor, value, target).unwrap();
+                                } else {
+                                    calibration::set_gamma_balance(editor, value).unwrap();
+                                }
+                            });
+                        })
+                        .unwrap();
+                    if layer_pick {
+                        editor.document.visit.white_balance_action = Some(action);
+                    } else {
+                        editor.document.visit.calibration_action = Some(action);
+                    }
+                    if import {
+                        editor.add_raws(vec![added], cx);
+                        assert!(editor.document_pending.is_some());
+                    } else if !publish {
+                        editor.begin_pick(replacement, cx);
+                    }
+                });
+                if import {
+                    app.run_until(Duration::from_secs(15), |editor| {
+                        !editor.busy && editor.document_pending.is_none()
+                    });
+                } else if publish {
+                    app.run_until(Duration::from_secs(5), |_| published.get());
+                } else {
+                    app.pump();
+                }
+                assert_eq!(published.get(), publish);
+                app.read(|editor| {
+                    assert_eq!(editor.document.visit.current_source, Some(source));
+                    let actual = if layer_pick {
+                        editor.document.visit.adjustment_layer_settings.wb
+                    } else {
+                        editor.balance()
+                    };
+                    assert_eq!(actual, if publish { value } else { before });
+                    if !import && !publish {
+                        assert_eq!(editor.test_pick(), Some(replacement.display()));
+                        assert!(!editor.busy);
+                    }
+                    assert_eq!(
+                        editor.document.project.order.len(),
+                        if import { 2 } else { 1 }
+                    );
+                    assert_eq!(
+                        editor.history_label(crate::editor::history::Direction::Undo),
+                        if import {
+                            Some("Import photos")
+                        } else if publish {
+                            Some("Calibration pick")
+                        } else {
+                            undo.as_deref()
+                        }
+                    );
+                });
+            });
+        }
+    }
+}
+
+#[test]
 fn accepted_open_seeds_a_fresh_scope_cache_from_the_prepared_source() {
     let scheduler = source_loading::SourceLoader::new();
     let directory = tempfile::tempdir().unwrap();

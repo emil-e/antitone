@@ -455,13 +455,13 @@ fn ordinary_pickers_keep_the_current_photo_until_the_interaction_ends() {
                 frame(editor, &context, pointer(point, false), cx);
                 assert_eq!(editor.document.visit.current_source, working);
                 assert_eq!(editor.document.selected, 2);
-                assert_eq!(editor.active_pick(), Some(pick.display()));
+                assert_eq!(editor.test_pick(), Some(pick.display()));
                 assert!(!editor.document.visit.source.pending());
                 assert_eq!(editor.document.state.project, before);
                 editor.finish_pick(cx);
                 assert_eq!(editor.document.visit.current_source, working);
                 assert_eq!(editor.document.visit.canvas.viewport, viewport);
-                assert!(editor.active_pick().is_none());
+                assert!(editor.test_pick().is_none());
                 let output = frame(editor, &context, vec![], cx);
                 assert!(!node(&output, "photo-0.ARW").1.is_disabled());
                 frame(editor, &context, pointer(point, true), cx);
@@ -522,7 +522,7 @@ fn pending_photo_loading_accepts_mouse_and_keyboard_replacement_and_ignores_old_
                 assert_ne!(editor.status, "obsolete failure");
                 editor.begin_pick(Pick::Dmin, cx);
                 editor.begin_crop();
-                assert!(editor.active_pick().is_none() && editor.document.crop_edit().is_none());
+                assert!(editor.test_pick().is_none() && editor.document.crop_edit().is_none());
             });
         });
     }

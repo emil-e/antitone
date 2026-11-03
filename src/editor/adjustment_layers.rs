@@ -154,7 +154,10 @@ impl Editor {
 
     pub(super) fn select_adjustment_layer(&mut self, target: Target) {
         if self
-            .active_pick()
+            .document
+            .visit
+            .picker
+            .display()
             .is_some_and(|display| display.lock_layer_selection)
         {
             return;
@@ -208,7 +211,7 @@ impl Editor {
     fn adjustment_layer_actions_available(&self) -> bool {
         !self.busy
             && self.document.input.ready()
-            && self.active_pick().is_none()
+            && !self.picking()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && !self.masking()
@@ -456,7 +459,7 @@ impl Editor {
     pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
         self.tab == 1
             && !self.dusting()
-            && self.active_pick().is_none()
+            && !self.picking()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && !self.masking()

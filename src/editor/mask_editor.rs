@@ -348,7 +348,7 @@ impl Editor {
             && self.document.visit.canvas.ready.is_some()
             && self.document.input.ready()
             && !self.document.source
-            && self.active_pick().is_none()
+            && !self.picking()
             && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
@@ -633,7 +633,7 @@ impl Editor {
         if !self.adjustment_layer_overlays_visible()
             || self.fullscreen.is_some()
             || self.document.analysis_review().is_some()
-            || self.active_pick().is_some()
+            || self.picking()
             || self.cropping()
             || self.document.source
             || self.tab != 1

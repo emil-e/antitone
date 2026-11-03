@@ -40,8 +40,8 @@ fn picker_view_and_navigation_are_owned_without_overwriting_normal_preferences()
             let viewport = editor.document.visit.canvas.viewport;
             let anchor = previous.source_point(canvas.center());
             let display = Display::sample("View ownership", view);
-            editor.show_picker(display);
-            assert!(editor.hosted_picker());
+            super::preview(&mut editor, display);
+            assert!(editor.test_picker_active());
             assert_eq!(editor.document.source, source);
             assert_eq!(editor.canvas_inspection(), view != View::Working);
             let composition = editor.canvas_composition(area, Some(display));
@@ -66,7 +66,7 @@ fn picker_view_and_navigation_are_owned_without_overwriting_normal_preferences()
                         View::Source
                     },
                 );
-                editor.show_picker(next);
+                super::preview(&mut editor, next);
                 let composition = editor.canvas_composition(area, Some(next));
                 let replacement = editor.with_tool_viewport(|viewport| {
                     viewport.layout_composition(canvas, composition, 2.)
@@ -75,7 +75,7 @@ fn picker_view_and_navigation_are_owned_without_overwriting_normal_preferences()
                 assert!((replacement.source_point(canvas.center()) - anchor).length() < 0.002);
             }
             editor.end_tool();
-            assert!(!editor.hosted_picker());
+            assert!(!editor.test_picker_active());
             assert_eq!(editor.document.source, source);
             assert_eq!(editor.canvas_inspection(), source);
             if view == View::Working {

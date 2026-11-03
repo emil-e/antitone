@@ -87,7 +87,7 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
         wait(app);
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(e.pick_region().is_some());
+            assert!(e.test_pick_region().is_some());
             assert!(e.canvas_source_context().unwrap().correction.is_none());
             assert_eq!(e.document.visit.view, visit);
         });
@@ -431,7 +431,7 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
         wait(app);
         app.update(|e| {
             let area = e.active_canvas().ready.as_ref().unwrap().area;
-            e.set_pick_region(Some(crate::coverage::Coverage::rectangle(
+            e.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
                 crate::raw::Rect {
                     x: area.x,
                     y: area.y,
@@ -561,7 +561,7 @@ fn retired_setup_cleanup_does_not_end_a_new_reference_interaction() {
                 .expect("replacement setup remains active");
             assert!(edit.view.ready.is_some());
             assert!(!edit.task.as_ref().unwrap().is_finished());
-            assert!(e.pick_region().is_some());
+            assert!(e.test_pick_region().is_some());
             assert_eq!(e.document.state.project, before);
         });
         apply(app);
@@ -580,7 +580,7 @@ fn correction_uses_the_prepared_reference_even_if_its_file_disappears_before_app
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.begin_flat_edit(reference.clone(), None, cx));
         wait(app);
-        app.read(|e| assert!(e.pick_region().is_some()));
+        app.read(|e| assert!(e.test_pick_region().is_some()));
         std::fs::remove_file(&reference).unwrap();
         apply(app);
         wait(app);
@@ -608,7 +608,7 @@ fn apply_captures_support_before_the_awaiting_setup_resumes() {
         wait(app);
         let chosen = app.enter(|e, cx| {
             let area = e.active_canvas().ready.as_ref().unwrap().area;
-            let chosen = e.pick_region().unwrap().exact_rectangle(area).unwrap();
+            let chosen = e.test_pick_region().unwrap().exact_rectangle(area).unwrap();
             e.apply_flat_edit(cx);
             let later = crate::raw::Rect {
                 x: chosen.x + 8,
@@ -617,7 +617,7 @@ fn apply_captures_support_before_the_awaiting_setup_resumes() {
                 height: chosen.height - 16,
             };
             assert_ne!(chosen, later);
-            e.set_pick_region(Some(crate::coverage::Coverage::rectangle(later)));
+            e.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(later)));
             chosen
         });
         wait(app);
@@ -755,8 +755,8 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             });
             wait(app);
             let region = app.update(|e| {
-                let region = e.pick_region().expect("proposed reference support");
-                e.set_pick_region(None);
+                let region = e.test_pick_region().expect("proposed reference support");
+                e.set_test_pick_region(None);
                 region
             });
             let disabled = frame(app, &context, vec![])
@@ -774,7 +774,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             );
             frame(app, &context, key(egui::Key::Enter));
             assert!(!app.read(|e| e.busy));
-            app.update(|e| e.set_pick_region(Some(region)));
+            app.update(|e| e.set_test_pick_region(Some(region)));
             if enter {
                 frame(app, &context, key(egui::Key::Enter));
             } else {
