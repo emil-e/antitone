@@ -10,6 +10,7 @@ pub(super) struct PhotoScope {
     pub view: u64,
     pub hosted_tool: super::tool::Slot,
     pub dust: super::dust::PhotoState,
+    pub masks: super::mask_editor::State,
     pub working_view: WorkingView,
     pub canvas: super::canvas_view::CanvasView,
     pub pending_preview: Option<super::thumbnails::SelectedPreview>,
@@ -18,6 +19,9 @@ pub(super) struct PhotoScope {
     pub photo_orientation: super::PhotoOrientation,
     pub crop: Option<super::Crop>,
     pub picking: super::picking::Session,
+    pub picker: super::picking::State,
+    pub calibration_action: Option<async_executor::Task<()>>,
+    pub white_balance_action: Option<async_executor::Task<()>>,
     pub current_source: Option<super::SourceId>,
     pub source: super::source_workflow::State,
     pub working: super::working_workflow::State,
@@ -34,11 +38,9 @@ impl PhotoScope {
     }
 
     fn activity(&self) -> Option<TaskRequest> {
-        self.picking.activity().or_else(|| {
-            self.source
-                .pending()
-                .then_some(TaskRequest::Photo(self.view))
-        })
+        self.source
+            .pending()
+            .then_some(TaskRequest::Photo(self.view))
     }
 }
 

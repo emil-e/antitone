@@ -61,7 +61,7 @@ impl Editor {
     pub(in crate::editor) fn auto_crop_context(&self) -> bool {
         self.fullscreen.is_none()
             && !self.cropping()
-            && self.active_pick().is_none()
+            && !self.picking()
             && self.document.flat_edit().is_none()
             && self
                 .document

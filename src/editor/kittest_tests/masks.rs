@@ -1,5 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerCoverage;
+mod creation;
 mod radial;
 mod workflows;
 
@@ -68,7 +69,7 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
         pointer(&mut harness, image.center(), false);
         harness.read(|editor| {
             assert!(
-                editor.document.mask_edit().is_some(),
+                editor.creating_mask(),
                 "a rejected zero-size creation remains retryable"
             )
         });
@@ -79,12 +80,12 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
             image.center() + egui::vec2(80., 40.),
         );
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
-        harness.read(|editor| assert!(editor.document.mask_edit().unwrap().dragging()));
+        harness.read(|editor| assert!(editor.mask_creation().unwrap().borrow().dragging()));
         harness.key_press(egui::Key::Escape);
         harness.step();
         pointer(&mut harness, image.center() + egui::vec2(80., 40.), false);
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
-        harness.read(|editor| assert!(editor.document.mask_edit().is_none()));
+        harness.read(|editor| assert!(!editor.masking()));
         arm(&mut harness, false);
         let image = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.image);
         drag(
@@ -92,7 +93,7 @@ fn drawing_accepts_on_release_and_exposure_is_immediately_available_without_a_ma
             image.center() - egui::vec2(80., 40.),
             image.center() + egui::vec2(80., 40.),
         );
-        harness.read(|editor| assert!(editor.document.mask_edit().is_none(), "{}", editor.status));
+        harness.read(|editor| assert!(!editor.masking(), "{}", editor.status));
         harness.try_run_realtime().unwrap();
         let layers = harness.read(adjustment_layers::layers);
         assert_eq!(layers.next_id, 3);
@@ -221,7 +222,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
                     < 1e-8
             );
             pointer(&mut harness, end, false);
-            harness.read(|editor| assert!(editor.document.mask_edit().is_none()));
+            harness.read(|editor| assert!(!editor.masking()));
             harness.read(|editor| {
                 assert_eq!(
                     accepted_mask(editor),
@@ -255,7 +256,7 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             let layout = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0);
             let outside = layout.canvas.min + egui::vec2(8., 20.);
             drag(&mut harness, outside, outside + egui::vec2(5., 70.));
-            harness.read(|editor| assert!(editor.document.mask_edit().is_none()));
+            harness.read(|editor| assert!(!editor.masking()));
             harness.read(|editor| {
                 assert_eq!(
                     editor.document.state.project, accepted,
@@ -281,15 +282,10 @@ fn creation_popup_escape_and_dust_keep_canvas_ownership_unambiguous() {
         click(&mut harness, "Viewer help");
         harness.key_press(egui::Key::Escape);
         harness.step();
-        harness.read(|editor| {
-            assert!(
-                editor.document.mask_edit().is_some(),
-                "popup owns the first Escape"
-            )
-        });
+        harness.read(|editor| assert!(editor.creating_mask(), "popup owns the first Escape"));
         harness.key_press(egui::Key::Escape);
         harness.step();
-        harness.read(|editor| assert!(editor.document.mask_edit().is_none()));
+        harness.read(|editor| assert!(!editor.masking()));
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
         click(&mut harness, "Dust repair");
         harness.read(|editor| assert!(editor.dusting()));
@@ -303,7 +299,7 @@ fn creation_popup_escape_and_dust_keep_canvas_ownership_unambiguous() {
         click(&mut harness, "Add linear");
         harness.read(|editor| {
             assert!(!editor.dusting());
-            assert!(editor.document.mask_edit().is_some());
+            assert!(editor.creating_mask());
             assert_eq!(editor.document.project, before);
         });
         harness.key_press(egui::Key::Escape);
@@ -341,8 +337,7 @@ fn armed_creation_suspends_outside_photo_and_resumes_without_consuming_an_id() {
                 );
                 h.read(|editor| assert_eq!(editor.document.state.project, before));
                 h.read(|editor| {
-                    let edit = editor.document.mask_edit().unwrap();
-                    assert!(edit.creating() && !edit.dragging());
+                    assert!(editor.creating_mask() && !editor.mask_dragging());
                     assert!(editor.mask_preview_source().is_none());
                 });
             }
@@ -353,7 +348,7 @@ fn armed_creation_suspends_outside_photo_and_resumes_without_consuming_an_id() {
                 image.center() - egui::vec2(30., 30.),
                 image.center() + egui::vec2(30., 30.),
             );
-            h.read(|editor| assert!(editor.document.mask_edit().is_none(), "{}", editor.status));
+            h.read(|editor| assert!(!editor.masking(), "{}", editor.status));
             let layers = h.read(adjustment_layers::layers);
             assert_eq!(layers.layers.len(), if radial { 3 } else { 2 });
             assert_eq!(layers.next_id, if radial { 4 } else { 3 });
@@ -430,7 +425,7 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
                     .clone()
             });
             pointer(&mut h, end + egui::vec2(10., 5.), false);
-            h.read(|editor| assert!(editor.document.mask_edit().is_none(), "{}", editor.status));
+            h.read(|editor| assert!(!editor.masking(), "{}", editor.status));
             h.read(|editor| {
                 assert_eq!(
                     editor
@@ -472,7 +467,7 @@ fn fullscreen_suspension_cannot_accept_an_unseen_mask_release() {
         harness.update(|editor| host::App::photo_fullscreen_changed(editor, false));
         harness.step();
         harness.read(|editor| assert!(editor.fullscreen.is_none()));
-        harness.read(|editor| assert!(editor.document.mask_edit().is_none()));
+        harness.read(|editor| assert!(!editor.masking()));
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
     });
 }

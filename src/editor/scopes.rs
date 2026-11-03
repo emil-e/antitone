@@ -271,7 +271,7 @@ impl Editor {
     }
 
     fn scope_basis(&self) -> Result<(&Ready, ProcessingInput, Composition), &'static str> {
-        if self.document.source || self.document.flat_edit().is_some() {
+        if self.canvas_inspection() {
             return Err("Positive grade only");
         }
         if self.busy || self.document_pending.is_some() {

@@ -567,17 +567,17 @@ fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() 
     let mut editor = state();
     let original = editor.document.state.project.clone();
     editor.preview_picker(Pick::Analysis);
-    editor.set_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 540]))));
+    editor.set_test_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 540]))));
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.state.project, original);
     editor.preview_picker(Pick::Analysis);
-    editor.set_pick_region(Some(Coverage::rectangle(rect([0, 0, 900, 700]))));
+    editor.set_test_pick_region(Some(Coverage::rectangle(rect([0, 0, 900, 700]))));
     editor.apply_analysis_area(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.state.project, original);
-    assert_eq!(editor.active_pick(), Some(Pick::Analysis.display()));
-    editor.set_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 540]))));
+    assert_eq!(editor.test_pick(), Some(Pick::Analysis.display()));
+    editor.set_test_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 540]))));
     editor.apply_analysis_area(&crate::application::UiContext::render_only());
-    assert!(editor.active_pick().is_none());
+    assert!(editor.test_pick().is_none());
     assert_eq!(
         editor.document.state.project.analysis_area,
         Some([52, 42, 720, 540])
@@ -801,9 +801,9 @@ fn statistics_edit_bypasses_composition_without_changing_processing_or_view() {
                 )
                 .unwrap()
             );
-            editor.set_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 480]))));
+            editor.set_test_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 480]))));
             editor.apply_analysis_area(cx);
-            assert!(editor.active_pick().is_none());
+            assert!(editor.test_pick().is_none());
             assert_eq!(
                 editor.document.state.project.analysis_area,
                 Some([52, 42, 720, 480])

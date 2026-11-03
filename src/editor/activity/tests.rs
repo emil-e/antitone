@@ -472,7 +472,7 @@ fn matching_success_retires_source_save_and_measurement_activity() {
                     let area = Scan::from_source(source).area;
                     // The synthetic SDK source marks its repeated borders ineligible.
                     // This scenario needs a successful pick, not a rejected capture.
-                    editor.set_pick_region(Some(Coverage::rectangle(Rect {
+                    editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
                         x: area.x + 8,
                         y: area.y + 8,
                         width: area.width - 16,

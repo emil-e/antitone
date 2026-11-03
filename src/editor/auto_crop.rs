@@ -158,7 +158,7 @@ impl Editor {
                 .auto_crop_operation()
                 .is_none_or(|op| op.task.is_none() || op.apply.is_some())
             && self.fullscreen.is_none()
-            && self.active_pick().is_none()
+            && !self.picking()
             && !self.cropping()
             && self.document.flat_edit().is_none()
             && !self.dusting()

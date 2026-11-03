@@ -86,10 +86,10 @@ impl Editor {
     fn file_context_available(&self) -> bool {
         !self.dust_search_pending()
             && !self.application_modal()
-            && self.active_pick().is_none()
+            && !self.picking()
             && self.document.auto_crop_edit().is_none()
             && !self.cropping()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
     }
 
     fn application_modal(&self) -> bool {
@@ -159,18 +159,13 @@ impl Editor {
                 state.enabled.insert(Export);
             }
         }
-        if self.document.visit.canvas.ready.is_some()
-            && !self.busy
-            && !self.document.mask_edit().is_some_and(MaskEdit::dragging)
-        {
+        if self.document.visit.canvas.ready.is_some() && !self.busy && !self.mask_dragging() {
             state.enabled.extend([Fit, ActualSize, ZoomIn, ZoomOut]);
         }
         if self.fullscreen_available() {
             state.enabled.insert(PhotoInspection);
         }
-        if self.fullscreen.is_none()
-            && self.active_pick().is_none()
-            && self.document.analysis_review().is_none()
+        if self.fullscreen.is_none() && !self.picking() && self.document.analysis_review().is_none()
         {
             state.enabled.insert(Scopes);
         }

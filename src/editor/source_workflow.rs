@@ -76,8 +76,7 @@ impl Editor {
             return;
         }
         let started = std::time::Instant::now();
-        let selecting_photo =
-            persistent && self.active_pick().is_none() && self.document.flat_edit().is_none();
+        let selecting_photo = persistent && !self.picking() && self.document.flat_edit().is_none();
         self.document.visit.support = Default::default();
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
@@ -155,7 +154,7 @@ impl Editor {
         };
         self.document.visit.source.task = Some(task);
         if selecting_photo
-            && self.active_pick().is_none()
+            && !self.picking()
             && self.document.flat_edit().is_none()
             && let Some(source) = self.document.visit.current_source
         {

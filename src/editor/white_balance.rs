@@ -1,5 +1,5 @@
 use super::{
-    AdjustmentLayerSettings, Balance, Editor, InputSettings, RollSettings, UiContext,
+    AdjustmentLayerSettings, Balance, Editor, InputSettings, RollSettings, SourceId, UiContext,
     adjustment_layers::Target,
     picking::{Display, View, measurement},
 };
@@ -111,17 +111,17 @@ pub(super) fn pick_roll<'scope>(
     let mut image = measurement::capture_scan(editor)?;
     let services = editor.source_services.clone();
     let input = RollInput::capture(editor);
+    let reading = measurement::pick(
+        editor,
+        ROLL,
+        move |region, cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+        },
+        cx.clone(),
+    );
     cx.spawn(move |cx| async move {
-        let Some(value) = measurement::pick(
-            ROLL,
-            move |region, cancelled| {
-                let services = measurement::query_services(services.as_ref())?;
-                input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
-            },
-            cx.clone(),
-        )
-        .await
-        else {
+        let Some(value) = reading.await else {
             return;
         };
         cx.update(|editor| {
@@ -141,34 +141,28 @@ pub(super) fn pick_layer<'scope>(
     let services = editor.source_services.clone();
     let input = LayerInput::capture(editor)?;
     let target = (
-        editor.document.visit.current_source,
+        editor
+            .document
+            .visit
+            .current_source
+            .expect("captured WB source"),
         editor.adjustment_layer_target(),
     );
+    let reading = measurement::pick(
+        editor,
+        LAYER,
+        move |region, cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+        },
+        cx.clone(),
+    );
     cx.spawn(move |cx| async move {
-        // Selection can change before this first poll opens and locks the picker.
-        if cx.read(|editor| {
-            (
-                editor.document.visit.current_source,
-                editor.adjustment_layer_target(),
-            )
-        }) != target
-        {
-            return;
-        }
-        let Some(value) = measurement::pick(
-            LAYER,
-            move |region, cancelled| {
-                let services = measurement::query_services(services.as_ref())?;
-                input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
-            },
-            cx.clone(),
-        )
-        .await
-        else {
+        let Some(value) = reading.await else {
             return;
         };
         cx.update(|editor| {
-            if let Err(error) = set_layer(editor, value) {
+            if let Err(error) = set_layer(editor, value, target) {
                 editor.status = error;
             }
         });
@@ -193,19 +187,30 @@ pub(super) fn set_roll(editor: &mut Editor, value: Balance) -> Result<(), String
     Ok(())
 }
 
-pub(super) fn set_layer(editor: &mut Editor, value: Balance) -> Result<(), String> {
-    let candidate = AdjustmentLayerSettings {
-        wb: value,
-        ..editor.document.visit.adjustment_layer_settings
+pub(super) fn set_layer(
+    editor: &mut Editor,
+    value: Balance,
+    target: (SourceId, Target),
+) -> Result<(), String> {
+    if editor.document.visit.current_source != Some(target.0) {
+        return Err("WB pick source is no longer selected".into());
+    }
+    let Target::Layer(id) = target.1 else {
+        return Err("WB pick has no target layer".into());
     };
-    validate(editor, editor.document.roll, candidate)?;
-    let before = editor.history_snapshot();
-    editor.document.visit.adjustment_layer_settings = candidate;
-    editor.record_edit(
-        before,
-        "Calibration pick",
-        editor.document.visit.current_source,
-    );
+    editor
+        .edit_adjustment_layers_named("Calibration pick", |layers| {
+            let layer = layers
+                .layers
+                .iter_mut()
+                .find(|layer| layer.id == id)
+                .ok_or(Error::InvalidParameter(
+                    "WB pick target layer no longer exists",
+                ))?;
+            layer.adjustment.photo.wb = value;
+            Ok(())
+        })
+        .map_err(|error| format!("Pick rejected: {error}"))?;
     editor.status = "Wb neutral correction applied".into();
     Ok(())
 }

@@ -16,11 +16,26 @@ pub(super) enum Action {
     Dismiss,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Primary {
+    pub label: &'static str,
+    pub enabled: bool,
+}
+
+impl From<&'static str> for Primary {
+    fn from(label: &'static str) -> Self {
+        Self {
+            label,
+            enabled: true,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Presentation {
     pub show_viewer: bool,
     pub identity: presentation::ToolIdentity<'static>,
-    pub primary: Option<&'static str>,
+    pub primary: Option<Primary>,
     pub dismiss: &'static str,
     pub warning: Option<String>,
     pub help: &'static str,
@@ -211,8 +226,8 @@ impl Editor {
         let activity = self.tool_activity();
         match self.document.tool.as_ref() {
             Some(legacy_tool::Tool::Mask(_)) => self.finish_mask(false),
-            Some(legacy_tool::Tool::Pick(_)) => {
-                self.cancel_picker();
+            Some(legacy_tool::Tool::Area) => {
+                self.cancel_legacy_picker();
                 self.document.tool.clear();
             }
             Some(legacy_tool::Tool::Analyze(_)) => self.close_analysis(),
@@ -269,7 +284,7 @@ impl Editor {
             return false;
         }
         if let Some(ready) = &self.document.visit.canvas.ready {
-            tool.composition(self.normal_canvas_composition(ready.area, self.active_pick()));
+            tool.composition(self.normal_canvas_composition(ready.area, self.legacy_pick()));
         }
         self.document.set_hosted_tool(placement, tool);
         true

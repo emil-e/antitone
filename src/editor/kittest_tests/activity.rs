@@ -145,7 +145,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 harness.update(|editor| editor.document.visit.picking.display = pick);
                 if name == "measurement" {
                     harness.update(|editor| {
-                        editor.set_pick_region(Some(Coverage::rectangle(Rect {
+                        editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
                             x: 32,
                             y: 32,
                             width: 64,
@@ -163,7 +163,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     harness.update(|editor| editor.document.visit.canvas.ready = Some(ready));
                 }
                 harness.update(|editor| editor.document.visit.picking.display = None);
-                harness.update(|editor| editor.set_pick_region(None));
+                harness.update(|editor| editor.set_test_pick_region(None));
                 harness.update(|editor| editor.tasks.finish(task.request()));
                 harness.update(|editor| editor.busy = false);
                 harness.step();

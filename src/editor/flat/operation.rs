@@ -47,7 +47,7 @@ pub(super) fn setup<'scope>(
                 editor.busy = false;
             }
             editor.resolve_failure(FailureKind::FlatReference);
-            editor.status = if editor.pick_region().is_some() {
+            editor.status = if editor.legacy_pick_region().is_some() {
                 "Proposed illuminated rectangle: adjust edges, then Apply."
             } else {
                 "Illuminated area is ambiguous; draw a rectangle around the usable light."

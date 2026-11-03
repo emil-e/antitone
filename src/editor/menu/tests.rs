@@ -154,7 +154,7 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
         assert!(editor.transition.is_none());
     }
-    assert_eq!(editor.active_pick(), Some(Pick::Dmin.display()));
+    assert_eq!(editor.test_pick(), Some(Pick::Dmin.display()));
     editor.document.visit.picking.display = None;
     editor.transition = Some(Transition::New);
     host::App::menu_action(&mut editor, Action::Settings);

@@ -196,7 +196,7 @@ impl Tool for Candidate {
                 icon: icons::Icon::Crop,
                 title: "Candidate",
             },
-            primary: Some("Accept"),
+            primary: Some("Accept".into()),
             dismiss: "Discard",
             fit_label: "Fit",
             warning: None,
@@ -365,14 +365,12 @@ fn legacy_and_hosted_installation_are_exclusive_in_both_directions() {
     let dropped = Rc::new(Cell::new(0));
     let actions = Rc::new(Cell::new(0));
     assert!(editor.activate_tool(Placement::Photo, Box::new(Probe::new(&dropped, &actions))));
-    editor
-        .document
-        .set_legacy_tool(legacy_tool::Tool::Pick(Vec::new()));
+    editor.document.set_legacy_tool(legacy_tool::Tool::Area);
     assert_eq!(dropped.get(), 1);
     assert!(editor.current_tool().is_none());
     assert!(matches!(
         editor.document.tool.as_ref(),
-        Some(legacy_tool::Tool::Pick(_))
+        Some(legacy_tool::Tool::Area)
     ));
     assert!(editor.activate_tool(
         Placement::Document,

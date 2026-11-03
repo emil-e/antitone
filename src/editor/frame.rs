@@ -187,7 +187,7 @@ impl Editor {
             && !egui::Popup::is_any_open(ui.ctx())
         {
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Z))
-                && !self.document.mask_edit().is_some_and(MaskEdit::dragging)
+                && !self.mask_dragging()
             {
                 self.with_tool_viewport(Viewport::fit);
             }
@@ -198,22 +198,25 @@ impl Editor {
     }
 
     fn tool_shortcuts(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        if self.active_pick().is_some()
+        if self.legacy_pick().is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.status = "Pick cancelled; processing unchanged".into();
             self.finish_pick(cx);
-            self.set_pick_region(None);
+            self.set_legacy_pick_region(None);
         }
-        if self.active_pick().is_some()
-            && self.pick_region().is_some()
+        if self.legacy_pick().is_some()
+            && self.legacy_pick_region().is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
         {
             self.apply_pick(cx);
         }
         self.with_current_tool(|tool, editor| tool.shortcuts(ui, editor));
         if let Some(tool) = self.current_tool() {
-            let primary = tool.presentation().primary.is_some();
+            let primary = tool
+                .presentation()
+                .primary
+                .is_some_and(|primary| primary.enabled);
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 self.hosted_action(tool::Action::Dismiss);
                 ui.ctx().request_repaint();
@@ -268,9 +271,9 @@ impl Editor {
         {
             *file_action = Some(FileAction::Remove);
         }
-        if self.active_pick().is_none()
+        if !self.picking()
             && !self.cropping()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && !self.document.visit.adjustment_layers.dragging()
             && !self.document.state.project.order.is_empty()
         {
@@ -457,13 +460,13 @@ impl Editor {
     ) {
         let auto_crop = self.document.auto_crop_requested.take();
         if let Some(action) = actions.file {
-            if self.document.mask_edit().is_none() {
+            if !self.masking() {
                 self.file_action(action, cx);
             } else {
                 self.status = "Apply or cancel the mask before a file action".into();
             }
         } else if actions.export {
-            if self.document.mask_edit().is_none() {
+            if !self.masking() {
                 self.open_export_dialog();
             } else {
                 self.status = "Apply or cancel the mask before exporting".into();

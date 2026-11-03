@@ -1010,7 +1010,7 @@ fn navigation_and_view_state_do_not_dirty_a_saved_document() {
             let before = editor.document.state.project.clone();
             editor.document.source = false;
             editor.document.visit.canvas.viewport.zoom = Some(2.);
-            editor.set_pick_region(Some(Coverage::rectangle(Rect {
+            editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
                 x: 12,
                 y: 12,
                 width: 32,

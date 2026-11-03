@@ -70,7 +70,7 @@ pub(super) fn calibrated_workflow<R>(
             harness.try_run_realtime().unwrap();
             harness.get_by_label(action).click();
             harness.step();
-            wait_for(&mut harness, |editor| editor.active_pick().is_some());
+            wait_for(&mut harness, |editor| editor.test_pick().is_some());
             assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
             // Keep the support inside the uniform swatch, including the demosaicer's
             // neighbours: the authored 32-pixel ramps can influence selection edges.
@@ -97,7 +97,7 @@ pub(super) fn calibrated_workflow<R>(
             harness.get_by_label("Apply").click();
             harness.step();
             wait_for(&mut harness, |e| !e.busy);
-            harness.read(|editor| assert!(editor.active_pick().is_none()));
+            harness.read(|editor| assert!(editor.test_pick().is_none()));
             let measured = harness.read(|editor| {
                 if expected == 3000. {
                     editor.dmin()
@@ -492,9 +492,9 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
-        wait_for(&mut harness, |editor| editor.active_pick().is_some());
-        harness.read(|editor| assert_eq!(editor.active_pick(), Some(Pick::Dmin.display())));
-        harness.read(|editor| assert!(editor.pick_region().is_none()));
+        wait_for(&mut harness, |editor| editor.test_pick().is_some());
+        harness.read(|editor| assert_eq!(editor.test_pick(), Some(Pick::Dmin.display())));
+        harness.read(|editor| assert!(editor.test_pick_region().is_none()));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
         harness.step();
@@ -525,7 +525,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         });
         harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(1.)));
         harness.read(|editor| assert!(!editor.document.source));
-        harness.read(|editor| assert!(editor.active_pick().is_none()));
+        harness.read(|editor| assert!(editor.test_pick().is_none()));
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
         harness.read(|editor| assert!(editor.preference_store.is_none()));
         harness.step();
@@ -549,13 +549,13 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         });
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
-        wait_for(&mut harness, |editor| editor.active_pick().is_some());
+        wait_for(&mut harness, |editor| editor.test_pick().is_some());
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, reference));
         harness.get_by_label("Cancel").click();
         harness.step();
         harness.read(|editor| {
             assert_eq!(editor.document.visit.current_source, reference);
-            assert!(editor.active_pick().is_none());
+            assert!(editor.test_pick().is_none());
             assert_eq!(editor.document.state.project, project);
         });
         wait_settled(&mut harness);
@@ -696,7 +696,13 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
             let bad = ProcessingInput::from(bad.parameters());
             let frame = editor.document.visit.working_view.current_frame().unwrap();
             let error = editor
-                .working_view(frame, &bad, &egui::Context::default(), cx)
+                .working_view(
+                    frame,
+                    &bad,
+                    super::super::canvas::ImageMode::Photograph,
+                    &egui::Context::default(),
+                    cx,
+                )
                 .err();
             assert!(error.is_some());
             editor.document.visit.working_view.error = error.map(|e| e.to_string());

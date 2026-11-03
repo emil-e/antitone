@@ -58,7 +58,7 @@ impl Editor {
         if self.document.auto_crop_edit().is_some() {
             return Some((icons::Icon::Crop, "Auto-crop"));
         }
-        self.active_pick().map(|display| {
+        self.legacy_pick().map(|display| {
             (
                 if display.area {
                     icons::Icon::Crop
@@ -133,8 +133,7 @@ impl Editor {
             })
             .flatten();
         let fit_label = hosted.as_ref().map_or("Fit", |tool| tool.fit_label);
-        let masking = !fullscreen && self.document.mask_edit().is_some();
-        let creating = !fullscreen && self.document.mask_edit().is_some_and(MaskEdit::creating);
+        let masking = !fullscreen && self.masking();
         let tool = hosted
             .as_ref()
             .map(|tool| (tool.identity.icon, tool.identity.title))
@@ -153,9 +152,8 @@ impl Editor {
             self.document.source = true;
         }
 
-        let navigating = self.active_canvas().ready.is_some()
-            && !self.busy
-            && !self.document.mask_edit().is_some_and(MaskEdit::dragging);
+        let navigating =
+            self.active_canvas().ready.is_some() && !self.busy && !self.mask_dragging();
         let reviewing = self.document.analysis_review().is_some();
         let apply_label = if reviewing { "Analyze roll" } else { "Apply" };
         let review_ready = self.document.analysis_review().is_none_or(|review| {
@@ -172,7 +170,12 @@ impl Editor {
             apply_enabled: if self.document.auto_crop_edit().is_some() {
                 self.auto_crop_editable()
             } else {
-                navigating && review_ready && (hosted.is_some() || self.pick_region().is_some())
+                navigating
+                    && review_ready
+                    && hosted.as_ref().map_or_else(
+                        || self.legacy_pick_region().is_some(),
+                        |tool| tool.primary.is_none_or(|primary| primary.enabled),
+                    )
             },
         });
 
@@ -181,7 +184,8 @@ impl Editor {
             .and_then(|tool| tool.warning.clone())
             .or_else(|| self.viewer_warning());
         let look_error = self.look_rendering_error();
-        let normal_controls = tool.is_none() || hosted.is_some();
+        let normal_controls =
+            tool.is_none() || hosted.is_some() && self.document.visit.picker.display().is_none();
         let inspecting = navigating && calibrated && tool.is_none() && !masking;
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
@@ -238,7 +242,7 @@ impl Editor {
                 let trailing_width = presentation::CONTROL_HEIGHT
                     + VIEWER_ITEM_GAP
                     + if let Some(group) = tool_group {
-                        if let Some(tool) = &hosted { group.width_actions(ui, tool.primary, tool.dismiss) }
+                        if let Some(tool) = &hosted { group.width_actions(ui, tool.primary.map(|primary| primary.label), tool.dismiss) }
                         else if reviewing {
                             group.width_named(ui, apply_label)
                         } else {
@@ -254,12 +258,16 @@ impl Editor {
                             .size()
                             .x
                     };
+                let source_controls = usize::from(normal_controls)
+                    + usize::from(self.canvas_inspection()
+                        || normal_controls && self.document.visit.working_view.enabled());
+                // Fit, zoom steps and fullscreen, plus the readout, separator and current view controls.
+                let navigation_icons = 4 + source_controls;
+                let navigation_width = 50.
+                    + navigation_icons as f32 * presentation::CONTROL_HEIGHT
+                    + (navigation_icons + 3) as f32 * VIEWER_ITEM_GAP;
                 let show_zoom_steps = tool.is_none() && !masking
-                    || ui.available_width()
-                        >= trailing_width
-                            + presentation::CONTROL_HEIGHT
-                            + VIEWER_ITEM_GAP
-                            + if self.canvas_inspection() { 224. } else { 192. };
+                    || ui.available_width() >= trailing_width + navigation_width;
                 if icons::button(
                     ui,
                     Icon::Fit,
@@ -441,7 +449,7 @@ impl Editor {
                             !fullscreen
                                 && self.tab == 1
                                 && hosted.is_none()
-                                && self.active_pick().is_none()
+                                && self.legacy_pick().is_none()
                         }) {
                             ui.separator();
                             ui.small(help);
@@ -469,7 +477,7 @@ impl Editor {
                                 "Drag either area's corners to resize, or its interior to move. Click a label when outlines coincide.",
                             );
                             ui.small("Enter analyzes · Escape cancels");
-                        } else if !fullscreen && let Some(kind) = self.active_pick() {
+                        } else if !fullscreen && let Some(kind) = self.legacy_pick() {
                             ui.separator();
                             ui.small(
                                 "Click a patch or drag an area; drag its edges/corners to resize.",
@@ -481,7 +489,7 @@ impl Editor {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(group) = tool_group {
                         if let Some(tool) = &hosted {
-                            let actions = group.show_actions(ui, tool.primary, tool.dismiss, warning.as_deref()).inner;
+                            let actions = group.show_actions(ui, tool.primary.map(|primary| primary.label), tool.dismiss, warning.as_deref()).inner;
                             cancel = actions.dismiss.clicked();
                             apply = actions.primary.is_some_and(|response| response.clicked());
                             return;
@@ -497,12 +505,6 @@ impl Editor {
                         cancel = actions.cancel.clicked();
                         apply = actions.apply.clicked();
 
-                    } else if creating {
-                        cancel = TextAction::new("Cancel drawing").show(ui).clicked();
-                        ui.add(
-                            egui::Label::new(self.document.mask_edit().unwrap().creation_label())
-                                .truncate(),
-                        );
                     } else {
                         ui.add(
                             egui::Label::new(egui::RichText::new(state).small().weak()).truncate(),

@@ -232,7 +232,7 @@ impl Editor {
             .map(|pending| (pending.id, pending.loaded))
             != Some((request, loaded))
             || loaded != self.id
-            || self.active_pick() != Some(Pick::Analysis.display())
+            || self.legacy_pick() != Some(Pick::Analysis.display())
             || self.document_pending.is_some()
         {
             return;
@@ -245,8 +245,10 @@ impl Editor {
             Ok(support) => {
                 ready.analysis_support = Some(support);
                 // A delayed suggestion must never overwrite a rectangle already drawn.
-                if self.pick_region().is_none() && self.document.visit.canvas.pick_drag.is_none() {
-                    self.set_pick_region(support.map(suggest).map(Coverage::rectangle));
+                if self.legacy_pick_region().is_none()
+                    && self.document.visit.canvas.pick_drag.is_none()
+                {
+                    self.set_legacy_pick_region(support.map(suggest).map(Coverage::rectangle));
                 }
             }
             Err(error) => self.status = error,
@@ -274,11 +276,11 @@ impl Editor {
         let capabilities = self.document.input.capabilities();
         let commands = !self.busy
             && self.document.visit.canvas.ready.is_some()
-            && self.active_pick().is_none()
+            && !self.picking()
             && !self.cropping()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && !self.document.visit.adjustment_layers.confirming()
             && !reviewing
             && self.document.removal_pending.is_none();
@@ -473,7 +475,7 @@ impl Editor {
     }
 
     pub(super) fn apply_analysis_area(&mut self, cx: &UiContext<'_, Self>) {
-        let Some(coverage) = self.pick_region() else {
+        let Some(coverage) = self.legacy_pick_region() else {
             return;
         };
         let Some(area) = self

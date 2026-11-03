@@ -559,7 +559,7 @@ impl DustTool {
             || editor.tab != 1
             || editor.document.source
             || !self.interaction.edit.borrow().show_masks
-            || editor.active_pick().is_some()
+            || editor.picking()
             || self.donor().is_some()
         {
             return None;

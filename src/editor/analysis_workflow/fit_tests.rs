@@ -135,7 +135,7 @@ fn cancelling_review_keeps_the_browsed_photo_and_its_layer_selection() {
             assert_ne!(selected, Target::Layer(old_layer));
             assert_eq!(editor.document.visit.canvas.viewport.zoom, Some(0.75));
             assert_eq!(editor.tab, 1);
-            assert!(editor.document.analysis_review().is_none() && editor.active_pick().is_none());
+            assert!(editor.document.analysis_review().is_none() && editor.test_pick().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();

@@ -908,6 +908,18 @@ fn value_adjustments_temporarily_hide_masks_and_restore_the_coverage_preference(
 
 #[test]
 fn collapsed_layers_keep_active_gradient_creation_visible_until_release() {
+    fn canvas_handles(harness: &Harness<'_, Editor>) -> usize {
+        let canvas = harness.read(|editor| editor.active_canvas().last_layout.unwrap().0.canvas);
+        harness
+            .inner
+            .output()
+            .shapes
+            .iter()
+            .filter(|shape| {
+                shape.clip_rect == canvas && matches!(shape.shape, egui::Shape::Circle(_))
+            })
+            .count()
+    }
     workflow::calibrated_workflow(|mut harness, _, _directory| {
         for name in ["Add linear", "Add radial"] {
             show_layers(&mut harness);
@@ -926,18 +938,29 @@ fn collapsed_layers_keep_active_gradient_creation_visible_until_release() {
                     .center()
             });
             let end = start + egui::vec2(30., 24.);
+            assert_eq!(
+                canvas_handles(&harness),
+                0,
+                "the undrawn mode has no handles"
+            );
             super::masks::hold_drag(&mut harness, start, end);
-            harness.read(|editor| {
-                assert!(editor.document.mask_edit().is_some());
-                assert!(mask_artwork(editor) > 0);
-            });
+            harness.read(|editor| assert!(editor.creating_mask()));
+            assert!(
+                canvas_handles(&harness) > 0,
+                "the hosted canvas paints creation handles"
+            );
             super::masks::pointer(&mut harness, end, false);
             harness.try_run_realtime().unwrap();
             harness.read(|editor| {
-                assert!(editor.document.mask_edit().is_none());
+                assert!(!editor.masking());
                 assert_eq!(layers(editor).layers.len(), before + 1);
                 assert_eq!(mask_artwork(editor), 0);
             });
+            assert_eq!(
+                canvas_handles(&harness),
+                0,
+                "the collapsed inspector hides accepted handles"
+            );
         }
     });
 }

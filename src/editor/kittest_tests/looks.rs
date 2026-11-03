@@ -1120,7 +1120,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         harness.get_by_label("Cancel").click();
         harness.step();
         paint_until(&mut harness, |editor| {
-            editor.active_pick().is_none() && positive_ready(editor)
+            editor.test_pick().is_none() && positive_ready(editor)
         });
         harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {

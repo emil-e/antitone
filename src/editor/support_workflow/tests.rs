@@ -121,7 +121,7 @@ fn queued_support_respects_drawn_geometry_and_reopened_picker_identity() {
                     e.finish_pick(access);
                     e.begin_pick(Pick::Analysis, access);
                 }
-                e.set_pick_region(Some(drawn));
+                e.set_test_pick_region(Some(drawn));
             });
             if reopen {
                 app.read(|e| {
@@ -134,7 +134,7 @@ fn queued_support_respects_drawn_geometry_and_reopened_picker_identity() {
             });
             app.update(|e| e.analysis_support_result(old, e.id, Err("stale".into())));
             app.read(|e| {
-                assert_eq!(e.pick_region(), Some(drawn));
+                assert_eq!(e.test_pick_region(), Some(drawn));
                 assert!(
                     e.document
                         .visit
@@ -184,7 +184,7 @@ fn document_replacement_retires_support_without_waiting_for_a_paint_or_accepting
         });
         app.read(|e| {
             assert!(e.document.visit.support.pending.is_none());
-            assert!(e.pick_region().is_none());
+            assert!(e.test_pick_region().is_none());
         });
         drop(hold);
         app.run_until(Duration::from_secs(20), |e| !e.busy);

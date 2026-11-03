@@ -154,7 +154,10 @@ impl Editor {
 
     pub(super) fn select_adjustment_layer(&mut self, target: Target) {
         if self
-            .active_pick()
+            .document
+            .visit
+            .picker
+            .display()
             .is_some_and(|display| display.lock_layer_selection)
         {
             return;
@@ -192,7 +195,11 @@ impl Editor {
     }
 
     pub(super) fn finish_adjustment_layer_interaction(&mut self) {
-        self.finish_mask(false);
+        if self.creating_mask() {
+            self.end_tool();
+        } else {
+            self.finish_mask(false);
+        }
         self.document.visit.adjustment_layers.rename = None;
         self.document.visit.adjustment_layers.owns_delete = false;
         self.document.visit.adjustment_layers.order_drag = None;
@@ -204,10 +211,10 @@ impl Editor {
     fn adjustment_layer_actions_available(&self) -> bool {
         !self.busy
             && self.document.input.ready()
-            && self.active_pick().is_none()
+            && !self.picking()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && self.document.analysis_review().is_none()
             && !self.document.visit.adjustment_layers.confirming()
     }
@@ -452,10 +459,10 @@ impl Editor {
     pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
         self.tab == 1
             && !self.dusting()
-            && self.active_pick().is_none()
+            && !self.picking()
             && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
-            && self.document.mask_edit().is_none()
+            && !self.masking()
             && self.document.analysis_review().is_none()
             && self.document.visit.adjustment_layers.owns_delete
             && matches!(self.adjustment_layer_target(), Target::Layer(_))

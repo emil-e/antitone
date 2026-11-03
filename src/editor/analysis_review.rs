@@ -193,7 +193,7 @@ impl Editor {
         if self.analysis_fitting() {
             return;
         }
-        let Some(region) = self.pick_region() else {
+        let Some(region) = self.legacy_pick_region() else {
             return;
         };
         let source = self.document.visit.current_source;
@@ -234,7 +234,7 @@ impl Editor {
     }
 
     pub(super) fn refresh_review_region(&mut self) {
-        self.set_pick_region(
+        self.set_legacy_pick_region(
             self.document
                 .analysis_review()
                 .and_then(|r| {
@@ -291,7 +291,7 @@ impl Editor {
     }
 
     pub(super) fn close_analysis(&mut self) {
-        self.cancel_picker();
+        self.cancel_legacy_picker();
         self.document.set_analysis_operation(None);
         self.scopes.visible = self.preferences.scopes_visible;
     }
@@ -463,7 +463,7 @@ impl Editor {
                 }
             }
         }
-        for (coverage, active) in [(other, false), (self.pick_region(), true)] {
+        for (coverage, active) in [(other, false), (self.legacy_pick_region(), true)] {
             let Some(coverage) = coverage else {
                 continue;
             };

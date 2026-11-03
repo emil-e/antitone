@@ -4,6 +4,28 @@ use crate::viewport::CanvasLayout;
 #[cfg(test)]
 mod tests;
 
+/// Photographic endpoint requested by a canvas consumer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ImageMode {
+    Photograph,
+    Crop,
+    PositiveSample,
+    SourceSample,
+}
+
+impl ImageMode {
+    pub fn is_sample(self) -> bool {
+        matches!(self, Self::PositiveSample | Self::SourceSample)
+    }
+    pub fn inspection(self, normal: bool) -> bool {
+        match self {
+            Self::Photograph | Self::Crop => normal,
+            Self::PositiveSample => false,
+            Self::SourceSample => true,
+        }
+    }
+}
+
 /// The selected image and native canvas interaction for one immediate-mode pass.
 pub(super) struct Canvas<'a> {
     pub ui: &'a mut egui::Ui,
@@ -45,14 +67,39 @@ impl Canvas<'_> {
         source_outside_frame: bool,
         cx: &UiContext<'_, Editor>,
     ) -> bool {
-        if let Some((draw, paint)) = editor.canvas_image(
-            self.ui,
-            layout,
-            self.proxy.clone(),
-            self.pending,
-            source_outside_frame,
-            cx,
-        ) {
+        let image = if source_outside_frame {
+            ImageMode::Crop
+        } else {
+            ImageMode::Photograph
+        };
+        self.paint(editor, layout, image, cx)
+    }
+
+    pub fn paint_sample(
+        &mut self,
+        editor: &mut Editor,
+        layout: CanvasLayout,
+        source: bool,
+        cx: &UiContext<'_, Editor>,
+    ) -> bool {
+        let image = if source {
+            ImageMode::SourceSample
+        } else {
+            ImageMode::PositiveSample
+        };
+        self.paint(editor, layout, image, cx)
+    }
+
+    fn paint(
+        &mut self,
+        editor: &mut Editor,
+        layout: CanvasLayout,
+        image: ImageMode,
+        cx: &UiContext<'_, Editor>,
+    ) -> bool {
+        if let Some((draw, paint)) =
+            editor.canvas_image(self.ui, layout, self.proxy.clone(), self.pending, image, cx)
+        {
             self.ui.painter().with_clip_rect(self.response.rect).add(
                 egui_wgpu::Callback::new_paint_callback(
                     draw,
@@ -249,13 +296,15 @@ impl Editor {
     fn canvas_parameters(
         &mut self,
         ui: &mut egui::Ui,
+        image: ImageMode,
         cx: &UiContext<'_, Self>,
     ) -> Option<ProcessingInput> {
-        let bypass_look = self.active_pick().is_some()
+        let inspection = image.inspection(self.canvas_inspection());
+        let bypass_look = image.is_sample()
             || self.document.flat_edit().is_some()
             || self.document.analysis_review().is_some();
         let mut recipe = None;
-        let mut parameters = if self.canvas_inspection() {
+        let mut parameters = if inspection {
             let source_parameters = self.source_parameters(self.source_exposure);
             match source_parameters {
                 Ok(parameters) => ProcessingInput::from(parameters),
@@ -294,7 +343,7 @@ impl Editor {
                 }
             }
         };
-        if !self.document.source && self.document.flat_edit().is_none() {
+        if !inspection && self.document.flat_edit().is_none() {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust(signature, cx);
             }
@@ -313,12 +362,13 @@ impl Editor {
         geometry: CanvasLayout,
         proxy: crate::viewer::GpuProxy,
         pending: bool,
-        source_outside_frame: bool,
+        image: ImageMode,
         cx: &UiContext<'_, Self>,
     ) -> Option<(egui::Rect, ImagePaint)> {
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas = geometry.canvas;
-        let active_pick = self.active_pick();
+        let source_outside_frame = image == ImageMode::Crop;
+        let inspection = image.inspection(self.canvas_inspection());
         let composition = geometry.composition;
         // The camera proxy covers the full source, not the crop's bounding region.
         let rect = geometry.image.intersect(canvas);
@@ -329,7 +379,7 @@ impl Editor {
             geometry.physical_frame_raster(pixels_per_point)
         };
         let normal = !source_outside_frame
-            && active_pick.is_none()
+            && !image.is_sample()
             && self.document_pending.is_none()
             && self.document.flat_edit().is_none();
         let working = normal && self.document.visit.working_view.enabled();
@@ -350,7 +400,7 @@ impl Editor {
                 frame: (!composition.is_exact()).then(|| geometry.frame_raster(pixels_per_point)),
             })
         };
-        let parameters = self.canvas_parameters(ui, cx)?;
+        let parameters = self.canvas_parameters(ui, image, cx)?;
         let capture = self
             .active_canvas()
             .grade
@@ -366,13 +416,12 @@ impl Editor {
         {
             self.discard_original();
         }
-        let purpose = if normal && !self.document.source && self.document.visit.working_view.compare
-        {
+        let purpose = if normal && !inspection && self.document.visit.working_view.compare {
             Some(OriginalPurpose::Reference)
         } else {
             (!source_outside_frame
                 && !pending
-                && (active_pick.is_some() || self.document.flat_edit().is_some()))
+                && (image.is_sample() || self.document.flat_edit().is_some()))
             .then_some(OriginalPurpose::Tool)
         };
         self.observe_original(
@@ -393,7 +442,7 @@ impl Editor {
             self.document.thumbnails.reserve_view(0);
             true
         };
-        let rendered = match self.working_view(physical_frame, &parameters, ui.ctx(), cx) {
+        let rendered = match self.working_view(physical_frame, &parameters, image, ui.ctx(), cx) {
             Ok(view) => view,
             Err(error) => {
                 self.document.visit.working_view.error = Some(error.to_string());
@@ -590,7 +639,7 @@ impl Editor {
             if self.document.analysis_review().is_some() {
                 self.select_review_area(geometry, point);
             } else {
-                self.set_pick_region(Some(geometry.pick_patch(point, 32)));
+                self.set_legacy_pick_region(Some(geometry.pick_patch(point, 32)));
             }
         }
         if response.drag_started_by(egui::PointerButton::Primary) {
@@ -605,7 +654,7 @@ impl Editor {
                 .filter(|point| {
                     geometry.image.contains(*point) || self.document.analysis_review().is_some()
                 })
-                .map(|point| PickDrag::begin(geometry, point, self.pick_region()));
+                .map(|point| PickDrag::begin(geometry, point, self.legacy_pick_region()));
         }
         if response.dragged_by(egui::PointerButton::Primary)
             && let (Some(drag), Some(end)) = (
@@ -613,35 +662,16 @@ impl Editor {
                 response.interact_pointer_pos(),
             )
         {
-            self.set_pick_region(Some(drag.update(geometry, end)));
+            self.set_legacy_pick_region(Some(drag.update(geometry, end)));
         }
     }
 
     fn paint_canvas_selection(&self, ui: &mut egui::Ui, geometry: CanvasLayout, fullscreen: bool) {
-        let canvas = geometry.canvas;
         self.paint_mask(ui, geometry);
         if self.document.analysis_review().is_some() {
-            self.paint_review_areas(ui, geometry, canvas);
-        } else if !fullscreen && let Some(region) = self.pick_region() {
-            ui.painter().with_clip_rect(canvas).rect_stroke(
-                geometry.screen_coverage(region),
-                0.,
-                egui::Stroke::new(1., egui::Color32::WHITE),
-                egui::StrokeKind::Inside,
-            );
-            let screen = geometry.screen_coverage(region);
-            for point in [
-                screen.min,
-                screen.max,
-                screen.left_bottom(),
-                screen.right_top(),
-            ] {
-                ui.painter().with_clip_rect(canvas).rect_filled(
-                    egui::Rect::from_center_size(point, egui::vec2(6., 6.)),
-                    0.,
-                    egui::Color32::WHITE,
-                );
-            }
+            self.paint_review_areas(ui, geometry, geometry.canvas);
+        } else if !fullscreen && let Some(region) = self.legacy_pick_region() {
+            picking::paint_selection(ui, geometry, region);
         }
     }
 
@@ -695,7 +725,7 @@ impl Editor {
         };
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas_input = self.canvas_input_allowed(ui, canvas);
-        let active_pick = self.active_pick();
+        let active_pick = self.legacy_pick();
         let composition = if pending {
             self.document
                 .visit
@@ -717,7 +747,18 @@ impl Editor {
         let geometry = self.canvas_layout(canvas, composition, pixels_per_point, zoom_action);
         let (geometry, panning) =
             self.canvas_navigation(ui, &response, geometry, canvas_input, fullscreen);
-        let image = self.canvas_image(ui, geometry, proxy, pending, false, cx);
+        let image_mode = if active_pick.is_some()
+            || fullscreen && self.document.visit.picker.display().is_some()
+        {
+            if self.canvas_inspection() {
+                ImageMode::SourceSample
+            } else {
+                ImageMode::PositiveSample
+            }
+        } else {
+            ImageMode::Photograph
+        };
+        let image = self.canvas_image(ui, geometry, proxy, pending, image_mode, cx);
         if let Some((draw, paint)) = image {
             ui.painter()
                 .with_clip_rect(canvas)

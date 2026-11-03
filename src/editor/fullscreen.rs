@@ -33,8 +33,7 @@ impl Editor {
             && self.document.analysis_review().is_none()
             && (self.fullscreen.is_some()
                 || self.selected_view().is_some()
-                    && !(self.busy
-                        && (self.active_pick().is_some() || self.document.flat_edit().is_some())))
+                    && !(self.busy && (self.picking() || self.document.flat_edit().is_some())))
     }
 
     pub(super) fn toggle_fullscreen(&mut self, context: &egui::Context) {
@@ -46,6 +45,14 @@ impl Editor {
                 view.exiting = true;
             }
         } else {
+            let inspection = self.canvas_inspection();
+            let picker_viewport = self
+                .document
+                .visit
+                .picker
+                .display()
+                .is_some()
+                .then(|| self.with_tool_viewport(|viewport| *viewport));
             let normal_viewport = std::ptr::from_ref(&self.active_canvas().viewport);
             let normal_layout =
                 self.with_tool_viewport(|viewport| std::ptr::eq(viewport, normal_viewport));
@@ -63,8 +70,12 @@ impl Editor {
                 restored: false,
                 exiting: false,
             });
-            // Use the old layout only when it was produced by the normal viewport.
-            if normal_layout
+            if let Some(viewport) = picker_viewport {
+                self.document.source = inspection;
+                self.active_canvas_mut().viewport = viewport;
+            }
+            // A picker carries its current view into inspection; Crop keeps its private draft view.
+            if (normal_layout || picker_viewport.is_some())
                 && self.active_canvas().viewport.zoom.is_some()
                 && let Some((layout, density)) = self.active_canvas().last_layout
             {

@@ -56,7 +56,7 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
         app.enter(|editor, cx| editor.begin_pick(Pick::RollWb, cx));
         app.pump();
         app.enter(|editor, cx| {
-            editor.set_pick_region(Some(region));
+            editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
         app.run_until(Duration::from_secs(5), |editor| !editor.busy);
@@ -68,7 +68,7 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
                 editor.history_label(crate::editor::history::Direction::Undo),
                 Some("Calibration pick")
             );
-            assert!(editor.active_pick().is_none());
+            assert!(editor.test_pick().is_none());
         });
     });
 }
@@ -291,7 +291,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
 }
 
 #[test]
-fn changing_layer_before_the_wb_caller_is_polled_withdraws_it_and_a_new_pick_can_apply() {
+fn wb_target_is_locked_before_polling_and_cancel_allows_a_new_layer_pick_without_old_publication() {
     use crate::{adjustment_layers::AdjustmentLayer, editor::adjustment_layers::Target};
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
@@ -341,12 +341,16 @@ fn changing_layer_before_the_wb_caller_is_polled_withdraws_it_and_a_new_pick_can
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.begin_pick(Pick::Wb, cx);
+            assert_eq!(editor.test_pick(), Some(LAYER));
+            editor.select_adjustment_layer(Target::Layer(second));
+            assert_eq!(editor.adjustment_layer_target(), Target::Layer(first));
+            editor.end_tool();
             editor.select_adjustment_layer(Target::Layer(second));
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(second));
         });
         app.pump();
         app.read(|editor| {
-            assert!(editor.active_pick().is_none() && !editor.busy);
+            assert!(editor.test_pick().is_none() && !editor.busy);
             assert_eq!(editor.document.state.project, before);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),
@@ -371,7 +375,7 @@ fn changing_layer_before_the_wb_caller_is_polled_withdraws_it_and_a_new_pick_can
         app.enter(|editor, cx| editor.begin_pick(Pick::Wb, cx));
         app.pump();
         app.enter(|editor, cx| {
-            editor.set_pick_region(Some(region));
+            editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
         app.run_until(Duration::from_secs(5), |editor| !editor.busy);
@@ -400,7 +404,118 @@ fn changing_layer_before_the_wb_caller_is_polled_withdraws_it_and_a_new_pick_can
 }
 
 #[test]
-fn wb_picking_keeps_its_selected_layer_until_its_awaiting_feature_applies_the_value() {
+fn a_completed_wb_result_applies_to_its_captured_layer_after_selection_changes() {
+    use crate::{adjustment_layers::AdjustmentLayer, editor::adjustment_layers::Target};
+    let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
+    let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
+    editor.load_input(InputSettings::Digital);
+    let source = editor.document.visit.current_source.unwrap();
+    let first = editor
+        .document
+        .project
+        .source(source)
+        .unwrap()
+        .adjustment_layers
+        .as_ref()
+        .unwrap()
+        .layers[0]
+        .id;
+    let other = AdjustmentLayerSettings {
+        exposure: 0.5,
+        wb: Balance {
+            warmth: 0.4,
+            tint: -0.2,
+        },
+        ..Default::default()
+    };
+    let second = editor
+        .document
+        .project
+        .source_mut(source)
+        .unwrap()
+        .adjustment_layers
+        .as_mut()
+        .unwrap()
+        .add("Other".into(), AdjustmentLayer::global(other))
+        .unwrap();
+    editor.select_adjustment_layer(Target::Layer(first));
+    let target = (source, Target::Layer(first));
+    let mut image = measurement::capture_scan(&editor).unwrap();
+    let area = image.area;
+    let region = Coverage::rectangle(Rect {
+        x: area.x + 8,
+        y: area.y + 8,
+        width: 32,
+        height: 32,
+    });
+    let input = LayerInput::capture(&editor).unwrap();
+    let services = editor.source_services.clone().unwrap();
+    let before = editor.document.visit.adjustment_layer_settings.wb;
+    crate::application::test_support::with_application(editor, |app| {
+        let reading = app.enter(|editor, cx| {
+            let reading = measurement::pick(
+                editor,
+                LAYER,
+                move |region, cancelled| {
+                    input.measure(&mut image, region, &services, &|| cancelled.is_cancelled())
+                },
+                cx.clone(),
+            );
+            editor.set_test_pick_region(Some(region));
+            editor.hosted_action(crate::editor::tool::Action::Primary);
+            reading
+        });
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.test_picker_active()
+        });
+        app.update(|editor| {
+            editor.select_adjustment_layer(Target::Layer(second));
+            assert_eq!(editor.adjustment_layer_target(), Target::Layer(second));
+        });
+        let value = pollster::block_on(reading).unwrap();
+        assert_ne!(value, before);
+        app.update(|editor| set_layer(editor, value, target).unwrap());
+        app.read(|editor| {
+            assert_eq!(editor.adjustment_layer_target(), Target::Layer(second));
+            assert_eq!(editor.document.visit.adjustment_layer_settings, other);
+            let layers = &editor
+                .document
+                .project
+                .source(source)
+                .unwrap()
+                .adjustment_layers
+                .as_ref()
+                .unwrap()
+                .layers;
+            assert_eq!(
+                layers
+                    .iter()
+                    .find(|layer| layer.id == first)
+                    .unwrap()
+                    .adjustment
+                    .photo
+                    .wb,
+                value
+            );
+            assert_eq!(
+                layers
+                    .iter()
+                    .find(|layer| layer.id == second)
+                    .unwrap()
+                    .adjustment
+                    .photo,
+                other
+            );
+            assert_eq!(
+                editor.history_label(crate::editor::history::Direction::Undo),
+                Some("Calibration pick")
+            );
+        });
+    });
+}
+
+#[test]
+fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
     let mut editor = crate::editor::tests::authored_fixture(&[file.path().to_str().unwrap()]);
     editor.load_input(InputSettings::Digital);
@@ -453,7 +568,7 @@ fn wb_picking_keeps_its_selected_layer_until_its_awaiting_feature_applies_the_va
         app.enter(|editor, cx| editor.begin_pick(Pick::Wb, cx));
         app.pump();
         app.enter(|editor, cx| {
-            editor.set_pick_region(Some(region));
+            editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
         let call = gate.next(app);
@@ -469,7 +584,7 @@ fn wb_picking_keeps_its_selected_layer_until_its_awaiting_feature_applies_the_va
         app.run_until(Duration::from_secs(5), |editor| !editor.busy);
         app.read(|editor| {
             assert!(!editor.measurement_pending());
-            assert!(editor.active_pick().is_none());
+            assert!(editor.test_pick().is_none());
             let layers = &editor
                 .document
                 .project

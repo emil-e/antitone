@@ -27,7 +27,7 @@ fn mapping(app: &TestApplication<'_, Editor>) -> (TextureMapping, FrameRaster, b
                     1.,
                 );
                 let (_, paint) = editor
-                    .canvas_image(ui, geometry, proxy, false, false, cx)
+                    .canvas_image(ui, geometry, proxy, false, ImageMode::Photograph, cx)
                     .unwrap();
                 result = Some((
                     paint.texture_mapping(),

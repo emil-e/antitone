@@ -65,7 +65,7 @@ fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_it
                 assert!(!editor.busy);
             });
             app.enter(|editor, cx| {
-                editor.set_pick_region(Some(region));
+                editor.set_test_pick_region(Some(region));
                 editor.apply_pick(cx);
             });
             app.run_until(Duration::from_secs(5), |editor| !editor.busy);
@@ -91,7 +91,7 @@ fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_it
                     editor.history_label(Direction::Undo),
                     Some("Calibration pick")
                 );
-                assert!(editor.active_pick().is_none());
+                assert!(editor.test_pick().is_none());
                 assert!(!editor.document.source);
             });
         });
@@ -152,7 +152,7 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
         app.enter(|editor, cx| editor.begin_pick(Pick::Gamma, cx));
         app.pump();
         app.enter(|editor, cx| {
-            editor.set_pick_region(Some(region));
+            editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
         app.run_until(Duration::from_secs(5), |editor| !editor.busy);
@@ -203,12 +203,12 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
         app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
         app.pump();
         app.enter(|editor, cx| {
-            editor.set_pick_region(Some(region));
+            editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
         app.run_until(Duration::from_secs(5), |editor| !editor.busy);
         app.read(|editor| {
-            assert!(editor.active_pick().is_none());
+            assert!(editor.test_pick().is_none());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.history_label(Direction::Undo), undo.as_deref());
         });
@@ -219,7 +219,7 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
         });
         app.pump();
         app.enter(|editor, cx| {
-            editor.set_pick_region(Some(region));
+            editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
         app.run_until(Duration::from_secs(5), |editor| !editor.busy);
@@ -229,7 +229,7 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
                 editor.history_label(Direction::Undo),
                 Some("Calibration pick")
             );
-            assert!(editor.active_pick().is_none());
+            assert!(editor.test_pick().is_none());
         });
     });
 }

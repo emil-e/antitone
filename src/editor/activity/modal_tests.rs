@@ -31,14 +31,14 @@ fn escape_targets_the_replacement_not_hidden_region_work() {
             if measuring {
                 app.update(|editor| {
                     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-                    editor.set_pick_region(Some(crate::coverage::Coverage::rectangle(
+                    editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
                         crate::raw::Rect {
                             width: 16,
                             height: 16,
                             ..area
                         },
                     )));
-                    assert!(editor.submit_picker());
+                    assert!(editor.submit_test_picker());
                 });
                 app.pump();
             }
