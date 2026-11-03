@@ -56,20 +56,42 @@ def reconstructed_density(parameters, log_h):
     return low + (high - low) * math.exp(-shape * math.log1p(math.exp(z)))
 
 
+def tabulated_density(samples, log_h):
+    index = bisect.bisect_right([row[0] for row in samples], log_h)
+    if index == 0:
+        return samples[0][1]
+    if index == len(samples):
+        return samples[-1][1]
+    a, b = samples[index - 1], samples[index]
+    fraction = (log_h - a[0]) / (b[0] - a[0])
+    return a[1] + (b[1] - a[1]) * fraction
+
+
+def spline_density(reconstruction, domain, log_h):
+    """Clamped uniform cubic B-spline, evaluated with de Boor's algorithm."""
+    intervals = reconstruction["intervals"]
+    controls = reconstruction["control_values"]
+    t = min(1.0, max(0.0, (log_h - domain[0]) / (domain[1] - domain[0])))
+    knots = [0.0] * 4 + [i / intervals for i in range(1, intervals)] + [1.0] * 4
+    span = min(int(t * intervals), intervals - 1) + 3
+    values = controls[span - 3 : span + 1]
+    for level in range(1, 4):
+        for j in range(3, level - 1, -1):
+            i = span - 3 + j
+            alpha = (t - knots[i]) / (knots[i + 4 - level] - knots[i])
+            # Difference form preserves flat controls exactly.
+            values[j] = values[j - 1] + alpha * (values[j] - values[j - 1])
+    return values[3]
+
+
 def source_density(source, log_h):
     reconstruction = source["reconstruction"]
     if reconstruction["family"] == "generalized-logistic-5":
         return reconstructed_density(reconstruction["parameters"][0], log_h)
     if reconstruction["family"] == "tabulated":
-        samples = reconstruction["samples"]
-        index = bisect.bisect_right([row[0] for row in samples], log_h)
-        if index == 0:
-            return samples[0][1]
-        if index == len(samples):
-            return samples[-1][1]
-        a, b = samples[index - 1], samples[index]
-        fraction = (log_h - a[0]) / (b[0] - a[0])
-        return a[1] + (b[1] - a[1]) * fraction
+        return tabulated_density(reconstruction["samples"], log_h)
+    if reconstruction["family"] == "monotone-cubic-bspline":
+        return spline_density(reconstruction, source["material"]["log_exposure_range"], log_h)
     raise ValueError("unreviewed characteristic-curve reconstruction")
 
 
@@ -98,6 +120,31 @@ def audit_source(source):
         or any(b[0] <= a[0] or b[1] < a[1] for a, b in zip(samples, samples[1:]))
     ):
         raise ValueError("invalid characteristic-curve samples")
+    reconstruction = source["reconstruction"]
+    if reconstruction["family"] == "monotone-cubic-bspline":
+        intervals = reconstruction["intervals"]
+        controls = reconstruction["control_values"]
+        domain = source["material"]["log_exposure_range"]
+        if (
+            type(intervals) is not int
+            or intervals < 1
+            or len(controls) != intervals + 3
+            or any(not math.isfinite(v) for v in controls)
+            or any(b < a for a, b in zip(controls, controls[1:]))
+            or len(domain) != 2
+            or any(not math.isfinite(v) for v in domain)
+            or domain[0] >= domain[1]
+            or samples is None
+            or [samples[0][0], samples[-1][0]] != domain
+            or [controls[0], controls[-1]] != [samples[0][1], samples[-1][1]]
+        ):
+            raise ValueError("invalid monotone characteristic spline")
+        # The retained trace is reading evidence, not the developed response.
+        if any(
+            abs(source_density(source, h) - d) > source["reading_uncertainty"]["density"]
+            for h, d in samples
+        ):
+            raise ValueError("characteristic curve outside retained graph-reading allowance")
     distances = []
     for sample in source["constraints"]:
         density = source_density(source, sample["log_exposure"])
@@ -376,12 +423,15 @@ def generate(upstream, output, scratch):
 
             raw_gray = float(raw_response([[gray] * 3])[0])
             h_axis = np.linspace(exposure["min"], exposure["max"], len(exposure["density"]))
-            # One relative exposure convention for every stock: gray is four
-            # stops above the source curve's Dmin+0.1 point, not an ISO claim.
-            gray_h = float(
-                np.interp(exposure["density"][0] + 0.1, exposure["density"], h_axis)
-                + 4 * np.log10(2)
-            )
+            # Keep exposure placement tied to the retained reading when its
+            # developed response is reconstructed, rather than moving the film
+            # along logH as a side effect of fitting the toe.
+            placement = exposure["density"]
+            if source["reconstruction"]["family"] == "monotone-cubic-bspline":
+                placement = [
+                    tabulated_density(source["reconstruction"]["samples"], h) for h in h_axis
+                ]
+            gray_h = float(np.interp(placement[0] + 0.1, placement, h_axis) + 4 * np.log10(2))
             raw = (raw_lut[:, :, 0] / raw_gray).astype("<f4")
             component.update(
                 {

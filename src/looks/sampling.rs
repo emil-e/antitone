@@ -61,3 +61,34 @@ pub(super) fn bake(
         chunks.into_iter().flatten().collect(),
     )?))
 }
+
+#[cfg(all(test, feature = "gpu"))]
+pub(super) fn assert_material_vertices(
+    lut: &Lut3D,
+    response: impl Fn(DVec3) -> Result<DVec3, Error>,
+) {
+    // Check the bake's connection to its native model separately from off-grid
+    // approximation. Corners and asymmetric interior vertices expose wrong
+    // channel/axis order, domain or response without a perceptual tolerance.
+    let n = lut.size();
+    assert_eq!(
+        lut.domain(),
+        (
+            [authoring::DOMAIN_MIN as f32; 3],
+            [authoring::domain_max() as f32; 3]
+        )
+    );
+    let step = (authoring::domain_max() - authoring::DOMAIN_MIN) / f64::from(n - 1);
+    for b in [0, n / 3, n - 1] {
+        for g in [0, n / 2, n - 1] {
+            for r in [0, n / 4, n - 1] {
+                let input =
+                    DVec3::from_array([r, g, b].map(|v| {
+                        photographic::decode(authoring::DOMAIN_MIN + f64::from(v) * step)
+                    }));
+                let expected = response(input).unwrap().to_array().map(|v| v as f32);
+                assert_eq!(lut.nodes()[((b * n + g) * n + r) as usize], expected);
+            }
+        }
+    }
+}

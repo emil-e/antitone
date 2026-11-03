@@ -118,3 +118,5 @@ mod catalogue;
 mod gpu;
 #[cfg(all(feature = "gpu", feature = "raw"))]
 mod photo;
+#[cfg(feature = "gpu")]
+mod ramps;

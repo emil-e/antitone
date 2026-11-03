@@ -125,7 +125,20 @@
     "curation": "threshold 128; longest thick ink run excluding grid; bounded monotone reconstruction"
   },
   "reconstruction": {
-    "family": "tabulated",
+    "family": "monotone-cubic-bspline",
+    "intervals": 6,
+    "control_values": [
+      0.28488735919899866,
+      0.28488735919899866,
+      0.28488735919899866,
+      0.5705849633657777,
+      1.149624039689836,
+      1.6148653341879684,
+      2.0847322268983906,
+      2.253303599024215,
+      2.297872340425532
+    ],
+    "method": "Least-squares clamped uniform cubic B-spline fitted to the retained samples with nondecreasing controls and fixed endpoints; limited complexity within the recorded density-reading allowance. Samples retain the graph trace, not interpolation knots.",
     "samples": [
       [
         0.03260869565217391,
