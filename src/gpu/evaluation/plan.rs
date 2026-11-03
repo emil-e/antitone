@@ -10,6 +10,7 @@ pub enum Policy {
     Composed,
 }
 
+/// Per-calculation working allowance, separate from optional cache retention.
 #[derive(Clone, Copy)]
 pub struct Budget {
     pub tile: [u32; 2],

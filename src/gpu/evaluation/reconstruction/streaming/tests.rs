@@ -546,7 +546,7 @@ fn related_reconstructions_share_source_traversal_and_duplicate_roots_share_one_
                     },
                     Budget {
                         tile: [2, 2],
-                        scratch_bytes: 32 << 10,
+                        scratch_bytes: 64 << 10,
                     },
                 )
                 .unwrap()

@@ -1,5 +1,16 @@
 use super::*;
 
+// Bounded source units keep support masks at most 8 KiB; this leaves a round allowance
+// per target for masks and command constants, separate from the large reduction buffers.
+pub(super) const SOURCE_TILE: [u32; 2] = [512, 128];
+pub(super) const SINK_HEADROOM_BYTES: u64 = 16 << 10;
+
+fn source_allowance(reduction_bytes: u64, targets: usize, budget: u64) -> Option<u64> {
+    budget
+        .checked_sub(reduction_bytes + SINK_HEADROOM_BYTES * targets as u64)
+        .filter(|bytes| *bytes >= 64)
+}
+
 pub(in crate::gpu::evaluation::reconstruction) fn produce(
     outputs: &[(&Arc<ImageNode>, Production<'_>)],
 ) -> Result<Option<Stats>, Error> {
@@ -59,6 +70,20 @@ pub(in crate::gpu::evaluation::reconstruction) fn produce(
         }
     } else {
         drop(plans);
+        let reduction_bytes = outputs
+            .iter()
+            .map(|(_, worker)| {
+                u64::from(worker.layout.region.width) * u64::from(worker.layout.region.height) * 20
+            })
+            .sum();
+        let budget = outputs
+            .iter()
+            .map(|(_, worker)| worker.budget.scratch_bytes)
+            .min()
+            .unwrap();
+        if source_allowance(reduction_bytes, outputs.len(), budget).is_none() {
+            return Ok(None);
+        }
         let targets: Vec<_> = operations
             .iter()
             .zip(outputs)
@@ -78,7 +103,15 @@ struct Reduction<'a, 'b> {
     finish: Plan,
 }
 impl Reduction<'_, '_> {
-    fn accumulation(&self, domain: Domain, part: Rect, affected: Rect) -> Result<Plan, Error> {
+    fn accumulate(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        source: PlannedImage,
+        pixels: &wgpu::Buffer,
+        affected: Rect,
+    ) -> Result<Stats, Error> {
+        let domain = source.domain;
+        let part = source.region;
         let mut fragment = Fragment::default();
         let source = PlannedImage {
             domain,
@@ -106,7 +139,13 @@ impl Reduction<'_, '_> {
         });
         self.operation
             .accumulate(&mut fragment, sample, (part, affected), result, metadata)?;
-        Plan::from_work(fragment, result, u64::MAX)
+        let device = self.worker.context.device();
+        let plan = Plan::from_work(fragment, result, SINK_HEADROOM_BYTES)?;
+        let recorded = self.worker.executor().prepare(device, plan)?;
+        let mut stats =
+            recorded.encode_work(device, encoder, &[pixels, &self.means, &self.flags])?;
+        stats.include(recorded.preparation.clone(), 0);
+        Ok(stats)
     }
 }
 
@@ -130,13 +169,9 @@ pub(super) fn stream(
         .map(|(_, w, _)| w.budget.scratch_bytes)
         .min()
         .unwrap();
-    let available =
-        budget
-            .checked_sub(scratch)
-            .filter(|v| *v >= 64)
-            .ok_or(Error::InvalidParameter(
-                "reconstruction exceeds working storage",
-            ))?;
+    let available = source_allowance(scratch, outputs.len(), budget).ok_or(
+        Error::InvalidParameter("reconstruction exceeds working storage"),
+    )?;
     for (_, _, r) in outputs {
         if u64::from(r.width) * u64::from(r.height) * 16 > limit {
             return Err(Error::InvalidParameter(
@@ -162,10 +197,13 @@ pub(super) fn stream(
         });
     }
     let demand = demand.unwrap();
-    let source_cells = (available.min(limit) / 64).min(512 * 128);
-    let width = u64::from(demand.width).min(512).min(source_cells) as u32;
+    let source_cells =
+        (available.min(limit) / 64).min(u64::from(SOURCE_TILE[0]) * u64::from(SOURCE_TILE[1]));
+    let width = u64::from(demand.width)
+        .min(u64::from(SOURCE_TILE[0]))
+        .min(source_cells) as u32;
     let height = (source_cells / u64::from(width))
-        .min(128)
+        .min(u64::from(SOURCE_TILE[1]))
         .min(u64::from(demand.height)) as u32;
     let mut stats = Stats {
         buffer_allocations: 2 * outputs.len(),
@@ -185,8 +223,8 @@ pub(super) fn stream(
     let targets = outputs
         .iter()
         .map(|(operation, worker, region)| {
-            let clear = operation.clear_plan(worker, *region, available)?;
-            let finish = operation.finish_plan(worker, *region, available)?;
+            let clear = operation.clear_plan(worker, *region, SINK_HEADROOM_BYTES)?;
+            let finish = operation.finish_plan(worker, *region, SINK_HEADROOM_BYTES)?;
             Executor::admit(&limits, &clear)?;
             Executor::admit(&limits, &finish)?;
             let means = buffer(u64::from(region.width) * u64::from(region.height) * 16);
@@ -241,40 +279,18 @@ pub(super) fn stream(
                 if affected.is_empty() {
                     continue;
                 }
-                let mut accumulations = affected
-                    .iter()
-                    .map(|(target, region)| {
-                        let plan = target.accumulation(input.domain, part, *region)?;
-                        Executor::admit(&limits, &plan)?;
-                        Ok((*target, plan))
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?;
-                let sink_bytes = accumulations
-                    .iter()
-                    .map(|(_, plan)| plan.peak_scratch_bytes)
-                    .sum();
-                let sink_uploads: u64 = accumulations
-                    .iter()
-                    .flat_map(|(_, plan)| &plan.tiles)
-                    .map(|tile| tile.fragment.upload_bytes())
-                    .sum();
-                let source_budget = available.checked_sub(sink_bytes);
-                let allowance = source_budget.unwrap_or(0);
                 let mut plan = super::super::super::plan::probe(
                     input,
                     part,
                     Budget {
                         tile: [part.width, part.height],
-                        scratch_bytes: allowance,
+                        scratch_bytes: available,
                     },
                     worker.scope,
                     &limits,
                 )?;
                 let admission = Executor::admit(&limits, &plan);
-                if source_budget.is_none()
-                    || plan.peak_scratch_bytes > allowance
-                    || admission.is_err()
-                {
+                if plan.peak_scratch_bytes > available || admission.is_err() {
                     if part.width == 1 && part.height == 1 {
                         admission?;
                         return Err(Error::InvalidParameter(
@@ -304,21 +320,13 @@ pub(super) fn stream(
                     }
                     continue;
                 }
-                plan.scratch_budget = allowance;
+                plan.scratch_budget = available;
                 let mut sinks = Stats::default();
                 let mut live_sinks = 0;
                 let mut source_stats = worker
                     .run_sink(executor, &plan, |encoder, source, pixels| {
-                        debug_assert_eq!(source.region, part);
-                        for (target, mut plan) in accumulations.drain(..) {
-                            plan.scratch_budget = plan.peak_scratch_bytes;
-                            let recorded = target.worker.executor().prepare(device, plan)?;
-                            let mut encoded = recorded.encode_work(
-                                device,
-                                encoder,
-                                &[pixels, &target.means, &target.flags],
-                            )?;
-                            encoded.include(recorded.preparation.clone(), 0);
+                        for (target, region) in &affected {
+                            let encoded = target.accumulate(encoder, source, pixels, *region)?;
                             let bytes = encoded.scratch_bytes;
                             sinks.include(encoded, live_sinks);
                             live_sinks += bytes;
@@ -326,7 +334,7 @@ pub(super) fn stream(
                         Ok(())
                     })?
                     .ok_or(Error::Cancelled)?;
-                source_stats.host_upload_bytes += pending_uploads + sink_uploads;
+                source_stats.host_upload_bytes += pending_uploads + sinks.host_upload_bytes;
                 source_stats.include(sinks, executor.pool_bytes());
                 stats.include(source_stats, scratch);
                 (worker.progress)();
