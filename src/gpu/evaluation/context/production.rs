@@ -14,7 +14,7 @@ pub struct Production<'a> {
 }
 
 impl Production<'_> {
-    pub(crate) fn produce(&self, evaluation: &Evaluation) -> Result<Stats, Error> {
+    pub(crate) fn produce(&self, evaluation: &Evaluation) -> Result<WorkCounts, Error> {
         let evaluation = evaluation.clone().with_materializations(self.scope.clone());
         let node = evaluation.job.image();
         let stored = super::super::materialized::Stored::find(
@@ -41,11 +41,11 @@ impl Production<'_> {
         }
     }
 
-    pub(super) fn evaluate(&self, evaluation: &Evaluation) -> Result<Stats, Error> {
+    pub(super) fn evaluate(&self, evaluation: &Evaluation) -> Result<WorkCounts, Error> {
         let mut executor = self.executor();
-        let mut stats = Stats::default();
+        let mut stats = WorkCounts::default();
         for plan in evaluation.plans() {
-            stats.include(self.deliver(&mut executor, plan?)?, 0);
+            stats.include(self.deliver(&mut executor, plan?)?);
         }
         Ok(stats)
     }
@@ -55,7 +55,7 @@ impl Production<'_> {
         executor: &mut Executor,
         plan: &Plan,
         sink: impl FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
-    ) -> Result<Option<Stats>, Error> {
+    ) -> Result<Option<WorkCounts>, Error> {
         self.context.run_sink(
             executor,
             (self.queue, self.gate),
@@ -72,21 +72,20 @@ impl Production<'_> {
         &self,
         plan: Plan,
         inputs: &[&wgpu::Buffer],
-    ) -> Result<Stats, Error> {
+    ) -> Result<WorkCounts, Error> {
         let recorded = self.executor().prepare(self.context.device(), plan)?;
         let mut encoder = self
             .context
             .device()
             .create_command_encoder(&Default::default());
         let mut stats = recorded.encode_work(self.context.device(), &mut encoder, inputs)?;
-        stats.include(recorded.preparation.clone(), 0);
-        stats.observe_device(self.context.device());
+        stats.include(recorded.preparation.clone());
         self.context
             .submit_with(self.queue, self.gate, encoder, self.cancelled, || {
                 recorded.submitted()
             })?
             .ok_or(Error::Cancelled)?;
-        stats.submissions += 1;
+        stats.submitted();
         Ok(stats)
     }
 
@@ -98,7 +97,7 @@ impl Production<'_> {
         &self,
         executor: &mut Executor,
         mut plan: Plan,
-    ) -> Result<Stats, Error> {
+    ) -> Result<WorkCounts, Error> {
         (self.progress)();
         if (self.cancelled)() {
             return Err(Error::Cancelled);
@@ -117,15 +116,14 @@ impl Production<'_> {
                 .device()
                 .create_command_encoder(&Default::default());
             let mut stats =
-                recorded.encode_result_stats(self.context.device(), &mut encoder, self.pixels)?;
-            stats.include(recorded.preparation.clone(), 0);
-            stats.observe_device(self.context.device());
+                recorded.encode_result_counts(self.context.device(), &mut encoder, self.pixels)?;
+            stats.include(recorded.preparation.clone());
             self.context
                 .submit_with(self.queue, self.gate, encoder, self.cancelled, || {
                     recorded.submitted()
                 })?
                 .ok_or(Error::Cancelled)?;
-            stats.submissions += 1;
+            stats.submitted();
             Ok(stats)
         } else {
             self.run_sink(executor, &plan, |encoder, part, input| {
@@ -158,7 +156,7 @@ impl Context {
         plan: &Plan,
         (cancelled, progress): (&dyn Fn() -> bool, &dyn Fn()),
         sink: Sink<E, S>,
-    ) -> Result<Option<Stats>, Error>
+    ) -> Result<Option<WorkCounts>, Error>
     where
         E: FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
         S: FnMut(),

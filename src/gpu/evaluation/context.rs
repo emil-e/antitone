@@ -240,7 +240,7 @@ impl Context {
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         sink: impl FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
-    ) -> Result<Option<Stats>, Error> {
+    ) -> Result<Option<WorkCounts>, Error> {
         self.evaluate_with(
             queue,
             gate,
@@ -261,13 +261,13 @@ impl Context {
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         mut sink: Sink<E, S>,
-    ) -> Result<Option<Stats>, Error>
+    ) -> Result<Option<WorkCounts>, Error>
     where
         E: FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
         S: FnMut(),
     {
         let mut executor = self.executor();
-        let mut total = Stats::default();
+        let mut total = WorkCounts::default();
         let mut plans = evaluation.plans();
         loop {
             if cancelled() {
@@ -289,7 +289,7 @@ impl Context {
             else {
                 return Ok(None);
             };
-            total.include(stats, 0);
+            total.include(stats);
         }
         Ok(Some(total))
     }

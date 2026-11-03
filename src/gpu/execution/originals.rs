@@ -293,10 +293,10 @@ pub(crate) struct Stats {
     pub destination_pixels: u64,
     pub submissions: u64,
     pub readback_bytes: u64,
-    pub scratch_buffer_allocations: u64,
+    pub buffer_allocations: u64,
+    pub generated_initializations: u64,
     pub planned_source_layout_changes: u64,
     pub look_payload_bytes: u64,
-    pub rgb16_payload_bytes: u64,
 }
 
 #[cfg(not(all(test, target_os = "macos")))]
@@ -385,11 +385,6 @@ pub(crate) fn execute(
     let mut executor = renderer.evaluation.executor();
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
-        rgb16_payload_bytes: if reconstruction.rgb16.is_some() {
-            rgb16::THRESHOLD_BYTES
-        } else {
-            0
-        },
         look_payload_bytes: _lut_resources
             .iter()
             .map(|resource| resource.byte_len())
@@ -508,13 +503,14 @@ pub(crate) fn execute(
                 stats.source_pixels += _executed.source_cells;
                 stats.destination_pixels += u64::from(extent[0]) * u64::from(extent[1]);
                 stats.submissions += _executed.submissions as u64;
-                stats.scratch_buffer_allocations += _executed.buffer_allocations as u64;
+                stats.buffer_allocations += _executed.buffer_allocations as u64;
+                stats.generated_initializations += _executed.initializations as u64;
                 for work in plan.tiles.iter().flat_map(|t| &t.fragment.work) {
-                    if let evaluation::Work::Upload { output, .. } = work {
-                        if previous_source_size != Some(output.size()) {
-                            stats.planned_source_layout_changes += 1;
-                            previous_source_size = Some(output.size());
-                        }
+                    if let evaluation::Work::Upload { output, .. } = work
+                        && previous_source_size != Some(output.size())
+                    {
+                        stats.planned_source_layout_changes += 1;
+                        previous_source_size = Some(output.size());
                     }
                 }
                 stats.readback_bytes +=
@@ -542,14 +538,14 @@ pub(crate) fn execute(
             probe.stats.report();
         }
         println!(
-            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} job_look_payload_bytes={} scratch_buffer_allocations={} job_rgb16_payload_bytes={}",
+            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} job_look_payload_bytes={} evaluation_buffer_allocations={} generated_initializations={}",
             stats.source_pixels,
             stats.destination_pixels,
             stats.submissions,
             stats.readback_bytes,
             stats.look_payload_bytes,
-            stats.scratch_buffer_allocations,
-            stats.rgb16_payload_bytes
+            stats.buffer_allocations,
+            stats.generated_initializations
         );
     }
     Ok(stats)

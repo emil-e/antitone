@@ -18,9 +18,9 @@ impl Context {
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         mut consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,
-    ) -> Result<Option<Stats>, Error> {
+    ) -> Result<Option<WorkCounts>, Error> {
         let mut executor = self.executor();
-        let mut total = Stats::default();
+        let mut total = WorkCounts::default();
         let mut readback: Option<wgpu::Buffer> = None;
         let mut plans = evaluation.plans();
 
@@ -61,7 +61,7 @@ impl Context {
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 }));
-                total.buffer_allocations += 1;
+                total.buffers_allocated(1);
             }
             let buffer = readback.as_ref().unwrap();
             let (send, receive) = mpsc::channel();
@@ -117,7 +117,7 @@ impl Context {
             buffer.unmap();
             result?;
 
-            total.include(stats, 0);
+            total.include(stats);
         }
 
         Ok((!cancelled()).then_some(total))

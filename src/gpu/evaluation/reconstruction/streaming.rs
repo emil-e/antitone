@@ -10,9 +10,9 @@ impl Reconstruction {
         &self,
         worker: &Production<'_>,
         input: &Arc<ImageNode>,
-    ) -> Result<Stats, Error> {
+    ) -> Result<WorkCounts, Error> {
         let requested = worker.layout.region;
-        let mut stats = Stats::default();
+        let mut stats = WorkCounts::default();
         let mut executor = worker.executor();
         for y in (requested.y..requested.bottom()).step_by(worker.budget.tile[1] as usize) {
             for x in (requested.x..requested.right()).step_by(worker.budget.tile[0] as usize) {
@@ -29,19 +29,19 @@ impl Reconstruction {
                 // Resident input also needs bounded loops: unit weights stop advancing at 2^24.
                 if self.requires_reduction() {
                     executor = worker.executor();
-                    stats.include(self.stream(worker, input, region, &mut executor)?, 0);
+                    stats.include(self.stream(worker, input, region, &mut executor)?);
                     continue;
                 }
                 let plan = self.plan(worker, input, region)?;
                 if plan.peak_scratch_bytes <= worker.budget.scratch_bytes
                     && Executor::admit(&worker.context.device().limits(), &plan).is_ok()
                 {
-                    stats.include(worker.deliver(&mut executor, plan)?, 0);
+                    stats.include(worker.deliver(&mut executor, plan)?);
                 } else {
                     // No pixel acquisition/allocation has occurred while testing the whole demand.
                     drop(plan);
                     executor = worker.executor();
-                    stats.include(self.stream(worker, input, region, &mut executor)?, 0);
+                    stats.include(self.stream(worker, input, region, &mut executor)?);
                 }
             }
         }
@@ -54,7 +54,7 @@ impl Reconstruction {
         input: &Arc<ImageNode>,
         output: Rect,
         executor: &mut Executor,
-    ) -> Result<Stats, Error> {
+    ) -> Result<WorkCounts, Error> {
         batch::stream(&[(self, worker, output)], input, executor)
     }
 

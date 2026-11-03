@@ -13,7 +13,7 @@ fn source_allowance(reduction_bytes: u64, targets: usize, budget: u64) -> Option
 
 pub(in crate::gpu::evaluation::reconstruction) fn produce(
     outputs: &[(&Arc<ImageNode>, Production<'_>)],
-) -> Result<Option<Stats>, Error> {
+) -> Result<Option<WorkCounts>, Error> {
     let Some((first, _)) = outputs.first() else {
         return Ok(None);
     };
@@ -63,10 +63,10 @@ pub(in crate::gpu::evaluation::reconstruction) fn produce(
         }
     }
     let mut executor = outputs[0].1.executor();
-    let mut stats = Stats::default();
+    let mut stats = WorkCounts::default();
     if resident {
         for ((_, worker), plan) in outputs.iter().zip(plans) {
-            stats.include(worker.deliver(&mut executor, plan)?, 0);
+            stats.include(worker.deliver(&mut executor, plan)?);
         }
     } else {
         drop(plans);
@@ -89,7 +89,7 @@ pub(in crate::gpu::evaluation::reconstruction) fn produce(
             .zip(outputs)
             .map(|(op, (_, worker))| (*op, worker, worker.layout.region))
             .collect();
-        stats.include(stream(&targets, input, &mut executor)?, 0);
+        stats.include(stream(&targets, input, &mut executor)?);
     }
     Ok(Some(stats))
 }
@@ -109,7 +109,7 @@ impl Reduction<'_, '_> {
         source: PlannedImage,
         pixels: &wgpu::Buffer,
         affected: Rect,
-    ) -> Result<Stats, Error> {
+    ) -> Result<WorkCounts, Error> {
         let domain = source.domain;
         let part = source.region;
         let mut fragment = Fragment::default();
@@ -144,7 +144,7 @@ impl Reduction<'_, '_> {
         let recorded = self.worker.executor().prepare(device, plan)?;
         let mut stats =
             recorded.encode_work(device, encoder, &[pixels, &self.means, &self.flags])?;
-        stats.include(recorded.preparation.clone(), 0);
+        stats.include(recorded.preparation.clone());
         Ok(stats)
     }
 }
@@ -153,7 +153,7 @@ pub(super) fn stream(
     outputs: &[(&Reconstruction, &Production<'_>, Rect)],
     input: &Arc<ImageNode>,
     executor: &mut Executor,
-) -> Result<Stats, Error> {
+) -> Result<WorkCounts, Error> {
     let worker = outputs[0].1;
     let device = worker.context.device();
     let limits = device.limits();
@@ -205,11 +205,8 @@ pub(super) fn stream(
     let height = (source_cells / u64::from(width))
         .min(u64::from(SOURCE_TILE[1]))
         .min(u64::from(demand.height)) as u32;
-    let mut stats = Stats {
-        buffer_allocations: 2 * outputs.len(),
-        scratch_bytes: scratch,
-        ..Default::default()
-    };
+    let mut stats = WorkCounts::default();
+    stats.buffers_allocated(2 * outputs.len());
     let buffer = |bytes| {
         #[cfg(all(test, feature = "editor"))]
         crate::gpu::test_support::evaluation_buffer_created(bytes);
@@ -229,7 +226,7 @@ pub(super) fn stream(
             Executor::admit(&limits, &finish)?;
             let means = buffer(u64::from(region.width) * u64::from(region.height) * 16);
             let flags = buffer(u64::from(region.width) * u64::from(region.height) * 4);
-            stats.include(worker.submit_work(clear, &[&means, &flags])?, scratch);
+            stats.include(worker.submit_work(clear, &[&means, &flags])?);
             (worker.progress)();
             Ok(Reduction {
                 operation,
@@ -309,21 +306,17 @@ pub(super) fn stream(
                     continue;
                 }
                 plan.scratch_budget = available;
-                let mut sinks = Stats::default();
-                let mut live_sinks = 0;
-                let mut source_stats = worker
+                let mut sinks = WorkCounts::default();
+                let source_stats = worker
                     .run_sink(executor, &plan, |encoder, source, pixels| {
                         for (target, region) in &affected {
-                            let encoded = target.accumulate(encoder, source, pixels, *region)?;
-                            let bytes = encoded.scratch_bytes;
-                            sinks.include(encoded, live_sinks);
-                            live_sinks += bytes;
+                            sinks.include(target.accumulate(encoder, source, pixels, *region)?);
                         }
                         Ok(())
                     })?
                     .ok_or(Error::Cancelled)?;
-                source_stats.include(sinks, executor.pool_bytes());
-                stats.include(source_stats, scratch);
+                stats.include(source_stats);
+                stats.include(sinks);
                 (worker.progress)();
             }
         }
@@ -331,13 +324,10 @@ pub(super) fn stream(
     // Source scratch is no longer live during the separately admitted final readouts.
     *executor = worker.executor();
     for target in targets {
-        stats.include(
-            target.worker.submit_work(
-                target.finish,
-                &[&target.means, &target.flags, target.worker.pixels],
-            )?,
-            scratch,
-        );
+        stats.include(target.worker.submit_work(
+            target.finish,
+            &[&target.means, &target.flags, target.worker.pixels],
+        )?);
     }
     Ok(stats)
 }

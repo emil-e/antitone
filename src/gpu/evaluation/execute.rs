@@ -13,38 +13,66 @@ macro_rules! timed {
     };
 }
 
+/// Work counters for tests and opt-in performance diagnostics; empty in ordinary builds.
 #[derive(Clone, Default, Debug)]
-pub struct Stats {
+pub struct WorkCounts {
+    #[cfg(test)]
     pub submissions: usize,
+    #[cfg(test)]
     pub initializations: usize,
+    #[cfg(test)]
     pub source_cells: u64,
-    pub peak_source_cells: u64,
+    #[cfg(test)]
     pub buffer_allocations: usize,
+    #[cfg(test)]
     pub texture_allocations: usize,
-    pub encoded_device_peak: u64,
-    /// Peak execution storage, excluding caller-owned outputs and resident arguments.
-    pub scratch_bytes: u64,
 }
 
-impl Stats {
-    pub(super) fn observe_device(&mut self, _device: &wgpu::Device) {
-        #[cfg(any(test, feature = "ui"))]
+impl WorkCounts {
+    pub(super) fn include(&mut self, _next: Self) {
+        #[cfg(test)]
         {
-            self.encoded_device_peak = self
-                .encoded_device_peak
-                .max(crate::gpu::allocated_resource_bytes(_device).unwrap_or(0) as u64);
+            self.submissions += _next.submissions;
+            self.initializations += _next.initializations;
+            self.source_cells += _next.source_cells;
+            self.buffer_allocations += _next.buffer_allocations;
+            self.texture_allocations += _next.texture_allocations;
         }
     }
 
-    pub(super) fn include(&mut self, next: Self, live_scratch: u64) {
-        self.submissions += next.submissions;
-        self.initializations += next.initializations;
-        self.source_cells += next.source_cells;
-        self.peak_source_cells = self.peak_source_cells.max(next.peak_source_cells);
-        self.buffer_allocations += next.buffer_allocations;
-        self.texture_allocations += next.texture_allocations;
-        self.encoded_device_peak = self.encoded_device_peak.max(next.encoded_device_peak);
-        self.scratch_bytes = self.scratch_bytes.max(live_scratch + next.scratch_bytes);
+    pub(super) fn submitted(&mut self) {
+        #[cfg(test)]
+        {
+            self.submissions += 1;
+        }
+    }
+
+    pub(super) fn initialized(&mut self) {
+        #[cfg(test)]
+        {
+            self.initializations += 1;
+        }
+    }
+
+    pub(super) fn source_read(&mut self, _cells: u64) {
+        #[cfg(test)]
+        {
+            self.source_cells += _cells;
+        }
+    }
+
+    pub(super) fn buffers_allocated(&mut self, _count: usize) {
+        #[cfg(test)]
+        {
+            self.buffer_allocations += _count;
+        }
+    }
+
+    pub(super) fn texture_allocated(&mut self) {
+        #[cfg(test)]
+        {
+            self.texture_allocations += 1;
+        }
     }
 }
 
@@ -203,7 +231,7 @@ pub struct Executor {
 #[cfg(all(test, feature = "editor"))]
 pub struct ResultImage {
     pub pixels: wgpu::Buffer,
-    pub stats: Stats,
+    pub counts: WorkCounts,
 }
 
 #[cfg(test)]
@@ -436,8 +464,11 @@ impl Executor {
         else {
             return Ok(None);
         };
-        stats.buffer_allocations += 1;
-        Ok(Some(ResultImage { pixels, stats }))
+        stats.buffers_allocated(1);
+        Ok(Some(ResultImage {
+            pixels,
+            counts: stats,
+        }))
     }
 
     /// A bounded tile's GPU sink records into the same submission. It owns publication,
@@ -451,7 +482,7 @@ impl Executor {
         plan: &Plan,
         cancelled: impl Fn() -> bool,
         sink: impl FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
-    ) -> Result<Option<Stats>, Error> {
+    ) -> Result<Option<WorkCounts>, Error> {
         self.run_produced_sink(
             device,
             (queue, gate),
@@ -484,8 +515,8 @@ impl Executor {
             &Arc<ImageNode>,
             PlannedImage,
             (&wgpu::Buffer, u64),
-        ) -> Result<Stats, Error>,
-    ) -> Result<Option<Stats>, Error>
+        ) -> Result<WorkCounts, Error>,
+    ) -> Result<Option<WorkCounts>, Error>
     where
         E: FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
         S: FnMut(),
@@ -505,7 +536,7 @@ impl Executor {
         }
 
         timed!(Setup, self.compile(device, plan))?;
-        let mut stats = Stats::default();
+        let mut stats = WorkCounts::default();
 
         for tile in &plan.tiles {
             if cancelled() {
@@ -519,7 +550,6 @@ impl Executor {
                 &mut stats,
                 Materialization::Worker,
             )?;
-            stats.scratch_bytes = stats.scratch_bytes.max(self.pool_bytes());
             for (id, storage) in tile.fragment.resources.iter().enumerate() {
                 if let Storage::Uniform(bytes) | Storage::Data(bytes) = storage {
                     queue.write_buffer(
@@ -552,7 +582,7 @@ impl Executor {
                             plan.scratch_budget.saturating_sub(self.pool_bytes()),
                         ),
                     )?;
-                    stats.include(nested, self.pool_bytes());
+                    stats.include(nested);
                 }
             }
             if cancelled() {
@@ -568,9 +598,8 @@ impl Executor {
             if cancelled() {
                 return Ok(None);
             }
-            stats.observe_device(device);
 
-            stats.submissions += 1;
+            stats.submitted();
             submit(device, queue, gate, encoder, || {
                 self.submitted();
                 (sink.submitted)()
@@ -588,7 +617,7 @@ impl Executor {
         queue: Option<&wgpu::Queue>,
         encoder: &mut wgpu::CommandEncoder,
         tile: &Tile,
-        stats: &mut Stats,
+        stats: &mut WorkCounts,
         inputs: &[&wgpu::Buffer],
     ) -> Result<(), Error> {
         for allocation in self.pool.iter().flatten() {
@@ -642,8 +671,7 @@ impl Executor {
                             "source differs from admitted evaluation layout",
                         ));
                     }
-                    stats.source_cells += values.len() as u64;
-                    stats.peak_source_cells = stats.peak_source_cells.max(values.len() as u64);
+                    stats.source_read(values.len() as u64);
                     timed!(
                         SourceUpload,
                         queue.write_buffer(
@@ -669,7 +697,7 @@ impl Executor {
                         continue;
                     }
                     if initialize.is_some() {
-                        stats.initializations += 1;
+                        stats.initialized();
                     }
 
                     let pipeline = self.programs.0.lock().unwrap()[&(code.clone(), *entry)].clone();
@@ -757,7 +785,7 @@ impl Executor {
         }
 
         self.compile(device, &plan)?;
-        let mut preparation = Stats::default();
+        let mut preparation = WorkCounts::default();
         self.materialize(
             device,
             &plan.tiles[0],
@@ -765,7 +793,6 @@ impl Executor {
             &mut preparation,
             Materialization::Capture,
         )?;
-        preparation.scratch_bytes = self.pool_bytes();
 
         Ok(Recorded {
             executor: self,
@@ -779,7 +806,7 @@ impl Executor {
         device: &wgpu::Device,
         tile: &Tile,
         budget: u64,
-        stats: &mut Stats,
+        stats: &mut WorkCounts,
         mode: Materialization,
     ) -> Result<(), Error> {
         self.pool.truncate(tile.slots.len());
@@ -844,7 +871,7 @@ impl Executor {
                         ));
                     }
 
-                    stats.buffer_allocations += 1;
+                    stats.buffers_allocated(1);
                     #[cfg(all(test, feature = "editor"))]
                     crate::gpu::test_support::evaluation_buffer_created(bytes);
                     Allocation::Buffer {
@@ -890,7 +917,7 @@ impl Executor {
                         continue;
                     };
                     if !value.ready() {
-                        stats.buffer_allocations += 1;
+                        stats.buffers_allocated(1);
                         #[cfg(all(test, feature = "editor"))]
                         crate::gpu::test_support::evaluation_buffer_created(*bytes);
                     }
@@ -911,7 +938,7 @@ impl Executor {
                         ));
                     }
 
-                    stats.texture_allocations += 1;
+                    stats.texture_allocated();
                     let texture = device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("evaluation scheduled texture slot"),
                         size: wgpu::Extent3d {
@@ -940,7 +967,7 @@ impl Executor {
 pub(crate) struct Recorded {
     executor: Executor,
     plan: Plan,
-    pub(super) preparation: Stats,
+    pub(super) preparation: WorkCounts,
 }
 
 impl Recorded {
@@ -976,16 +1003,16 @@ impl Recorded {
         encoder: &mut wgpu::CommandEncoder,
         destination: &wgpu::Buffer,
     ) -> Result<(), Error> {
-        self.encode_result_stats(device, encoder, destination)
+        self.encode_result_counts(device, encoder, destination)
             .map(|_| ())
     }
 
-    pub(super) fn encode_result_stats(
+    pub(super) fn encode_result_counts(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         destination: &wgpu::Buffer,
-    ) -> Result<Stats, Error> {
+    ) -> Result<WorkCounts, Error> {
         self.encode_buffers(device, encoder, &[], destination)
     }
 
@@ -995,7 +1022,7 @@ impl Recorded {
         encoder: &mut wgpu::CommandEncoder,
         inputs: &[&wgpu::Buffer],
         destination: &wgpu::Buffer,
-    ) -> Result<Stats, Error> {
+    ) -> Result<WorkCounts, Error> {
         let tile = &self.plan.tiles[0];
         if matches!(
             tile.fragment.resources[tile.result.resource.0],
@@ -1044,7 +1071,7 @@ impl Recorded {
                 writable: true,
             });
         }
-        let mut stats = Stats::default();
+        let mut stats = WorkCounts::default();
         execution.materialize(
             device,
             tile,
@@ -1054,7 +1081,6 @@ impl Recorded {
         )?;
         let inputs: Vec<_> = inputs.iter().copied().chain([destination]).collect();
         execution.encode_tile(device, None, encoder, tile, &mut stats, &inputs)?;
-        stats.scratch_bytes = execution.pool_bytes();
         let output = match execution.pool[output_slot].as_ref().unwrap() {
             Allocation::Input { slot, .. } => inputs[*slot],
             allocation => allocation.buffer(),
@@ -1081,13 +1107,13 @@ impl Recorded {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         inputs: &[&wgpu::Buffer],
-    ) -> Result<Stats, Error> {
+    ) -> Result<WorkCounts, Error> {
         let mut execution =
             Executor::with_scope(self.executor.programs.clone(), self.executor.scope.clone());
         execution.pool = self.executor.pool.clone();
         execution.retained = self.executor.retained.clone();
         let tile = &self.plan.tiles[0];
-        let mut stats = Stats::default();
+        let mut stats = WorkCounts::default();
         execution.materialize(
             device,
             tile,
@@ -1096,7 +1122,6 @@ impl Recorded {
             Materialization::Record,
         )?;
         execution.encode_tile(device, None, encoder, tile, &mut stats, inputs)?;
-        stats.scratch_bytes = execution.pool_bytes();
         Ok(stats)
     }
 

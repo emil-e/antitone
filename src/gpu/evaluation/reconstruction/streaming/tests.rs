@@ -2,8 +2,8 @@ use super::*;
 use std::sync::Mutex;
 
 mod admission;
+mod counts;
 mod coverage;
-mod stats;
 
 struct Pixels {
     domain: Domain,

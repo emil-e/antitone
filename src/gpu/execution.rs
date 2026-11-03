@@ -6,8 +6,6 @@ mod originals;
 #[cfg(feature = "raw")]
 mod request;
 
-#[cfg(all(test, feature = "raw", target_os = "macos"))]
-pub(crate) use originals::Unit;
 #[cfg(feature = "raw")]
 pub(crate) use originals::{Stats, TILE, execute};
 #[cfg(feature = "raw")]

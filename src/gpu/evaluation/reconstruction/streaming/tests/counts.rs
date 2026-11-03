@@ -2,7 +2,7 @@ use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
-fn nested_production_reports_observed_source_work_submissions_allocations_and_live_scratch() {
+fn nested_production_counts_source_work_submissions_and_allocations() {
     let (input, reads) = fixture([512, 256], vec![[2., -3., 4., 1.]; 512 * 256]);
     let mapping = Mapping {
         start: [0.; 2],
@@ -31,7 +31,6 @@ fn nested_production_reports_observed_source_work_submissions_allocations_and_li
         plan.tiles[0].fragment.work[0],
         Work::Produce { .. }
     ));
-    let parent_bytes = plan.peak_scratch_bytes;
 
     for delivery in ["read", "sink", "production"] {
         reads.lock().unwrap().clear();
@@ -126,17 +125,6 @@ fn nested_production_reports_observed_source_work_submissions_allocations_and_li
             "{delivery}"
         );
         assert_eq!(stats.source_cells, 512 * 256);
-        let peak_cells = reads.iter().map(cells).max().unwrap();
-        assert_eq!(stats.peak_source_cells, peak_cells, "{delivery}");
-        let largest_source = peak_cells * 16;
-        assert!(
-            stats.scratch_bytes >= parent_bytes + largest_source + 20,
-            "{delivery}: {stats:?}"
-        );
-        assert!(
-            stats.scratch_bytes <= budget.scratch_bytes,
-            "{delivery}: {stats:?}"
-        );
         drop(reads);
         if delivery != "read" {
             actual = super::super::super::super::execute::read(&device, &queue, &pixels);

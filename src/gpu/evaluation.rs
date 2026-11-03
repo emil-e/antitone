@@ -26,7 +26,7 @@ mod contract;
 pub(crate) use cache::RetainedBuffer;
 pub use cache::RetainedKey;
 pub use context::{CachePolicy, Context, Evaluation, Production, Region};
-pub use execute::{Sink, Stats};
+pub use execute::{Sink, WorkCounts};
 pub use plan::Budget;
 
 #[cfg(all(test, feature = "editor"))]

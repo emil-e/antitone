@@ -37,12 +37,13 @@ pub trait SampleProduction: Send + Sync {
     fn produce_many(
         &self,
         _outputs: &[(&Arc<ImageNode>, Production<'_>)],
-    ) -> Result<Option<Stats>, Error> {
+    ) -> Result<Option<WorkCounts>, Error> {
         Ok(None)
     }
 
     /// Writes the complete requested output. Cancellation is an error.
-    fn produce(&self, worker: &Production<'_>, input: &Arc<ImageNode>) -> Result<Stats, Error>;
+    fn produce(&self, worker: &Production<'_>, input: &Arc<ImageNode>)
+    -> Result<WorkCounts, Error>;
 }
 
 pub trait SampleConsumer: Send + Sync {
