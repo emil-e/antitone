@@ -1,7 +1,7 @@
 {
   "upstream_revision": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
   "inputs": {
-    "scripts/spektrafilm/monochrome.py": "4fe5bf4718496a9dd1dd05f7889cae5dc15c765ac4c28f75f3b086cdd7f451cc",
+    "scripts/spektrafilm/monochrome.py": "25813d344a5ee3fc496a99da965f183504c9bcc0f70e07c0960635c0d1964e3c",
     "scripts/spektrafilm/build.py": "b1af10b6c42c70cc088d4dced4d2136ff242dd46f40ccfd6fc7fd55f8558422c",
     "scripts/spektrafilm/requirements.lock": "e1182ee0eb7b0aeb29fa75a4b11ec33ba776570f60cebba10bd74cbd2d1841f8",
     "assets/papers/fomabrom-variant-glossy-filter-2/source.json": "ba3f73d627f1c9fa548e3ce79e7065b2468b99db6d41659dbfaaa51f944192a6",

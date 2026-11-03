@@ -3,10 +3,11 @@
 import copy
 import json
 import math
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 import zlib
 
 from . import monochrome
@@ -200,6 +201,25 @@ class Monochrome(unittest.TestCase):
     def test_current_components_index_and_fixture_bind_all_source_producers(self):
         monochrome.check(monochrome.ASSETS)
 
+    def test_provenance_keys_accept_windows_producer_paths(self):
+        key = "scripts/spektrafilm/monochrome.py"
+        root = PureWindowsPath("C:/checkout")
+        producer = root / key
+        provenance = json.loads((monochrome.ASSETS / "provenance.json").read_text())
+        source_sha = monochrome.sha
+        with (
+            patch.object(monochrome, "ROOT", root),
+            patch.object(monochrome, "PRODUCERS", [producer]),
+            patch.object(
+                monochrome,
+                "sha",
+                side_effect=lambda path: (
+                    provenance["inputs"][key] if path == producer else source_sha(path)
+                ),
+            ),
+        ):
+            monochrome.check(monochrome.ASSETS)
+
     def test_corruption_stale_producers_and_environment_changes_are_rejected(self):
         (monochrome.ROOT / ".cache").mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(
@@ -220,7 +240,11 @@ class Monochrome(unittest.TestCase):
             provenance = json.loads((folder / "provenance.json").read_text())
             for section, key, pattern in [
                 *[
-                    ("inputs", str(path.relative_to(monochrome.ROOT)), "paper producer changed")
+                    (
+                        "inputs",
+                        path.relative_to(monochrome.ROOT).as_posix(),
+                        "paper producer changed",
+                    )
                     for path in monochrome.SOURCES
                 ],
                 ("dependencies", "numpy", "paper dependencies differ"),

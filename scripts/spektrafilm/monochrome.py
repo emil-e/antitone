@@ -128,7 +128,7 @@ def check(candidate):
     if provenance["upstream_revision"] != build.REVISION:
         raise ValueError("paper algorithm pin differs")
     for path in PRODUCERS:
-        if provenance["inputs"][str(path.relative_to(ROOT))] != sha(path):
+        if provenance["inputs"][path.relative_to(ROOT).as_posix()] != sha(path):
             raise ValueError("paper producer changed: " + str(path))
     if provenance["dependencies"] != build.requirements():
         raise ValueError("paper dependencies differ from generation lock")
@@ -492,7 +492,7 @@ def generate(upstream, output, scratch):
         (output / name).write_bytes(content)
     provenance = {
         "upstream_revision": build.REVISION,
-        "inputs": {str(p.relative_to(ROOT)): sha(p) for p in PRODUCERS},
+        "inputs": {p.relative_to(ROOT).as_posix(): sha(p) for p in PRODUCERS},
         "dependencies": dependencies,
         "conditions": {s["material"]["id"]: s["conditions"] for _, s in sources},
         "model": "Scalar total film density with neutral transmission; fixed-grade paper total reflection density, no extra base. Paper-only uses luminance and0.6-stop exposure convention. No colour-stock data, DIR, invented paper sensitivities or tint.",
