@@ -28,21 +28,11 @@ pub(crate) use crate::gpu::execution::footprints::SourceRequest;
 use crate::gpu::execution::footprints::uniform;
 
 pub(crate) struct ViewKernels {
-    acquisition: Arc<crate::gpu::execution::footprints::Kernels>,
     compose: wgpu::RenderPipeline,
-}
-
-impl std::ops::Deref for ViewKernels {
-    type Target = crate::gpu::execution::footprints::Kernels;
-
-    fn deref(&self) -> &Self::Target {
-        &self.acquisition
-    }
 }
 
 impl ViewKernels {
     pub(crate) async fn new(device: &wgpu::Device) -> Result<Arc<Self>, Error> {
-        let acquisition = crate::gpu::execution::footprints::Kernels::new(device).await?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let compose = composite::pipeline(
             device,
@@ -52,10 +42,7 @@ impl ViewKernels {
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));
         }
-        Ok(Arc::new(Self {
-            acquisition,
-            compose,
-        }))
+        Ok(Arc::new(Self { compose }))
     }
 }
 
@@ -93,7 +80,6 @@ impl ViewSource {
             data: Arc::new(crate::gpu::execution::footprints::Acquired {
                 spec: spec.clone(),
                 renderer,
-                kernels: kernels.acquisition.clone(),
                 pixels: pixels.into(),
                 basis: definition.clone(),
                 definition,
@@ -133,7 +119,6 @@ impl ViewSource {
         let data = Arc::new(crate::gpu::execution::footprints::Acquired {
             spec: wanted.clone(),
             renderer,
-            kernels: kernels.acquisition.clone(),
             pixels: found.try_into().ok()?,
             basis: root.clone(),
             definition: root.clone(),
@@ -173,7 +158,6 @@ impl ViewSource {
             queue,
             submissions,
             renderer,
-            kernels.acquisition.clone(),
             proxy,
             field,
             spec,
@@ -199,7 +183,6 @@ impl ViewSource {
             queue,
             submissions,
             renderer,
-            kernels.acquisition.clone(),
             source,
             input,
             spec,
@@ -224,7 +207,6 @@ impl ViewSource {
                 queue,
                 submissions,
                 renderer,
-                kernels.acquisition.clone(),
                 source,
                 input,
                 spec,
@@ -276,7 +258,6 @@ impl ViewSource {
             queue,
             submissions,
             renderer,
-            kernels.acquisition.clone(),
             specs,
             requests,
             scope,
@@ -338,7 +319,6 @@ impl ViewSource {
             queue,
             submissions,
             renderer,
-            kernels.acquisition.clone(),
             scan,
             field,
             specs,
@@ -679,10 +659,7 @@ impl RenderedView {
         } else {
             let graded = self.graded.as_ref().expect("unsubmitted working view");
             if !**initialized.as_ref().unwrap() {
-                graded
-                    .source
-                    .kernels
-                    .grade(device, &mut encoder, &graded.data);
+                graded.data.encode(device, &mut encoder);
             }
             let binding = self.group.as_ref().unwrap();
             self.image.set_look_check(

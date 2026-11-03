@@ -20,14 +20,13 @@ mod request;
 
 pub(crate) use request::SourceRequest;
 
-mod kernels;
+mod storage;
 
-pub(crate) use kernels::{Kernels, float_buffer, uniform};
+pub(crate) use storage::{float_buffer, uniform};
 
 pub(crate) struct Acquired {
     pub spec: SourceRequest,
     pub renderer: Arc<crate::renderer::GpuRenderer>,
-    pub kernels: Arc<Kernels>,
     pub pixels: crate::gpu::evaluation::BufferImage,
     pub definition: Arc<crate::gpu::evaluation::ImageNode>,
     pub basis: Arc<crate::gpu::evaluation::ImageNode>,
@@ -78,7 +77,6 @@ impl Acquired {
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<Kernels>,
         proxy: &crate::scan::CameraProxy,
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
@@ -144,7 +142,6 @@ impl Acquired {
             basis: definition.clone(),
             definition,
             renderer,
-            kernels,
         });
         let processed = Processed::record(device, source.clone(), input, root, plan)?;
         Self::submit_preview(device, queue, submissions, source, native, processed)
@@ -156,7 +153,6 @@ impl Acquired {
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<Kernels>,
         source: Arc<ProcessingSource>,
         input: &crate::gpu::ProcessingInput,
         spec: SourceRequest,
@@ -164,8 +160,7 @@ impl Acquired {
         let (spec, definition) = Self::processing_definition(&source, input, spec)?;
         let (root, plan) =
             Processed::definition(&device.limits(), &spec, definition.clone(), input)?;
-        let (acquired, native) =
-            Self::record_processing(device, renderer, kernels, spec, definition)?;
+        let (acquired, native) = Self::record_processing(device, renderer, spec, definition)?;
         let processed = Processed::record(device, acquired.clone(), input, root, plan)?;
         Self::submit_preview(device, queue, submissions, acquired, native, processed)
     }
@@ -177,14 +172,12 @@ impl Acquired {
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<Kernels>,
         source: Arc<ProcessingSource>,
         input: &crate::gpu::ProcessingInput,
         spec: SourceRequest,
     ) -> Result<Arc<Self>, Error> {
         let (spec, definition) = Self::processing_definition(&source, input, spec)?;
-        let (acquired, native) =
-            Self::record_processing(device, renderer, kernels, spec, definition)?;
+        let (acquired, native) = Self::record_processing(device, renderer, spec, definition)?;
         let mut encoder = device.create_command_encoder(&Default::default());
         native.encode_from(device, &mut encoder, &source.input, &acquired.pixels)?;
         submissions.submit(queue, [encoder.finish()]);
@@ -269,13 +262,8 @@ impl Acquired {
                 Processed::prepare_calculation(device, self.clone(), input, root, plan, previous)?;
             return Ok((self.clone(), processed));
         }
-        let (source, native) = Self::record_processing(
-            device,
-            self.renderer.clone(),
-            self.kernels.clone(),
-            self.spec.clone(),
-            definition,
-        )?;
+        let (source, native) =
+            Self::record_processing(device, self.renderer.clone(), self.spec.clone(), definition)?;
         let processed = Processed::record(device, source.clone(), input, root, plan)?;
         Self::submit_preview(device, queue, submissions, source, native, processed)
     }
@@ -290,7 +278,7 @@ impl Acquired {
     ) -> Result<(Arc<Self>, Arc<Processed>), Error> {
         let mut encoder = device.create_command_encoder(&Default::default());
         native.encode_result(device, &mut encoder, &source.pixels)?;
-        source.kernels.grade(device, &mut encoder, &processed);
+        processed.encode(device, &mut encoder);
         submissions.submit(queue, [encoder.finish()]);
         native.submitted();
         processed.stages.as_ref().unwrap().submitted();
@@ -305,7 +293,6 @@ impl Acquired {
     fn record_processing(
         device: &wgpu::Device,
         renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<Kernels>,
         spec: SourceRequest,
         root: Arc<crate::gpu::evaluation::ImageNode>,
     ) -> Result<(Arc<Self>, crate::gpu::pixel_pipeline::Prepared), Error> {
@@ -328,7 +315,6 @@ impl Acquired {
             Arc::new(Self {
                 spec,
                 renderer,
-                kernels,
                 basis: root.clone(),
                 definition: root,
                 pixels,
@@ -344,7 +330,6 @@ impl Acquired {
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<Kernels>,
         scan: &Scan,
         field: Option<Arc<GpuFlatField>>,
         specs: Vec<SourceRequest>,
@@ -409,7 +394,6 @@ impl Acquired {
             queue,
             submissions,
             renderer,
-            kernels,
             specs,
             requests,
             scope,
@@ -423,7 +407,6 @@ impl Acquired {
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         renderer: Arc<crate::renderer::GpuRenderer>,
-        kernels: Arc<Kernels>,
         specs: Vec<SourceRequest>,
         requests: Vec<crate::gpu::evaluation::Evaluation>,
         scope: &crate::gpu::evaluation::Materializations,
@@ -471,7 +454,6 @@ impl Acquired {
                         definition,
                         pixels: image.try_into()?,
                         renderer: renderer.clone(),
-                        kernels: kernels.clone(),
                     }))
                 })
                 .collect::<Result<Vec<_>, Error>>()?,

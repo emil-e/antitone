@@ -277,7 +277,11 @@ fn refined_prepared_views_reuse_initialized_grain_and_preserve_pixels_without_re
                 u64::from(frame.output[0] * frame.output[1]) * 16
             );
             let mut abandoned = device.create_command_encoder(&Default::default());
-            kernels.grade(&device, &mut abandoned, &view.graded.as_ref().unwrap().data);
+            view.graded
+                .as_ref()
+                .unwrap()
+                .data
+                .encode(&device, &mut abandoned);
             drop(abandoned);
             assert!(
                 !field.ready(),

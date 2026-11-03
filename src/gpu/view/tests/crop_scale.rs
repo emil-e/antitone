@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn a_tighter_crop_reduces_the_source_gaussian_instead_of_magnifying_uncropped_blur() {
     pollster::block_on(async {
-        let (device, queue, _, kernels) = context().await;
+        let (device, queue, _, _) = context().await;
         let settings = crate::grain::GrainSettings {
             enabled: true,
             amount: 0.,
@@ -30,10 +30,7 @@ fn a_tighter_crop_reduces_the_source_gaussian_instead_of_magnifying_uncropped_bl
             let prepared =
                 crate::gpu::pixel_pipeline::Prepared::new(&device, &plan, raster).unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());
-            kernels
-                .stages
-                .encode(&device, &mut encoder, &prepared, &pixels)
-                .unwrap();
+            prepared.encode(&device, &mut encoder, &pixels).unwrap();
             queue.submit([encoder.finish()]);
             let output = read(&device, &queue, &pixels);
             let radius = (4. * sigma).ceil() as i32;

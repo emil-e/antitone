@@ -203,7 +203,6 @@ impl Acquired {
             definition,
             pixels: image.try_into()?,
             renderer: base.renderer.clone(),
-            kernels: base.kernels.clone(),
         })))
     }
 }
