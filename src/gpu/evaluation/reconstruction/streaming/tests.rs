@@ -1,6 +1,7 @@
 use super::*;
 use std::sync::Mutex;
 
+mod admission;
 mod coverage;
 
 struct Pixels {
@@ -331,8 +332,8 @@ fn nested_worker_admission_rejects_before_original_reads() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
-    let request = context
-        .request(
+    let request_for = |scratch_bytes| {
+        context.request(
             root.clone(),
             Region {
                 bounds: root.domain.finite().unwrap(),
@@ -340,13 +341,21 @@ fn nested_worker_admission_rejects_before_original_reads() {
             },
             Budget {
                 tile: [1, 1],
-                scratch_bytes: 1024,
+                scratch_bytes,
             },
         )
-        .unwrap();
+    };
+    let parent_bytes = request_for(1024)
+        .unwrap()
+        .plans()
+        .next()
+        .unwrap()
+        .unwrap()
+        .peak_scratch_bytes;
+    let request = request_for(parent_bytes).unwrap();
     let plan = request.plans().next().unwrap().unwrap();
     assert!(
-        plan.peak_scratch_bytes <= 1024
+        plan.peak_scratch_bytes == parent_bytes
             && matches!(plan.tiles[0].fragment.work[0], Work::Produce { .. }),
         "control: the parent plan fits; the child worker's remaining allowance must reject"
     );

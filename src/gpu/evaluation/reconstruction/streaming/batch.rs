@@ -74,24 +74,19 @@ struct Reduction<'a, 'b> {
     region: Rect,
     means: wgpu::Buffer,
     flags: wgpu::Buffer,
+    finish: Plan,
 }
 impl Reduction<'_, '_> {
-    fn accumulate(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        source: PlannedImage,
-        pixels: &wgpu::Buffer,
-        affected: Rect,
-    ) -> Result<(), Error> {
+    fn accumulation(&self, domain: Domain, part: Rect, affected: Rect) -> Result<Plan, Error> {
         let mut fragment = Fragment::default();
-        let part = source.region;
         let source = PlannedImage {
+            domain,
+            region: part,
             resource: fragment.resource(Storage::Input {
                 slot: 0,
-                bytes: pixels.size(),
+                bytes: u64::from(part.width) * u64::from(part.height) * 16,
                 writable: false,
             }),
-            ..source
         };
         let sample = Sampled::raster(&mut fragment, source);
         let result = PlannedImage {
@@ -110,12 +105,7 @@ impl Reduction<'_, '_> {
         });
         self.operation
             .accumulate(&mut fragment, sample, (part, affected), result, metadata)?;
-        self.worker.context.encode_work(
-            fragment,
-            result,
-            encoder,
-            &[pixels, &self.means, &self.flags],
-        )
+        Plan::from_work(fragment, result, u64::MAX)
     }
 }
 
@@ -139,12 +129,13 @@ pub(super) fn stream(
         .map(|(_, w, _)| w.budget.scratch_bytes)
         .min()
         .unwrap();
-    let available = budget
-        .checked_sub(scratch + 1024 * outputs.len() as u64)
-        .filter(|v| *v >= 64)
-        .ok_or(Error::InvalidParameter(
-            "reconstruction exceeds working storage",
-        ))?;
+    let available =
+        budget
+            .checked_sub(scratch)
+            .filter(|v| *v >= 64)
+            .ok_or(Error::InvalidParameter(
+                "reconstruction exceeds working storage",
+            ))?;
     for (_, _, r) in outputs {
         if u64::from(r.width) * u64::from(r.height) * 16 > limit {
             return Err(Error::InvalidParameter(
@@ -183,22 +174,27 @@ pub(super) fn stream(
             mapped_at_creation: false,
         })
     };
-    let targets: Vec<_> = outputs
+    let targets = outputs
         .iter()
-        .map(|(operation, worker, region)| Reduction {
-            operation,
-            worker,
-            region: *region,
-            means: buffer(u64::from(region.width) * u64::from(region.height) * 16),
-            flags: buffer(u64::from(region.width) * u64::from(region.height) * 4),
+        .map(|(operation, worker, region)| {
+            let clear = operation.clear_plan(worker, *region, available)?;
+            let finish = operation.finish_plan(worker, *region, available)?;
+            Executor::admit(&limits, &clear)?;
+            Executor::admit(&limits, &finish)?;
+            let means = buffer(u64::from(region.width) * u64::from(region.height) * 16);
+            let flags = buffer(u64::from(region.width) * u64::from(region.height) * 4);
+            worker.submit_work(clear, &[&means, &flags])?;
+            (worker.progress)();
+            Ok(Reduction {
+                operation,
+                worker,
+                region: *region,
+                means,
+                flags,
+                finish,
+            })
         })
-        .collect();
-    for target in &targets {
-        target
-            .operation
-            .clear(target.worker, target.region, &target.means, &target.flags)?;
-        (worker.progress)();
-    }
+        .collect::<Result<Vec<_>, Error>>()?;
     for y in (demand.y..demand.bottom()).step_by(height as usize) {
         for x in (demand.x..demand.right()).step_by(width as usize) {
             let part = Rect::new(
@@ -225,18 +221,35 @@ pub(super) fn stream(
                 if affected.is_empty() {
                     continue;
                 }
+                let mut accumulations = affected
+                    .iter()
+                    .map(|(target, region)| {
+                        let plan = target.accumulation(input.domain, part, *region)?;
+                        Executor::admit(&limits, &plan)?;
+                        Ok((*target, plan))
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let sink_bytes = accumulations
+                    .iter()
+                    .map(|(_, plan)| plan.peak_scratch_bytes)
+                    .sum();
+                let source_budget = available.checked_sub(sink_bytes);
+                let allowance = source_budget.unwrap_or(0);
                 let mut plan = super::super::super::plan::probe(
                     input,
                     part,
                     Budget {
                         tile: [part.width, part.height],
-                        scratch_bytes: available,
+                        scratch_bytes: allowance,
                     },
                     worker.scope,
                     &limits,
                 )?;
                 let admission = Executor::admit(&limits, &plan);
-                if plan.peak_scratch_bytes > available || admission.is_err() {
+                if source_budget.is_none()
+                    || plan.peak_scratch_bytes > allowance
+                    || admission.is_err()
+                {
                     if part.width == 1 && part.height == 1 {
                         admission?;
                         return Err(Error::InvalidParameter(
@@ -266,11 +279,21 @@ pub(super) fn stream(
                     }
                     continue;
                 }
-                plan.scratch_budget = available;
+                plan.scratch_budget = allowance;
                 worker
                     .run_sink(executor, &plan, |encoder, source, pixels| {
-                        for (target, region) in &affected {
-                            target.accumulate(encoder, source, pixels, *region)?;
+                        debug_assert_eq!(source.region, part);
+                        for (target, mut plan) in accumulations.drain(..) {
+                            plan.scratch_budget = plan.peak_scratch_bytes;
+                            target
+                                .worker
+                                .executor()
+                                .prepare(device, plan)?
+                                .encode_work(
+                                    device,
+                                    encoder,
+                                    &[pixels, &target.means, &target.flags],
+                                )?;
                         }
                         Ok(())
                     })?
@@ -279,10 +302,13 @@ pub(super) fn stream(
             }
         }
     }
+    // Source scratch is no longer live during the separately admitted final readouts.
+    *executor = worker.executor();
     for target in targets {
-        target
-            .operation
-            .finish(target.worker, target.region, &target.means, &target.flags)?;
+        target.worker.submit_work(
+            target.finish,
+            &[&target.means, &target.flags, target.worker.pixels],
+        )?;
     }
     Ok(())
 }

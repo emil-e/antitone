@@ -68,6 +68,24 @@ impl Production<'_> {
         )
     }
 
+    pub(in crate::gpu::evaluation) fn submit_work(
+        &self,
+        plan: Plan,
+        inputs: &[&wgpu::Buffer],
+    ) -> Result<(), Error> {
+        let recorded = self.executor().prepare(self.context.device(), plan)?;
+        let mut encoder = self
+            .context
+            .device()
+            .create_command_encoder(&Default::default());
+        recorded.encode_work(self.context.device(), &mut encoder, inputs)?;
+        self.context
+            .submit_with(self.queue, self.gate, encoder, self.cancelled, || {
+                recorded.submitted()
+            })?
+            .ok_or(Error::Cancelled)
+    }
+
     pub(in crate::gpu::evaluation) fn executor(&self) -> Executor {
         Executor::with_scope(self.context.programs.clone(), self.scope.clone())
     }
