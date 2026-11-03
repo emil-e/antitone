@@ -33,7 +33,7 @@ impl RollSelection {
 
 impl Editor {
     pub(super) fn roll_edit_available(&self) -> bool {
-        !self.busy && self.roll_navigation_available()
+        !self.busy && !self.document.gamma_pivot.pending() && self.roll_navigation_available()
     }
 
     fn roll_navigation_available(&self) -> bool {

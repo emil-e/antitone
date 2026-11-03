@@ -60,6 +60,24 @@ fn click(editor: &mut impl crate::editor::tests::UiFixture, context: &egui::Cont
 }
 
 #[test]
+fn system_quit_joins_a_document_owned_command_awaiting_admission() {
+    let (mut editor, _) = initialized();
+    editor.document.deferred_menu.push_back(Action::Quit);
+    assert_eq!(
+        host::App::quit_state(&editor),
+        Some(host::QuitState::Pending)
+    );
+    host::App::request_quit(&mut editor);
+    assert!(editor.menus.pending.is_empty());
+    assert_eq!(editor.document.deferred_menu.len(), 1);
+    editor.document.deferred_menu.clear();
+    assert_eq!(
+        host::App::quit_state(&editor),
+        Some(host::QuitState::Running)
+    );
+}
+
+#[test]
 fn system_quit_joins_one_dirty_decision_and_cancel_retires_it_without_mutation() {
     let (mut editor, context) = initialized();
     let before = editor.document.state.project.clone();

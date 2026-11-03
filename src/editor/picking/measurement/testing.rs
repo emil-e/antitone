@@ -3,7 +3,11 @@ use crate::{
 };
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::Duration,
 };
 
@@ -14,11 +18,45 @@ struct Waiting {
 }
 
 #[derive(Clone, Default)]
-pub(in crate::editor) struct Gate(Arc<Waiting>);
+pub(in crate::editor) struct Gate(Arc<Waiting>, bool);
+
+#[derive(Clone, Default)]
+pub(in crate::editor) struct Completion(Arc<Completed>);
+
+#[derive(Default)]
+struct Completed {
+    done: AtomicBool,
+    changed: event_listener::Event,
+}
+
+struct Acknowledge(Completion);
+impl Drop for Acknowledge {
+    fn drop(&mut self) {
+        self.0.0.done.store(true, Ordering::Release);
+        self.0.0.changed.notify(usize::MAX);
+    }
+}
+
+impl Completion {
+    pub fn wait(&self, app: &mut TestApplication<'_, Editor>) {
+        let completed = self.clone();
+        let task = app
+            .access()
+            .spawn(move |_| async move {
+                let changed = completed.0.changed.listen();
+                if !completed.0.done.load(Ordering::Acquire) {
+                    changed.await;
+                }
+            })
+            .unwrap();
+        app.run_until(Duration::from_secs(5), |_| task.is_finished());
+    }
+}
 
 pub(in crate::editor) struct Call {
     pub cancelled: Cancellation,
     release: mpsc::Sender<bool>,
+    pub completed: Completion,
 }
 
 impl Call {
@@ -32,6 +70,14 @@ impl Call {
 }
 
 impl Gate {
+    pub fn after_work() -> Self {
+        Self(Arc::default(), true)
+    }
+
+    pub fn is_after_work(&self) -> bool {
+        self.1
+    }
+
     pub fn install(editor: &mut Editor) -> Self {
         let gate = Self::default();
         editor.document.visit.picker.measurement_gate = Some(gate.clone());
@@ -56,17 +102,20 @@ impl Gate {
         self.0.calls.lock().unwrap().pop_front().unwrap()
     }
 
-    pub(super) fn wait(&self, cancelled: Cancellation) -> Result<(), String> {
+    pub(in crate::editor) fn wait(&self, cancelled: Cancellation) -> Result<(), String> {
         let (release, resume) = mpsc::channel();
+        let completed = Completion::default();
+        let _acknowledge = Acknowledge(completed.clone());
         self.0.calls.lock().unwrap().push_back(Call {
             cancelled: cancelled.clone(),
             release,
+            completed,
         });
         self.0.entered.notify(usize::MAX);
         let panic = resume
             .recv_timeout(Duration::from_secs(10))
             .map_err(|_| "measurement test gate dropped or timed out".to_owned())?;
-        if cancelled.is_cancelled() {
+        if !self.is_after_work() && cancelled.is_cancelled() {
             return Err("Measurement cancelled".into());
         }
         assert!(!panic, "injected measurement worker panic");

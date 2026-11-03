@@ -42,6 +42,7 @@ impl Editor {
         let closing =
             |transition: &Option<Transition>| matches!(transition, Some(Transition::Close));
         if self.menus.pending.contains(&Action::Quit)
+            || self.document.deferred_menu.contains(&Action::Quit)
             || closing(&self.transition)
             || closing(&self.after_save)
             || self

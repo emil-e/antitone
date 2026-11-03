@@ -198,6 +198,7 @@ impl DocumentScope {
 impl Editor {
     pub(super) fn tool_start_available(&self) -> bool {
         (!self.busy || self.tool_activity().is_some())
+            && !self.document.gamma_pivot.pending()
             && (self.document_pending.is_none()
                 || matches!(
                     self.document.tool.as_ref(),

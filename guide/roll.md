@@ -57,6 +57,17 @@ differs between shadows and highlights — a negative that goes warm in the high
 cool in the shadows, for example. The eyedropper in the section header fits it from a
 neutral area.
 
+The **Gamma colour pivot** pin beside that eyedropper lets you hold an arbitrary colour
+while changing Gamma or Balance. Click the pin, select an area, then **Apply**. The pin
+fills when locked; click it again to release. Cancel leaves the grade unchanged.
+
+Gamma edits then adjust Roll white balance to hold the chosen area's colour, while its
+brightness can change. Deliberate Roll white-balance edits establish a new held colour.
+The hold is measured before Photo grading and rendering, so a downstream look can still
+alter its appearance. The lock survives browsing but ends if its source is removed or its
+calibration, response or correction basis changes. Saving retains the accepted gamma and
+white balance, not the active lock.
+
 ## Toe & shoulder
 
 **Toe** and **Shoulder** shape the ends of the response: how quickly the deepest shadows

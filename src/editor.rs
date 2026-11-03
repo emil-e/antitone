@@ -91,6 +91,7 @@ mod canvas;
 mod canvas_view;
 mod document_services;
 mod document_workflow;
+mod gamma_pivot;
 use document_services::{Preparation, Prepared, Request as DocumentRequest};
 #[cfg(all(test, feature = "raw", feature = "export"))]
 mod ab_probe_tests;
@@ -118,6 +119,7 @@ enum Pick {
     Dmin,
     Dmax,
     Gamma,
+    GammaPivot,
     RollWb,
     Wb,
     Analysis,
@@ -925,7 +927,7 @@ impl Editor {
         &mut self,
         ui: &mut egui::Ui,
         cx: &UiContext<'_, Self>,
-    ) -> (Option<ScopeSlot>, bool) {
+    ) -> (Option<ScopeSlot>, bool, bool) {
         use controls::{ColorControl, Parameter};
         use presentation::SectionHeader;
 
@@ -961,8 +963,10 @@ impl Editor {
             self.photo_tool_shelf(ui, cx);
         }
 
+        let gamma_pending = self.document.gamma_pivot.pending();
         let editable = !self.busy
             && !self.creating_mask()
+            && !gamma_pending
             && matches!(
                 self.document.tool.as_ref(),
                 None | Some(legacy_tool::Tool::Area)
@@ -970,13 +974,15 @@ impl Editor {
             && self.document.input.ready();
         let can_pick = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
         let mut start_pick = None;
+        let mut gamma_edited = false;
 
         egui::ScrollArea::vertical()
             .id_salt(("inspector", self.tab))
             .show(ui, |ui| {
                 self.auto_crop_controls(ui);
                 if self.tab == 0 {
-                    let mut input = self.document.input;
+                    let displayed_input = self.gamma_pivot_input();
+                    let mut input = displayed_input;
                     let mut stage_target = None;
                     ui.push_id("roll", |ui| {
                         let capabilities = input.capabilities();
@@ -1074,7 +1080,7 @@ impl Editor {
                             {
                                 let inversion_changed = *gamma != crate::processing::DEFAULT_GAMMA
                                     || *balance != Balance::default();
-                                let (_, reset) = presentation::section(
+                                let (_, reset) = presentation::section_with_secondary_tool(
                                     ui,
                                     "roll-gamma-balance",
                                     "Gamma & balance",
@@ -1095,19 +1101,26 @@ impl Editor {
                                         )),
                                         default_open: Some(true),
                                     },
+                                    self.gamma_pivot_tool(can_pick),
                                     |ui| {
-                                        ui.add_enabled_ui(editable, |ui| {
-                                            controls::parameter(ui, Parameter::Gamma, gamma);
-                                            controls::balance_body(
-                                                ui,
-                                                ColorControl::GammaBalance,
-                                                balance,
-                                            );
-                                        });
+                                        ui.add_enabled_ui(
+                                            editable || gamma_pending && !self.busy,
+                                            |ui| {
+                                                controls::parameter(ui, Parameter::Gamma, gamma);
+                                                controls::balance_body(
+                                                    ui,
+                                                    ColorControl::GammaBalance,
+                                                    balance,
+                                                );
+                                            },
+                                        );
                                     },
                                 );
                                 if reset.tool {
                                     start_pick = Some(Pick::Gamma);
+                                }
+                                if reset.secondary_tool {
+                                    self.control_command(editing::Command::GammaPivot, cx);
                                 }
                                 if reset.reset
                                     && !controls::defer_reset(ui, controls::Reset::GammaAndBalance)
@@ -1191,11 +1204,12 @@ impl Editor {
                         });
                     });
                     // A reset command may already have replaced the staged input for this frame.
-                    if self.document.input == initial_input {
+                    gamma_edited = !gamma_pivot::same_gamma(input, displayed_input);
+                    if self.document.input == initial_input && input != displayed_input {
                         self.document.input = input;
                     }
                     if let Some(target) = stage_target {
-                        self.request_input(target, cx);
+                        self.control_command(editing::Command::Input(target), cx);
                     }
                 } else if self.tab == 1 {
                     ui.add_enabled_ui(!reviewing, |ui| {
@@ -1310,7 +1324,7 @@ impl Editor {
 
         // Render outgoing numeric controls once to commit focus loss before switching stages.
         self.tab = next_tab;
-        (scope_slot, analyze)
+        (scope_slot, analyze, gamma_edited)
     }
 }
 
@@ -1414,11 +1428,10 @@ impl Editor {
             tool_escape_available,
         );
 
-        let previous_settings = editing::ControlSettings::capture(self);
         let was_dirty = self.document.dirty();
         self.disable_blocked_workspace(ui);
         self.workspace_chrome(ui, cx, &mut actions);
-        let (scope_slot, analyze) = self.edit_frame_controls(ui, cx, previous_settings);
+        let (scope_slot, analyze) = self.edit_frame_controls(ui, cx);
         if self.document.analysis_review().is_some() && !self.analysis_fitting() {
             self.stash_review_region();
         }

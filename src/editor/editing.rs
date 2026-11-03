@@ -8,6 +8,7 @@ impl Pick {
             Self::Dmin => calibration::DMIN,
             Self::Dmax => calibration::DMAX,
             Self::Gamma => calibration::GAMMA,
+            Self::GammaPivot => gamma_pivot::DISPLAY,
             Self::RollWb => white_balance::ROLL,
             Self::Wb => white_balance::LAYER,
             Self::Analysis => analysis::AREA_DISPLAY,
@@ -60,13 +61,14 @@ impl Editor {
             Pick::Dmin => calibration::pick_dmin(self, cx),
             Pick::Dmax => calibration::pick_dmax(self, cx),
             Pick::Gamma => calibration::pick_gamma(self, cx),
+            Pick::GammaPivot => gamma_pivot::pick(self, cx),
             Pick::RollWb => white_balance::pick_roll(self, cx),
             Pick::Wb => white_balance::pick_layer(self, cx),
             Pick::Analysis => return,
         };
         match result {
             Ok(task) => match kind {
-                Pick::Dmin | Pick::Dmax | Pick::Gamma => {
+                Pick::Dmin | Pick::Dmax | Pick::Gamma | Pick::GammaPivot => {
                     self.document.visit.calibration_action = Some(task)
                 }
                 Pick::RollWb | Pick::Wb => self.document.visit.white_balance_action = Some(task),
@@ -217,6 +219,7 @@ pub(super) enum PhotoAction {
 }
 
 pub(super) enum Command {
+    ForPhoto(SourceId, Box<Command>),
     Reset(Scope, controls::Reset),
     InvertAdjustmentLayer(crate::project::AdjustmentLayerId, bool),
     OrderInput {
@@ -230,6 +233,9 @@ pub(super) enum Command {
 
     CreateMask(bool),
     Pick(Pick),
+    GammaPivot,
+    Analyze,
+    Input(InputSettings),
     ResetRepairs(SourceId),
     Correction(Option<bool>),
     FlatEdit(PathBuf, Option<Rect>),
@@ -348,22 +354,35 @@ impl Editor {
     // Numeric widgets must resolve focus loss and pass admission before a separate
     // command takes its snapshot or changes the controls' availability.
     pub(super) fn control_command(&mut self, command: Command, cx: &UiContext<'_, Self>) {
-        if self.history_controls.is_some() {
+        if self.history_controls.is_some() || self.document.gamma_pivot.pending() {
+            let photo_bound = matches!(
+                &command,
+                Command::Photo(_)
+                    | Command::Pick(_)
+                    | Command::CreateMask(_)
+                    | Command::Adjustment(_)
+                    | Command::InvertAdjustmentLayer(..)
+                    | Command::OrderInput { .. }
+            );
+            let command = if photo_bound && let Some(source) = self.document.visit.current_source {
+                Command::ForPhoto(source, Box::new(command))
+            } else {
+                command
+            };
             self.control_commands.push(command);
         } else {
             self.apply_control_command(command, cx);
         }
     }
 
-    fn reset_control(&mut self, scope: Scope, reset: controls::Reset) {
+    fn reset_control(&mut self, scope: Scope, reset: controls::Reset, cx: &UiContext<'_, Self>) {
         let before = self.history_snapshot();
         let result = match scope {
             Scope::Roll => {
                 let previous = ControlSettings::capture(self);
                 let mut candidate = previous;
                 reset_roll(&mut candidate.input, &mut candidate.roll, reset);
-                self.validate_control_edit(previous, candidate)
-                    .map(|()| candidate.apply(self))
+                self.accept_manual_controls(previous, candidate, true, None, cx)
             }
             Scope::Photo(source, target) if Some(source) == self.document.visit.current_source => {
                 match target {
@@ -442,7 +461,17 @@ impl Editor {
 
     pub(super) fn apply_control_command(&mut self, command: Command, cx: &UiContext<'_, Self>) {
         match command {
-            Command::Reset(scope, reset) => self.reset_control(scope, reset),
+            Command::ForPhoto(source, command) => {
+                if self.document.visit.current_source == Some(source) {
+                    self.apply_control_command(*command, cx);
+                } else {
+                    self.status = "Action cancelled because the selected photo changed".into();
+                }
+            }
+            Command::Reset(scope, reset) => self.reset_control(scope, reset, cx),
+            Command::GammaPivot => self.toggle_gamma_pivot(cx),
+            Command::Analyze => self.request_analysis(cx),
+            Command::Input(input) => self.request_input(input, cx),
             Command::InvertAdjustmentLayer(id, invert) => {
                 if let Err(error) = self.edit_adjustment_layers(|layers| {
                     let record = layers

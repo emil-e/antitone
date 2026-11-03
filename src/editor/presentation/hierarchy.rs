@@ -228,6 +228,7 @@ pub struct SectionHeader<'a> {
 pub struct SectionAction {
     pub reset: bool,
     pub tool: bool,
+    pub secondary_tool: bool,
 }
 
 pub fn section<R>(
@@ -243,6 +244,27 @@ pub fn section<R>(
         title,
         header,
         SectionPresentation::Inspector,
+        None,
+        contents,
+    )
+}
+
+/// Inspector section with two related subject-level tools.
+pub fn section_with_secondary_tool<R>(
+    ui: &mut Ui,
+    id: &str,
+    title: &str,
+    header: SectionHeader<'_>,
+    secondary: SectionTool<'_>,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> (Option<R>, SectionAction) {
+    section_impl(
+        ui,
+        id,
+        title,
+        header,
+        SectionPresentation::Inspector,
+        Some(secondary),
         contents,
     )
 }
@@ -266,6 +288,7 @@ pub fn dialog_disclosure<R>(
             default_open: Some(false),
         },
         SectionPresentation::Dialog,
+        None,
         contents,
     )
     .0
@@ -402,6 +425,7 @@ fn section_impl<R>(
     title: &str,
     header: SectionHeader<'_>,
     presentation: SectionPresentation,
+    secondary: Option<SectionTool<'_>>,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> (Option<R>, SectionAction) {
     let SectionHeader {
@@ -455,7 +479,9 @@ fn section_impl<R>(
             } else {
                 CONTROL_HEIGHT
             };
-            let tools = usize::from(reset_enabled.is_some()) + usize::from(tool.is_some());
+            let tools = usize::from(reset_enabled.is_some())
+                + usize::from(tool.is_some())
+                + usize::from(secondary.is_some());
             let reset_width = tools as f32 * (row_height + ui.spacing().item_spacing.x);
             let width = if inspector {
                 ui.available_width() - reset_width
@@ -480,8 +506,14 @@ fn section_impl<R>(
             if let Some(enabled) = reset_enabled {
                 action.reset |= reset_button_at(ui, enabled, title, row_height).clicked();
             }
-            if let Some(tool) = tool {
-                action.tool |= icons::button_at(
+            for (tool, clicked) in [
+                (tool, &mut action.tool),
+                (secondary, &mut action.secondary_tool),
+            ] {
+                let Some(tool) = tool else {
+                    continue;
+                };
+                *clicked |= icons::button_at(
                     ui,
                     tool.icon,
                     tool.enabled && inspector,

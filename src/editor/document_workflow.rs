@@ -39,7 +39,8 @@ impl Editor {
         }
         self.retire_pick_actions();
         self.cancel_spatial();
-        self.document.history.finish_group();
+        self.finish_gamma_edit();
+        self.control_commands.clear();
         self.history_pending = match &work {
             Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
             Preparation::Import(..) | Preparation::Correction(..) | Preparation::Input(..) => {
@@ -278,6 +279,7 @@ impl Editor {
                 .into();
                 log::info!(request = id; "document_ready");
                 self.history_prepared(pending_history);
+                self.observe_gamma_pivot();
                 if let Some(kind) = failure_kind {
                     self.resolve_failure(kind);
                 }

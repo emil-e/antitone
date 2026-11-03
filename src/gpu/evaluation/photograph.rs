@@ -184,14 +184,34 @@ impl Photograph {
         field: Option<Arc<GpuFlatField>>,
         origins: &[[u32; 2]],
     ) -> Result<Arc<ImageNode>, Error> {
+        Self::camera_patches(source, field, origins, [8, 8])
+    }
+
+    /// Individually selected original cells, retaining their physical correction coordinates.
+    #[cfg(feature = "editor")]
+    pub(crate) fn camera_samples(
+        source: Arc<ImageNode>,
+        field: Option<Arc<GpuFlatField>>,
+        positions: &[[u32; 2]],
+    ) -> Result<Arc<ImageNode>, Error> {
+        Self::camera_patches(source, field, positions, [1, 1])
+    }
+
+    #[cfg(feature = "editor")]
+    fn camera_patches(
+        source: Arc<ImageNode>,
+        field: Option<Arc<GpuFlatField>>,
+        origins: &[[u32; 2]],
+        patch: [u32; 2],
+    ) -> Result<Arc<ImageNode>, Error> {
         let height = u32::try_from(origins.len())
             .ok()
-            .and_then(|count| count.checked_mul(8))
+            .and_then(|count| count.checked_mul(patch[1]))
             .filter(|height| *height > 0)
             .ok_or(Error::InvalidParameter("invalid camera footprint batch"))?;
 
         if source.domain.meaning != Meaning::CameraCodes
-            || source.domain.bounds != Some(CellRegion::new([0, 0], [8, height]))
+            || source.domain.bounds != Some(CellRegion::new([0, 0], [patch[0], height]))
             || source.domain.grid != Grid::axis_aligned([0.; 2], [1.; 2])
         {
             return Err(Error::InvalidParameter(
@@ -222,7 +242,8 @@ impl Photograph {
             ),
             "gathered_camera_light",
         )
-        .with_storage(18, bytemuck::cast_slice(origins).to_vec());
+        .with_storage(18, bytemuck::cast_slice(origins).to_vec())
+        .with_uniform(19, &[patch[0], patch[1], 0u32, 0u32]);
         let function = captured.bind_field(function, &geometry);
         Ok(pointwise(source, Meaning::Camera, function))
     }

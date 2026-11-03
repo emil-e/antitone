@@ -43,6 +43,22 @@ impl crate::editor::tool::Tool for OwnedInteraction {
 }
 
 #[test]
+fn admitted_menu_commands_follow_the_document_owner_not_an_installed_snapshot() {
+    let mut scope = DocumentScope::from(Document::default());
+    scope
+        .deferred_menu
+        .push_back(crate::platform::menu::Action::Save);
+    let snapshot = scope.capture();
+    scope.install(snapshot.clone());
+    assert_eq!(
+        scope.deferred_menu.front(),
+        Some(&crate::platform::menu::Action::Save)
+    );
+    let replacement = scope.replacement(snapshot);
+    assert!(replacement.deferred_menu.is_empty());
+}
+
+#[test]
 fn document_retirement_drops_child_continuations_and_cache_despite_captured_snapshots() {
     let scope = DocumentScope::from(Document::default());
     let snapshot = scope.capture();

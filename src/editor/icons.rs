@@ -30,6 +30,7 @@ pub(super) enum Icon {
     AddLinearGradient,
     AddRadialGradient,
     Pick,
+    Pin { active: bool, filled: bool },
     Dust,
     Swap,
     Guides,
@@ -50,6 +51,32 @@ impl Icon {
             ));
         };
         match self {
+            Self::Pin { active, filled } => {
+                let stroke = if active {
+                    Stroke::new(stroke.width, ui.visuals().selection.stroke.color)
+                } else {
+                    stroke
+                };
+                let head = vec![
+                    point(5., 2.),
+                    point(11., 2.),
+                    point(10., 7.),
+                    point(12., 10.),
+                    point(4., 10.),
+                    point(6., 7.),
+                ];
+                ui.painter().add(egui::Shape::convex_polygon(
+                    head,
+                    if filled {
+                        stroke.color
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    },
+                    stroke,
+                ));
+                ui.painter()
+                    .line_segment([point(8., 10.), point(8., 15.)], stroke);
+            }
             Self::Pending => {
                 ui.painter().circle_stroke(point(8., 8.), 6., stroke);
                 line(&[[8., 4.], [8., 8.], [11., 10.]]);
