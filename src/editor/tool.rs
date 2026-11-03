@@ -52,6 +52,9 @@ pub(super) trait Tool: Any {
         &mut editor.active_canvas_mut().viewport
     }
     fn drawer(&mut self, _ui: &mut egui::Ui, _editor: &mut Editor, _cx: &UiContext<'_, Editor>) {}
+    fn filmstrip(&mut self, ui: &mut egui::Ui, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
+        editor.filmstrip(ui, cx);
+    }
     fn canvas(
         &mut self,
         canvas: &mut canvas::Canvas<'_>,
@@ -102,7 +105,7 @@ pub(super) enum Slot {
     Executing(Info),
 }
 impl Slot {
-    fn occupied(&self) -> bool {
+    pub(super) fn occupied(&self) -> bool {
         !matches!(self, Self::Empty)
     }
     pub(super) fn activity(&self, editor: &Editor) -> Option<TaskRequest> {
@@ -228,7 +231,6 @@ impl Editor {
         match self.document.tool.as_ref() {
             Some(legacy_tool::Tool::Mask(_)) => self.finish_mask(false),
             Some(legacy_tool::Tool::Analyze(_)) => self.close_analysis(),
-            Some(legacy_tool::Tool::AutoCrop(_)) => self.finish_auto_crop(false),
             Some(legacy_tool::Tool::Flat(_)) => self.finish_flat_edit(),
             None => {}
         }

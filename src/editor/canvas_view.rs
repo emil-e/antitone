@@ -7,12 +7,20 @@ pub(super) type Preview = (
     Arc<crate::gpu::view::RenderedView>,
 );
 
+/// The photograph and sampling actually passed to this canvas's paint callback.
+pub(super) struct Displayed {
+    pub view: Arc<crate::gpu::view::RenderedView>,
+    pub mapping: crate::geometry::TextureMapping,
+    pub size: [u32; 2],
+}
+
 /// Image and interaction state selected by the shared canvas and viewer controls.
 #[derive(Default)]
 pub(super) struct CanvasView {
     pub ready: Option<Ready>,
     pub viewport: Viewport,
     pub last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
+    pub displayed: Option<Displayed>,
     pub pick_drag: Option<PickDrag>,
     pub preview_rendered: Option<Preview>,
     pub selection_timing: Option<Arc<super::SelectionTiming>>,

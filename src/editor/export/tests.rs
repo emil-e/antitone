@@ -59,8 +59,8 @@ impl Editor {
         overwrite: Overwrite,
         cx: &UiContext<'_, Self>,
     ) {
-        if self.document.auto_crop_edit().is_some() {
-            self.status = "Apply or cancel auto-crop before exporting".into();
+        if self.tool_interacting() {
+            self.status = "Finish the active tool before exporting".into();
             return;
         }
         if self

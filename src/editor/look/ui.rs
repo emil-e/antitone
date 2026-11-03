@@ -90,7 +90,6 @@ impl Editor {
 
     fn lut_controls_allowed(&self, slot: Slot) -> bool {
         self.look_request_allowed(slot)
-            && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()
             && !self.masking()

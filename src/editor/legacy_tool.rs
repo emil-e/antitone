@@ -8,17 +8,10 @@ pub(super) struct Analyze {
     review: Option<analysis_review::Review>,
 }
 
-#[derive(Default)]
-pub(super) struct AutoCrop {
-    operation: auto_crop::Operation,
-    draft: Option<auto_crop::Draft>,
-}
-
 /// Legacy interactions not yet migrated to the shared tool host.
 pub(super) enum Tool {
     Mask(Box<MaskEdit>),
     Analyze(Box<Analyze>),
-    AutoCrop(Box<AutoCrop>),
     Flat(Box<FlatEdit>),
 }
 
@@ -39,11 +32,6 @@ impl Editor {
                     .map(|work| TaskRequest::Regions(work.id)),
                 analysis_workflow::Phase::Review => None,
             },
-            Some(Tool::AutoCrop(action)) if action.draft.is_none() => self
-                .document
-                .spatial_preparing
-                .as_ref()
-                .map(|work| TaskRequest::Regions(work.id)),
             Some(Tool::Flat(edit)) => edit.activity,
             _ => None,
         }
@@ -181,67 +169,6 @@ impl DocumentScope {
     pub fn take_analysis_review(&mut self) -> Option<analysis_review::Review> {
         match self.tool.as_mut() {
             Some(Tool::Analyze(tool)) => tool.review.take(),
-            _ => None,
-        }
-    }
-
-    pub fn auto_crop_operation(&self) -> Option<&auto_crop::Operation> {
-        match self.tool.as_ref() {
-            Some(Tool::AutoCrop(tool)) => Some(&tool.operation),
-            _ => None,
-        }
-    }
-
-    pub fn auto_crop_operation_mut(&mut self) -> Option<&mut auto_crop::Operation> {
-        match self.tool.as_mut() {
-            Some(Tool::AutoCrop(tool)) => Some(&mut tool.operation),
-            _ => None,
-        }
-    }
-
-    pub fn set_auto_crop_operation(&mut self, operation: Option<auto_crop::Operation>) {
-        match operation {
-            Some(operation) => {
-                self.set_legacy_tool(Tool::AutoCrop(Box::new(AutoCrop {
-                    operation,
-                    draft: None,
-                })));
-            }
-            None if matches!(self.tool.as_ref(), Some(Tool::AutoCrop(_))) => self.tool.clear(),
-            None => {}
-        }
-    }
-
-    pub fn auto_crop_edit(&self) -> Option<&auto_crop::Draft> {
-        match self.tool.as_ref() {
-            Some(Tool::AutoCrop(tool)) => tool.draft.as_ref(),
-            _ => None,
-        }
-    }
-
-    pub fn auto_crop_edit_mut(&mut self) -> Option<&mut auto_crop::Draft> {
-        match self.tool.as_mut() {
-            Some(Tool::AutoCrop(tool)) => tool.draft.as_mut(),
-            _ => None,
-        }
-    }
-
-    pub fn set_auto_crop_edit(&mut self, draft: Option<auto_crop::Draft>) {
-        match self.tool.as_mut() {
-            Some(Tool::AutoCrop(tool)) => tool.draft = draft,
-            _ if draft.is_some() => {
-                self.set_legacy_tool(Tool::AutoCrop(Box::new(AutoCrop {
-                    operation: Default::default(),
-                    draft,
-                })));
-            }
-            _ => {}
-        }
-    }
-
-    pub fn take_auto_crop_edit(&mut self) -> Option<auto_crop::Draft> {
-        match self.tool.as_mut() {
-            Some(Tool::AutoCrop(tool)) => tool.draft.take(),
             _ => None,
         }
     }

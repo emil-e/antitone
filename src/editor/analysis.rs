@@ -229,7 +229,6 @@ impl Editor {
             && self.document.visit.canvas.ready.is_some()
             && !self.picking()
             && !self.cropping()
-            && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && !self.masking()
             && !reviewing
@@ -301,7 +300,9 @@ impl Editor {
                 }
             }
             if capabilities.auto_crop {
-                let cropping = self.document.auto_crop_operation().is_some();
+                let cropping = self
+                    .current_tool()
+                    .is_some_and(|tool| tool.is::<auto_crop::AutoCropTool>());
                 if ToolButton::tool(
                     Icon::Crop,
                     "Auto-crop roll",

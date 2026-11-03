@@ -523,7 +523,7 @@ fn roll_review_controls_restore_scope_visibility_and_context() {
                     editor.preferences.scopes_visible = scopes_visible;
                     prepared(editor, cx);
                     assert_eq!(editor.tab, 0);
-                    assert!(!editor.scopes.visible);
+                    assert_eq!(editor.scopes.visible, scopes_visible);
                     let ctx = egui::Context::default();
                     super::super::super::tests::app_frame(editor, &ctx, vec![]);
                     assert_eq!(editor.preferences.scopes_visible, scopes_visible);

@@ -7,12 +7,11 @@ impl Editor {
 
         let cropping = self.cropping();
         let dusting = self.dusting();
-        let auto_cropping = self.document.auto_crop_edit().is_some();
         let tool_active = self.tool_interacting();
         let ready = !self.busy && self.document.visit.canvas.ready.is_some();
         let commands_enabled = ready && !tool_active && !self.picking();
         let tool_ready = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
-        let crop_enabled = cropping || auto_cropping || tool_ready;
+        let crop_enabled = cropping || tool_ready;
         let dust_enabled = dusting || tool_ready && self.document.input.ready();
         let repairs_changed = self
             .document
@@ -67,12 +66,12 @@ impl Editor {
             if ToolButton::tool(
                 Icon::Crop,
                 "Crop & straighten",
-                if cropping || auto_cropping {
+                if cropping {
                     "Exit crop without applying the draft."
                 } else {
                     "Edit this photo's crop and straighten."
                 },
-                cropping || auto_cropping,
+                cropping,
             )
             .enabled(crop_enabled)
             .changed(self.document.visit.crop.is_some())

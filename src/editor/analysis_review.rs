@@ -160,8 +160,6 @@ impl Editor {
                     replaces_photos,
                 }));
                 self.tab = 0;
-                // Positive-only scopes have no data in the source sampling tool.
-                self.scopes.visible = false;
                 self.show_legacy_picker(analysis::AREA_DISPLAY);
                 self.refresh_review_region();
                 self.document.visit.canvas.viewport.fit();
@@ -292,7 +290,6 @@ impl Editor {
     pub(super) fn close_analysis(&mut self) {
         self.cancel_legacy_picker();
         self.document.set_analysis_operation(None);
-        self.scopes.visible = self.preferences.scopes_visible;
     }
 
     pub(super) fn confirm_analysis_review(&mut self, _cx: &UiContext<'_, Self>) {

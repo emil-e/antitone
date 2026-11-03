@@ -227,9 +227,7 @@ impl Editor {
     pub(super) fn apply_photo_action(&mut self, action: PhotoAction) {
         match action {
             PhotoAction::Crop => {
-                if self.document.auto_crop_edit().is_some() {
-                    self.finish_auto_crop(false);
-                } else if self.cropping() {
+                if self.cropping() {
                     self.hosted_action(tool::Action::Dismiss);
                 } else {
                     self.begin_crop();

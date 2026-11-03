@@ -407,6 +407,20 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         let signature = h.read(|editor| editor.dust_signature().unwrap());
         let evaluated = h.read(|editor| editor.dust_evaluations(signature));
         let expected = h.read(|editor| editor.document.state.project.clone());
+        h.read(|editor| {
+            assert!(
+                !editor
+                    .application_menu_state()
+                    .enabled(crate::platform::menu::Action::Save)
+            )
+        });
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Done")
+            .click();
+        h.step();
+        h.read(|editor| {
+            assert!(!editor.dusting());
+            assert_eq!(editor.document.state.project, expected);
+        });
         native_file_action(&mut h, crate::platform::menu::Action::New);
         h.run();
         h.read(|editor| {
@@ -460,11 +474,8 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                 .clone()
         });
         assert_eq!(view.processing().look_id(), Some(look.lut().id()));
-        let scopes::ScopeInput::Rendered(scope, _) =
-            h.read(|editor| editor.scope_request().unwrap())
-        else {
-            panic!("scopes did not follow restored repairs")
-        };
+        let scopes::ScopeInput { view: scope, .. } =
+            h.read(|editor| editor.scope_request().unwrap());
         assert!(Arc::ptr_eq(&scope, &view));
         h.get_by_label("Original-resolution reference").click();
         h.step();
@@ -511,9 +522,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                     .unwrap()
                     .1
             ));
-            let scopes::ScopeInput::Rendered(scope, _) = editor.scope_request().unwrap() else {
-                panic!("scopes did not follow the restored original reference")
-            };
+            let scopes::ScopeInput { view: scope, .. } = editor.scope_request().unwrap();
             assert!(Arc::ptr_eq(&scope, reference));
             assert_eq!(editor.document.state.project, expected);
         });

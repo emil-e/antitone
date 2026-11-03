@@ -132,7 +132,7 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
         });
         app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
         app.enter(|editor, _| editor.finish_auto_crop(true));
-        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_none());
+        app.run_until(LIMIT, |editor| !editor.document.auto_crop.reviewing());
         let accepted = app.read(|editor| {
             let crop = editor
                 .document

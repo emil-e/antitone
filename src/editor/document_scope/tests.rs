@@ -121,7 +121,6 @@ fn unmatched_tool_accessors_preserve_the_owner_and_taking_it_transfers_its_lifet
             scope.set_mask_edit(None);
             scope.set_flat_edit(None);
             scope.set_analysis_operation(None);
-            scope.set_auto_crop_operation(None);
             scope.clear_dust();
             assert!(scope.visit.hosted_tool.installed().is_some());
         });

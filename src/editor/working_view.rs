@@ -275,6 +275,7 @@ impl WorkingView {
             .is_some_and(|(frame, wanted)| frame.satisfies(wanted))
     }
 
+    #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn current_frame(&self) -> Option<FrameRaster> {
         self.wanted.as_ref().map(|wanted| wanted.spec.frame())
     }

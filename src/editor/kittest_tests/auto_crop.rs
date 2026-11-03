@@ -1,4 +1,5 @@
 use super::*;
+mod interaction;
 mod margin;
 mod overlay;
 mod photo;
@@ -176,7 +177,7 @@ fn prior_crop(h: &mut Harness<'_, Editor>) -> Crop {
 }
 
 fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
-    h.read(|editor| assert!(editor.document.auto_crop_edit().is_none()));
+    h.read(|editor| assert!(!editor.document.auto_crop.reviewing()));
     wait_for(h, |e| {
         assert!(
             e.document.visit.working_view.error.is_none(),
@@ -212,21 +213,19 @@ fn wait_crop(h: &mut Harness<'_, Editor>, crop: Crop) {
     assert!(timing.ready_was_painted());
     let input = h.read(|editor| editor.scope_request().unwrap());
     assert_eq!(input.frame().composition.crop(), crop);
-    match input {
-        scopes::ScopeInput::Rendered(view, _) => h.read(|editor| {
-            assert!(Arc::ptr_eq(
-                &view,
-                editor
-                    .document
-                    .visit
-                    .working_view
-                    .displayed
-                    .as_ref()
-                    .unwrap()
-            ))
-        }),
-        _ => panic!("scopes must consume the accepted physical working/original view"),
-    }
+    let scopes::ScopeInput { view, .. } = input;
+    h.read(|editor| {
+        assert!(Arc::ptr_eq(
+            &view,
+            editor
+                .document
+                .visit
+                .working_view
+                .displayed
+                .as_ref()
+                .unwrap()
+        ))
+    });
 }
 
 fn assert_lifecycle(h: &Harness<'_, Editor>, size: egui::Vec2) {
@@ -470,7 +469,7 @@ fn photo_auto_crop_initializes_the_normal_crop_draft_at_both_layouts() {
             click_action(&mut h, "Auto-crop");
             let proposed = margin::expected_crop(&h, source, 0.5);
             h.read(|editor| assert_eq!(editor.document.crop_edit().unwrap().draft, proposed));
-            h.read(|editor| assert!(editor.document.auto_crop_edit().is_none()));
+            h.read(|editor| assert!(!editor.document.auto_crop.reviewing()));
             h.read(|editor| assert_eq!(editor.document.state.project, before));
             h.read(|editor| assert_eq!(editor.document.visit.crop, Some(old)));
             h.read(|editor| assert!(!editor.document.dirty()));
@@ -675,7 +674,7 @@ fn whole_roll_entry_ignores_selection_and_keeps_abstentions_unchanged() {
         }
         click_action(&mut h, "Apply");
         h.read(|editor| assert_eq!(editor.document.state.project, expected));
-        h.read(|editor| assert!(editor.document.auto_crop_edit().is_none()));
+        h.read(|editor| assert!(!editor.document.auto_crop.reviewing()));
     });
 }
 
@@ -728,7 +727,7 @@ fn selected_look_cards_validate_auto_crop_preview_framing_without_mutating_the_a
                 .is_none()
         );
         click_action(&mut h, "Cancel");
-        h.read(|editor| assert!(editor.document.auto_crop_edit().is_none()));
+        h.read(|editor| assert!(!editor.document.auto_crop.reviewing()));
         wait_for(&mut h, |editor| {
             editor
                 .document
@@ -758,7 +757,7 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
         h.read(|editor| {
             assert!(
                 editor.fullscreen.is_some()
-                    && editor.document.auto_crop_edit().is_some()
+                    && editor.document.auto_crop.reviewing()
                     && !editor.auto_crop_context()
             )
         });
@@ -777,7 +776,7 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
         });
         h.key_press(egui::Key::Enter);
         h.step();
-        h.read(|editor| assert!(editor.document.auto_crop_edit().is_some()));
+        h.read(|editor| assert!(editor.document.auto_crop.reviewing()));
         h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.key_press(egui::Key::Escape);
         h.step();
@@ -794,7 +793,7 @@ fn fullscreen_pauses_auto_crop_and_escape_returns_to_the_tool_before_cancelling_
         h.key_press(egui::Key::Escape);
         h.step();
         h.step();
-        h.read(|editor| assert!(editor.document.auto_crop_edit().is_none()));
+        h.read(|editor| assert!(!editor.document.auto_crop.reviewing()));
         h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.read(|editor| assert!(!editor.document.dirty()));
         wait_crop(&mut h, old);

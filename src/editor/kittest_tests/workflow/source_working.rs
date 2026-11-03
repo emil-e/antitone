@@ -369,9 +369,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                 !editor.document.visit.working_view.support_ready()
                     && editor.document.visit.working_view.displayed.is_none()
             );
-            if film {
-                assert!(matches!(editor.scope_request(), Err("Waiting for view")));
-            }
+            let scopes::ScopeInput { view: scope, .. } = editor.scope_request().unwrap();
             let preview = editor
                 .document
                 .visit
@@ -379,6 +377,10 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                 .preview_rendered
                 .as_ref()
                 .expect("available proxy preview");
+            assert!(
+                Arc::ptr_eq(&scope, &preview.2),
+                "scopes follow the painted fallback even while acquisition is parked"
+            );
             assert!(
                 preview
                     .0
@@ -411,9 +413,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
                 .displayed
                 .as_ref()
                 .unwrap();
-            let scopes::ScopeInput::Rendered(view, _) = editor.scope_request().unwrap() else {
-                panic!("scopes must resume from the accepted rendered view");
-            };
+            let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
             assert!(Arc::ptr_eq(&view, displayed));
             if film {
                 assert_eq!(
@@ -643,10 +643,12 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                 )
             });
             harness.read(|editor| {
-                assert!(
-                    editor.scope_request().is_err(),
-                    "source inspection still suspends photographic scopes"
-                )
+                let scopes::ScopeInput { view: scope, .. } = editor.scope_request().unwrap();
+                assert!(scope.spec.is_inspection());
+                assert!(Arc::ptr_eq(
+                    &scope,
+                    &editor.active_canvas().displayed.as_ref().unwrap().view
+                ));
             });
             harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
             harness.read(|editor| assert!(!editor.document.visit.canvas.grade.original.refining()));

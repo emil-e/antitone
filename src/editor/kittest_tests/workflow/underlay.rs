@@ -117,15 +117,11 @@ fn physical_view_underlay_keeps_navigation_covered_during_blocked_acquisition_an
             });
             wait_for(&mut harness, |e| {
                 let input = e.scope_request().unwrap();
-                match &input {
-                    scopes::ScopeInput::Rendered(view, _) => {
-                        assert!(Arc::ptr_eq(
-                            view,
-                            e.document.visit.working_view.displayed.as_ref().unwrap()
-                        ))
-                    }
-                    _ => panic!("scopes must share the accepted coverage composite"),
-                }
+                let scopes::ScopeInput { view, .. } = &input;
+                assert!(Arc::ptr_eq(
+                    view,
+                    e.document.visit.working_view.displayed.as_ref().unwrap()
+                ));
                 let settings = crate::scopes::Settings {
                     target: e.document.target,
                     plot: if e.scopes.vector {

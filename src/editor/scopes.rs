@@ -179,17 +179,16 @@ impl Scopes {
     }
 }
 
-pub(super) enum ScopeInput {
-    Proxy(Arc<GpuImage>, Box<ProcessingInput>, FrameRaster),
-    Rendered(Arc<crate::gpu::view::RenderedView>, FrameRaster),
+pub(super) struct ScopeInput {
+    pub view: Arc<crate::gpu::view::RenderedView>,
+    pub frame: FrameRaster,
+    pub mapping: crate::geometry::TextureMapping,
 }
 
 impl ScopeInput {
     #[cfg(all(test, feature = "ui-tests"))]
     pub(super) fn frame(&self) -> FrameRaster {
-        match self {
-            Self::Proxy(_, _, f) | Self::Rendered(_, f) => *f,
-        }
+        self.frame
     }
 
     pub(super) fn status(
@@ -197,12 +196,7 @@ impl ScopeInput {
         gpu: &GpuScopes,
         settings: Settings,
     ) -> Option<Result<crate::scopes::Counts, String>> {
-        match self {
-            Self::Proxy(image, input, frame) => {
-                gpu.status_processing(image, input, *frame, settings)
-            }
-            Self::Rendered(view, frame) => gpu.status_rendered(view, *frame, settings),
-        }
+        gpu.status_mapped_rendered(&self.view, self.frame, self.mapping, settings)
     }
 
     fn paint(
@@ -212,46 +206,35 @@ impl ScopeInput {
         submissions: crate::gpu::SubmissionGate,
         context: egui::Context,
     ) -> ScopePaint {
-        match self {
-            Self::Rendered(view, frame) => {
-                ScopePaint::rendered(gpu, view.clone(), *frame, settings, submissions, context)
-            }
-            Self::Proxy(image, input, frame) => ScopePaint::with_processing(
-                gpu,
-                image.clone(),
-                input.as_ref().clone(),
-                *frame,
-                settings,
-                context,
-            )
-            .expect("validated scope input"),
-        }
+        ScopePaint::mapped_rendered(
+            gpu,
+            self.view.clone(),
+            self.frame,
+            self.mapping,
+            settings,
+            submissions,
+            context,
+        )
     }
 }
 
 impl Editor {
     pub(super) fn scope_request(&self) -> Result<ScopeInput, &'static str> {
-        let (ready, parameters, composition) = self.scope_basis()?;
-        if let Some(view) = &self.document.visit.working_view.displayed
-            && let Some(visible) = self.document.visit.working_view.current_frame()
-        {
-            // Bound scope sampling, not photographic detail. Read the accepted target raster without
-            // grading, ACES, source-proxy mapping or a second composition.
-            let scale = (f64::from(visible.output[0].max(visible.output[1])) / 1024.).max(1.);
-            let frame = FrameRaster {
-                output: visible.output.map(|v| (f64::from(v) / scale).ceil() as u32),
-                ..visible
-            };
-            Ok(ScopeInput::Rendered(view.clone(), frame))
-        } else if !parameters.pixel_pipeline().is_empty() {
-            // Camera proxies can lose original-sample detail; wait for the same
-            // source-anchored emulation raster as the viewer rather than reprocessing that proxy.
-            Err("Waiting for view")
-        } else {
-            let (image, parameters, frame) =
-                self.proxy_scope_input(ready, parameters, composition)?;
-            Ok(ScopeInput::Proxy(image, Box::new(parameters), frame))
-        }
+        let displayed = self
+            .active_canvas()
+            .displayed
+            .as_ref()
+            .ok_or("Waiting for view")?;
+        let mut frame = displayed.view.spec.frame();
+        let scale = (f64::from(displayed.size[0].max(displayed.size[1])) / 1024.).max(1.);
+        frame.output = displayed
+            .size
+            .map(|v| (f64::from(v) / scale).ceil().max(1.) as u32);
+        Ok(ScopeInput {
+            view: displayed.view.clone(),
+            frame,
+            mapping: displayed.mapping,
+        })
     }
 
     pub(super) fn scope_panel(&mut self, ui: &mut egui::Ui) -> Option<Slot> {
@@ -266,89 +249,18 @@ impl Editor {
     pub(super) fn scope_input(
         &self,
     ) -> Result<(Arc<GpuImage>, ProcessingInput, FrameRaster), &'static str> {
-        let (ready, parameters, composition) = self.scope_basis()?;
-        self.proxy_scope_input(ready, parameters, composition)
-    }
-
-    fn scope_basis(&self) -> Result<(&Ready, ProcessingInput, Composition), &'static str> {
-        if self.canvas_inspection() {
-            return Err("Positive grade only");
-        }
-        if self.busy || self.document_pending.is_some() {
-            return Err("Waiting for image");
-        }
-        if self.cropping() {
-            return Err("Apply crop to update scopes");
-        }
-        let ready = self
+        let ScopeInput { view, frame, .. } = self.scope_request()?;
+        let device = self
             .document
             .visit
-            .canvas
-            .ready
-            .as_ref()
-            .ok_or("No image")?;
-        let parameters = self
-            .view_processing(
-                self.input(),
-                self.document.roll,
-                self.document.visit.adjustment_layer_settings,
-            )
-            .map_err(|_| "Positive grade unavailable")?;
-        let composition = Composition::with_crop(
-            ready.area,
-            self.document.roll_orientation,
-            self.document.visit.photo_orientation,
-            if self.auto_crop_context() {
-                None
-            } else {
-                self.document.visit.crop
-            },
-        )
-        .map_err(|_| "Composition unavailable")?;
-        self.document
-            .visit
-            .canvas
-            .last_layout
-            .ok_or("Waiting for view")?;
-        Ok((ready, parameters, composition))
-    }
-
-    fn proxy_scope_input(
-        &self,
-        ready: &Ready,
-        parameters: ProcessingInput,
-        composition: Composition,
-    ) -> Result<(Arc<GpuImage>, ProcessingInput, FrameRaster), &'static str> {
-        let image = ready
-            .proxy
-            .image(self.document.target)
-            .map_err(|_| "View unavailable")?;
-        if parameters.grade().is_some() {
-            image
-                .require_processing(&parameters)
-                .map_err(|_| "Positive grade unavailable")?;
-        }
-        let (layout, pixels_per_point) = self
-            .document
-            .visit
-            .canvas
-            .last_layout
-            .ok_or("Waiting for view")?;
-        let mut viewport = self.document.visit.canvas.viewport;
-        let visible = viewport
-            .layout_composition(layout.canvas, composition, pixels_per_point)
-            .frame_raster(pixels_per_point);
-        // Zoom changes coverage, not the retained proxy's source sampling pitch.
-        let pitch = (f64::from(ready.area.width) / f64::from(image.linear.width()))
-            .max(f64::from(ready.area.height) / f64::from(image.linear.height()));
-        let size = std::array::from_fn(|i| {
-            ((visible.max.0[i] - visible.min.0[i]) / pitch)
-                .round()
-                .clamp(1., 1024.) as u32
-        });
-        let frame = FrameRaster::new(composition, visible.min, visible.max, size)
-            .map_err(|_| "Composition unavailable")?;
-        Ok((image, parameters, frame))
+            .working_view
+            .device()
+            .ok_or("No device")?;
+        let input = view
+            .capture
+            .processing(&device.limits(), &view.spec.repairs)
+            .map_err(|_| "View processing unavailable")?;
+        Ok((view.image.clone(), input, frame))
     }
 
     pub(super) fn paint_scope(&self, slot: Option<Slot>) {
@@ -358,11 +270,21 @@ impl Editor {
             }
             return;
         };
-        // Output can change later in the controls; use the accepted end-of-frame target/settings.
-        slot.settings.target = self.document.target;
+        // The plotted codes belong to the painted image, even while a new target is pending.
+        slot.settings.target = self
+            .active_canvas()
+            .displayed
+            .as_ref()
+            .map_or(self.document.target, |image| image.view.target);
         slot.painter
             .rect_filled(slot.plot, 3., egui::Color32::from_gray(6));
-        if let Some(error) = self.look_rendering_error() {
+        if let Some(error) = self
+            .active_canvas()
+            .displayed
+            .as_ref()
+            .and_then(|image| image.view.image.look_result())
+            .and_then(Result::err)
+        {
             if let Some(gpu) = &self.scopes.gpu {
                 gpu.invalidate();
             }
@@ -433,13 +355,6 @@ impl Editor {
             slot.settings,
         );
         let status = input.status(gpu, slot.settings);
-        let status = if matches!(input, ScopeInput::Rendered(..))
-            && self.document.visit.working_view.updating
-        {
-            None
-        } else {
-            status
-        };
         if let Some((text, color)) = scope_feedback(status)
             && scope_notice(
                 &slot.painter,

@@ -867,9 +867,6 @@ impl Editor {
         self.candidate_operation = document_workflow::State::default();
         self.finish_flat_edit();
         self.retire_look_selection();
-        if self.document.auto_crop_edit().is_some() {
-            self.finish_auto_crop(false);
-        }
         if self.dusting() {
             self.end_tool();
         }
@@ -973,7 +970,11 @@ impl Editor {
         egui::ScrollArea::vertical()
             .id_salt(("inspector", self.tab))
             .show(ui, |ui| {
-                self.auto_crop_controls(ui);
+                if self.document.hosted_tool.occupied() {
+                    self.hosted_drawer(ui, cx);
+                } else if self.tab == 1 {
+                    ui.add_enabled_ui(!reviewing && !self.busy, |ui| self.hosted_drawer(ui, cx));
+                }
                 if self.tab == 0 {
                     let displayed_input = self.gamma_pivot_input();
                     let mut input = displayed_input;
@@ -1206,9 +1207,6 @@ impl Editor {
                         self.control_command(editing::Command::Input(target), cx);
                     }
                 } else if self.tab == 1 {
-                    ui.add_enabled_ui(!reviewing, |ui| {
-                        ui.add_enabled_ui(!self.busy, |ui| self.hosted_drawer(ui, cx));
-                    });
                     if self.adjustment_layer_controls(ui, cx, editable, can_pick) {
                         start_pick = Some(Pick::Wb);
                     }
@@ -1216,7 +1214,6 @@ impl Editor {
                     if self.document.input.capabilities().grain {
                         let allowed = !self.busy
                             && !reviewing
-                            && self.document.auto_crop_edit().is_none()
                             && self.document.flat_edit().is_none()
                             && !self.masking();
                         ui.add_enabled_ui(allowed, |ui| {
@@ -1243,10 +1240,7 @@ impl Editor {
                     }
                     self.look_controls(ui, cx);
                     ui.add_enabled_ui(
-                        !reviewing
-                            && self.document.auto_crop_edit().is_none()
-                            && self.document.flat_edit().is_none()
-                            && !self.masking(),
+                        !reviewing && self.document.flat_edit().is_none() && !self.masking(),
                         |ui| {
                             let changed = self.document.target != OutputTarget::DisplayP3;
                             let (_, action) = presentation::section(

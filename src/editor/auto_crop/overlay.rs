@@ -57,45 +57,30 @@ fn cursor(q: [egui::Pos2; 4], handle: [i8; 2]) -> egui::CursorIcon {
     }
 }
 
-impl Editor {
-    pub(in crate::editor) fn auto_crop_context(&self) -> bool {
-        self.fullscreen.is_none()
-            && !self.cropping()
-            && !self.picking()
-            && self.document.flat_edit().is_none()
-            && self
-                .document
-                .auto_crop_edit()
-                .is_some_and(|d| d.belongs_to(self))
+impl Draft {
+    pub(super) fn context(&self, editor: &Editor) -> bool {
+        editor.fullscreen.is_none() && self.belongs_to(editor)
     }
 
-    pub(super) fn auto_crop_margin_entry(&self) -> Option<&Entry> {
-        let id = self.document.visit.current_source?;
-        self.document
-            .auto_crop_edit()?
-            .entries
+    fn margin_entry(&self, editor: &Editor) -> Option<&Entry> {
+        let id = editor.document.visit.current_source?;
+        self.entries
             .iter()
-            .find(|e| e.source == id)
-            .filter(|e| e.current(self) && self.loaded_crop_source_current(id, &e.file))
+            .find(|entry| entry.source == id)
+            .filter(|entry| {
+                entry.current(editor) && editor.loaded_crop_source_current(id, &entry.file)
+            })
     }
 
-    pub(in crate::editor) fn auto_crop_artwork_visible(&self, ui: &egui::Ui) -> bool {
-        self.auto_crop_context()
-            && self
-                .document
-                .auto_crop_edit()
-                .is_some_and(|d| d.show_outline)
-            && !ui.input(|i| i.key_down(egui::Key::H))
+    pub(super) fn artwork_visible(&self, editor: &Editor, ui: &egui::Ui) -> bool {
+        self.context(editor) && self.show_outline && !ui.input(|input| input.key_down(egui::Key::H))
     }
 
-    pub(in crate::editor) fn auto_crop_outline(
-        &self,
-        layout: CanvasLayout,
-    ) -> Option<[egui::Pos2; 4]> {
-        if !self.auto_crop_context() {
+    pub(super) fn outline(&self, editor: &Editor, layout: CanvasLayout) -> Option<[egui::Pos2; 4]> {
+        if !self.context(editor) {
             return None;
         }
-        let entry = self.auto_crop_margin_entry()?;
+        let entry = self.margin_entry(editor)?;
         let crop = entry
             .draft
             .unwrap_or(Crop::from_region(entry.development.active_area.into()));
@@ -103,96 +88,102 @@ impl Editor {
             crop.coverage()
                 .ok()?
                 .corners()
-                .map(|p| layout.screen_frame_point(layout.composition.source_to_frame(p))),
+                .map(|point| layout.screen_frame_point(layout.composition.source_to_frame(point))),
         )
     }
 
-    pub(in crate::editor) fn auto_crop_margin_interaction(
+    pub(super) fn margin_interaction(
         &mut self,
+        editor: &mut Editor,
         ui: &egui::Ui,
         response: &egui::Response,
         layout: CanvasLayout,
     ) -> (bool, Option<egui::CursorIcon>) {
         if !ui.is_enabled()
             || !response.enabled()
-            || !self.auto_crop_artwork_visible(ui)
-            || !self.auto_crop_editable()
-            || ui.input(|i| i.key_down(egui::Key::Space))
+            || !self.artwork_visible(editor, ui)
+            || !self.editable(editor)
+            || ui.input(|input| input.key_down(egui::Key::Space))
         {
-            if let Some(d) = self.document.auto_crop_edit_mut() {
-                d.drag = None;
-            }
+            self.drag = None;
             return (false, None);
         }
-        let Some(q) = self.auto_crop_outline(layout) else {
-            if let Some(d) = self.document.auto_crop_edit_mut() {
-                d.drag = None;
-            }
+        let Some(outline) = self.outline(editor, layout) else {
+            self.drag = None;
             return (false, None);
         };
         let press = ui
-            .input(|i| i.pointer.press_origin())
-            .and_then(|p| hit(q, p).map(|h| (p, h)));
-        if response.drag_started_by(egui::PointerButton::Primary)
-            && let Some(d) = self.document.auto_crop_edit_mut()
-        {
-            d.drag = None;
+            .input(|input| input.pointer.press_origin())
+            .and_then(|point| hit(outline, point).map(|handle| (point, handle)));
+        if response.drag_started_by(egui::PointerButton::Primary) {
+            self.drag = None;
+            if let Some((point, handle)) = press {
+                let entry = self.margin_entry(editor).expect("outline retains source");
+                self.drag = Some(MarginDrag {
+                    source: entry.source,
+                    proposal: entry.proposal,
+                    handle,
+                    start: entry.proposal.local_point(
+                        layout
+                            .composition
+                            .frame_to_source(layout.frame_point(point)),
+                    ),
+                    percent: editor.auto_crop_margin,
+                });
+            }
         }
-        if response.drag_started_by(egui::PointerButton::Primary)
-            && let Some((point, handle)) = press
-        {
-            let entry = self
-                .auto_crop_margin_entry()
-                .expect("outline retains source");
-            let drag = MarginDrag {
-                source: entry.source,
-                proposal: entry.proposal,
-                handle,
-                start: entry.proposal.local_point(
-                    layout
-                        .composition
-                        .frame_to_source(layout.frame_point(point)),
-                ),
-                percent: self.auto_crop_margin,
-            };
-            self.document.auto_crop_edit_mut().unwrap().drag = Some(drag);
-        }
-        let drag = self
-            .document
-            .auto_crop_edit()
-            .and_then(|d| d.drag)
-            .filter(|d| {
-                self.document.visit.current_source == Some(d.source)
-                    && self
-                        .auto_crop_margin_entry()
-                        .is_some_and(|e| e.proposal == d.proposal)
-            });
+        let drag = self.drag.filter(|drag| {
+            editor.document.visit.current_source == Some(drag.source)
+                && self
+                    .margin_entry(editor)
+                    .is_some_and(|entry| entry.proposal == drag.proposal)
+        });
         let claimed = drag.is_some() && response.dragged_by(egui::PointerButton::Primary)
             || press.is_some() && response.clicked_by(egui::PointerButton::Primary);
-        if let Some(d) = drag
+        if let Some(drag) = drag
             && response.dragged_by(egui::PointerButton::Primary)
             && let Some(point) = response.interact_pointer_pos()
         {
-            let percent = d.margin(
+            let percent = drag.margin(
                 layout
                     .composition
                     .frame_to_source(layout.frame_point(point)),
             );
-            if percent != self.auto_crop_margin {
-                self.adjust_auto_crop_margin(percent);
+            if percent != editor.auto_crop_margin {
+                self.adjust_margin(editor, percent);
             }
         }
         let handle = if response.dragged_by(egui::PointerButton::Primary) {
-            drag.map(|d| d.handle)
+            drag.map(|drag| drag.handle)
         } else {
-            response.hover_pos().and_then(|p| hit(q, p))
+            response.hover_pos().and_then(|point| hit(outline, point))
         };
-        if response.drag_stopped_by(egui::PointerButton::Primary)
-            && let Some(d) = self.document.auto_crop_edit_mut()
-        {
-            d.drag = None;
+        if response.drag_stopped_by(egui::PointerButton::Primary) {
+            self.drag = None;
         }
-        (claimed, handle.map(|h| cursor(q, h)))
+        (claimed, handle.map(|handle| cursor(outline, handle)))
+    }
+}
+
+impl Editor {
+    #[cfg(test)]
+    pub(in crate::editor) fn auto_crop_context(&self) -> bool {
+        self.document.auto_crop.current().is_some_and(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .is_some_and(|draft| draft.context(self))
+        })
+    }
+
+    #[cfg(test)]
+    pub(in crate::editor) fn auto_crop_outline(
+        &self,
+        layout: CanvasLayout,
+    ) -> Option<[egui::Pos2; 4]> {
+        let state = self.document.auto_crop.current()?;
+        let state = state.borrow();
+        state.as_ref()?.outline(self, layout)
     }
 }
 

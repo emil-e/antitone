@@ -27,7 +27,6 @@ fn reduce(@builtin(global_invocation_id) id: vec3u) {
     let uv = (vec2f(id.xy) + .5) / vec2f(p.size.xy);
     let mapped = p.uv_x.xy + uv.x * p.uv_x.zw + uv.y * p.uv_y.xy;
     if any(mapped < vec2f(0.)) || any(mapped > vec2f(1.)) {
-        atomicAdd(&totals[1], 1u);
         return;
     }
     let source_size = textureDimensions(image);

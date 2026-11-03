@@ -351,7 +351,7 @@ fn retired_analysis_progress_and_cancel_actions_cannot_touch_the_new_task() {
             editor.analysis_progress(id, 1, 2);
             assert!(editor.tasks.is_current(current));
             assert_eq!(editor.tasks.view().unwrap().measured, progress);
-            assert!(editor.busy && editor.document.auto_crop_operation().is_some());
+            assert!(editor.busy && editor.document.auto_crop.active());
         });
         app.pump();
         assert!(reply.result.send(Ok(None)).is_err());

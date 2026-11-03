@@ -268,7 +268,7 @@ fn scope_divider_drag_release_reset_and_width_scaling_are_stable_at_both_dpis() 
 }
 
 #[test]
-fn source_and_reference_views_suspend_scopes_without_dirtying_projects() {
+fn viewing_and_scope_preferences_do_not_dirty_the_project() {
     let mut editor = super::super::tests::fixture();
     editor.sync_document();
     let project = editor.document.state.project.clone();
@@ -282,13 +282,13 @@ fn source_and_reference_views_suspend_scopes_without_dirtying_projects() {
         editor.sync_document();
         assert_eq!(editor.document.state.project, project);
         if source {
-            assert_eq!(editor.scope_input().err(), Some("Positive grade only"));
+            assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
         }
     }
     editor.busy = true;
-    assert_eq!(editor.scope_input().err(), Some("Waiting for image"));
+    assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
     editor.busy = false;
-    assert_eq!(editor.scope_input().err(), Some("No image"));
+    assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
 }
 
 #[test]
@@ -471,7 +471,7 @@ fn waveform_has_no_skin_or_colour_direction_overlay() {
 }
 
 #[test]
-fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer() {
+fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
     pollster::block_on(async {
         let instance = crate::gpu::instance();
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -565,6 +565,28 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             output.textures_delta.clear();
             output
         };
+        let settings = Settings {
+            target: editor.document.target,
+            plot: Plot::Vector,
+            ..Default::default()
+        };
+        let painted = |editor: &Editor| {
+            let input = editor.scope_request().unwrap();
+            let ScopeInput {
+                view,
+                frame: raster,
+                mapping,
+                ..
+            } = &input;
+            let actual = editor.active_canvas().displayed.as_ref().unwrap();
+            assert!(
+                Arc::ptr_eq(view, &actual.view),
+                "scopes must consume the painted product, not another available image"
+            );
+            assert_eq!(*mapping, actual.mapping);
+            assert!(raster.output.iter().all(|edge| *edge > 0 && *edge <= 1024));
+            input
+        };
         for size in [egui::vec2(1100., 800.), egui::vec2(800., 600.)] {
             for _ in 0..3 {
                 frame(&mut editor, size);
@@ -575,58 +597,53 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 .shapes
                 .iter()
                 .find_map(|shape| {
-                    if let egui::Shape::Callback(callback) = &shape.shape {
-                        assert!(callback.callback.is::<egui_wgpu::Callback>());
-                        Some(shape.clip_rect)
-                    } else {
-                        None
-                    }
+                    matches!(shape.shape, egui::Shape::Callback(_)).then_some(shape.clip_rect)
                 })
                 .unwrap();
             editor.scopes.visible = true;
             for _ in 0..3 {
-                frame(&mut editor, size);
-            }
-            let with = frame(&mut editor, size);
-            let mut found = false;
-            for shape in &with.shapes {
-                if let egui::Shape::Callback(callback) = &shape.shape {
-                    assert!(shape.clip_rect.expand(0.1).contains_rect(callback.rect));
-                    if callback.rect.center().x > viewer_clip.right() {
-                        found = true;
-                    } else {
-                        assert_eq!(shape.clip_rect, viewer_clip);
+                let output = frame(&mut editor, size);
+                let mut found_scope = false;
+                for shape in &output.shapes {
+                    if let egui::Shape::Callback(callback) = &shape.shape {
+                        assert!(shape.clip_rect.expand(0.1).contains_rect(callback.rect));
+                        if callback.rect.center().x > viewer_clip.right() {
+                            found_scope = true;
+                        } else {
+                            assert_eq!(shape.clip_rect, viewer_clip);
+                        }
                     }
                 }
+                assert!(
+                    found_scope,
+                    "scope callback must stay in the inspector without resizing the viewer"
+                );
+                prepare(output, size);
             }
-            assert!(found);
-            let (input, _, fit_frame) = editor.scope_input().unwrap();
-            assert!(Arc::ptr_eq(
-                &input,
-                &editor
-                    .document
-                    .visit
-                    .canvas
-                    .ready
-                    .as_ref()
-                    .unwrap()
-                    .proxy
-                    .image(editor.document.target)
-                    .unwrap()
-            ));
-            prepare(with, size);
+            let fit = painted(&editor);
+            let ScopeInput {
+                frame: fit_frame,
+                mapping: fit_mapping,
+                ..
+            } = fit;
             let reductions = gpu.reduction_count();
             editor.document.visit.canvas.viewport.zoom = Some(2.);
             prepare(frame(&mut editor, size), size);
-            let zoom_frame = editor.scope_input().unwrap().2;
-            assert_ne!(zoom_frame, fit_frame);
-            assert!(zoom_frame.min.0[0] > fit_frame.min.0[0]);
-            assert!(zoom_frame.max.0[0] < fit_frame.max.0[0]);
-            assert_eq!(zoom_frame.output, [1, 1]);
+            let zoom = painted(&editor);
+            let ScopeInput {
+                frame: zoom_frame,
+                mapping: zoom_mapping,
+                ..
+            } = &zoom;
+            assert!(zoom_frame != &fit_frame || zoom_mapping != &fit_mapping);
             assert_eq!(gpu.reduction_count(), reductions + 1);
             let reductions = gpu.reduction_count();
             prepare(frame(&mut editor, size), size);
-            assert_eq!(gpu.reduction_count(), reductions, "idle view reuses bins");
+            assert_eq!(
+                gpu.reduction_count(),
+                reductions,
+                "unchanged painted content reuses its bins"
+            );
             let (layout, ppp) = editor.document.visit.canvas.last_layout.unwrap();
             editor
                 .document
@@ -635,40 +652,19 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
                 .viewport
                 .pan(layout, ppp, egui::vec2(100., -60.));
             prepare(frame(&mut editor, size), size);
-            let pan_frame = editor.scope_input().unwrap().2;
-            assert_ne!(pan_frame, zoom_frame);
+            let pan = painted(&editor);
+            let ScopeInput {
+                frame: pan_frame,
+                mapping: pan_mapping,
+                ..
+            } = &pan;
             assert_eq!(pan_frame.output, zoom_frame.output);
+            assert!(pan_frame != zoom_frame || pan_mapping != zoom_mapping);
             assert_eq!(gpu.reduction_count(), reductions + 1);
             editor.document.visit.canvas.viewport.fit();
         }
-        prepare(
-            frame(&mut editor, egui::vec2(1100., 800.)),
-            egui::vec2(1100., 800.),
-        );
-        let (image, input, scope_frame) = editor.scope_input().unwrap();
-        let parameters = input.parameters();
-        let expected = ProcessingParameters::positive(
-            editor.calibration().unwrap(),
-            editor.document.roll,
-            matrix,
-        )
-        .unwrap();
-        assert_eq!(
-            bytemuck::bytes_of(&parameters),
-            bytemuck::bytes_of(&expected)
-        );
-        let settings = Settings {
-            target: editor.document.target,
-            plot: Plot::Vector,
-            ..Default::default()
-        };
-        assert_eq!(
-            gpu.status_processing(&image, &input, scope_frame, settings)
-                .unwrap()
-                .unwrap()
-                .valid,
-            21
-        );
+
+        let size = egui::vec2(1100., 800.);
         editor.document.roll_orientation.turn_clockwise();
         editor.document.visit.photo_orientation.flips.horizontal = true;
         editor.document.visit.crop = Some(
@@ -680,77 +676,108 @@ fn proxy_scopes_follow_visible_image_without_resizing_or_reprocessing_the_viewer
             .constrained(area)
             .unwrap(),
         );
-        let (_, composed_input, composed_frame) = editor.scope_input().unwrap();
-        let composed_parameters = composed_input.parameters();
+        prepare(frame(&mut editor, size), size);
+        let positive = painted(&editor);
+        let ScopeInput {
+            view: positive_view,
+            frame: positive_frame,
+            ..
+        } = &positive;
         assert_eq!(
-            bytemuck::bytes_of(&parameters),
-            bytemuck::bytes_of(&composed_parameters)
-        );
-        assert_eq!(composed_frame.output, [1, 5]);
-        assert_eq!(
-            composed_frame.composition,
+            positive_frame.composition,
             Composition::with_crop(
                 area,
                 editor.document.roll_orientation,
                 editor.document.visit.photo_orientation,
-                editor.document.visit.crop
+                editor.document.visit.crop,
             )
             .unwrap()
         );
         assert!(
-            gpu.status_processing(&image, &input, composed_frame, settings)
-                .is_none()
-        );
-        prepare(
-            frame(&mut editor, egui::vec2(1100., 800.)),
-            egui::vec2(1100., 800.),
-        );
-        assert_eq!(
-            gpu.status_processing(&image, &input, composed_frame, settings)
+            positive_view
+                .capture
+                .processing(&device.limits(), &positive_view.spec.repairs)
                 .unwrap()
-                .unwrap()
-                .valid,
-            5
+                .grade()
+                .is_some()
         );
-        assert!(
-            gpu.status_processing(&image, &input, scope_frame, settings)
-                .is_none()
-        );
-        let mut encoder = device.create_command_encoder(&Default::default());
-        assert!(
-            !image
-                .prepare_processing(&device, &mut encoder, &input)
-                .unwrap(),
-            "geometry must not rerender ACES"
-        );
-        editor.document.visit.canvas.viewport.zoom = Some(3.);
-        let zoomed_composed = editor.scope_input().unwrap().2;
-        assert_ne!(zoomed_composed, composed_frame);
-        assert_eq!(zoomed_composed.composition, composed_frame.composition);
-        assert_eq!(zoomed_composed.output, [1, 1]);
+
         editor.begin_crop();
+        prepare(frame(&mut editor, size), size);
+        let crop = painted(&editor);
+        let ScopeInput {
+            frame: crop_frame,
+            mapping: crop_mapping,
+            ..
+        } = &crop;
         assert_eq!(
-            editor.scope_input().err(),
-            Some("Apply crop to update scopes")
+            crop_frame.composition.crop(),
+            Crop::from_region(area),
+            "crop artwork does not crop away the underlying source"
         );
-        frame(&mut editor, egui::vec2(1100., 800.));
+        assert_ne!(
+            crop_mapping,
+            &crate::geometry::TextureMapping::IDENTITY,
+            "tilted crop view must retain its actual paint mapping"
+        );
         assert!(
-            gpu.status_processing(&image, &input, composed_frame, settings)
-                .is_none()
+            [(0., 0.), (1., 0.), (0., 1.), (1., 1.)]
+                .iter()
+                .any(|(x, y)| {
+                    (0..2).any(|i| {
+                        let uv = crop_mapping.origin[i]
+                            + x * crop_mapping.x_axis[i]
+                            + y * crop_mapping.y_axis[i];
+                        !(0. ..=1.).contains(&uv)
+                    })
+                }),
+            "the tilted fixture must contain blank, out-of-texture corners"
+        );
+        let counts = crop
+            .status(&gpu, settings)
+            .expect("submitted Crop reduction has completed")
+            .unwrap();
+        assert!(
+            counts.valid > 0,
+            "the displayed photograph still contributes samples"
+        );
+        assert_eq!(
+            counts.invalid, 0,
+            "blank canvas corners are absent coverage, not invalid image pixels"
         );
         editor.hosted_action(tool::Action::Dismiss);
-        assert_eq!(editor.scope_input().err(), Some("Waiting for view"));
-        prepare(
-            frame(&mut editor, egui::vec2(1100., 800.)),
-            egui::vec2(1100., 800.),
-        );
+        prepare(frame(&mut editor, size), size);
+
+        editor.sync_document();
         let before = editor.document.state.project.clone();
         editor.document.source = true;
-        frame(&mut editor, egui::vec2(800., 600.));
+        editor.source_exposure = 2.;
+        prepare(frame(&mut editor, size), size);
+        let source = painted(&editor);
+        let ScopeInput {
+            view: source_view, ..
+        } = &source;
+        assert!(!Arc::ptr_eq(source_view, positive_view));
+        assert!(source_view.spec.is_inspection());
         assert!(
-            gpu.status_processing(&image, &input, composed_frame, settings)
+            source_view
+                .capture
+                .processing(&device.limits(), &source_view.spec.repairs)
+                .unwrap()
+                .grade()
                 .is_none()
         );
+        assert!(
+            positive.status(&gpu, settings).is_none(),
+            "positive bins cannot be current for a source-inspection image"
+        );
         assert_eq!(editor.document.state.project, before);
+        editor.document.visit.canvas.ready = None;
+        prepare(frame(&mut editor, size), size);
+        assert!(matches!(editor.scope_request(), Err("Waiting for view")));
+        assert!(
+            source.status(&gpu, settings).is_none(),
+            "no painted image means no retained current trace"
+        );
     });
 }

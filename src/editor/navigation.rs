@@ -103,8 +103,7 @@ impl Editor {
                 || mask_pointer.is_some_and(|point| self.mask_pointer_interest(geometry, point));
         let captured_mask = masking && self.document.mask_edit().is_some_and(MaskEdit::dragging);
         let picking = (self.legacy_pick().is_some() || masking) && self.fullscreen.is_none();
-        let canvas_tool =
-            picking || (self.document.auto_crop_edit().is_some() && self.fullscreen.is_none());
+        let canvas_tool = picking;
         let (zoom, translation, touch, pointer, space) = ui.input(|input| {
             (
                 input.zoom_delta(),

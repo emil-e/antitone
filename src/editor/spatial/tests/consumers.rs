@@ -95,13 +95,9 @@ fn prepared_regions_apply_atomically_and_undo_redo_only_the_accepted_crops() {
             );
             editor.finish_auto_crop(true);
         });
-        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_none());
+        app.run_until(LIMIT, |editor| !editor.document.auto_crop.reviewing());
         app.read(|editor| {
-            assert!(
-                editor.document.auto_crop_edit().is_none(),
-                "{}",
-                editor.status
-            );
+            assert!(!editor.document.auto_crop.reviewing(), "{}", editor.status);
             for source in &editor.document.state.project.sources {
                 assert_eq!(
                     source.crop,
@@ -195,14 +191,9 @@ fn changed_supporting_geometry_prevents_any_selected_crop_from_being_applied() {
             editor.finish_auto_crop(true);
             accepted
         });
-        app.run_until(LIMIT, |editor| {
-            editor
-                .document
-                .auto_crop_operation()
-                .is_some_and(|op| op.apply.is_some())
-        });
+        app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
         app.read(|editor| {
-            assert!(editor.document.auto_crop_edit().is_some());
+            assert!(editor.document.auto_crop.reviewing());
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
         });
@@ -338,7 +329,7 @@ fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_prepara
         app.read(|editor| {
             use crate::platform::menu::Action;
             let state = editor.application_menu_state();
-            assert!(state.enabled(Action::Save) && state.enabled(Action::SaveAs));
+            assert!(!state.enabled(Action::Save) && !state.enabled(Action::SaveAs));
             for action in [
                 Action::New,
                 Action::Open,
@@ -351,6 +342,25 @@ fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_prepara
                     "only captured writes may overlap shared preparation"
                 );
             }
+        });
+        let received = std::rc::Rc::new(std::cell::Cell::new(false));
+        let completed = received.clone();
+        let _waiter = app.enter(|editor, cx| {
+            let regions = editor.prepare_regions(cx).unwrap();
+            editor.end_tool();
+            assert!(
+                editor.document.spatial_preparing.is_some(),
+                "retiring the tool leaves the independent producer alive"
+            );
+            assert!(
+                editor
+                    .application_menu_state()
+                    .enabled(crate::platform::menu::Action::Save)
+            );
+            cx.spawn(move |_| async move {
+                completed.set(regions.await.is_some());
+            })
+            .unwrap()
         });
         app.update(|editor| {
             crate::platform::host::App::menu_action(editor, crate::platform::menu::Action::Save)
@@ -373,14 +383,15 @@ fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_prepara
         app.run_until(LIMIT, |editor| {
             editor.document_pending.is_none()
                 && editor.document.spatial_preparing.is_none()
-                && editor.document.auto_crop_edit().is_some()
+                && received.get()
         });
         app.read(|editor| {
             assert!(
-                editor.document.auto_crop_edit().is_some(),
-                "Save must not discard the original consumer continuation: {}",
+                received.get(),
+                "Save must not discard an independent consumer continuation: {}",
                 editor.status
             );
+            assert!(!editor.document.auto_crop.active());
             assert_eq!(
                 editor
                     .document

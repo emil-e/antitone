@@ -212,7 +212,6 @@ impl Editor {
         !self.busy
             && self.document.input.ready()
             && !self.picking()
-            && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && !self.masking()
             && self.document.analysis_review().is_none()
@@ -460,7 +459,6 @@ impl Editor {
         self.tab == 1
             && !self.dusting()
             && !self.picking()
-            && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && !self.masking()
             && self.document.analysis_review().is_none()

@@ -344,11 +344,8 @@ fn dust_direct_cleanup_reuses_neutral_heals_and_gpu_sources_through_grading_and_
                 .unwrap()
                 .clone()
         });
-        let crate::editor::scopes::ScopeInput::Rendered(scope, _) =
-            h.read(|editor| editor.scope_request().unwrap())
-        else {
-            panic!("scope forked from repaired viewer")
-        };
+        let crate::editor::scopes::ScopeInput { view: scope, .. } =
+            h.read(|editor| editor.scope_request().unwrap());
         assert!(Arc::ptr_eq(&scope, &view));
         h.update(|editor| editor.set_gamma(0.8));
         h.step();

@@ -1,10 +1,10 @@
 # What the image scopes measure
 
-The waveform and vectorscope help judge the **rendered positive**, not the negative's density or the scene-linear working image. Their input is the selected sRGB or Display P3 output, before monitor conversion. This makes the plots useful for the photograph being graded while keeping them independent of the monitor on which the editor happens to run.
+The waveform and vectorscope help judge the **displayed image**, including developed-source inspection and temporary tool views. Their input is the selected sRGB or Display P3 output, before monitor conversion. This makes the plots useful for the photograph being graded while keeping them independent of the monitor on which the editor happens to run.
 
 ## Read the selected target's codes
 
-Scopes measure the same ACES target as the preview, then use its native RGB primaries and transfer. The positive working-view path consumes the viewer's accepted target-linear raster directly: it does not grade, apply ACES or compose it a second time. Neither first converts P3 to sRGB — identical RGB codes in two targets need not represent identical colours.
+Scopes measure the same ACES target as the preview, then use its native RGB primaries and transfer. Scopes consume the canvas paint's target-linear image and texture mapping directly, without grading, applying ACES or composing it a second time. Neither first converts P3 to sRGB — identical RGB codes in two targets need not represent identical colours.
 
 The waveform plots encoded R/G/B or target-derived encoded luma against horizontal position in the final frame. Its vertical scale is percent of nominal encoded white — not nits, scene stops or broadcast IRE. The vectorscope derives two chroma coordinates from those same encoded channels and target luma weights; blue is shown to the right and yellow to the left. Primary/secondary directions come from the target equations, not from the photographic wheel's equally spaced artwork.
 
@@ -12,11 +12,11 @@ Invalid output samples are excluded and visibly counted, not repaired into ordin
 
 ## Measure the visible image
 
-The plots measure the **visible image, approximately**, in the selected output target. Pan/zoom isolates the region being graded — a face, for example — while Fit covers the accepted composition. Waveform x follows left-to-right position within that visible region, never the letterbox or canvas. Crop, orientation and straightening use the same affine composition mapping as the viewer.
+The plots measure the **visible image, approximately**, in the selected output target. Pan/zoom isolates the visible region — a face, for example — while Fit covers the displayed composition. Waveform x follows left-to-right position within that visible region, never the letterbox or canvas. Crop, orientation and straightening use the same affine composition mapping as the viewer.
 
-A roll/selection Auto-crop draft deliberately inspects the full oriented scan, including surrounding film — but not proposed crop pixels or outline/shading artwork. Apply or Cancel restores normal accepted-composition measurements. Ordinary manual Crop drafts instead suspend the scopes; neither workflow changes Analyze's sampling populations. The positive prototype shares the accepted physical-view raster, including the coarse underlay during navigation, and never measures only the detailed patch while the viewer shows additional content.
+Scopes follow the image beneath tool artwork. Auto-crop shows the full oriented scan; manual Crop can show source content beyond its draft frame. Source/native pickers and reference views supply their displayed source image. Navigation composites include the same coarse underlay and detailed patch as the canvas. These viewing choices leave Analyze's sampling populations unchanged.
 
-Reduction remains independently bounded to a 1024-pixel edge, so sparse samples can miss a tiny highlight or colour patch. Unsupported transparent coverage is excluded, not counted as black. Navigation/resize updates analysis when visible coverage changes; without an accepted canvas layout the plots show **Waiting for view**. During grade, pan/zoom or resize, hold the previous coherent trace until a compatible replacement is ready. Source inspection, temporary tool/reference views and unavailable/busy image states suspend scopes.
+Reduction remains independently bounded to a 1024-pixel edge, so sparse samples can miss a tiny highlight or colour patch. Unsupported transparent coverage is excluded, not counted as black. Navigation/resize updates analysis when visible coverage changes; without a displayed canvas image the plots show **Waiting for view**. During grade, pan/zoom or resize, hold the previous coherent trace until a compatible replacement is ready. A pass without a painted photograph suspends scopes.
 
 ## Magnification changes the plot, not the grade
 
@@ -26,7 +26,7 @@ Small coloured reference boxes indicate nominal 100% RGB/CMY code colours; magni
 
 ## Keep feedback coherent
 
-Only one reduction/diagnostic readback is outstanding. Latest-result status requires exact processing content and visible-frame identity, so an old completion cannot become current: a different source/revision, accepted composition, target or vector scale must not inherit incompatible old bins; suspension clears them. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit.
+Only one reduction/diagnostic readback is outstanding. Latest-result status requires exact processing content and visible-frame identity, so an old completion cannot become current: a different source/revision, displayed framing, target or vector scale must not inherit incompatible old bins; suspension clears them. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit.
 
 The Scopes disclosure collapses the plot and suspends its work. A single header menu selects the plot type and vectorscope magnification. Plot controls do not change photographic processing: visibility and plot sizing are application preferences, while selection, magnification and GPU diagnostics are transient.
 

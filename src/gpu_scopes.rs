@@ -28,6 +28,7 @@ struct Key {
     processing: Option<ProcessingInput>,
     settings: Settings,
     frame: FrameRaster,
+    mapping: TextureMapping,
 }
 
 fn accumulation_settings(mut settings: Settings) -> Settings {
@@ -52,6 +53,11 @@ impl Key {
             processing: Some(input.clone()),
             settings: accumulation_settings(settings),
             frame,
+            mapping: frame.composition.texture_mapping(
+                frame.min,
+                frame.max,
+                frame.composition.area(),
+            ),
         }
     }
 
@@ -59,6 +65,7 @@ impl Key {
     fn rendered(
         view: &crate::gpu::view::RenderedView,
         frame: FrameRaster,
+        mapping: TextureMapping,
         settings: Settings,
     ) -> Self {
         Self {
@@ -68,6 +75,7 @@ impl Key {
             processing: None,
             settings: accumulation_settings(settings),
             frame,
+            mapping,
         }
     }
 
@@ -76,6 +84,7 @@ impl Key {
             && self.image.ptr_eq(&request.image)
             && self.source_revision == request.source_revision
             && self.frame == request.frame
+            && self.mapping == request.mapping
             && self.processing == request.processing
     }
 
@@ -451,20 +460,28 @@ impl GpuScopes {
         }
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn status_rendered(
         &self,
         view: &crate::gpu::view::RenderedView,
         frame: FrameRaster,
         settings: Settings,
     ) -> Option<Result<Counts, String>> {
-        if self
-            .prepared
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|p| p.key.matches(&Key::rendered(view, frame, settings)))
-        {
+        self.status_mapped_rendered(view, frame, TextureMapping::IDENTITY, settings)
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn status_mapped_rendered(
+        &self,
+        view: &crate::gpu::view::RenderedView,
+        frame: FrameRaster,
+        mapping: TextureMapping,
+        settings: Settings,
+    ) -> Option<Result<Counts, String>> {
+        if self.prepared.lock().unwrap().as_ref().is_some_and(|p| {
+            p.key
+                .matches(&Key::rendered(view, frame, mapping, settings))
+        }) {
             self.diagnostic.lock().unwrap().result.clone()
         } else {
             None
@@ -543,6 +560,7 @@ pub struct ScopePaint {
         crate::gpu::SubmissionGate,
     )>,
     pub frame: FrameRaster,
+    mapping: TextureMapping,
     pub settings: Settings,
     pub context: egui::Context,
     group: Mutex<Option<wgpu::BindGroup>>,
@@ -564,10 +582,26 @@ impl ScopePaint {
             processing: None,
             rendered: Some((view, submissions)),
             frame,
+            mapping: TextureMapping::IDENTITY,
             settings,
             context,
             group: Mutex::new(None),
         }
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn mapped_rendered(
+        gpu: Arc<GpuScopes>,
+        view: Arc<crate::gpu::view::RenderedView>,
+        frame: FrameRaster,
+        mapping: TextureMapping,
+        settings: Settings,
+        submissions: crate::gpu::SubmissionGate,
+        context: egui::Context,
+    ) -> Self {
+        let mut paint = Self::rendered(gpu, view, frame, settings, submissions, context);
+        paint.mapping = mapping;
+        paint
     }
 
     pub fn new(
@@ -585,6 +619,7 @@ impl ScopePaint {
             #[cfg(feature = "editor")]
             rendered: None,
             frame,
+            mapping: TextureMapping::IDENTITY,
             settings,
             context,
             group: Mutex::new(None),
@@ -607,6 +642,7 @@ impl ScopePaint {
             #[cfg(feature = "editor")]
             rendered: None,
             frame,
+            mapping: TextureMapping::IDENTITY,
             settings,
             context,
             group: Mutex::new(None),
@@ -637,11 +673,8 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
         #[cfg(feature = "editor")]
         if let Some((view, submissions)) = rendered {
             view.ensure_submitted(device, queue, submissions, &self.context);
-            key = Key::rendered(view, self.frame, self.settings);
-            let mut accepted = view.spec.frame();
-            accepted.output = self.frame.output;
-            coverage_ready =
-                accepted == self.frame && matches!(self.image.look_result(), Some(Ok(())));
+            key = Key::rendered(view, self.frame, self.mapping, self.settings);
+            coverage_ready = matches!(self.image.look_result(), Some(Ok(())));
         } else {
             let input = self.processing.as_ref().expect("source-backed scope input");
             self.image
@@ -687,7 +720,7 @@ impl egui_wgpu::CallbackTrait for ScopePaint {
                     encoder,
                     &self.image.linear,
                     self.frame.output,
-                    TextureMapping::IDENTITY,
+                    self.mapping,
                     self.settings,
                 )
             } else {

@@ -197,9 +197,7 @@ impl Editor {
         area: Rect,
         active_pick: Option<picking::Display>,
     ) -> Composition {
-        let crop = if self.auto_crop_context()
-            || active_pick.is_some_and(|display| display.view != picking::View::Working)
-        {
+        let crop = if active_pick.is_some_and(|display| display.view != picking::View::Working) {
             None
         } else {
             self.document.visit.crop
@@ -221,6 +219,7 @@ impl Editor {
         .expect("accepted crop belongs to the loaded source")
     }
 
+    #[cfg(test)]
     pub(super) fn canvas_composition(
         &mut self,
         area: Rect,
@@ -231,7 +230,7 @@ impl Editor {
             normal
         } else {
             self.with_current_tool(|tool, _| tool.composition(normal))
-                .expect("composition access cannot recursively invoke the executing tool")
+                .unwrap()
         }
     }
 
@@ -275,16 +274,7 @@ impl Editor {
         let (geometry, panning) = if !canvas_input {
             (geometry, false)
         } else {
-            let (claimed, cursor) = self.auto_crop_margin_interaction(ui, response, geometry);
-            let result = if claimed {
-                (geometry, false)
-            } else {
-                self.navigate(ui, response, geometry, pixels_per_point)
-            };
-            if let Some(cursor) = cursor {
-                ui.ctx().set_cursor_icon(cursor);
-            }
-            result
+            self.navigate(ui, response, geometry, pixels_per_point)
         };
         if !fullscreen && (self.document.mask_edit().is_some() || self.mask_handles_available()) {
             self.mask_interaction(ui, response, geometry, panning, canvas_input);
@@ -526,6 +516,15 @@ impl Editor {
             );
             return None;
         };
+        self.active_canvas_mut().displayed =
+            paint
+                .displayed()
+                .map(|(view, mapping)| canvas_view::Displayed {
+                    view,
+                    mapping,
+                    size: [draw.width(), draw.height()]
+                        .map(|v| (v * pixels_per_point).round().max(1.) as u32),
+                });
         Some((draw, paint))
     }
 
@@ -699,6 +698,7 @@ impl Editor {
         fullscreen: bool,
         cx: &UiContext<'_, Self>,
     ) {
+        self.active_canvas_mut().displayed = None;
         let available = ui
             .available_rect_before_wrap()
             .intersect(ui.clip_rect())
@@ -772,11 +772,6 @@ impl Editor {
                 ));
         } else if self.current_tool().is_none() {
             return;
-        }
-        if self.auto_crop_artwork_visible(ui)
-            && let Some(q) = self.auto_crop_outline(geometry)
-        {
-            crop_editor::paint_outline(ui, canvas, q, false, 64);
         }
         if !fullscreen
             && active_pick.is_some()

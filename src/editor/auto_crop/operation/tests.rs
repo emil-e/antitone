@@ -84,11 +84,11 @@ fn request(app: &mut TestApplication<'_, Editor>) {
         let (send, receive) = oneshot::channel();
         editor.document.spatial_reply = Some(receive);
         editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
-        assert!(editor.document.auto_crop_edit().is_none());
+        assert!(!editor.document.auto_crop.reviewing());
         send
     });
     send.send(Ok(Some(Default::default()))).unwrap();
-    app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_some());
+    app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
     app.read(|editor| assert!(editor.auto_crop_valid(), "{}", editor.status));
 }
 
@@ -113,20 +113,18 @@ fn a_one_photo_batch_reviews_the_explicit_photo_instead_of_seeding_manual_crop()
             reply
         });
         reply.send(Ok(Some(Default::default()))).unwrap();
-        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_some());
+        app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
         app.update(|editor| {
             assert!(editor.document.crop_edit().is_none());
             assert_eq!(editor.document.visit.current_source, Some(current));
-            let review = editor.document.auto_crop_edit().unwrap();
+            let review = editor.document.auto_crop.snapshot().unwrap();
             assert_eq!(review.entries.len(), 1);
             assert_eq!(review.entries[0].source, photo);
             assert!(editor.auto_crop_preview(current).is_none());
             assert!(editor.auto_crop_preview(photo).is_some());
             editor.finish_auto_crop(true);
         });
-        app.run_until(LIMIT, |editor| {
-            editor.document.auto_crop_operation().is_none()
-        });
+        app.run_until(LIMIT, |editor| !editor.document.auto_crop.active());
         app.read(|editor| {
             assert!(
                 editor
@@ -178,8 +176,8 @@ fn a_photo_proposal_only_seeds_its_own_existing_crop_without_accepting_an_edit()
         app.run_until(LIMIT, |editor| !editor.document.crop_auto_crop_pending());
         app.read(|editor| {
             assert_ne!(editor.document.crop_edit().unwrap().draft, before);
-            assert!(editor.document.auto_crop_edit().is_none());
-            assert!(editor.document.auto_crop_operation().is_none());
+            assert!(!editor.document.auto_crop.reviewing());
+            assert!(!editor.document.auto_crop.active());
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), None);
         });
@@ -187,7 +185,7 @@ fn a_photo_proposal_only_seeds_its_own_existing_crop_without_accepting_an_edit()
 }
 
 #[test]
-fn apply_snapshots_the_review_before_the_continuation_resumes() {
+fn apply_accepts_the_current_batch_atomically_and_ends_the_interaction() {
     let (editor, _files) = super::super::tests::fixture();
     let accepted = editor.document.state.project.clone();
     with_application(editor, |app| {
@@ -195,28 +193,27 @@ fn apply_snapshots_the_review_before_the_continuation_resumes() {
         let expected = app.update(|editor| {
             let expected: Vec<_> = editor
                 .document
-                .auto_crop_edit()
+                .auto_crop
+                .snapshot()
                 .unwrap()
                 .entries
                 .iter()
                 .map(|entry| (entry.source, entry.draft))
                 .collect();
-            editor.finish_auto_crop(true);
-            editor.finish_auto_crop(true);
             assert_eq!(
                 editor.document.state.project, accepted,
-                "the decision has not resumed yet"
+                "review has not accepted a crop"
             );
-            for entry in &mut editor.document.auto_crop_edit_mut().unwrap().entries {
-                entry.draft = Some(Crop::from_region([200, 150, 100, 90].into()));
-            }
+            editor.finish_auto_crop(true);
+            assert!(
+                !editor.document.auto_crop.active(),
+                "acceptance and tool completion are one action"
+            );
+            editor.finish_auto_crop(true);
             expected
         });
-        app.run_until(LIMIT, |editor| {
-            editor.document.auto_crop_operation().is_none()
-        });
         app.read(|editor| {
-            assert!(editor.document.auto_crop_edit().is_none());
+            assert!(!editor.document.auto_crop.reviewing());
             for (id, crop) in expected {
                 assert_eq!(editor.document.project.source(id).unwrap().crop, crop);
             }
@@ -234,31 +231,26 @@ fn rejected_apply_keeps_the_review_without_history_and_a_valid_retry_can_accept(
     with_application(editor, |app| {
         request(app);
         let (id, changed) = app.update(|editor| {
-            editor.finish_auto_crop(true);
             let id = *editor.document.project.order.last().unwrap();
             editor.document.project.source_mut(id).unwrap().crop =
                 Some(Crop::from_region([200, 150, 100, 90].into()));
-            (id, editor.document.state.project.clone())
-        });
-        app.run_until(LIMIT, |editor| {
-            editor
-                .document
-                .auto_crop_operation()
-                .is_some_and(|op| op.apply.is_some())
+            let changed = editor.document.state.project.clone();
+            editor.finish_auto_crop(true);
+            (id, changed)
         });
         app.update(|editor| {
-            assert_eq!(editor.document.state.project, changed);
-            assert!(editor.document.auto_crop_edit().is_some());
+            assert_eq!(
+                editor.document.state.project, changed,
+                "reject the whole batch, not a valid prefix"
+            );
+            assert!(editor.document.auto_crop.reviewing());
             assert_eq!(editor.history_label(history::Direction::Undo), None);
             editor.document.project.source_mut(id).unwrap().crop = None;
             assert!(editor.auto_crop_valid());
             editor.finish_auto_crop(true);
         });
-        app.run_until(LIMIT, |editor| {
-            editor.document.auto_crop_operation().is_none()
-        });
         app.read(|editor| {
-            assert!(editor.document.auto_crop_edit().is_none());
+            assert!(!editor.document.auto_crop.active());
             assert_eq!(
                 editor.history_label(history::Direction::Undo),
                 Some("Auto-crop")
@@ -287,16 +279,14 @@ fn cancelling_the_waiting_review_retires_its_action_and_allows_another_complete_
         });
         app.pump();
         app.read(|editor| {
-            assert!(editor.document.auto_crop_operation().is_none());
-            assert!(editor.document.auto_crop_edit().is_none());
+            assert!(!editor.document.auto_crop.active());
+            assert!(!editor.document.auto_crop.reviewing());
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), None);
         });
         request(app);
         app.update(|editor| editor.finish_auto_crop(true));
-        app.run_until(LIMIT, |editor| {
-            editor.document.auto_crop_operation().is_none()
-        });
+        app.run_until(LIMIT, |editor| !editor.document.auto_crop.active());
         app.read(|editor| {
             assert_eq!(
                 editor.history_label(history::Direction::Undo),

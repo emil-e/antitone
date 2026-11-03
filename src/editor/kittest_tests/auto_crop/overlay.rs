@@ -34,20 +34,17 @@ pub(super) fn wait_context(h: &mut Harness<'_, Editor>) {
     h.render().unwrap();
     assert!(timing.ready_was_painted());
     h.read(|e| {
-    let layout = e.active_canvas().last_layout.unwrap().0;
-    assert_eq!(
-        layout.composition.crop(),
-        Crop::from_region(e.document.visit.canvas.ready.as_ref().unwrap().area)
-    );
-    match e.scope_request().unwrap() {
-        scopes::ScopeInput::Rendered(view, frame) => {
-            assert!(Arc::ptr_eq(&view, e.document.visit.working_view.displayed.as_ref().unwrap()));
-            assert_eq!(frame.composition, layout.composition);
-        }
-        _ => panic!(
-            "representative view and scopes share the full physical scan, not artwork or an accepted crop"
-        ),
-    }
+        let layout = e.active_canvas().last_layout.unwrap().0;
+        assert_eq!(
+            layout.composition.crop(),
+            Crop::from_region(e.document.visit.canvas.ready.as_ref().unwrap().area)
+        );
+        let scopes::ScopeInput { view, frame, .. } = e.scope_request().unwrap();
+        assert!(Arc::ptr_eq(
+            &view,
+            e.document.visit.working_view.displayed.as_ref().unwrap()
+        ));
+        assert_eq!(frame.composition, layout.composition);
     });
 }
 
@@ -286,7 +283,7 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         h.key_press(egui::Key::Escape);
         h.step();
         h.step();
-        h.read(|editor| assert!(editor.document.auto_crop_edit().is_some()));
+        h.read(|editor| assert!(editor.document.auto_crop.reviewing()));
         h.read(|editor| assert_eq!(editor.auto_crop_margin, 0.5));
         h.read(|editor| assert_eq!(editor.auto_crop_preview(source), initial));
         h.get_by_label("Viewer help").click();
@@ -296,7 +293,7 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         h.step();
         h.step();
         assert!(!egui::Popup::is_any_open(&h.ctx));
-        h.read(|editor| assert!(editor.document.auto_crop_edit().is_some()));
+        h.read(|editor| assert!(editor.document.auto_crop.reviewing()));
         let layout = h.read(|editor| editor.active_canvas().last_layout.unwrap().0);
         let q = h.read(|editor| editor.auto_crop_outline(layout).unwrap());
         let end = q[0] + (q[2] - q[0]) * 0.1;
@@ -352,7 +349,7 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         h.key_press(egui::Key::Escape);
         h.step();
         h.step();
-        h.read(|editor| assert!(editor.document.auto_crop_edit().is_none()));
+        h.read(|editor| assert!(!editor.document.auto_crop.reviewing()));
         h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.read(|editor| assert!(!editor.document.dirty()));
     });

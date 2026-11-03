@@ -753,6 +753,15 @@ impl ImagePaint {
         self.rendered.as_ref().map(|(view, _, _)| view.spec.frame())
     }
 
+    #[cfg(feature = "editor")]
+    pub(crate) fn displayed(
+        &self,
+    ) -> Option<(Arc<crate::gpu::view::RenderedView>, TextureMapping)> {
+        self.rendered
+            .as_ref()
+            .map(|(view, _, _)| (view.clone(), self.uv))
+    }
+
     pub fn with_context(mut self, context: egui::Context) -> Self {
         self.context = Some(context);
         self

@@ -341,7 +341,7 @@ impl Editor {
 
     pub(super) fn mask_handles_available(&self) -> bool {
         self.adjustment_layer_overlays_visible()
-            && !self.creating_mask()
+            && !self.has_hosted_tool()
             && !self.document.visit.adjustment_layers.dragging()
             && self.tab == 1
             && !self.busy
@@ -349,11 +349,8 @@ impl Editor {
             && self.document.input.ready()
             && !self.document.source
             && !self.picking()
-            && !self.cropping()
-            && self.document.auto_crop_edit().is_none()
             && self.document.flat_edit().is_none()
             && self.document.analysis_review().is_none()
-            && !self.dusting()
             && !self.document.visit.adjustment_layers.confirming()
             && self.fullscreen.is_none()
     }
@@ -519,6 +516,7 @@ impl Editor {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn view_processing(
         &self,
         input: impl Into<InputSettings>,
