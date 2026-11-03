@@ -88,7 +88,7 @@ Require actual paints/completion and failure on premature closure or timeout. Fu
 
 ### Specialist diagnostics
 
-Ignored tests are opt-in for samples, hardware, windows or substantial resources. [Diagnostics](diagnostics.md) owns workloads, safety stops and interpretation. Authored resource observations live with [acquisition/execution](../src/gpu/view/tests/resource_observation.rs) and [native output](../src/gpu_export/native_resources.rs); sampled peaks and phase timings have limited coverage. Keep private inputs read-only and generated products ignored.
+Ignored tests are opt-in for samples, hardware, windows or substantial resources. [Diagnostics](diagnostics.md) owns workloads and interpretation. Authored resource observations live with [acquisition/execution](../src/gpu/view/tests/resource_observation.rs) and [native output](../src/gpu_export/native_resources.rs); sampled peaks and phase timings have limited coverage. Keep private inputs read-only and generated products ignored.
 
 ## Before handoff
 

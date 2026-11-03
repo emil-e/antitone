@@ -75,10 +75,7 @@ fn changing_input_from_review_retires_its_projection_on_success_and_failure() {
         editor.preferences.scopes_visible = true;
         editor.scopes.visible = true;
         with_application(editor, |app| {
-            app.enter(|editor, cx| {
-                let request = editor.analysis_request().unwrap();
-                editor.prepare_analysis_review(request, cx);
-            });
+            app.enter(|editor, cx| editor.request_analysis(cx));
             app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
             let before = app.read(|editor| editor.document.project.clone());
             app.enter(|editor, cx| {
@@ -121,8 +118,8 @@ fn held_work<T: Send + 'static>(
 ) -> testing::Work<T> {
     Box::new(move |request, stopped| {
         Box::pin(async move {
-            // Acquire the unviewed original through real native services. Only the
-            // numerical output is programmed; the CPU job owns its pixels through release.
+            // This scripted task acquires an unviewed original to probe physical-input
+            // cleanup, not to model production review assembly's metadata-only input.
             let scan = services
                 .acquire(Arc::new(request), 1, stopped.clone())
                 .await
@@ -150,10 +147,7 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
             let sources = source_loading::SourceLoader::new();
             let editor = fixture(sources.clone());
             with_application(editor, |app| {
-                app.enter(|editor, cx| {
-                    let request = editor.analysis_request().unwrap();
-                    editor.prepare_analysis_review(request, cx);
-                });
+                app.enter(|editor, cx| editor.request_analysis(cx));
                 app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
                 let (entered, starts) = mpsc::channel();
                 let (release, resume) = mpsc::channel();

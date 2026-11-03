@@ -126,6 +126,26 @@ fn shared_preparation_produces_common_geometry_and_independent_consumer_insets()
                 .iter()
                 .all(Boundary::is_measured)
         );
+        let automatic = source.sampling_areas();
+        assert!(
+            automatic.ready(),
+            "completed preparation must include statistical suggestions"
+        );
+        assert_eq!(automatic.material, source.material);
+        assert!(!automatic.opening_edited && !automatic.picture_edited);
+        assert!(
+            automatic.contains_footprint(
+                crate::geometry::SourceRegion {
+                    x: 651,
+                    y: 497,
+                    width: 8,
+                    height: 8
+                },
+                source.input.development.active_area.into(),
+                true,
+            ),
+            "known centre of the supplied picture must remain sampleable"
+        );
         let before = source.clone();
         let crop = crate::auto_crop::propose_spatial(source).unwrap();
         assert_eq!(crop.size, [960, 720]);

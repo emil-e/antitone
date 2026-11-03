@@ -88,6 +88,7 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
                         picture: Some(region),
                         film: None,
                         holder_opening: None,
+                        sampling: Default::default(),
                         material: None,
                     }
                 })

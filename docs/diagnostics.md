@@ -115,13 +115,11 @@ ANTITONE_RAW_ROOT=/absolute/read-only-samples ANTITONE_REGION_ROLL=roll-name \
 
 ### Bounded area-preparation profiling
 
-The ignored `profile_complete_roll_area_preparation` diagnostic calls the production preparation provider directly — no Editor, thumbnails, areas or window. Each invocation is bounded to one complete 2–40-source roll and 240 seconds at cooperative checkpoints; native calls cannot be interrupted mid-call, so do not truncate a larger roll or relax stops to obtain a result. The [monitor](../native/cache_observation.rs) requires Normal pressure and 2 GiB non-speculative free memory.
+The ignored `profile_complete_roll_area_preparation` diagnostic runs production shared detection and assembles its review windows directly — no Editor, thumbnails or window. Each invocation currently covers one complete 2–40-source roll with a 240-second cooperative timeout; native calls cannot be interrupted mid-call.
 
-Run the two arms as separate processes with fresh output directories. The **cold** arm means an empty application source store, not an uncached filesystem; the **warm** arm seeds only the last ordered source under a 600 MiB optional budget, so it is a partially warm document, not a fully resident roll:
+Run the two arms as separate processes with fresh output directories. The **cold** arm means an empty application source store, not an uncached filesystem; the **warm** arm seeds only the last ordered source under a 600 MiB optional budget, so it is a partially warm document, not a fully resident roll. That seed can be evicted before its turn. Reports count each source request and the cache misses separately from actual native developments:
 
 ```sh
-mkdir -p .cache/region-scratch
-export TMPDIR="$PWD/.cache/region-scratch"
 export ANTITONE_REGION_EVIDENCE=/absolute/retained-evidence
 export ANTITONE_RAW_ROOT=/absolute/read-only-samples
 export ANTITONE_REGION_ROLL=roll-name
@@ -134,9 +132,7 @@ ANTITONE_REGION_PERF_ARM=warm ANTITONE_REGION_OUTPUT="$PWD/.cache/region-warm" \
   profile_complete_roll_area_preparation -- --ignored --nocapture
 ```
 
-Reports contain per-stage samples (p50/p95/max), actual per-source native development counts and nested open/unpack/develop timings. **Sum exclusive stage times and inspect residual wall time** — the inclusive totals overlap. Each acquisition carries its source identity, so expected development counts can be checked exactly per source. A successful run measures preparation only, not import, numerical Analyze, UI latency or photographic border accuracy.
-
-For scale on one complete twelve-source Sony roll, a cold baseline measured ~18 s of preparation, of which native development dominated (95%); retaining one source dropped it to ~16.6 s with identical areas. The job-local inference-scratch candidate measured ~9.5 s cold and ~8.4 s partially warm, with exact area/evidence/revision agreement — roughly half the acquisition cost — and a 36-source cold roll exercised the capacity fallback (46.6 s versus 56.8 s baseline) with unchanged peak footprint. These single-run observations motivated the scratch design; they are not latency gates. Re-measure after relevant changes.
+Reports separate shared detection from review assembly, with actual per-source native development counts and nested open/unpack/develop timings. **Sum exclusive stage times and inspect residual wall time** — the inclusive totals overlap. Cold detection checks one development per source; repeated review assembly must consume the finished results without further native work. A successful run measures preparation only, not import, numerical Analyze, UI latency or photographic border accuracy.
 
 ### Marked crop quality and original-pixel inspection
 
@@ -161,7 +157,7 @@ ANTITONE_CROP_OUTPUT="$PWD/.cache/crop-quality-FRESH" \
   report_marked_crop_quality -- --ignored --nocapture
 ```
 
-For prediction-free native windows, use the same manifest and fresh output, add `ANTITONE_RAW_ROOT=/absolute/read-only-samples`, select `--features editor` and replace the test name with `capture_original_crop_windows`. Each case needs independently chosen windows; capture is bounded to three explicit sources and twelve windows per source, each at most 256×256, under the same pressure/memory preflight and stops. The lossless `.rgb16` files contain little-endian original camera RGB16 in source orientation; PNGs are 4× nearest-neighbour viewing aids with only the sRGB transfer applied — no colour matrix, inversion, correction, repairs or grade.
+For prediction-free native windows, use the same manifest and fresh output, add `ANTITONE_RAW_ROOT=/absolute/read-only-samples`, select `--features editor` and replace the test name with `capture_original_crop_windows`. Each case needs independently chosen windows; capture is bounded to three explicit sources and twelve windows per source, each at most 256×256. The lossless `.rgb16` files contain little-endian original camera RGB16 in source orientation; PNGs are 4× nearest-neighbour viewing aids with only the sRGB transfer applied — no colour matrix, inversion, correction, repairs or grade.
 
 ### Private all-roll contacts
 
@@ -244,7 +240,7 @@ cargo test --locked --offline --release --features editor --lib \
   physical_view_adjustment_layer_resources -- --ignored --nocapture
 ```
 
-The [diagnostic](../src/gpu/view/tests/adjustment_layer_resources.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay with correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source (headers must pass the existing 600-MiB diagnostic source bound); both variants use the existing pressure/free-memory/swap/growth stops, and timings without a coordinated window are indicative, not isolated interaction latency.
+The [diagnostic](../src/gpu/view/tests/adjustment_layer_resources.rs) uses an authored RAW, a 1080p detail grid and the production whole-composition underlay with correction off/on, numeric/geometry edits and both targets. It samples same-process footprint/resident/Metal allocation and checkpoints current/building, deferred encoded consumers and retirement. Set `ANTITONE_SCREEN_RAW=1 ANTITONE_RAW_SAMPLES=/absolute/samples` for the supplied native-size source. Concurrent work can affect timings; report them as observations rather than isolated interaction latency.
 
 Original-sample processing shares the editor's f32 inversion for integer and continuous inputs. [Continuous-source checks](../src/gpu/tests/gpu_continuous.rs), [film-response checks](../src/gpu/tests/gpu_film_response.rs) and [original export checks](../src/gpu_export/tests.rs) exercise the model and exact floor flags.
 
@@ -437,7 +433,7 @@ Rendering scripts share `scripts/generate-ocio-reference.sh`, which regenerates 
 
 [Export checks](development.md#export-checks) distinguish production GPU/worker workflows, exact encoder serialization and independent scalar/OCIO photographic references. [GPU exports](../tests/gpu_export.rs) reopen original-sample TIFF/AP0 EXR with ordered layers, correction, orientation and straightening; [reference export tests](../tests/export.rs) retain scalar file-code/profile/compression and failure checks behind `ocio-reference`. No reference is a production fallback.
 
-During an agreed GPU window, the opt-in full-size resource exercise retains production physical detail/underlay while exporting and then regrading that retained source:
+The opt-in full-size resource exercise retains production physical detail/underlay while exporting and then regrading that retained source:
 
 ```sh
 ANTITONE_RAW_SAMPLES=/absolute/samples \
@@ -446,7 +442,7 @@ ANTITONE_RAW_SAMPLES=/absolute/samples \
   -- --ignored --nocapture
 ```
 
-It reads the three train/calibration RAW inputs read-only, checks native geometry before development, and keeps the existing pressure, swap-counter, footprint-growth and telemetry stops. `ANTITONE_EXPORT_RESOURCE_CASE` selects `native`, `rotated`, `corrected-native` or `corrected-rotated`; `ANTITONE_EXPORT_RESOURCE_FORMAT=tiff` narrows a run to TIFF; `ANTITONE_EXPORT_RESOURCE_LOCALS=2` adds ordered linear and inverted radial locals (the post-export regrade preserves them); `ANTITONE_EXPORT_RESOURCE_BACKEND=gpu` selects the production engine (the default), while adding `ocio-reference` to the features enables `reference` or `compare` (reference followed by production GPU) for matched independent scalar/OCIO-reference measurements with identical source, grade, composition and encoders.
+It reads the three train/calibration RAW inputs read-only. `ANTITONE_EXPORT_RESOURCE_CASE` selects `native`, `rotated`, `corrected-native` or `corrected-rotated`; `ANTITONE_EXPORT_RESOURCE_FORMAT=tiff` narrows a run to TIFF; `ANTITONE_EXPORT_RESOURCE_LOCALS=2` adds ordered linear and inverted radial locals (the post-export regrade preserves them); `ANTITONE_EXPORT_RESOURCE_BACKEND=gpu` selects the production engine (the default), while adding `ocio-reference` to the features enables `reference` or `compare` (reference followed by production GPU) for matched independent scalar/OCIO-reference measurements with identical source, grade, composition and encoders.
 
 Record power source and configured mode with timing observations (`pmset -g batt` and `pmset -g custom` on macOS). Battery operation or a different power mode can alter CPU/GPU clock budgets, so comparisons that straddle a power transition are not matched latency evidence; numerical/file equality remains valid. Do not change system power settings, purge caches or interrupt other applications to improve a result without agreement.
 
@@ -489,7 +485,7 @@ If other GPU consumers are not known to be idle, timings are indicative rather t
 
 ### Preflight and independent reopening
 
-For read-only preflight diagnosis without RAW loading or export, run `cargo test --locked --offline --release --features editor --lib resource_preflight_only -- --ignored --nocapture`. The unchanged guard requires Normal pressure and 2 GiB non-speculative free memory; low non-speculative free memory alone is not a pressure alarm (macOS already counts speculative pages in its total). Do not purge caches or relax the guard to force a measurement.
+For read-only preflight diagnosis without RAW loading or export, run `cargo test --locked --offline --release --features editor --lib resource_preflight_only -- --ignored --nocapture`. The [monitor](../native/cache_observation.rs) reports its current start conditions. Low reported free memory alone is not a pressure alarm; macOS can reclaim cached pages.
 
 ImageIO provides independent TIFF reopening:
 

@@ -14,6 +14,54 @@ type Result<T> = std::result::Result<T, String>;
 const LIMIT: Duration = Duration::from_secs(240);
 const WARM_BUDGET: u64 = 600 << 20;
 
+type AcquisitionCounts = Arc<Mutex<BTreeMap<String, u64>>>;
+
+struct CountedSources {
+    inner: Arc<dyn crate::source::SourceProvider>,
+    counts: AcquisitionCounts,
+}
+
+impl crate::source::SourceProvider for CountedSources {
+    fn load_source(
+        &self,
+        key: crate::source::SourceKey,
+        priority: crate::source::Priority,
+    ) -> crate::source::SourceFuture<'_> {
+        *self
+            .counts
+            .lock()
+            .unwrap()
+            .entry(
+                key.path()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+            .or_default() += 1;
+        self.inner.load_source(key, priority)
+    }
+
+    fn available_proxy(
+        &self,
+        key: &crate::source::SourceKey,
+    ) -> Option<Arc<crate::scan::CameraPixels>> {
+        self.inner.available_proxy(key)
+    }
+
+    fn load_proxy(
+        &self,
+        key: crate::source::SourceKey,
+        priority: crate::source::Priority,
+    ) -> crate::source::Acquisition<'_, Arc<crate::scan::CameraPixels>> {
+        self.inner.load_proxy(key, priority)
+    }
+
+    fn load_preview(&self, key: crate::source::SourceKey) -> crate::source::PreviewFuture<'_> {
+        self.inner.load_preview(key)
+    }
+}
+
 struct NativeEvent {
     file: String,
     phase: &'static str,
@@ -174,6 +222,91 @@ fn within_limit(start: Instant, monitor: &cache_observation::Monitor) -> Result<
     Ok(())
 }
 
+fn guarded<T>(
+    cancelled: &crate::cancellation::Cancellation,
+    check: impl Fn() -> Result<()> + Sync,
+    work: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    check()?;
+    let done = AtomicBool::new(false);
+    let stopped = Mutex::new(None);
+    std::thread::scope(|scope| {
+        let watch = scope.spawn(|| {
+            while !done.load(Ordering::SeqCst) {
+                if let Err(error) = check() {
+                    *stopped.lock().unwrap() = Some(error);
+                    cancelled.cancel();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        // Keep telemetry alive until the awaited job acknowledges cancellation, including unwinding.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
+        done.store(true, Ordering::SeqCst);
+        watch.join().unwrap();
+        match result {
+            Err(panic) => std::panic::resume_unwind(panic),
+            Ok(result) => match stopped.lock().unwrap().take() {
+                Some(error) => Err(error),
+                None => result,
+            },
+        }
+    })
+}
+
+#[test]
+fn resource_stops_cancel_pending_fitting_and_wait_for_its_cleanup() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let cancelled = crate::cancellation::Cancellation::default();
+    let entered = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicBool::new(false));
+    let running = entered.clone();
+    let done = finished.clone();
+    let stop = cancelled.clone();
+    let work = || {
+        futures_lite::future::block_on(async {
+            crate::background::run(move |_| {
+                running.store(true, Ordering::SeqCst);
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while !stop.is_cancelled() {
+                    assert!(
+                        Instant::now() < deadline,
+                        "resource stop did not reach the fitting checkpoint"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                done.store(true, Ordering::SeqCst);
+                Ok(17)
+            })
+            .await
+            .map_err(|_| "fitting worker panicked".to_owned())?
+        })
+    };
+    let result = guarded(
+        &cancelled,
+        || {
+            if entered.load(Ordering::SeqCst) {
+                Err("synthetic footprint stop".into())
+            } else {
+                Ok(())
+            }
+        },
+        work,
+    );
+    assert_eq!(result, Err("synthetic footprint stop".into()));
+    assert!(cancelled.is_cancelled());
+    assert!(
+        finished.load(Ordering::SeqCst),
+        "telemetry must outlive pending fitting work"
+    );
+
+    let allowed = crate::cancellation::Cancellation::default();
+    assert_eq!(guarded(&allowed, || Ok(()), || Ok(42)), Ok(42));
+    assert!(!allowed.is_cancelled());
+}
+
 fn write_new(path: &Path, report: &Value) -> Result<()> {
     use std::io::Write;
     let mut file = fs::OpenOptions::new()
@@ -251,20 +384,17 @@ fn profile_complete_roll_area_preparation() {
         arm != "warm" || comparison.is_some(),
         "warm arm requires ANTITONE_REGION_PERF_COMPARE from the cold run"
     );
-    let result = cache_observation::with_monitor(|monitor, device, _| {
+    let result = cache_observation::with_monitor(|monitor, device, queue| {
         let start = Instant::now();
         let mut document = Document::default();
         let cache = Arc::new(crate::source::SourceCache::new(0));
         monitor.phase("region_headers", || {
             for path in &paths {
                 within_limit(start, monitor)?;
-                let (source, raw) = document::open_source(path, None).map_err(|e| e.to_string())?;
+                let (_, raw) = document::open_source(path, None).map_err(|e| e.to_string())?;
                 cache_observation::source_bound(&raw.metadata)?;
-                let wb = raw.metadata.as_shot_wb();
-                document
-                    .register_with_development(source, raw.metadata.development(wb))
-                    .map_err(|e| e.to_string())?;
             }
+            document.import(&paths).map_err(|e| e.to_string())?;
             document.validate().map_err(|e| e.to_string())
         })?;
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -323,7 +453,6 @@ fn profile_complete_roll_area_preparation() {
             }
             let before = document.project.clone();
             let request = analysis::Request {
-                revision: 1,
                 selected: document.project.order[0],
                 document,
                 film: None,
@@ -331,47 +460,78 @@ fn profile_complete_roll_area_preparation() {
                 picture: None,
                 areas: None,
             };
-            let generation = AtomicU64::new(1);
-            let stop = Mutex::new(None);
+            let cancelled = crate::cancellation::Cancellation::default();
+            let requests = AcquisitionCounts::default();
+            let misses = AcquisitionCounts::default();
             let prepare_start = Instant::now();
             let (prepared, timings) = region_timing::record(|| {
-                preparation::prepare_with_measurements(
-                    &request,
-                    &generation,
-                    &scheduler,
-                    device,
-                    |_, _| {
-                        if let Err(error) = within_limit(start, monitor) {
-                            *stop.lock().unwrap() = Some(error);
-                            generation.store(2, Ordering::Relaxed);
+                let services = crate::editor::analysis_services::Services {
+                    sources: Arc::new(CountedSources {
+                        counts: requests.clone(),
+                        inner: cache.provider(Arc::new(CountedSources {
+                            counts: misses.clone(),
+                            inner: scheduler.provider(None),
+                        })),
+                    }),
+                    sampling_inputs: Default::default(),
+                    exposures: Arc::default(),
+                    device: device.clone(),
+                    queue: queue.clone(),
+                    renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+                };
+                let metadata = crate::region_timing::timed!(
+                    "shared_detection",
+                    guarded(
+                        &cancelled,
+                        || within_limit(start, monitor),
+                        || {
+                            futures_lite::future::block_on(
+                                crate::editor::spatial::preparation::prepare(
+                                    Arc::new(request.document.clone()),
+                                    services,
+                                    cancelled.clone(),
+                                    |_, _| {},
+                                ),
+                            )
+                            .map_err(|e| e.to_string())
                         }
-                    },
-                    Default::default(),
-                    &cache,
+                    )
                 )
+                .map_err(Error::Project)?;
+                let Some(metadata) = metadata else {
+                    return Ok(None);
+                };
+                let mut detected = request.clone();
+                detected.document.spatial_metadata = Arc::new(metadata.metadata);
+                let approved = crate::region_timing::timed!(
+                    "review_assembly",
+                    preparation::assemble(
+                        &detected,
+                        device,
+                        || cancelled.is_cancelled(),
+                        |_, _| {}
+                    )
+                )?;
+                // Finished results must survive another consumer/review without native work.
+                let native_before = events.lock().unwrap().len();
+                let repeated = preparation::assemble(
+                    &detected,
+                    device,
+                    || cancelled.is_cancelled(),
+                    |_, _| {},
+                )?;
+                assert_eq!(events.lock().unwrap().len(), native_before);
+                assert_eq!(
+                    approved.as_ref().map(|a| &a.entries),
+                    repeated.as_ref().map(|a| &a.entries)
+                );
+                Ok::<_, Error>(approved)
             });
             let wall = prepare_start.elapsed();
             let native = native_report(&events.lock().unwrap(), prepare_start);
-            let calls = |stage: &str| timings.samples.iter().filter(|s| s.stage == stage).count();
-            let mut expected_by_source = BTreeMap::<String, u64>::new();
-            for sample in timings
-                .samples
-                .iter()
-                .filter(|s| matches!(s.stage, "coarse_acquire" | "fine_acquire"))
-            {
-                let id = SourceId(sample.source.expect("acquisition source context"));
-                let path = request
-                    .document
-                    .source_path(id)
-                    .map_err(|e| e.to_string())?;
-                let expected = expected_by_source
-                    .entry(path.file_name().unwrap().to_string_lossy().into_owned())
-                    .or_default();
-                if arm != "warm" || Some(&id) != request.document.project.order.last() {
-                    *expected += 1;
-                }
-            }
+            let expected_by_source = misses.lock().unwrap().clone();
             let expected_developments = expected_by_source.values().sum::<u64>();
+            let requests = requests.lock().unwrap().clone();
             let entries = prepared
                 .as_ref()
                 .ok()
@@ -383,7 +543,8 @@ fn profile_complete_roll_area_preparation() {
                 "limits":"Production provider only, no import/decode seed in preparation wall time, no UI/presentation or photographic acceptance. Native times are nested inside acquisition. Exclusive stage times must be used for accounting.",
                 "files":revisions,
                 "preparation":stage_report(&timings,wall),"native":native,"seed":seed_report,
-                "expected_developments":expected_developments,"expected_by_source":expected_by_source,
+                "expected_developments":expected_developments,"expected_by_source":expected_by_source,"source_requests":requests,
+                "cache_scope":"Seeded optional sources can be evicted before use. Expected native work is counted at cache misses, separately from native development events.",
                 "optional_budget_bytes":if arm=="warm" {WARM_BUDGET} else {0},
                 "retained_bytes_after":cache.charges().retained,
                 "entries":entries,"error":prepared.as_ref().err().map(ToString::to_string),
@@ -396,9 +557,6 @@ fn profile_complete_roll_area_preparation() {
                 report["native"]["developments"],
                 output.join("report.json").display()
             );
-            if let Some(error) = stop.into_inner().unwrap() {
-                return Err(error);
-            }
             let approved = prepared
                 .map_err(|e| e.to_string())?
                 .ok_or("unexpected preparation cancellation")?;
@@ -410,33 +568,33 @@ fn profile_complete_roll_area_preparation() {
             assert_eq!(approved.files, revisions);
             let developed = report["native"]["developments"].as_u64().unwrap() as usize;
             assert_eq!(developed as u64, expected_developments);
-            assert_eq!(calls("coarse_acquire"), paths.len());
-            for (index, path) in paths.iter().enumerate() {
+            assert_eq!(
+                requests.len(),
+                paths.len(),
+                "all sources must participate in the shared job"
+            );
+            for path in &paths {
                 let file = path.file_name().unwrap().to_str().unwrap();
+                assert_eq!(
+                    requests.get(file),
+                    Some(&1),
+                    "exactly one detection acquisition for {file}"
+                );
                 let count = report["native"]["developments_by_source"][file]
                     .as_u64()
                     .unwrap_or(0);
                 assert_eq!(
-                    count, expected_by_source[file],
-                    "unexpected native work for {file}"
-                );
-                let id = Some(request.document.project.order[index].0);
-                assert_eq!(
-                    timings
-                        .samples
-                        .iter()
-                        .filter(|s| s.stage == "coarse_acquire" && s.source == id)
-                        .count(),
-                    1
+                    count,
+                    expected_by_source.get(file).copied().unwrap_or(0),
+                    "native work must match cache misses for {file}"
                 );
                 assert!(
-                    timings
-                        .samples
-                        .iter()
-                        .filter(|s| s.stage == "fine_acquire" && s.source == id)
-                        .count()
-                        <= 1
+                    count <= 1,
+                    "source developed twice in one detection job: {file}"
                 );
+                if arm == "cold" {
+                    assert_eq!(count, 1, "cold source must be developed: {file}");
+                }
             }
             assert_eq!(approved.entries.len(), paths.len());
             if let Some(reference) = &comparison {

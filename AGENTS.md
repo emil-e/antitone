@@ -34,6 +34,8 @@ Within delegated work, continue through routine implementation and verification 
 
 Tie experiments to the requested outcome. Prefer a simple useful baseline, and add sophistication only when observed failures justify it.
 
+Use available hardware autonomously within agreed work; the machine may be in concurrent use. Diagnostic resource caps are implementation choices, not standing restrictions on agents.
+
 ## Follow contributor guidance
 
 Follow the [development guide](docs/development.md) for engineering standards, documentation conventions and proportionate checks before handoff. Use the relevant [processing](docs/processing.md), [colour/output](docs/colour-and-output.md) and [project compatibility](docs/projects.md) guides to understand the boundaries being changed, not to treat their implementation choices as immutable requirements.

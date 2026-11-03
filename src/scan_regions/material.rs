@@ -172,7 +172,7 @@ fn line_position(capture: &Capture, side: usize, line: &Line) -> f64 {
 }
 
 impl RollModel {
-    /// Pool the normal fine-measurement interiors before freezing roll support.
+    /// Pool automatic interiors before freezing roll support.
     /// Authored geometry and evidence-backed photo exceptions remain independent.
     pub fn refine_areas(&self, areas: &mut [Areas]) -> Result<(), Error> {
         if areas.len() != self.grids.len() {

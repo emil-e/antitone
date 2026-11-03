@@ -1,6 +1,9 @@
 use super::*;
-use crate::region_timing;
-use std::sync::{Arc, atomic::AtomicUsize};
+use crate::editor::analysis_services::Services;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 pub(in crate::editor) fn request() -> (
     analysis::Request,
@@ -31,7 +34,6 @@ pub(in crate::editor) fn request() -> (
     let selected = document.project.order[0];
     (
         analysis::Request {
-            revision: 1,
             document,
             selected,
             film: None,
@@ -59,162 +61,190 @@ pub(in crate::editor) fn observed() -> (source_loading::SourceLoader, Arc<Atomic
     )
 }
 
-#[test]
-fn scratch_and_unavailable_storage_produce_identical_areas_without_additional_native_retention() {
-    let (request, _directory, device, _queue) = request();
-    let before = request.document.project.clone();
-    let generation = AtomicU64::new(1);
-    let (scheduler, count) = observed();
-    let (cached, timings) =
-        region_timing::record(|| prepare(&request, &generation, &scheduler, &device, |_, _| {}));
-    let cached = cached.unwrap().unwrap();
-    assert_eq!(count.load(Ordering::Relaxed), 2);
-    assert_eq!(
-        timings
-            .samples
-            .iter()
-            .filter(|s| s.stage == "coarse_acquire")
-            .map(|s| s.source)
-            .collect::<Vec<_>>(),
-        request
-            .document
-            .project
-            .order
-            .iter()
-            .map(|id| Some(id.0))
-            .collect::<Vec<_>>()
-    );
-    assert!(!timings.samples.iter().any(|s| s.stage == "fine_acquire"));
-    let uncached = prepare_with_measurements(
-        &request,
-        &generation,
-        &scheduler,
-        &device,
+struct NoSources;
+impl crate::source::SourceProvider for NoSources {
+    fn load_source(
+        &self,
+        _: crate::source::SourceKey,
+        _: crate::source::Priority,
+    ) -> crate::source::SourceFuture<'_> {
+        panic!("review assembly must not request source pixels")
+    }
+}
+
+pub(super) fn review_services(device: &wgpu::Device, queue: &wgpu::Queue) -> Services {
+    Services {
+        sampling_inputs: Default::default(),
+        exposures: Arc::default(),
+        sources: Arc::new(NoSources),
+        device: device.clone(),
+        queue: queue.clone(),
+        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
+    }
+}
+
+pub(super) fn detect(
+    request: &mut analysis::Request,
+    scheduler: &source_loading::SourceLoader,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    let mut services = review_services(device, queue);
+    services.sources = scheduler.provider(None);
+    let metadata = futures_lite::future::block_on(crate::editor::spatial::preparation::prepare(
+        Arc::new(request.document.clone()),
+        services,
+        Default::default(),
         |_, _| {},
-        &mut measurements::Measurements::unavailable(),
-    )
+    ))
     .unwrap()
     .unwrap();
-    assert_eq!(count.load(Ordering::Relaxed), 6);
-    let overflow = prepare_with_measurements(
-        &request,
-        &generation,
-        &scheduler,
-        &device,
-        |_, _| {},
-        &mut measurements::Measurements::full(),
-    )
-    .unwrap()
-    .unwrap();
-    scheduler.close_and_wait().unwrap();
-    assert_eq!(count.load(Ordering::Relaxed), 10);
-    assert_eq!(cached.entries, overflow.entries);
-    assert_eq!(cached.entries, uncached.entries);
-    assert_eq!(cached.files, uncached.files);
-    assert_eq!(request.document.project, before);
+    request.document.spatial_metadata = Arc::new(metadata.metadata);
+    assert!(!request.document.ready_spatial_metadata().groups.is_empty());
 }
 
 #[test]
-fn cancellation_at_the_roll_barrier_neither_reads_scratch_nor_promotes_partial_areas() {
-    let (request, _directory, device, _queue) = request();
+fn finished_shared_sampling_is_reused_without_changing_accepted_state() {
+    let (mut request, _directory, device, queue) = request();
     let before = request.document.project.clone();
-    let generation = AtomicU64::new(1);
     let (scheduler, count) = observed();
-    let (result, timings) = region_timing::record(|| {
-        prepare(
-            &request,
-            &generation,
-            &scheduler,
-            &device,
-            |index, total| {
-                if index == total / 2 {
-                    generation.store(2, Ordering::Relaxed);
-                }
-            },
-        )
-    });
-    scheduler.close_and_wait().unwrap();
-    assert!(result.unwrap().is_none());
-    assert_eq!(count.load(Ordering::Relaxed), 2);
+    detect(&mut request, &scheduler, &device, &queue);
     assert_eq!(
-        timings
-            .samples
-            .iter()
-            .filter(|s| s.stage == "measurement_write")
-            .count(),
-        2
+        count.load(Ordering::Relaxed),
+        2,
+        "both authored sources must exercise detection"
     );
-    assert!(
-        !timings
-            .samples
-            .iter()
-            .any(|s| s.stage == "measurement_read")
-    );
+    let ready = request.document.spatial_metadata.clone();
+    let first = preparation::assemble(&request, &device, || false, |_, _| {})
+        .unwrap()
+        .unwrap();
+    let second = preparation::assemble(&request, &device, || false, |_, _| {})
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.entries, second.entries);
+    assert_eq!(first.files, second.files);
+    assert_eq!(first.entries.len(), 2);
+    assert!(first.entries.iter().all(|entry| entry.areas.ready()));
+    assert_eq!(count.load(Ordering::Relaxed), 2);
+    assert_eq!(request.document.spatial_metadata, ready);
     assert_eq!(request.document.project, before);
+    scheduler.close_and_wait().unwrap();
 }
 
 #[test]
-fn authored_areas_remain_authoritative_and_complete_edits_need_no_fine_capture() {
-    let (mut request, _directory, device, _queue) = request();
-    let mut areas = Areas::default();
-    let opening = Coverage::rectangle(crate::geometry::SourceRegion {
-        x: 16,
-        y: 16,
-        width: 480,
-        height: 480,
-    });
-    let picture = Coverage::rectangle(crate::geometry::SourceRegion {
-        x: 96,
-        y: 96,
-        width: 320,
-        height: 320,
-    });
-    areas.edit_opening(opening);
-    areas.edit_picture(picture);
-    let first = SourceAnalysis {
-        source: request.document.project.order[0],
-        areas: areas.clone(),
-    };
-    areas = Areas {
-        opening: Some(opening.corners().map(|p| p.0)),
+fn cancelling_review_assembly_does_not_return_partial_areas_or_discard_detection() {
+    let (mut request, _directory, device, queue) = request();
+    let (scheduler, count) = observed();
+    detect(&mut request, &scheduler, &device, &queue);
+    let before = request.document.project.clone();
+    let ready = request.document.spatial_metadata.clone();
+    let cancelled = std::cell::Cell::new(false);
+    let result = preparation::assemble(
+        &request,
+        &device,
+        || cancelled.get(),
+        |index, _| {
+            if index == 1 {
+                cancelled.set(true);
+            }
+        },
+    )
+    .unwrap();
+    assert!(result.is_none());
+    assert_eq!(count.load(Ordering::Relaxed), 2);
+    assert_eq!(request.document.project, before);
+    assert_eq!(request.document.spatial_metadata, ready);
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn authored_windows_override_suggestions_without_changing_shared_results() {
+    let (mut request, _directory, device, queue) = request();
+    let (scheduler, count) = observed();
+    detect(&mut request, &scheduler, &device, &queue);
+    let opening = Coverage::rectangle(analysis::rect([16, 16, 480, 480]));
+    let picture = Coverage::rectangle(analysis::rect([96, 96, 320, 320]));
+    let mut first = Areas::default();
+    first.edit_opening(opening);
+    first.edit_picture(picture);
+    let mut second = Areas {
+        opening: Some(
+            Coverage::rectangle(analysis::rect([8, 8, 496, 496]))
+                .corners()
+                .map(|p| p.0),
+        ),
         ..Default::default()
     };
-    areas.edit_picture(picture);
-    let second = SourceAnalysis {
-        source: request.document.project.order[1],
-        areas,
-    };
-    request.document.project.analysis_regions = vec![first.clone(), second.clone()];
+    second.edit_picture(picture);
+    request.document.project.analysis_regions = vec![
+        SourceAnalysis {
+            source: request.document.project.order[0],
+            areas: first.clone(),
+        },
+        SourceAnalysis {
+            source: request.document.project.order[1],
+            areas: second.clone(),
+        },
+    ];
     let before = request.document.project.clone();
-    let (scheduler, count) = observed();
-    let (result, timings) = region_timing::record(|| {
-        prepare(&request, &AtomicU64::new(1), &scheduler, &device, |_, _| {})
-    });
-    let approved = result.unwrap().unwrap();
-    assert_eq!(count.load(Ordering::Relaxed), 2);
-    let reference = prepare_with_measurements(
-        &request,
-        &AtomicU64::new(1),
-        &scheduler,
-        &device,
-        |_, _| {},
-        &mut measurements::Measurements::unavailable(),
-    )
-    .unwrap()
-    .unwrap();
-    scheduler.close_and_wait().unwrap();
-    assert_eq!(count.load(Ordering::Relaxed), 5);
-    assert_eq!(approved.entries, reference.entries);
-    assert_eq!(approved.entries[0], first);
-    assert_eq!(approved.entries[1].areas.picture, second.areas.picture);
+    let ready = request.document.spatial_metadata.clone();
+    let approved = preparation::assemble(&request, &device, || false, |_, _| {})
+        .unwrap()
+        .unwrap();
+    assert_eq!(approved.entries[0].areas, first);
+    assert_eq!(approved.entries[1].areas.picture, second.picture);
     assert!(approved.entries[1].areas.picture_edited);
+    let detected = ready.groups[0]
+        .sources
+        .iter()
+        .find(|s| s.input.source == approved.entries[1].source)
+        .unwrap();
     assert_eq!(
-        timings
-            .samples
-            .iter()
-            .filter(|s| s.stage == "measurement_write")
-            .count(),
-        1
+        approved.entries[1].areas.opening,
+        detected.sampling_areas().opening
     );
+    assert!(approved.entries[1].areas.opening.is_some());
+    assert_eq!(count.load(Ordering::Relaxed), 2);
     assert_eq!(request.document.project, before);
+    assert_eq!(request.document.spatial_metadata, ready);
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn unavailable_detected_components_are_reviewable_without_redetection() {
+    let (mut request, _directory, device, queue) = request();
+    let (scheduler, count) = observed();
+    detect(&mut request, &scheduler, &device, &queue);
+    let mut metadata = (*request.document.spatial_metadata).clone();
+    let source = metadata.groups[0].sources[0].input.source;
+    metadata.groups[0].sources[0].sampling = Default::default();
+    metadata.groups[0].sources[0].picture = None;
+    metadata.validate().unwrap();
+    request.document.spatial_metadata = Arc::new(metadata.clone());
+    let approved = preparation::assemble(&request, &device, || false, |_, _| {})
+        .unwrap()
+        .unwrap();
+    assert!(
+        !approved
+            .entries
+            .iter()
+            .find(|r| r.source == source)
+            .unwrap()
+            .areas
+            .ready()
+    );
+    assert!(
+        approved.entries.iter().any(|r| r.areas.ready()),
+        "the positive source must remain usable"
+    );
+    assert_eq!(*request.document.spatial_metadata, metadata);
+    assert_eq!(count.load(Ordering::Relaxed), 2);
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn missing_shared_detection_is_not_replaced_with_an_operation_local_detector() {
+    let (request, _directory, device, _queue) = request();
+    assert!(preparation::assemble(&request, &device, || false, |_, _| {}).is_err());
+    assert!(request.document.spatial_metadata.groups.is_empty());
 }

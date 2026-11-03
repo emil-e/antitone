@@ -136,7 +136,51 @@ impl Fit {
             correction.settings.require_source(&actual.development)?;
             scan.set_flat_field(Some(correction.settings.map.clone()))?;
         }
-        let active = scan.area;
+        let renderer = services.renderers.get(&services.device, &services.queue)?;
+        let sampler = crate::gpu::analysis::CameraSampler::new(
+            &services.device,
+            &renderer,
+            (&services.queue, services.renderers.submissions()),
+            &scan,
+        )?;
+        self.sample_camera(index, scan.area, &sampler, cancelled)
+    }
+
+    fn sample_retained(
+        &mut self,
+        index: usize,
+        input: Arc<crate::scan::AnalysisInput>,
+        services: &Services,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<bool, Error> {
+        if cancelled() {
+            return Ok(false);
+        }
+        let project = &self.request.document.project;
+        let record = project.source(project.order[index])?;
+        project.require_scan_source(&record.development)?;
+        if let Some(correction) = &self.correction {
+            correction.settings.require_source(&record.development)?;
+        }
+        let active = input.area();
+        let renderer = services.renderers.get(&services.device, &services.queue)?;
+        let sampler = crate::gpu::analysis::CameraSampler::retained(
+            &services.device,
+            &renderer,
+            (&services.queue, services.renderers.submissions()),
+            input,
+            self.correction.as_ref().map(|c| c.settings.map.clone()),
+        )?;
+        self.sample_camera(index, active, &sampler, cancelled)
+    }
+
+    fn sample_camera(
+        &mut self,
+        index: usize,
+        active: Rect,
+        sampler: &crate::gpu::analysis::CameraSampler<'_>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<bool, Error> {
         let frame_areas = self.request.areas.as_ref().map(|a| &a.entries[index].areas);
         let regions = self
             .request
@@ -177,13 +221,6 @@ impl Fit {
         };
         // Physical film support supplements even authored areas. It must not resize the
         // canonical grid, alter accepted geometry, or turn unknown/camera limits into edges.
-        let renderer = services.renderers.get(&services.device, &services.queue)?;
-        let sampler = crate::gpu::analysis::CameraSampler::new(
-            &services.device,
-            &renderer,
-            (&services.queue, services.renderers.submissions()),
-            &scan,
-        )?;
         let film_samples = sampler.sample(
             if frame_areas.is_some() {
                 active
@@ -219,7 +256,7 @@ impl Fit {
         };
         require_picture(&picture)?;
         self.owned.push(FrameMeasurements {
-            floor: scan.effective_floor(),
+            floor: sampler.effective_floor(),
             film,
             picture,
         });
@@ -363,21 +400,39 @@ pub(in crate::editor) async fn run(
             return Ok(None);
         }
         progress(index, total);
-        let Some(scan) = services
-            .acquire(state.request.clone(), index, cancelled.clone())
-            .await?
-        else {
-            return Ok(None);
+        let retained = if state.request.areas.is_some() {
+            services.sampling_inputs.get(
+                &state.request.document,
+                state.request.document.project.order[index],
+            )?
+        } else {
+            None
         };
         let retired = cancelled.clone();
         let queries = services.clone();
-        let Some((next, keep)) = services
-            .cpu(&cancelled, move || {
-                let keep = state.sample(index, scan, &queries, || retired.is_cancelled())?;
-                Ok((state, keep))
-            })
-            .await?
-        else {
+        let measured = if let Some(input) = retained {
+            services
+                .cpu(&cancelled, move || {
+                    let keep =
+                        state.sample_retained(index, input, &queries, || retired.is_cancelled())?;
+                    Ok((state, keep))
+                })
+                .await?
+        } else {
+            let Some(scan) = services
+                .acquire(state.request.clone(), index, cancelled.clone())
+                .await?
+            else {
+                return Ok(None);
+            };
+            services
+                .cpu(&cancelled, move || {
+                    let keep = state.sample(index, scan, &queries, || retired.is_cancelled())?;
+                    Ok((state, keep))
+                })
+                .await?
+        };
+        let Some((next, keep)) = measured else {
             return Ok(None);
         };
         state = next;

@@ -61,6 +61,7 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
     let (scheduler, _) = observed();
     let services = Services {
         exposures: Arc::default(),
+        sampling_inputs: Default::default(),
         sources: scheduler.provider(None),
         device,
         queue,
@@ -147,6 +148,7 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
     let (scheduler, _) = observed();
     let services = Services {
         exposures: Arc::default(),
+        sampling_inputs: Default::default(),
         sources: scheduler.provider(None),
         device,
         queue,

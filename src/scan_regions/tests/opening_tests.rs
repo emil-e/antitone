@@ -1,6 +1,8 @@
 use super::super::{lines::Group, opening::Shared, rectangles::project};
 use super::*;
 
+mod shared_sampling;
+
 fn capture(scene: usize, angle: f64) -> Capture {
     let size = [192, 128];
     let mut rgb = vec![[10500; 3]; 192 * 128];

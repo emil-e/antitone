@@ -35,21 +35,71 @@ fn fixture(scheduler: source_loading::SourceLoader) -> Editor {
     editor
 }
 
-fn observed() -> (source_loading::SourceLoader, Arc<AtomicUsize>) {
+type SourceStarts = Arc<Mutex<std::collections::BTreeMap<std::path::PathBuf, usize>>>;
+
+fn observed_by_source() -> (source_loading::SourceLoader, Arc<AtomicUsize>, SourceStarts) {
     let count = Arc::new(AtomicUsize::new(0));
     let starts = count.clone();
-    let scheduler = source_loading::SourceLoader::new_observed(move |_, phase, _| {
+    let sources = SourceStarts::default();
+    let observed = sources.clone();
+    let scheduler = source_loading::SourceLoader::new_observed(move |path, phase, _| {
         if matches!(phase, source_loading::NativePhase::UnpackBegin) {
             starts.fetch_add(1, Ordering::SeqCst);
+            *observed.lock().unwrap().entry(path.to_owned()).or_default() += 1;
         }
         Ok(())
     });
+    (scheduler, count, sources)
+}
+
+fn confirm_without_native(
+    app: &mut TestApplication<'_, Editor>,
+    scheduler: &source_loading::SourceLoader,
+) {
+    assert!(app.read(|e| e.document.sampling_inputs.retained_bytes() > 0));
+    scheduler.close_and_wait().unwrap();
+    app.enter(|editor, cx| editor.confirm_analysis_review(cx));
+    app.run_until(LIMIT, |editor| {
+        !editor.busy && editor.document.analysis_operation().is_none()
+    });
+    app.read(|editor| {
+        assert!(editor.status.starts_with("Analyzed 2"), "{}", editor.status);
+        assert_eq!(editor.document.project.analysis_regions.len(), 2);
+    });
+}
+
+fn observed() -> (source_loading::SourceLoader, Arc<AtomicUsize>) {
+    let (scheduler, count, _) = observed_by_source();
     (scheduler, count)
+}
+
+fn assert_once_per_source(counts: &SourceStarts, document: &Document) {
+    let counts = counts.lock().unwrap();
+    assert!(
+        !counts.is_empty(),
+        "positive control must exercise native acquisition"
+    );
+    for (path, count) in counts.iter() {
+        assert!(
+            document
+                .project
+                .order
+                .iter()
+                .any(|id| document.source_path(*id).is_ok_and(|p| p == *path)),
+            "unexpected source {}",
+            path.display()
+        );
+        assert!(
+            *count <= 1,
+            "source developed more than once during area detection: {} ({count})",
+            path.display()
+        );
+    }
 }
 
 #[test]
 fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_consumers_edits() {
-    let (scheduler, starts) = observed();
+    let (scheduler, starts, by_source) = observed_by_source();
     let editor = fixture(scheduler.clone());
     let accepted = editor.document.state.project.clone();
     let dirty = editor.document.dirty();
@@ -78,8 +128,17 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
                 2
             );
             assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);
+            assert!(
+                regions
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.sources)
+                    .all(|s| s.sampling_areas().ready()),
+                "Auto-crop must finish sampling detection too, not defer it until Analyze"
+            );
             regions
         });
+        app.read(|editor| assert_once_per_source(&by_source, &editor.document.capture()));
         let acquired = starts.load(Ordering::SeqCst);
         assert!(
             acquired > 0,
@@ -108,6 +167,11 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
         app.run_until(LIMIT, |editor| {
             editor.document.spatial_preparing.is_none() && !editor.analysis_preparing()
         });
+        assert_eq!(
+            starts.load(Ordering::SeqCst),
+            acquired,
+            "Analyze must not acquire pixels to detect areas after Auto-crop"
+        );
         app.read(|editor| {
             assert!(
                 editor.document.analysis_review().is_some(),
@@ -118,13 +182,15 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
         });
+        confirm_without_native(app, &scheduler);
+        assert_eq!(starts.load(Ordering::SeqCst), acquired);
     });
     scheduler.close_and_wait().unwrap();
 }
 
 #[test]
 fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses_them() {
-    let (scheduler, starts) = observed();
+    let (scheduler, starts, by_source) = observed_by_source();
     let editor = fixture(scheduler.clone());
     let accepted = editor.document.state.project.clone();
     let undo = editor.history_label(history::Direction::Undo);
@@ -154,10 +220,19 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
             );
             editor.document.spatial.ready()
         });
+        app.read(|editor| assert_once_per_source(&by_source, &editor.document.capture()));
+        let acquired = starts.load(Ordering::SeqCst);
+        assert!(
+            regions
+                .groups
+                .iter()
+                .flat_map(|g| &g.sources)
+                .all(|s| s.sampling_areas().ready()),
+            "finished shared results must include usable sampling suggestions for the authored positive control"
+        );
         app.enter(|editor, cx| editor.finish_pick(cx));
         app.run_until(LIMIT, |editor| !editor.busy);
         assert!(app.read(|editor| editor.document.analysis_review().is_none()));
-        let acquired = starts.load(Ordering::SeqCst);
         app.enter(|editor, cx| {
             editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
         });
@@ -169,6 +244,55 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
         });
         assert_eq!(starts.load(Ordering::SeqCst), acquired);
+        app.enter(|editor, cx| {
+            editor.finish_auto_crop(false);
+            editor.request_analysis(cx);
+        });
+        app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
+        confirm_without_native(app, &scheduler);
+        assert_eq!(starts.load(Ordering::SeqCst), acquired);
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn restored_regions_collect_missing_sampling_pixels_without_replacing_finished_detection() {
+    let (scheduler, starts) = observed();
+    let editor = fixture(scheduler.clone());
+    with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.review_crop_proposals(e.document.project.order.clone(), "Whole roll", cx)
+        });
+        app.run_until(LIMIT, |e| e.document.spatial_preparing.is_none());
+        let retained = app.read(|e| {
+            assert!(e.document.sampling_inputs.retained_bytes() > 0);
+            let mut metadata = (*e.document.spatial.ready()).clone();
+            assert!(metadata.groups[0].sources[0].sampling_areas().ready());
+            metadata.groups[0].sources[0].sampling =
+                crate::spatial_metadata::SamplingAreas::new(&Default::default());
+            metadata.validate().unwrap();
+            metadata
+        });
+        app.update(|e| {
+            e.finish_auto_crop(false);
+            e.document.sampling_inputs = Default::default();
+            e.document.spatial = crate::spatial_metadata::Store::restored(retained.clone());
+        });
+        let before = starts.load(Ordering::SeqCst);
+        app.enter(|e, cx| e.request_analysis(cx));
+        app.run_until(LIMIT, |e| e.document.spatial_preparing.is_none());
+        app.read(|e| {
+            assert_eq!(
+                *e.document.spatial.ready(),
+                retained,
+                "collecting pixels must not rerun or replace finished detection"
+            );
+            assert!(e.document.sampling_inputs.retained_bytes() > 0);
+        });
+        assert!(
+            starts.load(Ordering::SeqCst) > before,
+            "missing patches must actually be recollected with zero optional RAW retention"
+        );
     });
     scheduler.close_and_wait().unwrap();
 }

@@ -48,7 +48,7 @@ ANTITONE_SWITCH_SAMPLES=/absolute/path/to/samples \
   -- --ignored --exact --nocapture
 ```
 
-Use only within agreed workload bounds. The [measurement helper](../native/cache_observation.rs) rejects sources over 600 MiB of explicitly estimated source-construction storage; the diagnostic starts only at known Normal pressure with at least 2 GiB reported free memory, and its sampler latches unknown/elevated pressure or stale sampling. Native calls are noninterruptible: stop thresholds are not hard allocation caps, and sampled peaks are not exact maxima. These measurements do not grant cache admission permission; [fixed preferences](editor.md#responsiveness-and-optional-caches) govern optional ownership.
+The [measurement helper](../native/cache_observation.rs) samples process footprint, resident memory and native GPU allocations. Native calls are noninterruptible, and sampled peaks are not exact maxima. Production cache admission uses [fixed preferences](editor.md#responsiveness-and-optional-caches).
 
 The exercise observes native development counts, Ready delivery and accepted physical-view readiness separately, including source replacement while loading. A retained native hit does not imply cached physical AP1 or original comparison output. Offscreen/single-pass measurements do not establish physical display latency or default-budget whole-roll residency.
 

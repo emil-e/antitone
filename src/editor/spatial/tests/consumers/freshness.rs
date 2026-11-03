@@ -7,6 +7,7 @@ fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
     let mut editor = fixture(scheduler.clone());
     let peer = editor.document.state.project.order[1];
     let metadata = supplied(&mut editor);
+    editor.document.spatial = crate::spatial_metadata::Store::default();
     let reply = programmed(&mut editor);
     editor.document.roll_selection = Default::default();
     editor.document.roll_selection.reconcile(
@@ -27,6 +28,14 @@ fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
                     .collect(),
                 "Entry selection",
                 cx,
+            );
+            assert!(
+                editor.document.spatial_preparing.is_some(),
+                "positive control must start the producer, not use the ready shortcut"
+            );
+            assert!(
+                editor.document.spatial_reply.is_none(),
+                "producer must capture the programmed reply"
             );
             editor
                 .document

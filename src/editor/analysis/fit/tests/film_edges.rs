@@ -17,6 +17,7 @@ fn attach_film(request: &mut Request, index: usize, boundaries: [Boundary; 4]) {
             observation: None,
             picture: None,
             holder_opening: None,
+            sampling: Default::default(),
             material: None,
         })
         .collect();
@@ -94,6 +95,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
         let physical = request.document.spatial_metadata.clone();
         let (scheduler, _) = observed();
         let services = Services {
+            sampling_inputs: Default::default(),
             exposures: Arc::default(),
             sources: scheduler.provider(None),
             device,
@@ -256,6 +258,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
     let physical = request.document.spatial_metadata.clone();
     let (scheduler, _) = observed();
     let services = Services {
+        sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
@@ -379,6 +382,7 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
+        sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
@@ -426,6 +430,7 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
+        sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
@@ -478,6 +483,7 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
     );
     let (scheduler, _) = observed();
     let services = Services {
+        sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,
@@ -508,6 +514,7 @@ fn too_little_picture_after_edge_exclusion_fails_without_relaxing_or_installing_
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
     let services = Services {
+        sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),
         device,

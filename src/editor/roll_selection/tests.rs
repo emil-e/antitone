@@ -50,6 +50,56 @@ fn settle(editor: &mut Editor) {
 }
 
 #[test]
+fn removing_a_photo_releases_its_sampling_inputs_and_undo_does_not_restore_working_pixels() {
+    let mut editor = crate::editor::tests::authored_fixture(&["roll-0.dng", "roll-1.dng"]);
+    let id = editor.document.project.order[0];
+    let document = editor.document.capture();
+    let scan = crate::scan::Scan::open(&document.source_path(id).unwrap(), Some([1.; 4])).unwrap();
+    let input = std::sync::Arc::new(
+        crate::scan::AnalysisInput::capture(
+            &scan,
+            crate::roll_analysis::MAX_SAMPLES_PER_FRAME,
+            || false,
+        )
+        .unwrap()
+        .unwrap(),
+    );
+    let weak = std::sync::Arc::downgrade(&input);
+    editor
+        .document
+        .sampling_inputs
+        .insert(&document, id, input)
+        .unwrap();
+    editor.document.roll_selection.only(id);
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|e, cx| {
+            e.request_removal();
+            assert_eq!(e.document.removal_pending, Some(vec![id]));
+            e.remove_selected_photos(cx);
+            assert!(e.document.project.source(id).is_err());
+            assert_eq!(e.document.sampling_inputs.retained_bytes(), 0);
+        });
+        assert!(
+            weak.upgrade().is_none(),
+            "real removal/history must not retain the patch payload"
+        );
+        app.run_until(std::time::Duration::from_secs(20), |e| !e.busy);
+        app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
+        app.run_until(std::time::Duration::from_secs(20), |e| !e.busy);
+        app.read(|e| {
+            assert!(e.document.project.source(id).is_ok());
+            assert!(
+                e.document
+                    .sampling_inputs
+                    .get(&e.document.capture(), id)
+                    .unwrap()
+                    .is_none()
+            );
+        });
+    });
+}
+
+#[test]
 fn plain_command_and_shift_keep_active_selected_and_last_plain_anchor() {
     let editor = fixture(2);
     crate::application::test_support::with_application(editor, |app| {

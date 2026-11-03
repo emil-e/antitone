@@ -217,11 +217,13 @@ async fn fit_and_accept(
 impl Editor {
     fn analysis_services(&self) -> Option<Services> {
         self.source_services.as_ref().map(|source| {
-            Services::new(
+            let mut services = Services::new(
                 source,
                 source.provider(Some(self.document.cache.clone())),
                 self.document.exposures.clone(),
-            )
+            );
+            services.sampling_inputs = self.document.sampling_inputs.clone();
+            services
         })
     }
 
@@ -272,7 +274,7 @@ impl Editor {
         let Some(mut request) = self.analysis_request() else {
             return;
         };
-        let Some(regions) = self.prepare_regions(cx) else {
+        let Some(regions) = self.prepare_analysis_regions(cx) else {
             return;
         };
         let operation = Operation::new(Phase::Regions);

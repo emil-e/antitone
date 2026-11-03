@@ -25,8 +25,6 @@ pub(super) enum Orientation {
 
 #[derive(Clone)]
 pub(super) struct Request {
-    #[cfg(test)]
-    pub revision: u64,
     pub document: Document,
     pub selected: SourceId,
     pub film: Option<Rect>,
@@ -159,35 +157,6 @@ fn proposed_document(
     }
     candidate.project.analysis_area = picture.map(array);
     Ok(candidate)
-}
-
-#[cfg(test)]
-pub(super) fn develop_scan(
-    developments: &source_loading::SourceLoader,
-    document: &Document,
-    cache: &Arc<crate::source::SourceCache>,
-    expected: &Source,
-    path: &std::path::Path,
-    wb: [f64; 4],
-    cancelled: impl Fn() -> bool,
-) -> Result<Option<Scan>, Error> {
-    let request = source::Request {
-        input: document.project.input,
-        reference: Arc::default(),
-        path: path.to_owned(),
-        wb: Some(wb),
-        expected: Some(expected.clone()),
-        sources: Some(developments.provider(Some(cache.clone()))),
-        file: document.file_key(path),
-        correction: None,
-    };
-    let result = request.load(developments, &cancelled);
-    if cancelled() {
-        return Ok(None);
-    }
-    result
-        .and_then(|developed| developed.context.scan())
-        .map(Some)
 }
 
 impl Editor {
@@ -335,8 +304,6 @@ impl Editor {
         }
         self.sync_document();
         Some(Request {
-            #[cfg(test)]
-            revision: 0,
             document: self.document.capture(),
             selected: self.document.visit.current_source?,
             film: self.analysis_support(),

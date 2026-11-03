@@ -6,15 +6,7 @@ use crate::{
 };
 
 fn open(app: &mut TestApplication<'_, Editor>) {
-    app.enter(|editor, cx| {
-        // Program shared geometry only. Its producer/publication and the Analyze
-        // continuation run normally; sampling preparation uses real RAW inputs.
-        let (reply, receive) = oneshot::channel();
-        editor.document.spatial_reply = Some(receive);
-        let metadata = editor.document.capture().ready_spatial_metadata();
-        editor.request_analysis(cx);
-        reply.send(Ok(Some(metadata))).ok().unwrap();
-    });
+    app.enter(|editor, cx| editor.request_analysis(cx));
     app.run_until(LIMIT, |editor| {
         editor.document.analysis_review().is_some() && !editor.busy
     });
