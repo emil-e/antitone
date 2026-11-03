@@ -23,6 +23,8 @@ pub(super) struct DocumentScope {
     pub halation: crate::halation::HalationSettings,
     pub roll_orientation: super::RollOrientation,
     pub auto_crop_requested: Option<super::auto_crop::Action>,
+    #[cfg(test)]
+    pub auto_crop: super::auto_crop::State,
     pub target: super::OutputTarget,
     pub source: bool,
     pub selected: usize,
@@ -189,6 +191,8 @@ impl From<Document> for DocumentScope {
             target: super::OutputTarget::DisplayP3,
             source: true,
             auto_crop_requested: None,
+            #[cfg(test)]
+            auto_crop: Default::default(),
             spatial: crate::spatial_metadata::Store::restored((*state.spatial_metadata).clone()),
             spatial_preparing: None,
             #[cfg(test)]

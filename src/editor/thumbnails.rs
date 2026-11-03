@@ -342,6 +342,13 @@ fn shared_look_bytes(entries: &std::collections::VecDeque<(ImageKey, CachedProdu
     bytes
 }
 
+/// Filmstrip inputs captured by its caller for the current presentation.
+#[derive(Default)]
+pub(super) struct Preview {
+    pub compositions: Vec<(SourceId, Composition)>,
+    pub warnings: Vec<(SourceId, String)>,
+}
+
 pub(super) struct Thumbnails {
     cache: Cache<ImageKey, CachedProduct>,
     pub(super) sources: Arc<crate::source::SourceCache>,
@@ -363,6 +370,7 @@ pub(super) struct Thumbnails {
     services: Option<Services>,
     backend: Option<Arc<dyn crate::source::SourceProvider>>,
     demand: Demand,
+    preview: Preview,
     generation: Arc<std::sync::atomic::AtomicU64>,
     pending: Option<(u64, ImageKey)>,
     pending_render: bool,
@@ -413,6 +421,7 @@ impl Default for Thumbnails {
             services: None,
             backend: None,
             demand: Demand::None,
+            preview: Preview::default(),
             generation: Arc::default(),
             pending: None,
             pending_render: false,
@@ -423,6 +432,11 @@ impl Default for Thumbnails {
 }
 
 impl Thumbnails {
+    #[cfg(all(test, feature = "ui-tests"))]
+    pub(super) fn preview(&self) -> &Preview {
+        &self.preview
+    }
+
     pub(super) fn selected_preview(
         &mut self,
         request: u64,
@@ -957,13 +971,21 @@ impl Editor {
         } else {
             source.orientation
         };
-        let crop = self.auto_crop_preview(source.id).unwrap_or_else(|| {
-            if self.document.visit.current_source == Some(source.id) {
-                self.document.visit.crop
-            } else {
-                source.crop
-            }
-        });
+        if let Some((_, composition)) = self
+            .document
+            .thumbnails
+            .preview
+            .compositions
+            .iter()
+            .find(|(id, _)| *id == source.id)
+        {
+            return *composition;
+        }
+        let crop = if self.document.visit.current_source == Some(source.id) {
+            self.document.visit.crop
+        } else {
+            source.crop
+        };
         if self.document.analysis_review().is_some() {
             Composition::new(
                 source.development.active_area.into(),
@@ -1037,6 +1059,16 @@ impl Editor {
     }
 
     pub(super) fn filmstrip(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        self.filmstrip_preview(ui, Preview::default(), cx);
+    }
+
+    pub(super) fn filmstrip_preview(
+        &mut self,
+        ui: &mut egui::Ui,
+        preview: Preview,
+        cx: &UiContext<'_, Self>,
+    ) {
+        self.document.thumbnails.preview = preview;
         if self.document.thumbnails.memory_watch.is_none() {
             self.document
                 .thumbnails
@@ -1341,7 +1373,16 @@ impl Editor {
                     } else {
                         None
                     };
-                    if let Some(reason) = self.source_tool_warning(id) {
+                    if let Some(reason) = self
+                        .document
+                        .thumbnails
+                        .preview
+                        .warnings
+                        .iter()
+                        .find(|(source, _)| *source == id)
+                        .map(|(_, reason)| reason.clone())
+                        .or_else(|| self.source_tool_warning(id))
+                    {
                         let warning = ContextualStatus::new(StatusLevel::Warning, reason);
                         status =
                             Some(status.map_or(warning.clone(), |status| status.combine(warning)));
@@ -1392,9 +1433,7 @@ impl Editor {
                         }
                         if ui
                             .add_enabled(
-                                self.roll_edit_available()
-                                    && self.document.auto_crop_edit().is_none()
-                                    && selected,
+                                self.roll_edit_available() && !self.tool_interacting() && selected,
                                 egui::Button::new("Remove selected photos…"),
                             )
                             .clicked()

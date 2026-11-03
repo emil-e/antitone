@@ -1,7 +1,9 @@
+#[cfg(test)]
 use super::picking::Display;
 use super::*;
 use crate::processing::InputSettings;
 
+#[cfg(test)]
 impl Pick {
     pub(super) fn display(self) -> Display {
         match self {
@@ -11,7 +13,6 @@ impl Pick {
             Self::GammaPivot => gamma_pivot::DISPLAY,
             Self::RollWb => white_balance::ROLL,
             Self::Wb => white_balance::LAYER,
-            Self::Analysis => analysis::AREA_DISPLAY,
         }
     }
 }
@@ -39,22 +40,7 @@ impl Editor {
     }
 
     pub(super) fn begin_pick(&mut self, kind: Pick, cx: &UiContext<'_, Self>) {
-        if kind == Pick::Analysis && self.document.analysis_review().is_some() {
-            self.show_legacy_picker(kind.display());
-            self.refresh_review_region();
-            return;
-        }
         if !self.prepare_tool() {
-            return;
-        }
-        if kind == Pick::Analysis {
-            self.document.set_legacy_tool(legacy_tool::Tool::Area);
-            self.show_legacy_picker(kind.display());
-            if self.document.analysis_review().is_some() {
-                self.refresh_review_region();
-            } else {
-                self.request_analysis_support(cx);
-            }
             return;
         }
         let result = match kind {
@@ -64,7 +50,6 @@ impl Editor {
             Pick::GammaPivot => gamma_pivot::pick(self, cx),
             Pick::RollWb => white_balance::pick_roll(self, cx),
             Pick::Wb => white_balance::pick_layer(self, cx),
-            Pick::Analysis => return,
         };
         match result {
             Ok(task) => match kind {
@@ -72,7 +57,6 @@ impl Editor {
                     self.document.visit.calibration_action = Some(task)
                 }
                 Pick::RollWb | Pick::Wb => self.document.visit.white_balance_action = Some(task),
-                Pick::Analysis => unreachable!(),
             },
             Err(error) => {
                 self.status = error;
@@ -89,8 +73,6 @@ impl Editor {
             self.confirm_analysis_review(cx);
         } else if self.document.flat_edit().is_some() {
             self.apply_flat_edit(cx);
-        } else if self.legacy_pick() == Some(analysis::AREA_DISPLAY) {
-            self.apply_analysis_area(cx);
         }
     }
 }
@@ -245,9 +227,7 @@ impl Editor {
     pub(super) fn apply_photo_action(&mut self, action: PhotoAction) {
         match action {
             PhotoAction::Crop => {
-                if self.document.auto_crop_edit().is_some() {
-                    self.finish_auto_crop(false);
-                } else if self.cropping() {
+                if self.cropping() {
                     self.hosted_action(tool::Action::Dismiss);
                 } else {
                     self.begin_crop();

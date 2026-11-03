@@ -8,7 +8,6 @@ fn open(h: &mut Harness<'_, Editor>, kind: Pick) {
         Pick::GammaPivot => ("Roll", "Gamma colour pivot"),
         Pick::RollWb => ("Roll", "Pick neutral for white balance"),
         Pick::Wb => ("Photo", "Pick neutral for white balance"),
-        Pick::Analysis => unreachable!("legacy area selection is not a measurement mode"),
     };
     stage(h, tab);
     h.get_by_label(label).scroll_to_me();
@@ -95,7 +94,6 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
                             Pick::GammaPivot => "gamma-pivot",
                             Pick::RollWb => "roll-wb",
                             Pick::Wb => "layer-wb",
-                            Pick::Analysis => unreachable!(),
                         }
                     ),
                 );

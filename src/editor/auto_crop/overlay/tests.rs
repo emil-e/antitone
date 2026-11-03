@@ -168,57 +168,71 @@ fn shared_outline_shades_outside_but_not_inside_rotated_and_reflected_frames() {
 }
 
 #[test]
-fn context_changes_only_the_view_and_margin_changes_reuse_the_uncropped_image_authority() {
+fn batch_view_and_margin_edits_preserve_accepted_composition_and_normal_navigation() {
     let (mut editor, _directory) = super::super::tests::fixture();
+    let accepted = Crop::from_region([200, 150, 100, 90].into());
+    editor.document.visit.crop = Some(accepted);
+    editor.document.visit.canvas.viewport.zoom = Some(1.5);
+    editor.sync_document();
     let project = editor.document.state.project.clone();
+    let viewport = editor.document.visit.canvas.viewport;
     editor.begin_auto_crop_review(editor.document.project.order.clone(), "Whole roll");
     assert!(editor.auto_crop_context());
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-    let composition = Composition::new(
-        area,
-        editor.document.roll_orientation,
-        editor.document.visit.photo_orientation,
-    )
-    .unwrap();
-    let layout = editor.document.visit.canvas.viewport.layout_composition(
+    let composition = editor.canvas_composition(area, None);
+    assert_eq!(
+        composition.crop(),
+        Crop::from_region(area),
+        "the review reveals source outside the accepted crop"
+    );
+    let layout = Viewport::default().layout_composition(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
         composition,
         1.,
     );
     editor.document.visit.canvas.last_layout = Some((layout, 1.));
-    let viewport = editor.document.visit.canvas.viewport;
-    let revision = editor.document.visit.canvas.grade.original.continuation();
     let outline = editor.auto_crop_outline(layout).unwrap();
     editor.adjust_auto_crop_margin(2.);
     assert_ne!(editor.auto_crop_outline(layout).unwrap(), outline);
-    assert_eq!(editor.document.visit.canvas.viewport, viewport);
     assert_eq!(
-        editor.document.visit.canvas.grade.original.continuation(),
-        revision,
-        "the full-scan reference remains valid when only an overlay moves"
+        editor.canvas_composition(area, None),
+        composition,
+        "moving the outline does not reframe the displayed source"
     );
-    assert!(editor.document.visit.canvas.last_layout.is_some());
-    editor.document.auto_crop_edit_mut().unwrap().show_outline = false;
+    assert_eq!(editor.document.visit.canvas.viewport, viewport);
+    assert_eq!(editor.document.state.project, project);
+    editor
+        .document
+        .auto_crop
+        .current()
+        .unwrap()
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .show_outline = false;
     assert!(
         editor.auto_crop_context(),
         "artwork visibility is not a second tool lifecycle"
     );
+    assert_eq!(editor.canvas_composition(area, None), composition);
+    editor.finish_auto_crop(false);
+    assert!(!editor.auto_crop_context());
     assert_eq!(
-        editor.document.visit.canvas.grade.original.continuation(),
-        revision
+        editor.canvas_composition(area, None).crop(),
+        accepted,
+        "normal viewing uses accepted framing after retirement"
     );
+    assert_eq!(editor.document.visit.canvas.viewport, viewport);
+    assert_eq!(editor.document.state.project, project);
+
+    editor.begin_auto_crop_review(editor.document.project.order.clone(), "Whole roll");
     editor.begin_crop();
     assert!(editor.document.crop_edit().is_some() && !editor.auto_crop_context());
     editor.finish_auto_crop(false);
-    assert!(!editor.auto_crop_context());
-    assert_eq!(editor.document.state.project, project);
-    assert_ne!(
-        editor.document.visit.canvas.grade.original.continuation(),
-        revision,
-        "leaving the tool changes the view domain"
+    assert!(
+        editor.document.crop_edit().is_some(),
+        "a retired batch cannot dismiss its successor"
     );
-    editor.begin_crop();
-    assert!(editor.document.crop_edit().is_some());
     editor.hosted_action(tool::Action::Dismiss);
     assert_eq!(editor.document.state.project, project);
 }

@@ -616,8 +616,15 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         );
         editor.document.source = true;
         editor.source_exposure = 2.;
-        assert!(editor.scope_input().is_err());
+        assert!(
+            editor.scope_input().unwrap().1.grade().is_some(),
+            "before repaint, scopes still describe the painted positive"
+        );
         frame(&mut editor, &context);
+        assert!(
+            editor.scope_input().unwrap().1.grade().is_none(),
+            "the source repaint supplies source scopes"
+        );
         assert!(
             editor.document.visit.canvas.grade.original.wanted.is_none(),
             "source inspection never requests photographic comparison"
@@ -667,7 +674,13 @@ fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history(
         let image = images[editor.document.target as usize].clone();
         let context = egui::Context::default();
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
-        let (_, _, scope_frame) = editor.scope_input().unwrap();
+        let source = editor
+            .document
+            .project
+            .source(editor.document.visit.current_source.unwrap())
+            .unwrap();
+        let scope_frame =
+            crate::frame_raster::FrameRaster::full(editor.source_composition(source)).unwrap();
         let image_paint = ImagePaint::with_processing(
             image.clone(),
             Some(accepted.clone()),

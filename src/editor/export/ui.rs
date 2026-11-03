@@ -214,6 +214,10 @@ impl Editor {
     }
 
     pub(in crate::editor) fn open_export_dialog(&mut self) {
+        if self.tool_interacting() {
+            self.status = "Finish the active tool before exporting".into();
+            return;
+        }
         if self.dust_search_pending() {
             self.status = "Wait for donor selection before exporting".into();
             return;

@@ -55,9 +55,6 @@ impl Editor {
         if self.document.analysis_review().is_some() {
             return Some((icons::Icon::Analyze, "Analyze"));
         }
-        if self.document.auto_crop_edit().is_some() {
-            return Some((icons::Icon::Crop, "Auto-crop"));
-        }
         self.legacy_pick().map(|display| {
             (
                 if display.area {
@@ -71,9 +68,6 @@ impl Editor {
     }
 
     pub(super) fn source_tool_warning(&self, id: SourceId) -> Option<String> {
-        if self.document.auto_crop_edit().is_some() {
-            return self.auto_crop_problem(id).map(str::to_owned);
-        }
         if self.document.visit.current_source == Some(id) && self.cropping() {
             return self.current_tool()?.presentation().warning;
         }
@@ -86,9 +80,6 @@ impl Editor {
             .visit
             .current_source
             .and_then(|id| self.source_tool_warning(id));
-        if warning.is_none() {
-            warning = self.auto_crop_batch_warning().map(str::to_owned);
-        }
         if let Some(review) = &self.document.analysis_review() {
             let missing = review
                 .approved
@@ -167,16 +158,10 @@ impl Editor {
             identity: ToolIdentity { icon, title },
             busy: self.busy,
             cancel_enabled: !self.busy || reviewing && !self.analysis_fitting(),
-            apply_enabled: if self.document.auto_crop_edit().is_some() {
-                self.auto_crop_editable()
-            } else {
-                navigating
-                    && review_ready
-                    && hosted.as_ref().map_or_else(
-                        || self.legacy_pick_region().is_some(),
-                        |tool| tool.primary.is_none_or(|primary| primary.enabled),
-                    )
-            },
+            apply_enabled: hosted.as_ref().map_or_else(
+                || navigating && review_ready && self.legacy_pick_region().is_some(),
+                |tool| !self.busy && tool.primary.is_some_and(|primary| primary.enabled),
+            ),
         });
 
         let warning = hosted
@@ -461,16 +446,6 @@ impl Editor {
                             } else {
                                 "Escape: dismiss"
                             });
-                        } else if !fullscreen &&self.document.auto_crop_edit().is_some() {
-                            ui.separator();
-                            ui.small(
-                                "Auto-crop: drag an edge or corner for the shared inward margin; Space-drag / middle-drag pans.",
-                            );
-                            ui.small(
-                                "Browsing is optional and never retargets the proposals · H hides artwork.",
-                            );
-                            ui.small("Enter applies the fixed set · Escape cancels");
-
                         } else if !fullscreen &&self.document.analysis_review().is_some() {
                             ui.separator();
                             ui.small(
@@ -517,8 +492,6 @@ impl Editor {
         if cancel {
             if hosted.is_some() {
                 self.hosted_action(tool::Action::Dismiss);
-            } else if self.document.auto_crop_edit().is_some() {
-                self.finish_auto_crop(false);
             } else if masking {
                 self.finish_mask(false);
             } else {
@@ -528,8 +501,6 @@ impl Editor {
         } else if apply {
             if hosted.is_some() {
                 self.hosted_action(tool::Action::Primary);
-            } else if self.document.auto_crop_edit().is_some() {
-                self.finish_auto_crop(true);
             } else {
                 self.apply_pick(cx);
             }

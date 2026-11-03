@@ -365,12 +365,16 @@ fn legacy_and_hosted_installation_are_exclusive_in_both_directions() {
     let dropped = Rc::new(Cell::new(0));
     let actions = Rc::new(Cell::new(0));
     assert!(editor.activate_tool(Placement::Photo, Box::new(Probe::new(&dropped, &actions))));
-    editor.document.set_legacy_tool(legacy_tool::Tool::Area);
+    editor
+        .document
+        .set_analysis_operation(Some(analysis_workflow::Operation::new(
+            analysis_workflow::Phase::Review,
+        )));
     assert_eq!(dropped.get(), 1);
     assert!(editor.current_tool().is_none());
     assert!(matches!(
         editor.document.tool.as_ref(),
-        Some(legacy_tool::Tool::Area)
+        Some(legacy_tool::Tool::Analyze(_))
     ));
     assert!(editor.activate_tool(
         Placement::Document,

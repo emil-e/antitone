@@ -194,7 +194,6 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                     Pick::GammaPivot,
                     Pick::RollWb,
                     Pick::Wb,
-                    Pick::Analysis,
                 ] {
                     editor.preview_picker(pick);
                     for tab in 0..3 {
@@ -238,7 +237,6 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                             Pick::GammaPivot => "Gamma colour pivot",
                             Pick::RollWb => "Roll WB neutral",
                             Pick::Wb => "WB neutral",
-                            Pick::Analysis => "Picture area",
                         };
                         let marking = title.to_uppercase();
                         let identity = text

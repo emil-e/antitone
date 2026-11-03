@@ -37,13 +37,15 @@ fn source_readiness_leaves_support_lazy_and_explicit_service_preserves_exact_sam
             .await
             .unwrap();
         assert_eq!(ready.analysis_support, None);
-        let support = support_workflow::prepare(source::Context {
+        let input = source::Context {
             reference: None,
             source: ready.developed,
             correction: None,
-        })
-        .await
-        .unwrap();
+        };
+        let support = crate::background::run(move |_| input.scan()?.propose_flat_field_area())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             support, expected,
             "service extraction must preserve the existing exact estimator result"

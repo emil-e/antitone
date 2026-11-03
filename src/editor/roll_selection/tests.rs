@@ -256,7 +256,6 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
                     .load(std::sync::atomic::Ordering::Relaxed),
                 editor.id
             );
-            assert!(editor.document.visit.support.pending.is_none());
             assert!(!editor.document.visit.source.pending());
             editor.source_result(old_id, Ok(Box::new(ready)));
             assert!(

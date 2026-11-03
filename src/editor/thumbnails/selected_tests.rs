@@ -599,7 +599,22 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                     ),
                     1.,
                 ));
-                assert!(editor.scope_input().is_ok());
+                assert_eq!(
+                    editor.scope_request().err(),
+                    Some("Waiting for view"),
+                    "readiness and a synthetic layout are not a displayed image"
+                );
+            });
+            let context = egui::Context::default();
+            for _ in 0..3 {
+                crate::editor::tests::app_frame(app, &context, vec![]);
+            }
+            app.read(|editor| {
+                let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
+                assert!(Arc::ptr_eq(
+                    &view,
+                    &editor.active_canvas().displayed.as_ref().unwrap().view
+                ));
             });
         });
     });

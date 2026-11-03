@@ -77,7 +77,6 @@ impl Editor {
         }
         let started = std::time::Instant::now();
         let selecting_photo = persistent && !self.picking() && self.document.flat_edit().is_none();
-        self.document.visit.support = Default::default();
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.selection_timing = None;
@@ -126,10 +125,7 @@ impl Editor {
         self.document.visit.canvas.ready = None;
         self.document.visit.canvas.selection_timing =
             selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
-        self.document.source = self
-            .document
-            .auto_crop_edit()
-            .map_or(!self.document.input.ready(), |d| d.source_view);
+        self.document.source = !self.document.input.ready();
         self.busy = true;
         self.status = "Developing full-resolution RAW…".into();
         self.tasks.begin(Task::Photo(self.id));
@@ -165,7 +161,7 @@ impl Editor {
                 .source(source)
                 .ok()
                 .map(|source| source.development.active_area.into())
-                .map(|area| self.canvas_composition(area, None));
+                .map(|area| self.normal_canvas_composition(area, None));
             if let Some(composition) = composition {
                 match self.document.thumbnails.selected_preview(
                     self.id,

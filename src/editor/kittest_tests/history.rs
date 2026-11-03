@@ -106,8 +106,8 @@ fn native_history_actions_route_to_text_first_and_then_restore_the_accepted_phot
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
         h.update(|editor| editor.begin_crop());
         native_action(&mut h, Action::Undo);
-        h.read(|editor| assert!(editor.document.crop_edit().is_some()));
-        h.read(|editor| assert_eq!(editor.document.state.project, accepted));
+        h.read(|editor| assert!(editor.document.crop_edit().is_none()));
+        h.read(|editor| assert_eq!(editor.document.state.project, original));
     });
 }
 
@@ -539,10 +539,10 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
         h.step();
         h.read(|editor| assert!(editor.document.crop_edit().is_some()));
         shortcut(&mut h, false);
-        h.read(|editor| assert!(editor.document.crop_edit().is_some()));
+        h.read(|editor| assert!(editor.document.crop_edit().is_none()));
+        h.read(|editor| assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.));
+        shortcut(&mut h, true);
         h.read(|editor| assert_eq!(editor.document.state.project, accepted));
-        h.get_by_label("Cancel").click();
-        h.step();
         stage(&mut h, "Photo");
         h.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Exposure")
             .scroll_to_me();

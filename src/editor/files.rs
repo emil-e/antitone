@@ -132,9 +132,8 @@ impl Editor {
             self.status = "Wait for donor selection before changing or saving the document".into();
             return;
         }
-        if self.cropping() || self.document.auto_crop_edit().is_some() {
-            self.status =
-                "Apply or cancel the crop tool before changing or saving the document".into();
+        if self.tool_interacting() {
+            self.status = "Finish the active tool before a file action".into();
             return;
         }
         match action {

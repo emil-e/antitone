@@ -876,14 +876,7 @@ fn closed_application_does_not_leave_a_pick_busy() {
 impl Editor {
     pub(super) fn preview_picker(&mut self, kind: Pick) {
         if self.prepare_tool() {
-            if kind == Pick::Analysis {
-                self.document.set_legacy_tool(legacy_tool::Tool::Area);
-            }
-            if kind == Pick::Analysis {
-                self.show_legacy_picker(kind.display());
-            } else {
-                picking::preview(self, kind.display());
-            }
+            picking::preview(self, kind.display());
         }
     }
 

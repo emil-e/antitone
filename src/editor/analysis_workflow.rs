@@ -143,7 +143,7 @@ async fn sampling_review(
                 editor.status = "Analysis-area preparation cancelled; grade unchanged".into();
                 return None;
             }
-            editor.open_analysis_review(&request, result, &cx)
+            editor.open_analysis_review(&request, result)
         })
         .flatten();
     await_review(request, decision, cancelled, &cx).await;

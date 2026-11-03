@@ -138,7 +138,6 @@ impl Editor {
         &mut self,
         request: &analysis::Request,
         result: Result<Option<Approved>, String>,
-        cx: &UiContext<'_, Self>,
     ) -> Option<futures_channel::oneshot::Receiver<analysis_workflow::Confirmation>> {
         self.sync_document();
         match result {
@@ -161,9 +160,7 @@ impl Editor {
                     replaces_photos,
                 }));
                 self.tab = 0;
-                // Positive-only scopes have no data in the source sampling tool.
-                self.scopes.visible = false;
-                self.begin_pick(Pick::Analysis, cx);
+                self.show_legacy_picker(analysis::AREA_DISPLAY);
                 self.refresh_review_region();
                 self.document.visit.canvas.viewport.fit();
                 self.status = "Review sampling areas".into();
@@ -281,7 +278,7 @@ impl Editor {
             self.load_source(path, false, cx);
         }
         self.document.selected = index;
-        self.document.visit.picking.display = Some(Pick::Analysis.display());
+        self.document.visit.picking.display = Some(analysis::AREA_DISPLAY);
         self.document.source = true;
         self.refresh_review_region();
     }
@@ -293,7 +290,6 @@ impl Editor {
     pub(super) fn close_analysis(&mut self) {
         self.cancel_legacy_picker();
         self.document.set_analysis_operation(None);
-        self.scopes.visible = self.preferences.scopes_visible;
     }
 
     pub(super) fn confirm_analysis_review(&mut self, _cx: &UiContext<'_, Self>) {

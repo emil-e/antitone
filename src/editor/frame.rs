@@ -240,15 +240,6 @@ impl Editor {
                 ui.ctx().request_repaint();
             }
         }
-        if self.document.auto_crop_edit().is_some() {
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                self.finish_auto_crop(false);
-            } else if ui
-                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
-            {
-                self.finish_auto_crop(true);
-            }
-        }
         if self.document.mask_edit().is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
@@ -273,7 +264,6 @@ impl Editor {
             self.delete_selected_adjustment_layer();
         }
         if !self.dusting()
-            && self.document.auto_crop_edit().is_none()
             && !adjustment_delete
             && !self.document.visit.adjustment_layers.dragging()
             && self.roll_edit_available()
@@ -357,7 +347,11 @@ impl Editor {
                         .on_hover_text(&self.status);
                 }
             });
-        self.filmstrip(ui, cx);
+        if self.current_tool().is_some() {
+            self.with_current_tool(|tool, editor| tool.filmstrip(ui, editor, cx));
+        } else {
+            self.filmstrip(ui, cx);
+        }
         if self.document.confirming() {
             ui.disable();
         }

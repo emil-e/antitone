@@ -77,11 +77,7 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
                     .sum::<usize>(),
                 2
             );
-            assert!(
-                editor.document.auto_crop_edit().is_some(),
-                "{}",
-                editor.status
-            );
+            assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);
             regions
         });
         let acquired = starts.load(Ordering::SeqCst);
@@ -98,11 +94,7 @@ fn authored_auto_crop_first_reuses_regions_for_analyze_without_accepting_either_
         app.read(|editor| {
             assert_eq!(*editor.document.spatial.ready(), *regions);
             assert_eq!(editor.document.state.project, accepted);
-            assert!(
-                editor.document.auto_crop_edit().is_some(),
-                "{}",
-                editor.status
-            );
+            assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);
         });
         assert_eq!(
             starts.load(Ordering::SeqCst),
@@ -173,11 +165,7 @@ fn authored_analyze_first_keeps_regions_after_review_cancel_and_auto_crop_reuses
         app.read(|editor| {
             assert_eq!(*editor.document.spatial.ready(), *regions);
             assert_eq!(editor.document.state.project, accepted);
-            assert!(
-                editor.document.auto_crop_edit().is_some(),
-                "{}",
-                editor.status
-            );
+            assert!(editor.document.auto_crop.reviewing(), "{}", editor.status);
             assert_eq!(editor.history_label(history::Direction::Undo), undo);
         });
         assert_eq!(starts.load(Ordering::SeqCst), acquired);
@@ -305,7 +293,7 @@ fn an_arbitrary_awaiter_can_use_regions_or_depart_without_retiring_document_prep
                     assert!(received.borrow().is_none());
                 }
                 assert_eq!(editor.document.state.project, accepted);
-                assert!(editor.document.auto_crop_edit().is_none());
+                assert!(!editor.document.auto_crop.reviewing());
                 assert!(editor.document.analysis_review().is_none());
             });
             drop(caller);
@@ -391,7 +379,7 @@ fn document_retirement_cancels_publication_without_blocking_unrelated_cpu_work()
         drop(probe);
         app.read(|editor| {
             assert!(editor.document.spatial.ready().groups.is_empty());
-            assert!(editor.document.auto_crop_edit().is_none());
+            assert!(!editor.document.auto_crop.reviewing());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -419,7 +407,7 @@ fn application_retirement_cancels_shared_continuation_before_native_cleanup_retu
         assert!(cancelled.is_cancelled());
         app.read(|editor| {
             assert!(editor.document.spatial.ready().groups.is_empty());
-            assert!(editor.document.auto_crop_edit().is_none());
+            assert!(!editor.document.auto_crop.reviewing());
         });
         release.send(()).unwrap();
     });
@@ -443,14 +431,14 @@ fn replacing_analyze_with_batch_crop_joins_the_existing_document_region_producer
         app.enter(|editor, cx| {
             editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx);
             assert!(editor.document.analysis_operation().is_none());
-            assert!(editor.document.auto_crop_operation().is_some());
+            assert!(editor.document.auto_crop.active());
             assert_eq!(
                 editor.document.spatial_preparing.as_ref().unwrap().id,
                 preparation
             );
         });
         reply.send(Ok(Some(metadata))).unwrap();
-        app.run_until(LIMIT, |editor| editor.document.auto_crop_edit().is_some());
+        app.run_until(LIMIT, |editor| editor.document.auto_crop.reviewing());
         app.read(|editor| {
             assert!(
                 editor
@@ -460,14 +448,7 @@ fn replacing_analyze_with_batch_crop_joins_the_existing_document_region_producer
                     .iter()
                     .all(|photo| editor.auto_crop_preview(*photo).is_some())
             );
-            assert!(
-                editor
-                    .document
-                    .auto_crop_operation()
-                    .unwrap()
-                    .apply
-                    .is_some()
-            );
+            assert!(editor.document.auto_crop.reviewing());
             assert!(editor.document.analysis_review().is_none());
             assert_eq!(editor.document.project, before);
             assert_eq!(

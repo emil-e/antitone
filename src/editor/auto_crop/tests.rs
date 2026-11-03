@@ -1,11 +1,8 @@
 use super::*;
 
-// Domain acceptance tests use a static proposal; interaction tests exercise the awaited Apply.
+// Domain fixtures supply static proposals; composed tests exercise discovery and input.
 fn apply(editor: &mut Editor) {
-    let snapshot = editor.document.auto_crop_edit().unwrap().clone();
-    if editor.commit_auto_crop(&snapshot) {
-        editor.end_auto_crop_review(true);
-    }
+    editor.finish_auto_crop(true);
 }
 use crate::{
     project::SourceAnalysis,
@@ -170,20 +167,18 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
         e.begin_radial_mask(None);
         e.delete_selected_adjustment_layer();
         assert!(e.creating_mask());
-        assert!(e.document.auto_crop_edit().is_none());
+        assert!(!e.document.auto_crop.reviewing());
         assert!(!e.document.visit.adjustment_layers.confirming());
         assert_eq!(e.document.state.project, before);
         e.finish_adjustment_layer_interaction();
         e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
 
         if apply {
-            let snapshot = e.document.auto_crop_edit().unwrap().clone();
-            assert!(e.commit_auto_crop(&snapshot));
-            e.end_auto_crop_review(true);
+            e.finish_auto_crop(true);
         } else {
             e.finish_auto_crop(false);
         }
-        assert!(e.document.auto_crop_edit().is_none(), "{}", e.status);
+        assert!(!e.document.auto_crop.reviewing(), "{}", e.status);
         assert_eq!(
             e.document
                 .state
@@ -237,30 +232,30 @@ fn partial_proposals_keep_source_reasons_without_warning_about_uncaptured_photos
                 "Entry selection",
             );
             assert!(e.auto_crop_valid());
-            assert!(e.source_tool_warning(ids[0]).is_none());
+            assert!(e.auto_crop_problem(ids[0]).is_none());
             assert!(
-                e.source_tool_warning(ids[1])
+                e.auto_crop_problem(ids[1])
                     .unwrap()
                     .contains("no retained frame evidence")
             );
             assert!(
-                e.source_tool_warning(ids[2])
+                e.auto_crop_problem(ids[2])
                     .unwrap()
                     .contains("four measured picture edges")
             );
             assert!(
-                e.source_tool_warning(ids[3]).is_none(),
+                e.auto_crop_problem(ids[3]).is_none(),
                 "not captured is not a failed proposal"
             );
             browse(e, 1, cx);
-            let reason = e.source_tool_warning(ids[1]).unwrap().to_owned();
+            let reason = e.auto_crop_problem(ids[1]).unwrap().to_owned();
             e.select_active_photo_only();
             e.adjust_auto_crop_margin(2.);
-            assert_eq!(e.source_tool_warning(ids[1]), Some(reason));
-            assert!(e.source_tool_warning(ids[3]).is_none());
+            assert_eq!(e.auto_crop_problem(ids[1]), Some(reason));
+            assert!(e.auto_crop_problem(ids[3]).is_none());
             assert_eq!(e.document.state.project, before);
             e.finish_auto_crop(false);
-            assert!(ids.iter().all(|&id| e.source_tool_warning(id).is_none()));
+            assert!(ids.iter().all(|&id| e.auto_crop_problem(id).is_none()));
             assert_eq!(e.document.state.project, before);
         });
     });
@@ -273,25 +268,33 @@ fn all_failed_attempts_stay_selected_with_reasons_but_cannot_apply_or_edit_crops
     let before = e.document.state.project.clone();
     let serialized = serde_json::to_string(&before).unwrap();
     e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
-    assert!(e.document.auto_crop_edit().is_some() && e.auto_crop_context());
-    assert!(!e.auto_crop_valid() && !e.auto_crop_editable());
+    assert!(e.document.auto_crop.reviewing() && e.auto_crop_context());
+    assert!(!e.auto_crop_valid());
+    assert!(
+        !e.current_tool()
+            .unwrap()
+            .presentation()
+            .primary
+            .unwrap()
+            .enabled
+    );
     for &id in &before.order {
         assert!(
-            e.source_tool_warning(id)
+            e.auto_crop_problem(id)
                 .unwrap()
                 .contains("No crop proposal")
         );
     }
     e.adjust_auto_crop_margin(2.);
     apply(&mut e);
-    assert!(e.document.auto_crop_edit().is_some());
+    assert!(e.document.auto_crop.reviewing());
     assert_eq!(
         serde_json::to_string(&e.document.state.project).unwrap(),
         serialized
     );
     assert!(!e.analysis_preparing() && !e.analysis_fitting());
     e.finish_auto_crop(false);
-    assert!(e.document.auto_crop_edit().is_none());
+    assert!(!e.document.auto_crop.reviewing());
     assert_eq!(e.document.state.project, before);
 }
 
@@ -312,13 +315,13 @@ fn scopes_capture_drafts_and_apply_only_their_fixed_successful_sources() {
             assert_eq!(e.document.state.project, expected);
             assert_eq!(e.document.visit.crop, Some(small()));
             assert_eq!(e.document.crop_edit().unwrap().draft, proposed);
-            assert!(e.document.auto_crop_edit().is_none());
+            assert!(!e.document.auto_crop.reviewing());
             e.hosted_action(tool::Action::Primary);
             e.sync_document();
             expected.source_mut(ids[0]).unwrap().crop = Some(proposed);
             assert_eq!(e.document.state.project, expected);
             assert_eq!(e.document.visit.crop, Some(proposed));
-            assert!(e.document.auto_crop_edit().is_none());
+            assert!(!e.document.auto_crop.reviewing());
             e.select_roll_photo(2, egui::Modifiers::COMMAND, cx);
             e.begin_auto_crop_review(
                 e.document
@@ -397,7 +400,7 @@ fn abstentions_preserve_previous_crops_without_preventing_other_proposals() {
     let mut expected = before;
     expected.source_mut(ids[0]).unwrap().crop = draft;
     assert_eq!(e.document.state.project, expected);
-    assert!(e.document.auto_crop_edit().is_none(), "{}", e.status);
+    assert!(!e.document.auto_crop.reviewing(), "{}", e.status);
 }
 
 #[test]
@@ -421,14 +424,15 @@ fn margin_uses_originals_and_target_identity_across_browsing_and_reselection() {
             );
             let proposals = e
                 .document
-                .auto_crop_edit()
+                .auto_crop
+                .snapshot()
                 .unwrap()
                 .entries
                 .iter()
                 .map(|r| r.proposal)
                 .collect::<Vec<_>>();
             browse(e, 1, cx);
-            assert!(e.document.source && e.auto_crop_context());
+            assert!(!e.document.source && e.auto_crop_context());
             assert!(e.auto_crop_preview(ids[1]).is_none());
             e.select_active_photo_only();
             let viewport = e.document.visit.canvas.viewport;
@@ -457,7 +461,8 @@ fn margin_uses_originals_and_target_identity_across_browsing_and_reselection() {
             }
             assert!(
                 e.document
-                    .auto_crop_edit()
+                    .auto_crop
+                    .snapshot()
                     .unwrap()
                     .entries
                     .iter()
@@ -467,7 +472,7 @@ fn margin_uses_originals_and_target_identity_across_browsing_and_reselection() {
             e.finish_auto_crop(false);
             assert_eq!(e.document.visit.current_source, Some(ids[1]));
             assert_eq!(e.document.state.project, before);
-            assert!(e.document.source);
+            assert!(!e.document.source);
             assert_eq!(
                 e.auto_crop_margin, 0.,
                 "transient preference is reused, not persisted crop data"
@@ -509,7 +514,7 @@ fn cancel_restores_entry_view_and_never_installs_preview_crops() {
     assert_eq!(e.document.state.project, before);
     assert_eq!(e.document.visit.crop, Some(small()));
     assert_eq!(e.document.visit.canvas.viewport, viewport);
-    assert!(e.document.auto_crop_edit().is_none() && !e.auto_crop_context());
+    assert!(!e.document.auto_crop.reviewing() && !e.auto_crop_context());
 }
 
 #[test]
@@ -560,7 +565,7 @@ fn stale_metadata_evidence_authored_crops_order_and_document_cannot_be_promoted(
         apply(&mut e);
         assert_eq!(e.document.state.project, before, "case {case}");
         assert!(
-            e.document.auto_crop_edit().is_some(),
+            e.document.auto_crop.reviewing(),
             "case {case}: {}",
             e.status
         );
@@ -592,7 +597,7 @@ fn development_change_and_invalid_margins_do_not_mutate_the_draft_or_document() 
     e.adjust_auto_crop_margin(2.);
     apply(&mut e);
     assert_eq!(e.document.state.project, changed);
-    assert!(e.document.auto_crop_edit().is_some());
+    assert!(e.document.auto_crop.reviewing());
     e.finish_auto_crop(false);
     assert_eq!(e.document.state.project, changed);
 }
@@ -664,7 +669,7 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
                     && !e.dusting()
                     && e.document.removal_pending.is_none()
             );
-            assert!(e.document.auto_crop_edit().is_some());
+            assert!(e.document.auto_crop.reviewing());
             assert!(e.document.export.operation.is_none());
             assert_eq!(e.document.state.project, before);
             assert!(
@@ -674,7 +679,7 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
                     && e.document.export.operation.is_none()
             );
             e.start_document(Preparation::New, cx);
-            assert!(e.document.auto_crop_edit().is_none());
+            assert!(!e.document.auto_crop.reviewing());
             assert_eq!(e.document.state.project, before);
             assert!(e.busy && e.document_pending.is_some());
         });
@@ -694,7 +699,7 @@ fn photo_initialization_stays_in_manual_crop_and_keeps_its_cancel_baseline() {
     e.begin_crop();
     e.document.crop_edit_mut().unwrap().draft = Crop::from_region(active);
     e.auto_crop_photo(e.document.visit.current_source.unwrap());
-    assert!(e.document.auto_crop_edit().is_none());
+    assert!(!e.document.auto_crop.reviewing());
     assert_eq!(e.document.crop_edit().unwrap().draft, expected);
     assert_eq!(e.document.visit.crop, Some(small()));
     assert_eq!(e.document.state.project, before);
@@ -733,7 +738,7 @@ fn unavailable_photo_proposal_does_not_replace_a_manual_draft() {
         .push_str(" incompatible");
     e.auto_crop_photo(e.document.visit.current_source.unwrap());
     assert_eq!(e.document.crop_edit().unwrap().draft, small());
-    assert!(e.document.auto_crop_edit().is_none());
+    assert!(!e.document.auto_crop.reviewing());
     assert_eq!(e.document.state.project, before);
     assert_eq!(e.document.visit.canvas.viewport, viewport);
     assert!(e.status.contains("Crop unchanged"));
@@ -786,7 +791,7 @@ fn batch_entry_respects_document_operations_and_removal() {
             _ => unreachable!(),
         }
         e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
-        assert!(e.document.auto_crop_edit().is_none(), "case {case}");
+        assert!(!e.document.auto_crop.reviewing(), "case {case}");
         assert_eq!(e.document.state.project, before);
     }
 }

@@ -7,7 +7,7 @@ struct PickView {
     anchored: Viewport,
 }
 
-/// Region and view state for Area/Analyze; Flat retains its reference region.
+/// Region and view state for Analyze; Flat retains its reference region.
 #[derive(Default)]
 pub(in crate::editor) struct Session {
     pub display: Option<Display>,
@@ -43,14 +43,10 @@ impl Editor {
     pub(in crate::editor) fn cancel_legacy_picker(&mut self) {
         if self.document.visit.picking.display.is_some() {
             self.restore_pick_view();
-            if matches!(self.document.tool.as_ref(), Some(legacy_tool::Tool::Area)) {
-                self.document.tool.clear();
-            }
         }
     }
 
     fn restore_pick_view(&mut self) {
-        self.document.visit.support = Default::default();
         let view = self.document.visit.picking.view.take();
         let source = view.map_or(!self.document.input.ready(), |view| view.source);
         let source_tool = self

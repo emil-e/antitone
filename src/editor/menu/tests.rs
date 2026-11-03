@@ -50,17 +50,22 @@ fn native_history_actions_use_dynamic_labels_and_advance_only_after_preparation(
             assert!(state.enabled(Action::Redo));
         });
         app.update(|e| {
-            e.document.visit.picking.display = Some(Pick::Dmin.display());
+            super::super::tests::add_ready_fixture(e);
+            e.begin_crop();
+            assert!(e.cropping());
             host::App::menu_action(e, Action::Redo);
         });
         frame(app, &context);
         app.read(|e| {
             assert!(
-                e.document_pending.is_none(),
-                "a queued native command must not bypass a draft"
+                e.document_pending.is_some(),
+                "the ordinary restoration boundary admits history and retires the tool"
             );
+            assert!(!e.cropping());
             assert_eq!(e.document.roll.exposure, 0.);
         });
+        app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
+        app.read(|e| assert_eq!(e.document.roll.exposure, 0.5));
     });
 }
 
@@ -140,12 +145,15 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
     let mut editor = super::super::tests::fixture();
     let context = egui::Context::default();
     frame(&mut editor, &context);
-    editor.document.visit.picking.display = Some(Pick::Dmin.display());
+    super::super::tests::add_ready_fixture(&mut editor);
+    editor.begin_crop();
+    assert!(editor.cropping());
     for action in [
         Action::New,
         Action::Open,
         Action::AddScans,
         Action::Save,
+        Action::Export,
         Action::Quit,
     ] {
         assert!(!editor.application_menu_state().enabled(action));
@@ -154,8 +162,8 @@ fn queued_native_actions_revalidate_tool_and_modal_availability() {
         assert!(editor.document_pending.is_none() && editor.document.export.operation.is_none());
         assert!(editor.transition.is_none());
     }
-    assert_eq!(editor.test_pick(), Some(Pick::Dmin.display()));
-    editor.document.visit.picking.display = None;
+    assert!(editor.cropping());
+    editor.end_tool();
     editor.transition = Some(Transition::New);
     host::App::menu_action(&mut editor, Action::Settings);
     frame(&mut editor, &context);

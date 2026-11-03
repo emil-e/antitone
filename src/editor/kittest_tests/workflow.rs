@@ -444,7 +444,14 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
             );
         }
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
-        harness.read(|editor| assert_eq!(editor.scope_input().err(), Some("Positive grade only")));
+        harness.read(|editor| {
+            let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
+            assert!(view.spec.is_inspection());
+            assert!(Arc::ptr_eq(
+                &view,
+                &editor.active_canvas().displayed.as_ref().unwrap().view
+            ));
+        });
         harness.get_by_label("View source").click();
         harness.step();
         harness.read(|editor| assert!(!editor.document.source));
@@ -959,21 +966,20 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
             ))
         });
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
-        match harness.read(|editor| editor.scope_request().unwrap()) {
-            scopes::ScopeInput::Rendered(view, _) => harness.read(|editor| {
-                assert!(Arc::ptr_eq(
-                    &view,
-                    editor
-                        .document
-                        .visit
-                        .working_view
-                        .displayed
-                        .as_ref()
-                        .unwrap()
-                ))
-            }),
-            _ => panic!("scopes must consume the viewer's accepted target-linear result"),
-        }
+        let scopes::ScopeInput { view, .. } =
+            harness.read(|editor| editor.scope_request().unwrap());
+        harness.read(|editor| {
+            assert!(Arc::ptr_eq(
+                &view,
+                editor
+                    .document
+                    .visit
+                    .working_view
+                    .displayed
+                    .as_ref()
+                    .unwrap()
+            ))
+        });
         harness.get_by_label("100%").click();
         harness.step();
         wait_for(&mut harness, |e| {

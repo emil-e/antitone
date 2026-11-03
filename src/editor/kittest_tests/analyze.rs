@@ -47,7 +47,12 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             )
             .unwrap()
         );
-        assert!(matches!(editor.scope_request(), Err("Positive grade only")));
+        let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
+        assert!(view.spec.is_inspection());
+        assert!(Arc::ptr_eq(
+            &view,
+            &editor.active_canvas().displayed.as_ref().unwrap().view
+        ));
     });
     if harness.read(|editor| editor.document.analysis_review().unwrap().replaces_photos) {
         let warning = harness.get_by_label("Tool warning");
@@ -570,7 +575,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                     assert_eq!(editor.document.analysis_review().unwrap().picture, picture)
                 });
                 harness.read(|editor| assert!(editor.document.source));
-                harness.read(|editor| assert!(!editor.scopes.visible));
+                harness.read(|editor| assert_eq!(editor.scopes.visible, scopes_visible));
                 harness
                     .read(|editor| assert_eq!(editor.preferences.scopes_visible, scopes_visible));
                 assert!(harness.query_by_label("Roll analysis").is_none());
@@ -720,8 +725,10 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                 original
             );
         });
-        harness
-            .read(|editor| assert!(matches!(editor.scope_request(), Err("Positive grade only"))));
+        harness.read(|editor| {
+            let scopes::ScopeInput { view, .. } = editor.scope_request().unwrap();
+            assert!(view.spec.is_inspection());
+        });
         harness.read(|editor| {
             assert!(
                 !editor

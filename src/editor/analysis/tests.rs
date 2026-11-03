@@ -563,31 +563,6 @@ fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
 }
 
 #[test]
-fn area_accept_cancel_and_invalid_edits_do_not_change_calibration_or_exposure() {
-    let mut editor = state();
-    let original = editor.document.state.project.clone();
-    editor.preview_picker(Pick::Analysis);
-    editor.set_test_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 540]))));
-    editor.finish_pick(&crate::application::UiContext::render_only());
-    assert_eq!(editor.document.state.project, original);
-    editor.preview_picker(Pick::Analysis);
-    editor.set_test_pick_region(Some(Coverage::rectangle(rect([0, 0, 900, 700]))));
-    editor.apply_analysis_area(&crate::application::UiContext::render_only());
-    assert_eq!(editor.document.state.project, original);
-    assert_eq!(editor.test_pick(), Some(Pick::Analysis.display()));
-    editor.set_test_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 540]))));
-    editor.apply_analysis_area(&crate::application::UiContext::render_only());
-    assert!(editor.test_pick().is_none());
-    assert_eq!(
-        editor.document.state.project.analysis_area,
-        Some([52, 42, 720, 540])
-    );
-    assert_eq!(editor.document.roll, original.roll);
-    assert_eq!(editor.document.state.project.dmin(), original.dmin());
-    assert_eq!(editor.document.state.project.dmax(), original.dmax());
-}
-
-#[test]
 fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_requested_work() {
     for (settled, outstanding) in [(false, true), (true, false)] {
         for cancel in [false, true] {
@@ -753,78 +728,10 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
 }
 
 #[test]
-fn statistics_edit_bypasses_composition_without_changing_processing_or_view() {
-    let editor = super::super::tests::fixture();
-    crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| {
-            editor.document.roll_orientation.turn_clockwise();
-            editor.document.visit.photo_orientation.flips.horizontal = true;
-            editor.document.visit.crop = Some(crate::crop::Crop {
-                center: [444., 300.],
-                size: [360, 240],
-                angle: 0.1,
-            });
-            super::super::tests::add_ready_fixture(editor);
-            editor.document.source = false;
-            editor.sync_document();
-            let before = editor.document.state.project.clone();
-            editor.document.visit.canvas.viewport.zoom = Some(1.7);
-            let view = editor.document.visit.canvas.viewport;
-            editor.begin_pick(Pick::Analysis, cx);
-            let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-            let ctx = egui::Context::default();
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(1100., 800.),
-                    )),
-                    ..Default::default()
-                },
-                |ui| crate::editor::tests::paint_controller(editor, ui),
-            );
-            output.textures_delta.clear();
-            assert!(editor.document.source);
-            assert_eq!(
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .last_layout
-                    .unwrap()
-                    .0
-                    .composition,
-                Composition::new(
-                    area,
-                    RollOrientation::default(),
-                    PhotoOrientation::default()
-                )
-                .unwrap()
-            );
-            editor.set_test_pick_region(Some(Coverage::rectangle(rect([52, 42, 720, 480]))));
-            editor.apply_analysis_area(cx);
-            assert!(editor.test_pick().is_none());
-            assert_eq!(
-                editor.document.state.project.analysis_area,
-                Some([52, 42, 720, 480])
-            );
-            assert_eq!(editor.document.state.project.sources, before.sources);
-            assert_eq!(
-                editor.document.state.project.orientation,
-                before.orientation
-            );
-            assert_eq!(editor.document.roll, before.roll);
-            assert_eq!(editor.document.visit.canvas.viewport, view);
-            assert!(!editor.document.source);
-        });
-    });
-}
-
-#[test]
 fn missing_local_support_never_becomes_whole_camera_picture_statistics() {
     let editor = state();
     assert_eq!(editor.analysis_support(), None);
-    assert_eq!(editor.analysis_picture(), None);
+    assert_eq!(editor.document.project.analysis_area, None);
     assert!(picture_area(None, None).is_err());
     let support = rect([1372, 46, 5950, 5576]);
     assert_eq!(picture_area(None, Some(support)).unwrap(), suggest(support));
@@ -919,7 +826,7 @@ fn real_ambiguous_first_frame_uses_roll_opening_instead_of_holder() {
                 .analysis_support,
             None
         );
-        assert_eq!(editor.analysis_picture(), None);
+        assert_eq!(editor.document.project.analysis_area, None);
         let before = editor.document.state.project.clone();
         editor = click_analyze(editor, Duration::from_secs(180));
         assert!(
