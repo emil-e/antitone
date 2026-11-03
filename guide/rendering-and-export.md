@@ -15,15 +15,16 @@ The sections follow processing order:
 - **Film & paper** — **Negative** selects an optional simulated camera-negative stock;
   None skips synthetic formation, not the Roll panel's inversion of an actual negative.
   **Paper** selects the print medium independently. Paper None is available only without
-  a selected negative; choosing a negative from bypass also selects Portra Endura.
-  For B&W, choose **Negative: None** and **ILFORD MULTIGRADE RC DELUXE · filter 2**.
-  Paper-only processing works on an already inverted scan or a Digital photograph.
+  a selected negative. From bypass, a colour negative also selects Portra Endura; a B&W
+  negative selects Ilford Multigrade RC Deluxe · filter 2. Choose Negative None to use
+  paper alone on an already inverted scan or a Digital photograph.
 - **Target** — **sRGB** or **Display P3**, both 100-nit. This is the output colour space,
   not the monitor profile; choosing P3 changes the actual rendering and gamut limitation.
 
 LUT and Film & paper are independent: use either, both or neither. A LUT can alter the
-working positive before the film/paper response. Changing a stock prepares a new treatment
-in the background; Cancel keeps the accepted choices.
+working positive before the film/paper response. Switching between colour and B&W asks
+before clearing the negative or choosing a matching default paper. Changing a stock
+prepares a new treatment in the background; Cancel keeps the accepted choices.
 
 ## TIFF or EXR?
 
