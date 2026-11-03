@@ -242,11 +242,11 @@ fn generated_retention_is_bounded_independently_of_scratch_and_cache_off_preserv
                 expected(region)
             );
             assert_eq!(
-                result.stats.initializations,
+                result.counts.initializations,
                 usize::from(iteration == 0 || limit < field_bytes)
             );
             assert!(
-                result.stats.scratch_bytes > 0,
+                executor.pool_bytes() > 0,
                 "cache-off still admits necessary working storage"
             );
             assert_eq!(

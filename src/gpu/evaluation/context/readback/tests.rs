@@ -226,7 +226,8 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
             _: Option<PlannedImage>,
             output: PlannedImage,
         ) -> Result<(), Error> {
-            fragment.resources[output.resource.0] = Storage::Buffer(u64::from(output.cells()) * 8);
+            fragment.resources[output.resource.0] =
+                Storage::Data(vec![0; output.cells() as usize * 8].into());
             Ok(())
         }
     }
@@ -263,6 +264,8 @@ fn host_float_delivery_rejects_a_packed_result_before_copying() {
             || false,
             |_, _| panic!("packed float delivery")
         ),
-        Err(Error::InvalidParameter(_))
+        Err(Error::InvalidParameter(
+            "host float delivery requires a complete RGBA buffer"
+        ))
     ));
 }

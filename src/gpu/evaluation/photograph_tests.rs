@@ -70,6 +70,120 @@ fn evaluate(
 }
 
 #[test]
+fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let area: SourceRegion = [0, 0, 128, 128].into();
+    let codes = Arc::new(Codes {
+        area,
+        pixels: vec![[20000., 30000., 10000., 0.]; 128 * 128],
+    });
+    let repair = crate::dust_repair::Repair {
+        id: crate::dust_repair::RepairId(1),
+        enabled: true,
+        origin: crate::dust_repair::RepairOrigin::Manual,
+        support: crate::dust_repair::SupportMask::new([32, 48], [16, 16], vec![true; 256]).unwrap(),
+        offset: [48, 0],
+    };
+    let evaluated =
+        Arc::new(crate::dust_repair::evaluate(&repair, area, |_| Ok([0.25, 0.5, 0.75])).unwrap());
+    let mut input = ProcessingInput::new(
+        &device.limits(),
+        InputSettings::Digital,
+        Default::default(),
+        crate::adjustment_layers::AdjustmentLayerSnapshot::new(Vec::new()).unwrap(),
+        glam::DMat3::IDENTITY,
+        area,
+    )
+    .unwrap();
+    input.repairs = crate::gpu::repairs::Snapshot::logical(vec![evaluated]).unwrap();
+    let stages = crate::pixel_pipeline::PixelPipeline {
+        stages: vec![crate::pixel_pipeline::PixelStage::new(
+            crate::image_mtf::ImageMtfParameters { sigma: 1. },
+        )],
+    };
+    let domain = Domain {
+        bounds: Some([0, 0, 1, 1].into()),
+        grid: Grid {
+            coverage: 8,
+            ..Grid::axis_aligned([0., 48.], [128., 8.])
+        },
+        meaning: Meaning::Graded,
+    };
+    let compose = |stages: &crate::pixel_pipeline::PixelPipeline| {
+        let photograph = Photograph::new_with_stages(
+            &device.limits(),
+            source(codes.clone()),
+            None,
+            &input,
+            glam::DMat3::IDENTITY,
+            stages,
+        )
+        .unwrap();
+        reconstruct(photograph.processed, domain).unwrap()
+    };
+    let read = |root: Arc<ImageNode>, scratch_bytes, must_stream| {
+        let request = context
+            .request(
+                root,
+                Region {
+                    bounds: domain.finite().unwrap(),
+                    grid: domain.grid,
+                },
+                Budget {
+                    tile: [1, 1],
+                    scratch_bytes,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            request
+                .plans()
+                .next()
+                .unwrap()
+                .unwrap()
+                .tiles
+                .iter()
+                .flat_map(|t| &t.fragment.work)
+                .any(|work| matches!(work, Work::Produce { .. })),
+            must_stream
+        );
+        let mut pixels = Vec::new();
+        context
+            .read(
+                &queue,
+                &Default::default(),
+                &request,
+                || false,
+                |_, values| {
+                    pixels.extend_from_slice(values);
+                    Ok(())
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(pixels.len(), 1);
+        pixels[0]
+    };
+    let resident = read(compose(&stages), 2 << 20, false);
+    let unfiltered = read(compose(&Default::default()), 2 << 20, false);
+    assert!(
+        resident[..3]
+            .iter()
+            .zip(unfiltered)
+            .any(|(a, b)| (*a - b).abs() > 2e-5),
+        "control: filtering across the repair edge must affect the sampled strip"
+    );
+    let streamed = read(compose(&stages), 64 << 10, true);
+    for (a, b) in streamed.iter().zip(resident) {
+        assert!(
+            (*a - b).abs() < 2e-5,
+            "streamed={streamed:?}, resident={resident:?}"
+        );
+    }
+}
+
+#[test]
 fn photographic_identities_follow_captured_operations_not_physical_fusion() {
     use crate::adjustment_layers::{
         AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,

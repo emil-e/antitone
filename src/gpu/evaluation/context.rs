@@ -203,6 +203,7 @@ impl Context {
     ) -> Result<(), Error> {
         self.record_work(fragment, result)?
             .encode_work(&self.device, encoder, inputs)
+            .map(|_| ())
     }
 
     pub(crate) fn submit(
@@ -239,7 +240,7 @@ impl Context {
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         sink: impl FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
-    ) -> Result<Option<Stats>, Error> {
+    ) -> Result<Option<WorkCounts>, Error> {
         self.evaluate_with(
             queue,
             gate,
@@ -260,13 +261,13 @@ impl Context {
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         mut sink: Sink<E, S>,
-    ) -> Result<Option<Stats>, Error>
+    ) -> Result<Option<WorkCounts>, Error>
     where
         E: FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
         S: FnMut(),
     {
         let mut executor = self.executor();
-        let mut total = Stats::default();
+        let mut total = WorkCounts::default();
         let mut plans = evaluation.plans();
         loop {
             if cancelled() {
@@ -288,13 +289,7 @@ impl Context {
             else {
                 return Ok(None);
             };
-            total.submissions += stats.submissions;
-            total.source_cells += stats.source_cells;
-            total.buffer_allocations += stats.buffer_allocations;
-            total.texture_allocations += stats.texture_allocations;
-            total.initializations += stats.initializations;
-            total.encoded_device_peak = total.encoded_device_peak.max(stats.encoded_device_peak);
-            total.scratch_bytes = total.scratch_bytes.max(stats.scratch_bytes);
+            total.include(stats);
         }
         Ok(Some(total))
     }

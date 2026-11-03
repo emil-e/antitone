@@ -479,11 +479,18 @@ impl SampleProduction for Reconstruction {
         self.requires_reduction()
     }
 
-    fn produce_many(&self, outputs: &[(&Arc<ImageNode>, Production<'_>)]) -> Result<bool, Error> {
+    fn produce_many(
+        &self,
+        outputs: &[(&Arc<ImageNode>, Production<'_>)],
+    ) -> Result<Option<WorkCounts>, Error> {
         streaming::batch::produce(outputs)
     }
 
-    fn produce(&self, worker: &Production<'_>, input: &Arc<ImageNode>) -> Result<(), Error> {
+    fn produce(
+        &self,
+        worker: &Production<'_>,
+        input: &Arc<ImageNode>,
+    ) -> Result<WorkCounts, Error> {
         self.produce_image(worker, input)
     }
 }

@@ -1,6 +1,8 @@
 use super::*;
 use std::sync::Mutex;
 
+mod admission;
+mod counts;
 mod coverage;
 
 struct Pixels {
@@ -331,8 +333,8 @@ fn nested_worker_admission_rejects_before_original_reads() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     let scope = context.test_materializations(false);
-    let request = context
-        .request(
+    let request_for = |scratch_bytes| {
+        context.request(
             root.clone(),
             Region {
                 bounds: root.domain.finite().unwrap(),
@@ -340,13 +342,21 @@ fn nested_worker_admission_rejects_before_original_reads() {
             },
             Budget {
                 tile: [1, 1],
-                scratch_bytes: 1024,
+                scratch_bytes,
             },
         )
-        .unwrap();
+    };
+    let parent_bytes = request_for(1024)
+        .unwrap()
+        .plans()
+        .next()
+        .unwrap()
+        .unwrap()
+        .peak_scratch_bytes;
+    let request = request_for(parent_bytes).unwrap();
     let plan = request.plans().next().unwrap().unwrap();
     assert!(
-        plan.peak_scratch_bytes <= 1024
+        plan.peak_scratch_bytes == parent_bytes
             && matches!(plan.tiles[0].fragment.work[0], Work::Produce { .. }),
         "control: the parent plan fits; the child worker's remaining allowance must reject"
     );
@@ -439,6 +449,68 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
 }
 
 #[test]
+fn shared_neighbourhood_admission_falls_back_when_individual_requests_fit() {
+    let (input, reads) = fixture([128, 64], vec![[-2., 3., 4., 1.]; 128 * 64]);
+    let input = super::super::super::operators::gaussian(input, 1.).unwrap();
+    let roots: Vec<_> = [128., 127.]
+        .into_iter()
+        .map(|width| {
+            let mapping = Mapping {
+                start: [0.; 2],
+                axes: [[width, 0.], [0., 64.]],
+            };
+            reconstruct_mapped(input.clone(), output(mapping, [0, 0, 1, 1].into()), mapping)
+                .unwrap()
+        })
+        .collect();
+    let budget = Budget {
+        tile: [1, 1],
+        scratch_bytes: 33 << 10,
+    };
+    let expected: Vec<_> = roots
+        .iter()
+        .map(|root| materialize(root.clone(), budget.tile, budget.scratch_bytes))
+        .collect();
+    reads.lock().unwrap().clear();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let scope = context.test_materializations(false);
+    let requests = roots
+        .into_iter()
+        .map(|root| {
+            context
+                .request(
+                    root.clone(),
+                    Region {
+                        bounds: root.domain.finite().unwrap(),
+                        grid: root.domain.grid,
+                    },
+                    budget,
+                )
+                .unwrap()
+        })
+        .collect();
+    let images = pollster::block_on(futures_util::future::try_join_all(
+        context
+            .materialize_many(&queue, &Default::default(), &scope, requests)
+            .unwrap(),
+    ))
+    .unwrap();
+    for (image, expected) in images.iter().zip(expected) {
+        let actual =
+            super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
+        assert_eq!(actual.len(), 1);
+        for (a, b) in actual[0].iter().zip(expected[0]) {
+            assert!(
+                (*a - b).abs() < 2e-5,
+                "batched={actual:?}, individual={expected:?}"
+            );
+        }
+    }
+    assert!(reads.lock().unwrap().len() > 1);
+}
+
+#[test]
 fn disjoint_reconstruction_targets_skip_source_units_that_cannot_contribute() {
     let (input, reads) = fixture(
         [1536, 16],
@@ -474,7 +546,7 @@ fn disjoint_reconstruction_targets_skip_source_units_that_cannot_contribute() {
                     },
                     Budget {
                         tile: [1, 1],
-                        scratch_bytes: 32 << 10,
+                        scratch_bytes: 64 << 10,
                     },
                 )
                 .unwrap()
@@ -536,7 +608,7 @@ fn related_reconstructions_share_source_traversal_and_duplicate_roots_share_one_
                     },
                     Budget {
                         tile: [2, 2],
-                        scratch_bytes: 32 << 10,
+                        scratch_bytes: 64 << 10,
                     },
                 )
                 .unwrap()
@@ -939,6 +1011,67 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
     assert_eq!(actual[0][3], 9.);
     assert_eq!(context.retained_bytes(), 0);
     drop(resident);
+}
+
+#[test]
+fn irreducible_neighbourhoods_reject_before_source_io_on_the_authored_graph() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Unreadable(Arc<AtomicUsize>);
+    impl Source for Unreadable {
+        fn domain(&self) -> Domain {
+            Domain {
+                bounds: Some(Rect::new([0; 2], [100_000; 2])),
+                grid: Grid::axis_aligned([0.; 2], [1.; 2]),
+                meaning: Meaning::Graded,
+            }
+        }
+        fn read(&self, _: Rect) -> Result<Vec<[f32; 4]>, Error> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Err(Error::Gpu("unexpected source IO".into()))
+        }
+    }
+
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let reads = Arc::new(AtomicUsize::new(0));
+    for (sigma, expected) in [
+        (100., "reconstruction neighbourhood exceeds working storage"),
+        (20_000., "evaluation raster exceeds GPU cell addressing"),
+    ] {
+        let input = super::super::super::operators::gaussian(
+            source(Arc::new(Unreadable(reads.clone()))),
+            sigma,
+        )
+        .unwrap();
+        let domain = Domain {
+            bounds: Some(Rect::new([50_000; 2], [16; 2])),
+            ..input.domain
+        };
+        let root = reconstruct_complete(input, domain).unwrap();
+        let evaluation = context
+            .request(
+                root,
+                Region {
+                    bounds: domain.finite().unwrap(),
+                    grid: domain.grid,
+                },
+                Budget {
+                    tile: [16; 2],
+                    scratch_bytes: 64 << 10,
+                },
+            )
+            .unwrap();
+        let result = context.read(
+            &queue,
+            &Default::default(),
+            &evaluation,
+            || false,
+            |_, _| panic!("inadmissible neighbourhood delivered"),
+        );
+        assert!(matches!(result, Err(Error::InvalidParameter(message)) if message == expected));
+        assert_eq!(reads.load(Ordering::Relaxed), 0);
+    }
 }
 
 #[test]

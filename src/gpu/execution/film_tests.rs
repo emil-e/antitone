@@ -4,18 +4,16 @@ use crate::grain::{GrainPreset, GrainSettings};
 fn processed(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    kernels: &crate::gpu::pixel_pipeline::Kernels,
     bounds: SourceRegion,
     settings: GrainSettings,
     frame_size: [u32; 2],
 ) -> Vec<[f32; 4]> {
-    processed_with_flags(device, queue, kernels, bounds, settings, 0., frame_size)
+    processed_with_flags(device, queue, bounds, settings, 0., frame_size)
 }
 
 fn processed_with_flags(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    kernels: &crate::gpu::pixel_pipeline::Kernels,
     bounds: SourceRegion,
     settings: GrainSettings,
     flags: f32,
@@ -23,13 +21,12 @@ fn processed_with_flags(
 ) -> Vec<[f32; 4]> {
     let pipeline =
         crate::pixel_pipeline::PixelPipeline::film(settings, frame_size, (1 << 60) + 17).unwrap();
-    processed_pipeline(device, queue, kernels, bounds, &pipeline, flags)
+    processed_pipeline(device, queue, bounds, &pipeline, flags)
 }
 
 fn processed_pipeline(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    kernels: &crate::gpu::pixel_pipeline::Kernels,
     bounds: SourceRegion,
     pipeline: &crate::pixel_pipeline::PixelPipeline,
     flags: f32,
@@ -46,13 +43,12 @@ fn processed_pipeline(
             })
         })
         .collect();
-    processed_pixels(device, queue, kernels, bounds, pipeline, &values)
+    processed_pixels(device, queue, bounds, pipeline, &values)
 }
 
 fn processed_pixels(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    kernels: &crate::gpu::pixel_pipeline::Kernels,
     bounds: SourceRegion,
     pipeline: &crate::pixel_pipeline::PixelPipeline,
     values: &[[f32; 4]],
@@ -77,9 +73,7 @@ fn processed_pixels(
         crate::gpu::raster::Raster::native(bounds),
     )
     .unwrap();
-    kernels
-        .encode(device, &mut encoder, &prepared, &working)
-        .unwrap();
+    prepared.encode(device, &mut encoder, &working).unwrap();
     encoder.copy_buffer_to_buffer(&working, 0, &staging, 0, working.size());
     let submission = queue.submit([encoder.finish()]);
     let (send, recv) = std::sync::mpsc::channel();
@@ -98,7 +92,6 @@ fn processed_pixels(
 #[test]
 fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
     let bounds: SourceRegion = [1048, 980, 64, 64].into();
     let settings = GrainSettings {
         amount: 0.,
@@ -113,13 +106,10 @@ fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf
         .map(|i| (-0.5 * (i * i) as f64 / (sigma * sigma)).exp())
         .sum();
     for flags in [0., 7.] {
-        let active = processed_with_flags(
-            &device, &queue, &kernels, bounds, settings, flags, [6000; 2],
-        );
+        let active = processed_with_flags(&device, &queue, bounds, settings, flags, [6000; 2]);
         let clean = processed_with_flags(
             &device,
             &queue,
-            &kernels,
             bounds,
             GrainSettings::default(),
             flags,
@@ -146,7 +136,6 @@ fn native_floor_flags_and_zero_amount_retain_the_independent_source_gaussian_mtf
 #[test]
 fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_crop_edges() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
     let area: SourceRegion = [100, 80, 6000, 6000].into();
     let whole: SourceRegion = [1000, 780, 420, 420].into();
     let composition = Composition::with_crop(
@@ -168,14 +157,7 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
         amount: 0.065,
         ..Default::default()
     };
-    let reference = processed(
-        &device,
-        &queue,
-        &kernels,
-        whole,
-        settings,
-        composition.crop().size,
-    );
+    let reference = processed(&device, &queue, whole, settings, composition.crop().size);
     let engine = Reconstructor::new(&device).unwrap();
     let mut unpadded_defect = false;
     for origin in [[0, 0], [128, 0], [0, 128], [128, 128]] {
@@ -196,14 +178,7 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
                 && b.x + b.width <= whole.x + whole.width
                 && b.y + b.height <= whole.y + whole.height
         );
-        let tile = processed(
-            &device,
-            &queue,
-            &kernels,
-            b,
-            settings,
-            composition.crop().size,
-        );
+        let tile = processed(&device, &queue, b, settings, composition.crop().size);
         let actual = super::tests::reconstructed(
             &device,
             &queue,
@@ -216,14 +191,7 @@ fn original_film_tiles_match_whole_source_filtering_across_seams_and_rotated_cro
             let mut clipped = Unit::new(composition, origin, extent).unwrap();
             clipped.mapping.space[0] = 1;
             let bounds = clipped.bounds;
-            let pixels = processed(
-                &device,
-                &queue,
-                &kernels,
-                bounds,
-                settings,
-                composition.crop().size,
-            );
+            let pixels = processed(&device, &queue, bounds, settings, composition.crop().size);
             super::tests::reconstructed(
                 &device,
                 &queue,
@@ -280,7 +248,6 @@ fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolu
         pixel_pipeline::{PixelPipeline, PixelStage},
     };
     let (device, queue, _) = crate::gpu::test_support::render_context();
-    let kernels = pollster::block_on(crate::gpu::pixel_pipeline::Kernels::new(&device)).unwrap();
     let composition = Composition::with_crop(
         [100, 80, 6000, 4000].into(),
         Default::default(),
@@ -324,14 +291,7 @@ fn planned_unequal_gaussians_with_point_grain_match_independent_discrete_convolu
                 .map(move |x| sample(x as i32, y as i32))
         })
         .collect();
-    let samples = processed_pixels(
-        &device,
-        &queue,
-        &kernels,
-        unit.bounds,
-        plan.pipeline(),
-        &values,
-    );
+    let samples = processed_pixels(&device, &queue, unit.bounds, plan.pipeline(), &values);
     let actual = super::tests::reconstructed(
         &device,
         &queue,

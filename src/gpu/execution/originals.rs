@@ -1,11 +1,9 @@
 //! Codec-independent bounded original-sample execution and destination-only readback.
 
-use super::{OutputBlock, Request, SampleEncoding, WorkBudget};
+use super::{OutputBlock, Request, SampleEncoding};
 use crate::gpu::{ProcessingInput, SubmissionGate, evaluation, rgb16};
 use crate::{
     Error,
-    frame_raster::FrameRaster,
-    geometry::Composition,
     renderer::GpuRenderer,
     rendering::{OutputReference, OutputTarget},
 };
@@ -31,7 +29,12 @@ pub(crate) type RenderBlock<'a> = dyn FnMut([u32; 2], [u32; 2]) -> Result<Output
 pub(crate) type Complete<'a> = dyn FnMut() -> Result<(), Error> + 'a;
 
 #[cfg(test)]
-use crate::{acquisition::ValidOutput, geometry::SourceRegion};
+use crate::{
+    acquisition::ValidOutput,
+    frame_raster::FrameRaster,
+    geometry::{Composition, SourceRegion},
+};
+#[cfg(test)]
 use crate::{
     acquisition::{Plan, Request as AcquisitionRequest, Sampling, SourceRead, SourceSupport},
     geometry::FramePoint,
@@ -46,42 +49,6 @@ mod film_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "intent_tests.rs"]
 mod intent_tests;
-
-// Geometry and admission precede all source-sized preparation, including coverage masks.
-fn admit_source(
-    composition: Composition,
-    origin: [u32; 2],
-    extent: [u32; 2],
-    pipeline: &crate::pixel_pipeline::PixelPipeline,
-    budget: WorkBudget,
-) -> Result<Plan, Error> {
-    if extent.contains(&0) || (0..2).any(|i| extent[i] > TILE[i]) {
-        return Err(Error::InvalidParameter(
-            "invalid processing destination unit",
-        ));
-    }
-    let raster = FrameRaster::new(
-        composition,
-        FramePoint(origin.map(f64::from)),
-        FramePoint(std::array::from_fn(|i| {
-            f64::from(origin[i]) + f64::from(extent[i])
-        })),
-        extent,
-    )?;
-    // The source adapter receives the planned read; it does not propagate stage margins.
-    let plan = Plan::new(AcquisitionRequest {
-        output: raster,
-        stages: pipeline,
-        sampling: Sampling::Originals {
-            reconstruction: SourceSupport([1; 2]),
-        },
-    })?;
-    let SourceRead::Originals(bounds) = plan.source_read() else {
-        unreachable!("original-sample processing plan")
-    };
-    budget.require_source([bounds.width, bounds.height])?;
-    Ok(plan)
-}
 
 #[cfg(test)]
 mod unit_fixture;
@@ -326,21 +293,16 @@ pub(crate) struct Stats {
     pub destination_pixels: u64,
     pub submissions: u64,
     pub readback_bytes: u64,
-    pub peak_unit_payload: u64,
-    pub scratch_buffer_allocations: u64,
-    pub source_layout_changes: u64,
+    pub buffer_allocations: u64,
+    pub generated_initializations: u64,
+    pub planned_source_layout_changes: u64,
     pub look_payload_bytes: u64,
-    pub retained_repair_payload_bytes: u64,
-    pub peak_repair_upload_bytes: u64,
-    pub rgb16_payload_bytes: u64,
 }
 
 #[cfg(not(all(test, target_os = "macos")))]
 #[derive(Default)]
 pub(crate) struct Stats {}
 
-// One source bounding rectangle lives until its destination block completes; dimensions may
-// change between blocks. No source atlas, full-photo resident buffer or speculative cache.
 pub(crate) fn execute(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
@@ -420,21 +382,9 @@ pub(crate) fn execute(
         meaning: original.domain().meaning,
     };
     let root = evaluation::reconstruct_complete(original, domain)?;
-    let budget = WorkBudget {
-        source_pixels: request
-            .budget
-            .source_pixels
-            .min(WorkBudget::for_device(device).source_pixels),
-    };
     let mut executor = renderer.evaluation.executor();
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
-        rgb16_payload_bytes: if reconstruction.rgb16.is_some() {
-            rgb16::THRESHOLD_BYTES
-        } else {
-            0
-        },
-        retained_repair_payload_bytes: repairs.byte_len(),
         look_payload_bytes: _lut_resources
             .iter()
             .map(|resource| resource.byte_len())
@@ -461,7 +411,6 @@ pub(crate) fn execute(
                     "invalid processing destination unit",
                 ));
             }
-            admit_source(request.composition, origin, extent, pipeline, budget)?;
             #[cfg(all(test, target_os = "macos", feature = "export"))]
             let timing = std::cell::RefCell::new(timestamps.borrow_mut());
             let plan = timed!(
@@ -554,42 +503,18 @@ pub(crate) fn execute(
                 stats.source_pixels += _executed.source_cells;
                 stats.destination_pixels += u64::from(extent[0]) * u64::from(extent[1]);
                 stats.submissions += _executed.submissions as u64;
-                stats.scratch_buffer_allocations += _executed.buffer_allocations as u64;
+                stats.buffer_allocations += _executed.buffer_allocations as u64;
+                stats.generated_initializations += _executed.initializations as u64;
                 for work in plan.tiles.iter().flat_map(|t| &t.fragment.work) {
-                    if let evaluation::Work::Upload { output, .. } = work {
-                        if previous_source_size != Some(output.size()) {
-                            stats.source_layout_changes += 1;
-                            previous_source_size = Some(output.size());
-                        }
-                        stats.peak_repair_upload_bytes = stats
-                            .peak_repair_upload_bytes
-                            .max(repairs.upload_scratch_bytes(output.region.source()?));
+                    if let evaluation::Work::Upload { output, .. } = work
+                        && previous_source_size != Some(output.size())
+                    {
+                        stats.planned_source_layout_changes += 1;
+                        previous_source_size = Some(output.size());
                     }
                 }
                 stats.readback_bytes +=
                     u64::from(extent[0]) * u64::from(extent[1]) * reconstruction.bytes_per_pixel();
-                let repair_upload = plan
-                    .tiles
-                    .iter()
-                    .flat_map(|t| &t.fragment.resources)
-                    .filter_map(|r| {
-                        if let evaluation::Storage::Data(bytes) = r {
-                            Some(bytes.len() as u64)
-                        } else {
-                            None
-                        }
-                    })
-                    .sum::<u64>();
-                // Explicit bounded payloads; immutable resources and driver overhead are separate.
-                stats.peak_unit_payload = stats.peak_unit_payload.max(
-                    _executed.scratch_bytes
-                        + _executed.source_cells * 16
-                        + u64::from(TILE[0])
-                            * u64::from(TILE[1])
-                            * (16 + if reconstruction.rgb16.is_some() { 8 } else { 0 })
-                        + u64::from(extent[0]) * u64::from(extent[1]) * 42
-                        + repair_upload,
-                );
             }
             Ok(pixels)
         },
@@ -613,17 +538,14 @@ pub(crate) fn execute(
             probe.stats.report();
         }
         println!(
-            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} unit_payload_upper_bound_bytes={} job_look_payload_bytes={} scratch_buffer_allocations={} retained_repair_payload_bytes={} peak_repair_upload_bytes={} job_rgb16_payload_bytes={}",
+            "export_area source_pixels={} destination_pixels={} submissions={} readback_bytes={} job_look_payload_bytes={} evaluation_buffer_allocations={} generated_initializations={}",
             stats.source_pixels,
             stats.destination_pixels,
             stats.submissions,
             stats.readback_bytes,
-            stats.peak_unit_payload,
             stats.look_payload_bytes,
-            stats.scratch_buffer_allocations,
-            stats.retained_repair_payload_bytes,
-            stats.peak_repair_upload_bytes,
-            stats.rgb16_payload_bytes
+            stats.buffer_allocations,
+            stats.generated_initializations
         );
     }
     Ok(stats)

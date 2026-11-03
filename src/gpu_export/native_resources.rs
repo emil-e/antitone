@@ -110,7 +110,6 @@ fn native_output_resources() {
                         output,
                         luts: (None).into(),
                         encoding,
-                        budget: execution::WorkBudget::for_device(&device),
                     },
                     |render, complete| {
                         let size = composition.size();
@@ -168,11 +167,13 @@ fn native_output_resources() {
         );
         let usage = unsafe { usage.assume_init() };
         println!(
-            "native_output run={run} seconds={seconds:.9} retained={} encoded_peak={} source_cells={} submissions={} peak_rss={} file_bytes={}",
+            "native_output run={run} seconds={seconds:.9} retained={} encoded_peak={} source_cells={} submissions={} evaluation_buffer_allocations={} generated_initializations={} peak_rss={} file_bytes={}",
             crate::gpu::allocated_resource_bytes(&device).unwrap_or(0),
             peak.load(Ordering::Relaxed),
             stats.source_pixels,
             stats.submissions,
+            stats.buffer_allocations,
+            stats.generated_initializations,
             usage.ru_maxrss,
             std::fs::metadata(&path).map_or(0, |m| m.len())
         );

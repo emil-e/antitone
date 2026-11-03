@@ -146,7 +146,7 @@ fn grain_gpu_encoded_field_survives_owner_retirement_before_submission() {
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let graded = view.graded.as_ref().unwrap();
-            kernels.grade(&device, &mut encoder, graded);
+            graded.data.encode(&device, &mut encoder);
             encoder.copy_buffer_to_buffer(&graded.pixels, 0, &output, 0, output.size());
         }
         drop(view);
@@ -260,7 +260,11 @@ fn grain_gpu_reuses_grain_across_amount_colour_and_grade_edits() {
         // Encoding alone is not initialization, including when a different photographic view
         // shares the field. A deferred/abandoned UI encoder must not poison later publication.
         let mut abandoned = device.create_command_encoder(&Default::default());
-        kernels.grade(&device, &mut abandoned, base.graded.as_ref().unwrap());
+        base.graded
+            .as_ref()
+            .unwrap()
+            .data
+            .encode(&device, &mut abandoned);
         drop(abandoned);
         assert!(!field(&edited).ready());
         edited.ensure_submitted(

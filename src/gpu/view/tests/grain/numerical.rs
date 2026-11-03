@@ -152,7 +152,7 @@ fn kernel_probe(@builtin(global_invocation_id) id: vec3u) {
 #[test]
 fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_range_rejection() {
     pollster::block_on(async {
-        let (device, queue, _, kernels) = context().await;
+        let (device, queue, _, _) = context().await;
         let settings = crate::grain::GrainPreset::ThirtyFiveMm.settings();
         let parameters = settings.parameters([64; 2]).unwrap().unwrap();
         // Small sources integrate many lattice samples; their actual finite gain is exercised.
@@ -176,10 +176,7 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
                     | wgpu::BufferUsages::COPY_DST,
             });
             let mut encoder = device.create_command_encoder(&Default::default());
-            kernels
-                .stages
-                .encode(&device, &mut encoder, &prepared, &pixels)
-                .unwrap();
+            prepared.encode(&device, &mut encoder, &pixels).unwrap();
             queue.submit([encoder.finish()]);
             let result = read(&device, &queue, &pixels);
             for p in &result {
@@ -208,7 +205,8 @@ fn grain_evaluates_small_sources_and_dark_signed_pixels_without_speculative_rang
 #[test]
 fn grain_gpu_mtf_preserves_large_signed_hdr_constants() {
     pollster::block_on(async {
-        let (device, queue, _, kernels) = context().await;
+        let (device, queue, _, _) = context().await;
+        let mtf = crate::gpu::image_mtf::Kernels::new(&device).await.unwrap();
         let value = 2_f32.powi(122);
         let values = vec![[value, -value, 0.0001, 8.]; 65];
         let source = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -231,7 +229,7 @@ fn grain_gpu_mtf_preserves_large_signed_hdr_constants() {
             );
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
-                layout: &kernels.stages.mtf.horizontal.get_bind_group_layout(0),
+                layout: &mtf.horizontal.get_bind_group_layout(0),
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -250,7 +248,7 @@ fn grain_gpu_mtf_preserves_large_signed_hdr_constants() {
             let mut encoder = device.create_command_encoder(&Default::default());
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&kernels.stages.mtf.horizontal);
+                pass.set_pipeline(&mtf.horizontal);
                 pass.set_bind_group(0, &group, &[]);
                 pass.dispatch_workgroups(2, 1, 1);
             }

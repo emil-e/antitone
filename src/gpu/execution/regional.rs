@@ -204,7 +204,7 @@ pub(crate) fn execute(
                 progress: &|| {},
             };
             match worker.produce(&request) {
-                Ok(()) => {}
+                Ok(_) => {}
                 Err(Error::Cancelled) => return Ok(None),
                 Err(error) => return Err(error),
             }

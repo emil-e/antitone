@@ -108,9 +108,9 @@ impl Context {
                 {
                     producer.produce_many(&outputs)?
                 } else {
-                    false
+                    None
                 };
-                if !handled {
+                if handled.is_none() {
                     for ((_, worker), (evaluation, _)) in outputs.iter().zip(&selected) {
                         worker.produce(evaluation)?;
                     }

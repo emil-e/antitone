@@ -77,9 +77,6 @@ fn request(scan: &Scan, output: OutputReference, encoding: SampleEncoding) -> Re
         output,
         luts: (Some(look())).into(),
         encoding,
-        budget: WorkBudget {
-            source_pixels: u64::MAX,
-        },
     }
 }
 
@@ -267,7 +264,7 @@ fn display_reference_can_deliver_linear_float_or_encoded_rgb16_without_a_file_co
 }
 
 #[test]
-fn scene_rgb16_is_rejected_and_source_work_is_bounded_before_reading_a_unit() {
+fn scene_rgb16_is_rejected_before_the_sink_and_valid_float_execution_remains_usable() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let scan = scan();
     let called = Cell::new(false);
@@ -288,18 +285,6 @@ fn scene_rgb16_is_rejected_and_source_work_is_bounded_before_reading_a_unit() {
         !called.get(),
         "invalid scene storage must fail before handing work to a sink"
     );
-    let mut bounded = request(
-        &scan,
-        OutputReference::SceneReferred,
-        SampleEncoding::LinearFloat,
-    );
-    bounded.budget.source_pixels = 1;
-    assert!(matches!(
-        render(&device, &queue, &renderer, bounded),
-        Err(Error::InvalidParameter(
-            "processing unit exceeds source work budget"
-        ))
-    ));
     render(
         &device,
         &queue,

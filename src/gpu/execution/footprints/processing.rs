@@ -23,6 +23,16 @@ pub(crate) struct Processed {
 }
 
 impl Processed {
+    pub(crate) fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        let Some(stages) = &self.stages else {
+            return;
+        };
+        debug_assert_eq!(stages.raster.size(), self.plan.input().size());
+        stages
+            .encode_from(device, encoder, &self.source.pixels, &self.pixels)
+            .expect("validated photographic composition");
+    }
+
     fn supplies(
         &self,
         definition: &Arc<crate::gpu::evaluation::ImageNode>,

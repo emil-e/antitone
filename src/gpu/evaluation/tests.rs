@@ -352,7 +352,7 @@ fn composed_real_grade_and_multi_pass_fragment_match_independent_signed_hdr_edge
         )
         .unwrap()
         .unwrap();
-    assert_eq!(result.stats.submissions, plan.tiles.len());
+    assert_eq!(result.counts.submissions, plan.tiles.len());
     let actual = execute::read(&device, &queue, &result.pixels);
     let expected = scalar(&data, false, None, 0.9);
     let error = max_error(&expected, &actual);

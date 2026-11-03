@@ -472,7 +472,16 @@ These measurements describe the *preceding* coverage/cache/pair exporter, not th
 
 ### Reading export resource reports
 
-Every output pixel is reopened through bounded TIFF strips or a nonparallel EXR counting/finite-value sink; decoder limits are not disabled. GPU phase traces include source preparation, bounded area planning, GPU/readback waits and output packing; reference totals include scalar photographic processing, reconstruction and encoding. Reports count evaluated source pixels, dispatches, destination readback bytes, stop checks, sampled process footprint/resident memory/Metal allocation and sample age — **those quantities overlap and must not be added**.
+For repeated authored GPU-output measurements without private RAWs:
+
+```sh
+ANTITONE_NATIVE_GPU_ONLY=1 cargo test --locked --offline --release --features editor \
+  --lib gpu_export::native_resources::native_output_resources -- --ignored --exact --nocapture
+```
+
+Omit `ANTITONE_NATIVE_GPU_ONLY` to include file encoding; `ANTITONE_NATIVE_FORMAT` selects `tiff`, `half` or `full`. Source-cell and submission counts identify repeated acquisition or extra queue work; evaluation-buffer allocations identify lost storage reuse, and generated initializations distinguish cold work from cached fields. These work counters compile into test builds only. The report separately observes device allocation and process peak RSS; its RSS high-water mark covers the process lifetime, not just the latest repetition.
+
+Every output pixel is reopened through bounded TIFF strips or a nonparallel EXR counting/finite-value sink; decoder limits are not disabled. GPU phase traces include source preparation, bounded area planning, GPU/readback waits and output packing; reference totals include scalar photographic processing, reconstruction and encoding. Reports count evaluated source pixels, submissions, destination readback bytes and stop checks, alongside sampled process footprint/resident memory/Metal allocation and sample age. Compare memory observations separately — **those quantities overlap and must not be added**.
 
 Opt-in `export_stage` aggregates and host `export_detail` rows subdivide the same work (setup, coverage planning, tile access, weighted reduction, encoding, packing, finalization; upload inside command encoding, map/wait/copy/unmap inside tile access). Some rows explain residual work; others subdivide parent intervals — **do not add nested or overlapping costs to the stage total**, and use calibrated pass counters for narrower GPU attribution. Queue-write and mapped-copy times measure host operations, not isolated device transfer bandwidth; completion wait includes queued GPU processing and host/driver scheduling. Field definitions live with the report generators in [export resource tests](../src/gpu_export/resource_tests.rs); read them there rather than duplicating the full schema here.
 

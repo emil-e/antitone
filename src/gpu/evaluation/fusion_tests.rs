@@ -69,12 +69,16 @@ fn unchanged_logical_chains_can_skip_gaussian_display_and_copy_intermediates() {
                 .run(&device, &queue, &gate, &baseline, || false)
                 .unwrap()
                 .unwrap();
+            assert!(
+                before.counts.texture_allocations > 0,
+                "control: baseline allocates raster textures"
+            );
             let before = execute::read(&device, &queue, &before.pixels);
             let after = execute::Executor::default()
                 .run(&device, &queue, &gate, &composed, || false)
                 .unwrap()
                 .unwrap();
-            assert_eq!(after.stats.texture_allocations, 0);
+            assert_eq!(after.counts.texture_allocations, 0);
             let after = execute::read(&device, &queue, &after.pixels);
             let expected = scalar(&data, physical, Some(target), 0.9);
             let error = max_error(&expected, &after);

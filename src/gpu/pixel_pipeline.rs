@@ -6,11 +6,6 @@ use crate::Error;
 use crate::pixel_pipeline::PixelPipeline;
 use std::sync::Arc;
 
-pub(crate) struct Kernels {
-    #[cfg(all(test, feature = "editor"))]
-    pub mtf: super::image_mtf::Kernels,
-}
-
 pub(crate) struct Prepared {
     pub raster: Raster,
     pub definition: Arc<evaluation::ImageNode>,
@@ -121,6 +116,19 @@ impl Prepared {
         })
     }
 
+    #[cfg(test)]
+    pub fn encode(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        pixels: &wgpu::Buffer,
+    ) -> Result<(), Error> {
+        if let Some(execution) = &self.execution {
+            execution.encode(device, encoder, pixels)?;
+        }
+        Ok(())
+    }
+
     #[cfg(all(test, feature = "editor"))]
     pub fn field(&self) -> Option<&Arc<evaluation::RetainedBuffer>> {
         self.execution.as_ref()?.cached::<super::grain::FieldKey>()
@@ -166,39 +174,5 @@ impl Prepared {
 
     pub fn byte_len(&self) -> u64 {
         self.execution.as_ref().map_or(0, |p| p.byte_len())
-    }
-}
-
-impl Kernels {
-    pub async fn new(_device: &wgpu::Device) -> Result<Self, Error> {
-        Ok(Self {
-            #[cfg(all(test, feature = "editor"))]
-            mtf: super::image_mtf::Kernels::new(_device).await?,
-        })
-    }
-
-    #[cfg(test)]
-    pub fn encode(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        prepared: &Prepared,
-        pixels: &wgpu::Buffer,
-    ) -> Result<(), Error> {
-        if let Some(execution) = &prepared.execution {
-            execution.encode(device, encoder, pixels)?;
-        }
-        Ok(())
-    }
-
-    pub fn encode_from(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        prepared: &Prepared,
-        input: &wgpu::Buffer,
-        destination: &wgpu::Buffer,
-    ) -> Result<(), Error> {
-        prepared.encode_from(device, encoder, input, destination)
     }
 }

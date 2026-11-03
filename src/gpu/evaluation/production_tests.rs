@@ -187,7 +187,6 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         output: OutputReference::DisplayReferred(OutputTarget::Srgb),
         luts: Some(look.clone()).into(),
         encoding: crate::gpu::execution::SampleEncoding::LinearFloat,
-        budget: crate::gpu::execution::WorkBudget::for_device(&device),
     };
     let expected = canonical(&renderer, &device, &queue, request());
     let composition = Composition::new(a, Default::default(), Default::default()).unwrap();

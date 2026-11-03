@@ -1,35 +1,46 @@
 use super::*;
 
+// Bounded source units keep support masks at most 8 KiB; this leaves a round allowance
+// per target for masks and command constants, separate from the large reduction buffers.
+pub(super) const SOURCE_TILE: [u32; 2] = [512, 128];
+pub(super) const SINK_HEADROOM_BYTES: u64 = 16 << 10;
+
+fn source_allowance(reduction_bytes: u64, targets: usize, budget: u64) -> Option<u64> {
+    budget
+        .checked_sub(reduction_bytes + SINK_HEADROOM_BYTES * targets as u64)
+        .filter(|bytes| *bytes >= 64)
+}
+
 pub(in crate::gpu::evaluation::reconstruction) fn produce(
     outputs: &[(&Arc<ImageNode>, Production<'_>)],
-) -> Result<bool, Error> {
+) -> Result<Option<WorkCounts>, Error> {
     let Some((first, _)) = outputs.first() else {
-        return Ok(false);
+        return Ok(None);
     };
     let Some(input) = first.input.as_ref() else {
-        return Ok(false);
+        return Ok(None);
     };
     let mut operations = Vec::new();
     for (image, worker) in outputs {
         let Some(operation) =
             (image.operation.as_ref() as &dyn std::any::Any).downcast_ref::<Reconstruction>()
         else {
-            return Ok(false);
+            return Ok(None);
         };
         let Some(upstream) = image.input.as_ref() else {
-            return Ok(false);
+            return Ok(None);
         };
         if !(Arc::ptr_eq(input, upstream)
             || input.identity().is_some() && input.identity() == upstream.identity())
             || worker.budget.tile[0] < worker.layout.region.width
             || worker.budget.tile[1] < worker.layout.region.height
         {
-            return Ok(false);
+            return Ok(None);
         }
         operations.push(operation);
     }
     if outputs.len() < 2 {
-        return Ok(false);
+        return Ok(None);
     }
     let mut plans = Vec::new();
     let mut resident = true;
@@ -52,20 +63,35 @@ pub(in crate::gpu::evaluation::reconstruction) fn produce(
         }
     }
     let mut executor = outputs[0].1.executor();
+    let mut stats = WorkCounts::default();
     if resident {
         for ((_, worker), plan) in outputs.iter().zip(plans) {
-            worker.deliver(&mut executor, plan)?;
+            stats.include(worker.deliver(&mut executor, plan)?);
         }
     } else {
         drop(plans);
+        let reduction_bytes = outputs
+            .iter()
+            .map(|(_, worker)| {
+                u64::from(worker.layout.region.width) * u64::from(worker.layout.region.height) * 20
+            })
+            .sum();
+        let budget = outputs
+            .iter()
+            .map(|(_, worker)| worker.budget.scratch_bytes)
+            .min()
+            .unwrap();
+        if source_allowance(reduction_bytes, outputs.len(), budget).is_none() {
+            return Ok(None);
+        }
         let targets: Vec<_> = operations
             .iter()
             .zip(outputs)
             .map(|(op, (_, worker))| (*op, worker, worker.layout.region))
             .collect();
-        stream(&targets, input, &mut executor)?;
+        stats.include(stream(&targets, input, &mut executor)?);
     }
-    Ok(true)
+    Ok(Some(stats))
 }
 
 struct Reduction<'a, 'b> {
@@ -74,6 +100,7 @@ struct Reduction<'a, 'b> {
     region: Rect,
     means: wgpu::Buffer,
     flags: wgpu::Buffer,
+    finish: Plan,
 }
 impl Reduction<'_, '_> {
     fn accumulate(
@@ -82,16 +109,18 @@ impl Reduction<'_, '_> {
         source: PlannedImage,
         pixels: &wgpu::Buffer,
         affected: Rect,
-    ) -> Result<(), Error> {
-        let mut fragment = Fragment::default();
+    ) -> Result<WorkCounts, Error> {
+        let domain = source.domain;
         let part = source.region;
+        let mut fragment = Fragment::default();
         let source = PlannedImage {
+            domain,
+            region: part,
             resource: fragment.resource(Storage::Input {
                 slot: 0,
-                bytes: pixels.size(),
+                bytes: u64::from(part.width) * u64::from(part.height) * 16,
                 writable: false,
             }),
-            ..source
         };
         let sample = Sampled::raster(&mut fragment, source);
         let result = PlannedImage {
@@ -110,12 +139,13 @@ impl Reduction<'_, '_> {
         });
         self.operation
             .accumulate(&mut fragment, sample, (part, affected), result, metadata)?;
-        self.worker.context.encode_work(
-            fragment,
-            result,
-            encoder,
-            &[pixels, &self.means, &self.flags],
-        )
+        let device = self.worker.context.device();
+        let plan = Plan::from_work(fragment, result, SINK_HEADROOM_BYTES)?;
+        let recorded = self.worker.executor().prepare(device, plan)?;
+        let mut stats =
+            recorded.encode_work(device, encoder, &[pixels, &self.means, &self.flags])?;
+        stats.include(recorded.preparation.clone());
+        Ok(stats)
     }
 }
 
@@ -123,7 +153,7 @@ pub(super) fn stream(
     outputs: &[(&Reconstruction, &Production<'_>, Rect)],
     input: &Arc<ImageNode>,
     executor: &mut Executor,
-) -> Result<(), Error> {
+) -> Result<WorkCounts, Error> {
     let worker = outputs[0].1;
     let device = worker.context.device();
     let limits = device.limits();
@@ -139,12 +169,9 @@ pub(super) fn stream(
         .map(|(_, w, _)| w.budget.scratch_bytes)
         .min()
         .unwrap();
-    let available = budget
-        .checked_sub(scratch + 1024 * outputs.len() as u64)
-        .filter(|v| *v >= 64)
-        .ok_or(Error::InvalidParameter(
-            "reconstruction exceeds working storage",
-        ))?;
+    let available = source_allowance(scratch, outputs.len(), budget).ok_or(
+        Error::InvalidParameter("reconstruction exceeds working storage"),
+    )?;
     for (_, _, r) in outputs {
         if u64::from(r.width) * u64::from(r.height) * 16 > limit {
             return Err(Error::InvalidParameter(
@@ -170,12 +197,19 @@ pub(super) fn stream(
         });
     }
     let demand = demand.unwrap();
-    let source_cells = (available.min(limit) / 64).min(512 * 128);
-    let width = u64::from(demand.width).min(512).min(source_cells) as u32;
+    let source_cells =
+        (available.min(limit) / 64).min(u64::from(SOURCE_TILE[0]) * u64::from(SOURCE_TILE[1]));
+    let width = u64::from(demand.width)
+        .min(u64::from(SOURCE_TILE[0]))
+        .min(source_cells) as u32;
     let height = (source_cells / u64::from(width))
-        .min(128)
+        .min(u64::from(SOURCE_TILE[1]))
         .min(u64::from(demand.height)) as u32;
+    let mut stats = WorkCounts::default();
+    stats.buffers_allocated(2 * outputs.len());
     let buffer = |bytes| {
+        #[cfg(all(test, feature = "editor"))]
+        crate::gpu::test_support::evaluation_buffer_created(bytes);
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("required reconstruction reduction"),
             size: bytes,
@@ -183,22 +217,27 @@ pub(super) fn stream(
             mapped_at_creation: false,
         })
     };
-    let targets: Vec<_> = outputs
+    let targets = outputs
         .iter()
-        .map(|(operation, worker, region)| Reduction {
-            operation,
-            worker,
-            region: *region,
-            means: buffer(u64::from(region.width) * u64::from(region.height) * 16),
-            flags: buffer(u64::from(region.width) * u64::from(region.height) * 4),
+        .map(|(operation, worker, region)| {
+            let clear = operation.clear_plan(worker, *region, SINK_HEADROOM_BYTES)?;
+            let finish = operation.finish_plan(worker, *region, SINK_HEADROOM_BYTES)?;
+            Executor::admit(&limits, &clear)?;
+            Executor::admit(&limits, &finish)?;
+            let means = buffer(u64::from(region.width) * u64::from(region.height) * 16);
+            let flags = buffer(u64::from(region.width) * u64::from(region.height) * 4);
+            stats.include(worker.submit_work(clear, &[&means, &flags])?);
+            (worker.progress)();
+            Ok(Reduction {
+                operation,
+                worker,
+                region: *region,
+                means,
+                flags,
+                finish,
+            })
         })
-        .collect();
-    for target in &targets {
-        target
-            .operation
-            .clear(target.worker, target.region, &target.means, &target.flags)?;
-        (worker.progress)();
-    }
+        .collect::<Result<Vec<_>, Error>>()?;
     for y in (demand.y..demand.bottom()).step_by(height as usize) {
         for x in (demand.x..demand.right()).step_by(width as usize) {
             let part = Rect::new(
@@ -239,6 +278,18 @@ pub(super) fn stream(
                 if plan.peak_scratch_bytes > available || admission.is_err() {
                     if part.width == 1 && part.height == 1 {
                         admission?;
+                        if outputs.len() > 1 {
+                            // Shared reduction storage can crowd out a neighbourhood that fits
+                            // individually. No output has been delivered; retire the attempt.
+                            drop(plan);
+                            drop(affected);
+                            drop(targets);
+                            *executor = worker.executor();
+                            for (operation, target, _) in outputs {
+                                stats.include(operation.produce_image(target, input)?);
+                            }
+                            return Ok(stats);
+                        }
                         return Err(Error::InvalidParameter(
                             "reconstruction neighbourhood exceeds working storage",
                         ));
@@ -267,22 +318,28 @@ pub(super) fn stream(
                     continue;
                 }
                 plan.scratch_budget = available;
-                worker
+                let mut sinks = WorkCounts::default();
+                let source_stats = worker
                     .run_sink(executor, &plan, |encoder, source, pixels| {
                         for (target, region) in &affected {
-                            target.accumulate(encoder, source, pixels, *region)?;
+                            sinks.include(target.accumulate(encoder, source, pixels, *region)?);
                         }
                         Ok(())
                     })?
                     .ok_or(Error::Cancelled)?;
+                stats.include(source_stats);
+                stats.include(sinks);
                 (worker.progress)();
             }
         }
     }
+    // Source scratch is no longer live during the separately admitted final readouts.
+    *executor = worker.executor();
     for target in targets {
-        target
-            .operation
-            .finish(target.worker, target.region, &target.means, &target.flags)?;
+        stats.include(target.worker.submit_work(
+            target.finish,
+            &[&target.means, &target.flags, target.worker.pixels],
+        )?);
     }
-    Ok(())
+    Ok(stats)
 }

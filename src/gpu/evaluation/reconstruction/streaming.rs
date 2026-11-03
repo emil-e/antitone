@@ -10,8 +10,9 @@ impl Reconstruction {
         &self,
         worker: &Production<'_>,
         input: &Arc<ImageNode>,
-    ) -> Result<(), Error> {
+    ) -> Result<WorkCounts, Error> {
         let requested = worker.layout.region;
+        let mut stats = WorkCounts::default();
         let mut executor = worker.executor();
         for y in (requested.y..requested.bottom()).step_by(worker.budget.tile[1] as usize) {
             for x in (requested.x..requested.right()).step_by(worker.budget.tile[0] as usize) {
@@ -28,23 +29,23 @@ impl Reconstruction {
                 // Resident input also needs bounded loops: unit weights stop advancing at 2^24.
                 if self.requires_reduction() {
                     executor = worker.executor();
-                    self.stream(worker, input, region, &mut executor)?;
+                    stats.include(self.stream(worker, input, region, &mut executor)?);
                     continue;
                 }
                 let plan = self.plan(worker, input, region)?;
                 if plan.peak_scratch_bytes <= worker.budget.scratch_bytes
                     && Executor::admit(&worker.context.device().limits(), &plan).is_ok()
                 {
-                    worker.deliver(&mut executor, plan)?;
+                    stats.include(worker.deliver(&mut executor, plan)?);
                 } else {
                     // No pixel acquisition/allocation has occurred while testing the whole demand.
                     drop(plan);
                     executor = worker.executor();
-                    self.stream(worker, input, region, &mut executor)?;
+                    stats.include(self.stream(worker, input, region, &mut executor)?);
                 }
             }
         }
-        Ok(())
+        Ok(stats)
     }
 
     fn stream(
@@ -53,7 +54,7 @@ impl Reconstruction {
         input: &Arc<ImageNode>,
         output: Rect,
         executor: &mut Executor,
-    ) -> Result<(), Error> {
+    ) -> Result<WorkCounts, Error> {
         batch::stream(&[(self, worker, output)], input, executor)
     }
 
@@ -90,26 +91,25 @@ impl Reconstruction {
         }
     }
 
-    fn clear(
+    fn clear_plan(
         &self,
         worker: &Production<'_>,
         output: Rect,
-        means: &wgpu::Buffer,
-        flags: &wgpu::Buffer,
-    ) -> Result<(), Error> {
+        scratch_bytes: u64,
+    ) -> Result<Plan, Error> {
         let mut fragment = Fragment::default();
         let result = PlannedImage {
             domain: worker.layout.domain,
             region: output,
             resource: fragment.resource(Storage::Input {
                 slot: 0,
-                bytes: means.size(),
+                bytes: u64::from(output.width) * u64::from(output.height) * 16,
                 writable: true,
             }),
         };
         let metadata = fragment.resource(Storage::Input {
             slot: 1,
-            bytes: flags.size(),
+            bytes: u64::from(output.width) * u64::from(output.height) * 4,
             writable: true,
         });
         fragment.compute(
@@ -121,35 +121,24 @@ impl Reconstruction {
             ],
             output.width * output.height,
         );
-        let mut encoder = worker
-            .context
-            .device()
-            .create_command_encoder(&Default::default());
-        worker
-            .context
-            .encode_work(fragment, result, &mut encoder, &[means, flags])?;
-        worker
-            .context
-            .submit(worker.queue, worker.gate, encoder, worker.cancelled)?
-            .ok_or(Error::Cancelled)
+        Plan::from_work(fragment, result, scratch_bytes)
     }
 
-    fn finish(
+    fn finish_plan(
         &self,
         worker: &Production<'_>,
         output: Rect,
-        means: &wgpu::Buffer,
-        flags: &wgpu::Buffer,
-    ) -> Result<(), Error> {
+        scratch_bytes: u64,
+    ) -> Result<Plan, Error> {
         let mut fragment = Fragment::default();
         let source = fragment.resource(Storage::Input {
             slot: 0,
-            bytes: means.size(),
+            bytes: u64::from(output.width) * u64::from(output.height) * 16,
             writable: false,
         });
         let metadata = fragment.resource(Storage::Input {
             slot: 1,
-            bytes: flags.size(),
+            bytes: u64::from(output.width) * u64::from(output.height) * 4,
             writable: true,
         });
         let result = PlannedImage {
@@ -178,20 +167,7 @@ impl Reconstruction {
             ],
             output.width * output.height,
         );
-        let mut encoder = worker
-            .context
-            .device()
-            .create_command_encoder(&Default::default());
-        worker.context.encode_work(
-            fragment,
-            result,
-            &mut encoder,
-            &[means, flags, worker.pixels],
-        )?;
-        worker
-            .context
-            .submit(worker.queue, worker.gate, encoder, worker.cancelled)?
-            .ok_or(Error::Cancelled)
+        Plan::from_work(fragment, result, scratch_bytes)
     }
 
     // A source unit can affect many output cells. Extend only units touching real source edges,

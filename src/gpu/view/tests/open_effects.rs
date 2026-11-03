@@ -92,7 +92,6 @@ fn native(
             output: OutputReference::SceneReferred,
             luts: (None).into(),
             encoding: crate::gpu::execution::SampleEncoding::LinearFloat,
-            budget: crate::gpu::execution::WorkBudget::for_device(device),
         },
         |render, complete| {
             for y in (0..size[1]).step_by(128) {

@@ -1,38 +1,4 @@
-use super::processing::Processed;
 use super::*;
-
-pub(crate) struct Kernels {
-    pub(crate) stages: crate::gpu::pixel_pipeline::Kernels,
-}
-
-impl Kernels {
-    pub async fn new(device: &wgpu::Device) -> Result<Arc<Self>, Error> {
-        Ok(Arc::new(Self {
-            stages: crate::gpu::pixel_pipeline::Kernels::new(device).await?,
-        }))
-    }
-
-    pub(crate) fn grade(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        graded: &Processed,
-    ) {
-        let Some(stages) = &graded.stages else {
-            return;
-        };
-        debug_assert_eq!(stages.raster.size(), graded.plan.input().size());
-        self.stages
-            .encode_from(
-                device,
-                encoder,
-                stages,
-                &graded.source.pixels,
-                &graded.pixels,
-            )
-            .expect("validated photographic composition");
-    }
-}
 
 pub(crate) fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

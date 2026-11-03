@@ -235,7 +235,7 @@ fn native_evaluation_resource_comparison() {
                 start.elapsed().as_secs_f64(),
                 crate::gpu::allocated_resource_bytes(&device),
                 peak.load(Ordering::Relaxed),
-                result.stats
+                result.counts
             );
             if run == 0
                 && let Some(path) = std::env::var_os("ANTITONE_EVALUATION_OUTPUT")
