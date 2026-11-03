@@ -278,6 +278,18 @@ pub(super) fn stream(
                 if plan.peak_scratch_bytes > available || admission.is_err() {
                     if part.width == 1 && part.height == 1 {
                         admission?;
+                        if outputs.len() > 1 {
+                            // Shared reduction storage can crowd out a neighbourhood that fits
+                            // individually. No output has been delivered; retire the attempt.
+                            drop(plan);
+                            drop(affected);
+                            drop(targets);
+                            *executor = worker.executor();
+                            for (operation, target, _) in outputs {
+                                stats.include(operation.produce_image(target, input)?);
+                            }
+                            return Ok(stats);
+                        }
                         return Err(Error::InvalidParameter(
                             "reconstruction neighbourhood exceeds working storage",
                         ));

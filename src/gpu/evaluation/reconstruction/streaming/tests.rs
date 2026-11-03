@@ -449,6 +449,68 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
 }
 
 #[test]
+fn shared_neighbourhood_admission_falls_back_when_individual_requests_fit() {
+    let (input, reads) = fixture([128, 64], vec![[-2., 3., 4., 1.]; 128 * 64]);
+    let input = super::super::super::operators::gaussian(input, 1.).unwrap();
+    let roots: Vec<_> = [128., 127.]
+        .into_iter()
+        .map(|width| {
+            let mapping = Mapping {
+                start: [0.; 2],
+                axes: [[width, 0.], [0., 64.]],
+            };
+            reconstruct_mapped(input.clone(), output(mapping, [0, 0, 1, 1].into()), mapping)
+                .unwrap()
+        })
+        .collect();
+    let budget = Budget {
+        tile: [1, 1],
+        scratch_bytes: 33 << 10,
+    };
+    let expected: Vec<_> = roots
+        .iter()
+        .map(|root| materialize(root.clone(), budget.tile, budget.scratch_bytes))
+        .collect();
+    reads.lock().unwrap().clear();
+    let (device, queue, _) = crate::gpu::test_support::render_context();
+    let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
+    let scope = context.test_materializations(false);
+    let requests = roots
+        .into_iter()
+        .map(|root| {
+            context
+                .request(
+                    root.clone(),
+                    Region {
+                        bounds: root.domain.finite().unwrap(),
+                        grid: root.domain.grid,
+                    },
+                    budget,
+                )
+                .unwrap()
+        })
+        .collect();
+    let images = pollster::block_on(futures_util::future::try_join_all(
+        context
+            .materialize_many(&queue, &Default::default(), &scope, requests)
+            .unwrap(),
+    ))
+    .unwrap();
+    for (image, expected) in images.iter().zip(expected) {
+        let actual =
+            super::super::super::execute::read(&device, &queue, image.as_buffer().unwrap());
+        assert_eq!(actual.len(), 1);
+        for (a, b) in actual[0].iter().zip(expected[0]) {
+            assert!(
+                (*a - b).abs() < 2e-5,
+                "batched={actual:?}, individual={expected:?}"
+            );
+        }
+    }
+    assert!(reads.lock().unwrap().len() > 1);
+}
+
+#[test]
 fn disjoint_reconstruction_targets_skip_source_units_that_cannot_contribute() {
     let (input, reads) = fixture(
         [1536, 16],
@@ -484,7 +546,7 @@ fn disjoint_reconstruction_targets_skip_source_units_that_cannot_contribute() {
                     },
                     Budget {
                         tile: [1, 1],
-                        scratch_bytes: 32 << 10,
+                        scratch_bytes: 64 << 10,
                     },
                 )
                 .unwrap()
