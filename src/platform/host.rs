@@ -709,9 +709,7 @@ impl Bridge {
     fn new(device: &wgpu::Device, surface: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("presentation copy"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/presentation_copy.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("host/presentation_copy.wgsl").into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("presentation source"),

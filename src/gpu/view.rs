@@ -43,7 +43,7 @@ impl ViewKernels {
         let compose = composite::pipeline(
             device,
             "coherent navigation coverage",
-            include_str!("../shaders/view_composite.wgsl"),
+            include_str!("view/composite.wgsl"),
         );
         if let Some(error) = scope.pop().await {
             return Err(Error::Gpu(error.to_string()));

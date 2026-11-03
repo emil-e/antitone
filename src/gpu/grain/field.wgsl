@@ -1,16 +1,3 @@
-struct Grain {
-    raster: Raster,
-    values: vec4f,
-    variance: vec4f,
-    seed: vec4u,
-}
-@group(0) @binding(1)
-var<storage, read_write> positives: array<vec4f>;
-@group(0) @binding(12)
-var<storage, read_write> grain_pixels: array<vec4f>;
-@group(0) @binding(10)
-var<uniform> parameters: Grain;
-
 fn pcg(value: u32) -> u32 {
     let state = value * 747796405u + 2891336453u;
     let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
@@ -99,43 +86,4 @@ fn grain_field(source: vec2f, scale: f32, view_footprint: f32, seed: u32) -> vec
         value += sqrt(power) * (GRAIN_FACTORS[i] * sum) / sqrt(energy / 12.0);
     }
     return value / sqrt(reference);
-}
-
-@compute @workgroup_size(64)
-fn field(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
-    let index = raster_index(id, groups);
-    if index >= arrayLength(&grain_pixels) {
-        return;
-    }
-    let raster = parameters.raster;
-    let pitch = raster_pitch(raster);
-    let footprint = max(pitch.x, pitch.y);
-    grain_pixels[index] = vec4f(
-            grain_field(
-                raster_point(raster, index),
-                parameters.values.x,
-                footprint,
-                parameters.seed.x,
-            ),
-            0.0,
-        );
-}
-
-@compute @workgroup_size(64)
-fn apply(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) groups: vec3u) {
-    let index = raster_index(id, groups);
-    if index >= arrayLength(&positives) {
-        return;
-    }
-    var result = positives[index];
-    if raster_covered(parameters.raster, result) && parameters.values.y > 0.0 {
-        let field = grain_pixels[index].rgb;
-        let grain = mix(vec3f(field.y), field, 2.0 * parameters.values.z);
-        let amount = parameters.values.y;
-        result = vec4f(
-                result.rgb * exp(amount * grain - 0.5 * amount * amount * parameters.variance.xyz),
-                result.w,
-            );
-    }
-    positives[index] = result;
 }

@@ -153,11 +153,9 @@ fn corrected_conversion_and_processing_preserve_spatial_gains_and_floor_flags() 
             label: None,
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}\n{}",
-                    include_str!("../shaders/camera_conversion.wgsl"),
-                    include_str!("../shaders/flat_field.wgsl"),
+                    "{}\n{}",
+                    crate::gpu::photograph::shader::functions(),
                     r#"
-@group(0) @binding(0) var<storage, read> scans: array<vec2u>;
 @group(0) @binding(1) var<storage, read_write> output: array<vec4f>;
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id:vec3u) {

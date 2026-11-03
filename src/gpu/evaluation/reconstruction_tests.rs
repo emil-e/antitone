@@ -57,7 +57,7 @@ fn area_control(p: vec4f, xy: vec2f) -> vec4f {{
     return vec4f(mass, edge, 0.0, 1.0);
 }}
 "#,
-            include_str!("../../shaders/footprint.wgsl")
+            include_str!("footprint.wgsl")
         );
         let root = pointwise(
             operators::source(Arc::new(Chart { domain, marker: 0. })),

@@ -4,8 +4,10 @@ use crate::grain::GrainParameters;
 
 pub(crate) fn shader() -> String {
     [
-        include_str!("../shaders/raster.wgsl"),
-        include_str!("../shaders/grain.wgsl"),
+        include_str!("raster.wgsl"),
+        include_str!("grain/bindings.wgsl"),
+        include_str!("grain/field.wgsl"),
+        include_str!("grain/kernels.wgsl"),
     ]
     .join("\n")
 }

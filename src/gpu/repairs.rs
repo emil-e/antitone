@@ -5,6 +5,15 @@ use glam::DVec3;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+pub(crate) fn shader() -> String {
+    [
+        crate::gpu::photograph::shader::functions(),
+        include_str!("evaluation/footprint.wgsl").to_owned(),
+        include_str!("repairs.wgsl").to_owned(),
+    ]
+    .join("\n")
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct Pixel {

@@ -27,7 +27,7 @@ impl Validation {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}",
-                    include_str!("../shaders/footprint.wgsl"),
+                    include_str!("evaluation/footprint.wgsl"),
                     include_str!("lut3d_validation.wgsl")
                 )
                 .into(),

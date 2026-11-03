@@ -20,7 +20,7 @@ use crate::processing::Calibration;
 
 #[test]
 fn processing_assembles_shared_photographic_operators_once() {
-    let shader = crate::gpu::photograph::shader::kernel_shader();
+    let shader = crate::gpu::photograph::shader::functions();
     assert!(!shader.contains("Triple"));
     assert!(!shader.contains("precise_"));
     // Originals, repairs and working views use the same photographic operators.

@@ -335,7 +335,7 @@ impl Operation for Gaussian {
         ];
         let parameters = fragment.uniform(&crop);
         fragment.compute(
-            include_str!("../../shaders/raster_crop.wgsl"),
+            include_str!("raster_crop.wgsl"),
             "main",
             vec![
                 (1, Binding::Write(output.resource)),

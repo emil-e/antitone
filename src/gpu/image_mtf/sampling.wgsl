@@ -1,13 +1,3 @@
-struct ImageMtf {
-    raster: Raster,
-    raster_sigma: vec4f,
-    radii: vec4u,
-}
-@group(0) @binding(11)
-var<storage, read> working_source: array<vec4f>;
-@group(0) @binding(10)
-var<uniform> parameters: ImageMtf;
-
 fn source_mtf(index: u32, axis: vec2i, sigma: f32, radius: i32) -> vec4f {
     let dimensions = vec2i(parameters.raster.dimensions.xy);
     let xy = vec2i(i32(index) % dimensions.x, i32(index) / dimensions.x);

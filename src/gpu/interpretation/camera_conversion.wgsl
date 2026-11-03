@@ -1,9 +1,3 @@
-struct CameraMatrix {
-    columns: array<vec4f, 3>,
-}
-@group(0) @binding(3)
-var<uniform> camera_matrix: CameraMatrix;
-
 fn matrix_product(columns: array<vec4f, 3>, rgb: array<f32, 3>) -> array<f32, 3> {
     var output: array<f32, 3>;
     for(var c = 0u; c < 3u; c++) {

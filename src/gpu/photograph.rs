@@ -194,7 +194,7 @@ impl PhotographGraph {
         let function = Function::new(
             format!(
                 "{}\n{}",
-                crate::gpu::photograph::shader::kernel_shader(),
+                crate::gpu::photograph::shader::functions(),
                 include_str!("photograph/gathered.wgsl")
             ),
             "gathered_camera_light",
@@ -252,7 +252,7 @@ impl PhotographGraph {
         let repaired = Repairs::image(
             input.clone(),
             snapshot,
-            crate::gpu::photograph::shader::module_shader().into(),
+            crate::gpu::repairs::shader().into(),
             Mapping::Originals,
         );
         Ok(ImageNode::captured(

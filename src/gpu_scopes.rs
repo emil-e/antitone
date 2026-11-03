@@ -191,7 +191,7 @@ impl GpuScopes {
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("visible-frame scope reduction"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scopes.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("gpu_scopes/reduce.wgsl").into()),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
@@ -228,7 +228,7 @@ impl GpuScopes {
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scope density display"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scope_display.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("gpu_scopes/display.wgsl").into()),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,

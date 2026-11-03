@@ -26,11 +26,16 @@ fn validate(name: &str, source: &str, entry_points: &[&str]) {
 
 #[cfg(feature = "gpu")]
 #[test]
-fn composed_photographic_kernel_validates() {
+fn photographic_functions_and_repair_kernels_validate() {
     validate(
-        "photographic kernel",
-        &gpu::photograph::shader::module_shader(),
-        &["main", "repair_original", "repair_copy", "repair_neutral"],
+        "photographic functions",
+        &gpu::photograph::shader::functions(),
+        &[],
+    );
+    validate(
+        "repair kernels",
+        &gpu::repairs::shader(),
+        &["repair_original", "repair_copy", "repair_neutral"],
     );
 }
 

@@ -1,10 +1,3 @@
-struct GradingContext {
-    gain: vec4f,
-    coverage: vec4u,
-}
-@group(0) @binding(8)
-var<uniform> grading_context: GradingContext;
-
 fn evaluation_grade_covered(pixel: vec4f) -> bool {
     let mask = grading_context.coverage.x;
     return mask == 0u || (u32(pixel.w) & mask) != 0u;

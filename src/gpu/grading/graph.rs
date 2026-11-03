@@ -134,11 +134,12 @@ impl Grading {
     }
 
     pub(crate) fn shader() -> String {
-        format!(
-            "{}\n{}",
-            crate::gpu::photograph::shader::kernel_shader(),
-            include_str!("grading.wgsl")
-        )
+        [
+            crate::gpu::photograph::shader::functions(),
+            include_str!("view_bindings.wgsl").to_owned(),
+            include_str!("view.wgsl").to_owned(),
+        ]
+        .join("\n")
     }
 
     pub fn for_grid(&self, coverage: u32) -> Self {

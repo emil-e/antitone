@@ -257,7 +257,9 @@ impl Chart {
     fn new(device: &wgpu::Device, patches: &[Vec4], format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("extended sRGB presentation"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/presentation.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("presentation_probe/presentation.wgsl").into(),
+            ),
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("managed float presentation"),

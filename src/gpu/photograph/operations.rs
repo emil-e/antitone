@@ -107,7 +107,7 @@ impl Captured {
             matrix,
             field,
             mapping,
-            code: crate::gpu::photograph::shader::module_shader().into(),
+            code: crate::gpu::repairs::shader().into(),
         }))
     }
 
@@ -152,7 +152,7 @@ impl Operation for Camera {
             Function::new(
                 format!(
                     "{}\n{}",
-                    crate::gpu::photograph::shader::pixel_shader(),
+                    crate::gpu::photograph::shader::functions(),
                     r#"
 fn corrected_camera_light(pixel: vec4f, position: vec2f) -> vec4f {
     return vec4f(camera_light_at(pixel.rgb, vec2u(floor(position))), 0.0);
@@ -343,7 +343,7 @@ impl Operation for Native {
             Function::new(
                 format!(
                     "{}\n{}",
-                    crate::gpu::photograph::shader::pixel_shader(),
+                    crate::gpu::photograph::shader::functions(),
                     include_str!("native.wgsl")
                 ),
                 "native_response",
@@ -395,7 +395,7 @@ impl Operation for Working {
             Function::new(
                 format!(
                     "{}\n{}",
-                    crate::gpu::photograph::shader::pixel_shader(),
+                    crate::gpu::photograph::shader::functions(),
                     include_str!("working.wgsl")
                 ),
                 "native_to_working",
@@ -505,7 +505,7 @@ impl SampleProducer for Camera {
             let function = Function::new(
                 format!(
                     "{}\n{}",
-                    crate::gpu::photograph::shader::pixel_shader(),
+                    crate::gpu::photograph::shader::functions(),
                     r#"
 fn corrected_resident_camera_light(pixel:vec4f, position:vec2f) -> vec4f {
     var source=vec2u(0u);

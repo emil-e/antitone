@@ -198,15 +198,7 @@ fn creative_operators_preserve_identity_linear_anchors_and_finite_signed_values(
             label: Some("direct photographic primitive gate"),
             source: wgpu::ShaderSource::Wgsl(
                 [
-                    include_str!("../../shaders/camera_conversion.wgsl"),
-                    include_str!("../../shaders/flat_field.wgsl"),
-                    include_str!("../../shaders/film_response.wgsl"),
-                    include_str!("../../shaders/film_inversion_export.wgsl"),
-                    include_str!("../../shaders/photographic.wgsl"),
-                    include_str!("../../shaders/adjustment_layers.wgsl"),
-                    include_str!("../../shaders/photographic_colour.wgsl"),
-                    include_str!("../../shaders/photographic_export.wgsl"),
-                    include_str!("../../shaders/processing.wgsl"),
+                    crate::gpu::photograph::shader::functions(),
                     r#"
 struct PrimitiveParameters { amounts: vec4f, density: vec4f }
 @group(0) @binding(2) var<uniform> primitive: PrimitiveParameters;
@@ -220,7 +212,7 @@ fn grade_test(@builtin(global_invocation_id) id: vec3u) {
         primitive.amounts.x, primitive.amounts.y, primitive.amounts.z, primitive.amounts.w, primitive.density.x);
     grade_output[id.x] = finish_pixel(ProcessedPixel(rgb, 0u));
 }
-"#,
+"#.to_owned(),
                 ]
                 .join("\n")
                 .into(),

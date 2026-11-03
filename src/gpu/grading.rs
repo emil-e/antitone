@@ -107,7 +107,7 @@ impl Grading {
         let code = format!(
             "{}\n{}",
             Self::shader(),
-            include_str!("evaluation/layer_weight.wgsl")
+            include_str!("grading/layer_weight.wgsl")
         );
 
         Ok(pointwise(
