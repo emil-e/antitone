@@ -203,6 +203,18 @@ pub(super) fn stream(
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
+    let pending_uploads: u64 = targets
+        .iter()
+        .map(|target| {
+            target
+                .finish
+                .tiles
+                .iter()
+                .map(|tile| tile.fragment.upload_bytes())
+                .sum::<u64>()
+        })
+        .sum();
+    stats.host_upload_bytes = stats.host_upload_bytes.max(pending_uploads);
     for y in (demand.y..demand.bottom()).step_by(height as usize) {
         for x in (demand.x..demand.right()).step_by(width as usize) {
             let part = Rect::new(
@@ -240,6 +252,11 @@ pub(super) fn stream(
                 let sink_bytes = accumulations
                     .iter()
                     .map(|(_, plan)| plan.peak_scratch_bytes)
+                    .sum();
+                let sink_uploads: u64 = accumulations
+                    .iter()
+                    .flat_map(|(_, plan)| &plan.tiles)
+                    .map(|tile| tile.fragment.upload_bytes())
                     .sum();
                 let source_budget = available.checked_sub(sink_bytes);
                 let allowance = source_budget.unwrap_or(0);
@@ -309,6 +326,7 @@ pub(super) fn stream(
                         Ok(())
                     })?
                     .ok_or(Error::Cancelled)?;
+                source_stats.host_upload_bytes += pending_uploads + sink_uploads;
                 source_stats.include(sinks, executor.pool_bytes());
                 stats.include(source_stats, scratch);
                 (worker.progress)();

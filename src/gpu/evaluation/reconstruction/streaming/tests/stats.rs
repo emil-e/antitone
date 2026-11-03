@@ -130,6 +130,10 @@ fn nested_production_reports_observed_source_work_submissions_allocations_and_li
         assert_eq!(stats.peak_source_cells, peak_cells, "{delivery}");
         let largest_source = peak_cells * 16;
         assert!(
+            stats.host_upload_bytes >= largest_source,
+            "{delivery}: {stats:?}"
+        );
+        assert!(
             stats.scratch_bytes >= parent_bytes + largest_source + 20,
             "{delivery}: {stats:?}"
         );

@@ -48,6 +48,10 @@ mod film_tests;
 #[path = "intent_tests.rs"]
 mod intent_tests;
 
+#[cfg(all(test, target_os = "macos", feature = "editor"))]
+#[path = "payload_tests.rs"]
+mod payload_tests;
+
 #[cfg(test)]
 mod unit_fixture;
 #[cfg(test)]
@@ -304,8 +308,15 @@ pub(crate) struct Stats {
 #[derive(Default)]
 pub(crate) struct Stats {}
 
-// One source bounding rectangle lives until its destination block completes; dimensions may
-// change between blocks. No source atlas, full-photo resident buffer or speculative cache.
+// Conservative explicit execution/readback payload bound, not process or device residency.
+#[cfg(all(test, target_os = "macos"))]
+fn unit_payload_bound(stats: &evaluation::Stats, extent: [u32; 2], rgb16: bool) -> u64 {
+    stats.scratch_bytes
+        + stats.host_upload_bytes
+        + u64::from(TILE[0]) * u64::from(TILE[1]) * (16 + if rgb16 { 8 } else { 0 })
+        + u64::from(extent[0]) * u64::from(extent[1]) * 42
+}
+
 pub(crate) fn execute(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
@@ -526,29 +537,13 @@ pub(crate) fn execute(
                 }
                 stats.readback_bytes +=
                     u64::from(extent[0]) * u64::from(extent[1]) * reconstruction.bytes_per_pixel();
-                let repair_upload = plan
-                    .tiles
-                    .iter()
-                    .flat_map(|t| &t.fragment.resources)
-                    .filter_map(|r| {
-                        if let evaluation::Storage::Data(bytes) = r {
-                            Some(bytes.len() as u64)
-                        } else {
-                            None
-                        }
-                    })
-                    .sum::<u64>();
-                // Conservative payload bound: CPU source uploads follow the largest read, not
-                // cumulative traversal. Immutable resources and driver overhead are separate.
-                stats.peak_unit_payload = stats.peak_unit_payload.max(
-                    _executed.scratch_bytes
-                        + _executed.peak_source_cells * 16
-                        + u64::from(TILE[0])
-                            * u64::from(TILE[1])
-                            * (16 + if reconstruction.rgb16.is_some() { 8 } else { 0 })
-                        + u64::from(extent[0]) * u64::from(extent[1]) * 42
-                        + repair_upload,
-                );
+                // Execution includes nested GPU storage and simultaneous CPU upload payloads.
+                // Immutable resources and driver overhead are separate from this payload bound.
+                stats.peak_unit_payload = stats.peak_unit_payload.max(unit_payload_bound(
+                    &_executed,
+                    extent,
+                    reconstruction.rgb16.is_some(),
+                ));
             }
             Ok(pixels)
         },

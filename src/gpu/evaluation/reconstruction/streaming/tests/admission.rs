@@ -95,6 +95,11 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
             stats.scratch_bytes >= live,
             "{stats:?}: omitted live storage"
         );
+        let host = cells * 16 + PAYLOAD as u64 + cells.div_ceil(32) * 4;
+        assert!(
+            stats.host_upload_bytes >= host,
+            "{stats:?}: omitted simultaneous host payload"
+        );
     }
     assert_eq!(
         reads
