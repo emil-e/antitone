@@ -6,22 +6,29 @@
 ))]
 use crate as api;
 use crate::adjustment_layers::AdjustmentLayerSettings;
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::photograph::test_support::CameraFixture;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
 use crate::raw_test_support::train_raw;
-use api::{
-    adjustment_layers::{
-        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline, AdjustmentLayerSnapshot,
-    },
-    color::Balance,
-    crop::Crop,
-    frame_raster::FrameRaster,
-    geometry::{Composition, FramePoint, SourcePoint, SourceRaster, SourceRegion},
-    gpu::{ProcessingInput, ProcessingSource, SourceGeometry},
-    processing::RollSettings,
-    refinement::{ViewRequest, refine},
-    rendering::{CpuRenderer, OutputTarget},
-    viewer::GpuImage,
-};
+use api::adjustment_layers::AdjustmentLayer;
+use api::adjustment_layers::AdjustmentLayerCoverage;
+use api::adjustment_layers::AdjustmentLayerPipeline;
+use api::adjustment_layers::AdjustmentLayerSnapshot;
+use api::color::Balance;
+use api::crop::Crop;
+use api::frame_raster::FrameRaster;
+use api::geometry::Composition;
+use api::geometry::FramePoint;
+use api::geometry::SourcePoint;
+use api::geometry::SourceRaster;
+use api::geometry::SourceRegion;
+use api::processing::RollSettings;
+use api::refinement::ViewRequest;
+use api::refinement::refine;
+use api::rendering::CpuRenderer;
+use api::rendering::OutputTarget;
+use api::viewer::GpuImage;
 use glam::{DVec3, Vec4};
 use std::{
     sync::{Arc, atomic::AtomicU64},

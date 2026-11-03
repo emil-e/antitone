@@ -1,10 +1,12 @@
-use super::{ProcessingParameters, ProcessingSource};
+//! Captured photographic input transforms and source-inspection interpretation.
+
+use crate::gpu::{parameters::ProcessingParameters, source::ProcessingSource};
 use crate::{Error, processing::InputSettings};
 use glam::DMat3;
 
 /// Source execution captured separately from photographic controls.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GpuInputProgram {
+pub struct InputTransform {
     pub(super) input: InputSettings,
     pub(super) matrix: DMat3,
 }
@@ -12,7 +14,7 @@ pub struct GpuInputProgram {
 #[cfg(feature = "editor")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SourceInterpretation {
-    Photograph(GpuInputProgram),
+    Photograph(InputTransform),
     Inspection(DMat3),
 }
 
@@ -26,7 +28,7 @@ impl SourceInterpretation {
     }
 
     #[cfg(test)]
-    pub(crate) fn program(&self) -> Option<&GpuInputProgram> {
+    pub(crate) fn transform(&self) -> Option<&InputTransform> {
         match self {
             Self::Photograph(program) => Some(program),
             Self::Inspection(_) => None,
@@ -34,7 +36,7 @@ impl SourceInterpretation {
     }
 }
 
-impl GpuInputProgram {
+impl InputTransform {
     pub fn new(input: impl Into<InputSettings>, matrix: DMat3) -> Result<Self, Error> {
         let input = input.into();
         crate::processing::validate_camera_matrix(matrix)?;
@@ -70,7 +72,7 @@ impl GpuInputProgram {
     }
 
     pub(super) fn neutral_parameters(&self) -> Result<ProcessingParameters, Error> {
-        super::input_parameters(self.input, self.matrix)
+        crate::gpu::parameters::input_parameters(self.input, self.matrix)
     }
 
     #[cfg(feature = "raw")]
@@ -107,12 +109,12 @@ mod tests {
             gamma: 0.75,
             balance: Default::default(),
         };
-        let a = GpuInputProgram::new(input, DMat3::IDENTITY).unwrap();
+        let a = InputTransform::new(input, DMat3::IDENTITY).unwrap();
         let mut changed = input;
         if let InputSettings::Negative { gamma, .. } = &mut changed {
             *gamma = gamma.next_up();
         }
-        let b = GpuInputProgram::new(changed, DMat3::IDENTITY).unwrap();
+        let b = InputTransform::new(changed, DMat3::IDENTITY).unwrap();
         let packed_a = a.neutral_parameters().unwrap();
         let packed_b = b.neutral_parameters().unwrap();
         assert_eq!(
@@ -124,6 +126,6 @@ mod tests {
             a, b,
             "captured input content must distinguish the original parameters"
         );
-        assert_eq!(a, GpuInputProgram::new(input, DMat3::IDENTITY).unwrap());
+        assert_eq!(a, InputTransform::new(input, DMat3::IDENTITY).unwrap());
     }
 }

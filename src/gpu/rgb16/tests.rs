@@ -28,7 +28,8 @@ fn run(
         .encode(device, &mut encoder, &input, &output, values.len() as u32)
         .unwrap();
     encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
-    let submission = crate::gpu::SubmissionGate::default().submit(queue, [encoder.finish()]);
+    let submission =
+        crate::gpu::submission::SubmissionGate::default().submit(queue, [encoder.finish()]);
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     readback.map_async(wgpu::MapMode::Read, .., move |r| tx.send(r).unwrap());
     device

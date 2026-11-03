@@ -1,7 +1,8 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 use crate::{
     dust_repair::{RepairOrigin, SupportMask},
-    gpu::ProcessingInput,
+    gpu::input::ProcessingInput,
     project::{Development, Project, Source, SourceDevelopment, SourceId},
 };
 use std::cell::Cell;

@@ -10,7 +10,7 @@ fn native_treatment_matches_upstream_and_reports_final_bake_approximation() {
         let reference = crate::looks::reference::ReferenceTransforms::new(&device, &queue)
             .await
             .unwrap();
-        let gate = crate::gpu::SubmissionGate::default();
+        let gate = crate::gpu::submission::SubmissionGate::default();
         let cancel = AtomicBool::new(false);
         let f = fixtures();
         let cases = f

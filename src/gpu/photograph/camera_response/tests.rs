@@ -24,7 +24,7 @@ impl Source for CameraLight {
 fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
     let (device, queue, _) = crate::gpu::test_support::render_context();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let domain = Domain {
         bounds: Some([9, 13, 4, 1].into()),
         grid: Grid::axis_aligned([0.; 2], [1.; 2]),
@@ -53,12 +53,12 @@ fn native_response_preserves_floor_flags_continuations_and_folded_f64_range() {
     }));
     let readout = CameraReadout::normalized(camera, negative).unwrap();
 
-    assert_eq!(readout.image.domain.meaning, Meaning::NativePositive);
+    assert_eq!(readout.image.domain().meaning, Meaning::NativePositive);
     assert_eq!(
-        readout.image.domain.finite().unwrap(),
+        readout.image.domain().finite().unwrap(),
         domain.finite().unwrap()
     );
-    assert_eq!(readout.image.domain.grid, domain.grid);
+    assert_eq!(readout.image.domain().grid, domain.grid);
     assert!(
         readout.decode_gain > 1.,
         "the endpoint must need folded range"

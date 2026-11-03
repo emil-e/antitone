@@ -2,10 +2,12 @@
 
 use super::*;
 use crate::gpu::evaluation::{self as e, ImageBacking, ImageFormat, ImageLayout};
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::acquisition::AcquiredViewRaster;
 
-impl Acquired {
+impl AcquiredViewRaster {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn reconstruct_repairs(
+    pub async fn reconstruct_repairs(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
@@ -69,7 +71,10 @@ impl Acquired {
             Default::default(),
         )?;
         let spec = base.spec.clone().with_repairs(repairs.clone());
-        let definition = e::Photograph::repaired_reconstruction(&base.definition, repairs.clone())?;
+        let definition = crate::gpu::photograph::PhotographGraph::repaired_reconstruction(
+            &base.definition,
+            repairs.clone(),
+        )?;
         let layout = ImageLayout {
             domain: definition.domain(),
             region: base_layout.region,

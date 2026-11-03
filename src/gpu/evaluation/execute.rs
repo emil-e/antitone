@@ -422,7 +422,7 @@ impl Executor {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         plan: &Plan,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<ResultImage>, Error> {
@@ -478,7 +478,7 @@ impl Executor {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         plan: &Plan,
         cancelled: impl Fn() -> bool,
         sink: impl FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
@@ -507,7 +507,7 @@ impl Executor {
     pub(in crate::gpu::evaluation) fn run_produced_sink<E, S>(
         &mut self,
         device: &wgpu::Device,
-        (queue, gate): (&wgpu::Queue, &crate::gpu::SubmissionGate),
+        (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
         plan: &Plan,
         cancelled: impl Fn() -> bool,
         mut sink: Sink<E, S>,
@@ -1145,7 +1145,7 @@ impl Recorded {
 pub(super) fn submit(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    gate: &crate::gpu::SubmissionGate,
+    gate: &crate::gpu::submission::SubmissionGate,
     encoder: wgpu::CommandEncoder,
     submitted: impl FnOnce(),
 ) -> Result<(), Error> {

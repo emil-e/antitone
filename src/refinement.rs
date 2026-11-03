@@ -1,11 +1,10 @@
+use crate::Error;
 pub use crate::gpu::execution::regional::Demand as ViewRequest;
-use crate::{
-    Error,
-    gpu::{GpuFlatField, ProcessingInput},
-    rendering::OutputTarget,
-    scan::Scan,
-    viewer::GpuImage,
-};
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::rendering::OutputTarget;
+use crate::scan::Scan;
+use crate::viewer::GpuImage;
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};

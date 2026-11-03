@@ -2,7 +2,7 @@
 use antitone::{
     frame_raster::FrameRaster,
     geometry::{Composition, SourceRegion},
-    gpu::ProcessingParameters,
+    gpu::parameters::ProcessingParameters,
     gpu_scopes::{GpuScopes, ScopePaint},
     rendering::OutputTarget,
     scopes::{self, PLANE_LEN, Plot, Settings},

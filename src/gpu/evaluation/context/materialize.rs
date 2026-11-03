@@ -52,7 +52,7 @@ impl Context {
     pub fn materialize(
         &self,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         scope: &Materializations,
         evaluation: Evaluation,
         format: ImageFormat,
@@ -64,7 +64,7 @@ impl Context {
     pub(in crate::gpu::evaluation) fn materialize_into(
         &self,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         scope: &Materializations,
         evaluation: Evaluation,
         storage: (ImageFormat, ImageBacking),

@@ -1,11 +1,16 @@
 use super::*;
-use crate::{
-    adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
-    color::Balance,
-    gpu::{GpuInputProgram, Grading},
-    pixel_pipeline::{EffectDefinition, PixelStage},
-    processing::{Calibration, InputSettings, NegativeInput, Response},
-};
+use crate::adjustment_layers::AdjustmentLayer;
+use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::color::Balance;
+use crate::gpu::grading::Grading;
+use crate::gpu::interpretation::InputTransform;
+use crate::pixel_pipeline::EffectDefinition;
+use crate::pixel_pipeline::PixelStage;
+use crate::processing::Calibration;
+use crate::processing::InputSettings;
+use crate::processing::NegativeInput;
+use crate::processing::Response;
 use glam::{DMat3, DVec3};
 
 #[test]
@@ -20,7 +25,7 @@ fn native_and_working_identity_use_captured_values_not_uniform_packing() {
     };
     let capture = |input| {
         Interpretation::Program(
-            GpuInputProgram::new(input, DMat3::IDENTITY).unwrap(),
+            InputTransform::new(input, DMat3::IDENTITY).unwrap(),
             RollSettings::default(),
         )
     };
@@ -63,7 +68,7 @@ impl EffectDefinition for Scale {
     }
 
     fn compose(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
-        let meaning = image.domain.meaning;
+        let meaning = image.domain().meaning;
         Ok(pointwise(
             image,
             meaning,
@@ -92,7 +97,7 @@ impl EffectDefinition for Square {
     }
 
     fn compose(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
-        let meaning = image.domain.meaning;
+        let meaning = image.domain().meaning;
         Ok(pointwise(
             image,
             meaning,
@@ -117,7 +122,7 @@ impl EffectDefinition for FootprintScale {
     }
 
     fn compose(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
-        Scale(DVec3::splat(image.domain.grid.pitch[0])).compose(image)
+        Scale(DVec3::splat(image.domain().grid.pitch[0])).compose(image)
     }
 }
 
@@ -143,8 +148,8 @@ fn read(context: &Context, queue: &wgpu::Queue, image: Arc<ImageNode>) -> Vec<DV
         .request(
             image.clone(),
             Region {
-                bounds: image.domain.finite().unwrap(),
-                grid: image.domain.grid,
+                bounds: image.domain().finite().unwrap(),
+                grid: image.domain().grid,
             },
             Budget {
                 tile: [2, 1],
@@ -156,7 +161,7 @@ fn read(context: &Context, queue: &wgpu::Queue, image: Arc<ImageNode>) -> Vec<DV
     context
         .read(
             queue,
-            &crate::gpu::SubmissionGate::default(),
+            &crate::gpu::submission::SubmissionGate::default(),
             &request,
             || false,
             |_, pixels| {
@@ -233,7 +238,7 @@ fn inserting_one_upstream_operation_changes_independent_prefixes_and_complete_co
         },
     };
     let matrix = DMat3::from_cols_array(&[1.2, 0.1, -0.1, 0.05, 0.9, 0.05, -0.1, 0.1, 1.1]);
-    let program = GpuInputProgram::new(negative, matrix).unwrap();
+    let program = InputTransform::new(negative, matrix).unwrap();
     let roll = RollSettings {
         exposure: 1.,
         ..Default::default()
@@ -411,7 +416,7 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
         .unwrap()
         .at(Boundary::Graded);
     assert!(
-        graded.domain.same_grid(domain),
+        graded.domain().same_grid(domain),
         "a prefix query must retain its declared native grid"
     );
     let prefix = read(renderer.evaluation(), &queue, graded);
@@ -422,7 +427,7 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
         .build(input, Boundary::Neutral, Boundary::Processed, &steps)
         .unwrap()
         .at(Boundary::Processed);
-    assert!(image.domain.same_grid(output));
+    assert!(image.domain().same_grid(output));
     let actual = read(renderer.evaluation(), &queue, image);
     for (pair, actual) in values.as_chunks::<2>().0.iter().zip(actual) {
         // Squaring precedes averaging, so the result contains the mean of squares,
@@ -442,7 +447,7 @@ fn encoded_readouts_stop_at_the_requested_boundary_and_reject_unproven_scaling_c
         dmax: DVec3::splat(0.14),
         input_floor: 1e-4,
     });
-    let program = GpuInputProgram::new(negative, DMat3::IDENTITY).unwrap();
+    let program = InputTransform::new(negative, DMat3::IDENTITY).unwrap();
     let encoding = RollSettings {
         exposure: -crate::processing::MAX_EXPOSURE,
         ..Default::default()

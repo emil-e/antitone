@@ -1,5 +1,7 @@
 use super::*;
-use crate::{gpu::SourceGeometry, grain::GrainPreset};
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::source::ProcessingSource;
+use crate::{gpu::source::SourceGeometry, grain::GrainPreset};
 
 #[test]
 fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_source_grid() {

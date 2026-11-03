@@ -64,7 +64,7 @@ fn unchanged_logical_chains_can_skip_gaussian_display_and_copy_intermediates() {
                         .any(|w| matches!(w, Work::Render { .. }))
                 );
             }
-            let gate = crate::gpu::SubmissionGate::default();
+            let gate = crate::gpu::submission::SubmissionGate::default();
             let before = execute::Executor::default()
                 .run(&device, &queue, &gate, &baseline, || false)
                 .unwrap()

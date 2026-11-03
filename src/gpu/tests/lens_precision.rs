@@ -4,20 +4,11 @@
     feature = "ocio-reference",
     target_os = "macos"
 ))]
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::photograph::test_support::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 
 use crate::raw_test_support::train_raw;
 use antitone as api;
-use api::{
-    flat_field::FlatField,
-    gpu::{GpuFlatField, ProcessingParameters, ProcessingSource, SourceGeometry},
-    lens::EmbeddedLensGeometry,
-    processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
-    raw::RawFile,
-    rendering::{CpuRenderer, OutputTarget},
-    scan::Scan,
-};
 use glam::{DMat3, DVec3};
 use std::{
     fs,
@@ -25,6 +16,21 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
+};
+use {
+    crate::gpu::{
+        flat::GpuFlatField,
+        parameters::ProcessingParameters,
+        source::{ProcessingSource, SourceGeometry},
+    },
+    api::{
+        flat_field::FlatField,
+        lens::EmbeddedLensGeometry,
+        processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
+        raw::RawFile,
+        rendering::{CpuRenderer, OutputTarget},
+        scan::Scan,
+    },
 };
 
 struct Dataset {
@@ -161,7 +167,7 @@ fn synthetic(near_base: bool) -> Dataset {
 
 enum ProcessingCase {
     Source(ProcessingParameters),
-    Layers(antitone::gpu::ProcessingInput),
+    Layers(antitone::gpu::input::ProcessingInput),
 }
 
 struct Gpu {
@@ -534,7 +540,7 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
                 antitone::adjustment_layers::AdjustmentLayer::global(photo),
             ])
             .and_then(|snapshot| {
-                antitone::gpu::ProcessingInput::new(
+                antitone::gpu::input::ProcessingInput::new(
                     &gpu.device.limits(),
                     cal,
                     roll,

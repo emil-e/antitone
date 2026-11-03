@@ -64,12 +64,12 @@ fn native_output_resources() {
             .unwrap();
     let path = directory.path().join("native-output");
     let peak = Arc::new(AtomicU64::new(0));
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let observed = peak.clone();
     let gpu = device.clone();
     gate.observe_encoded_resources(Arc::new(move || {
         observed.fetch_max(
-            crate::gpu::allocated_resource_bytes(&gpu).unwrap_or(0) as u64,
+            crate::sys::allocated_resource_bytes(&gpu).unwrap_or(0) as u64,
             Ordering::Relaxed,
         );
     }));
@@ -168,7 +168,7 @@ fn native_output_resources() {
         let usage = unsafe { usage.assume_init() };
         println!(
             "native_output run={run} seconds={seconds:.9} retained={} encoded_peak={} source_cells={} submissions={} evaluation_buffer_allocations={} generated_initializations={} peak_rss={} file_bytes={}",
-            crate::gpu::allocated_resource_bytes(&device).unwrap_or(0),
+            crate::sys::allocated_resource_bytes(&device).unwrap_or(0),
             peak.load(Ordering::Relaxed),
             stats.source_pixels,
             stats.submissions,

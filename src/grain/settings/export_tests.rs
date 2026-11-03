@@ -3,7 +3,7 @@ use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     export::{ExrPrecision, Overwrite},
     geometry::Composition,
-    gpu::SubmissionGate,
+    gpu::submission::SubmissionGate,
     gpu_export::{
         Format, Request,
         tests::{context, exr_pixels, tiff_pixels},
@@ -14,7 +14,7 @@ use crate::{
     scan::Scan,
 };
 #[cfg(feature = "editor")]
-use crate::{frame_raster::FrameRaster, gpu::ProcessingInput};
+use crate::{frame_raster::FrameRaster, gpu::input::ProcessingInput};
 use std::{path::Path, sync::Arc};
 
 #[test]
@@ -206,7 +206,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
         )
         .unwrap(),
     );
-    let input = crate::gpu::ProcessingInput::from(grade);
+    let input = crate::gpu::input::ProcessingInput::from(grade);
     let gate = SubmissionGate::default();
     let generation = AtomicU64::new(1);
     let directory = tempfile::tempdir().unwrap();

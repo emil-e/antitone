@@ -1,8 +1,14 @@
 //! Captured filtered-AP1 composition and recording against its supplied values.
 
-use super::*;
-use crate::gpu::{Grading, ProcessingInput, ProcessingParameters};
+use super::storage::float_buffer;
+use crate::Error;
+use crate::gpu::grading::Grading;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::view::acquisition::AcquiredViewRaster;
+use crate::gpu::view::request::SourceRequest;
 use glam::DMat3;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 #[cfg(test)]
@@ -12,8 +18,8 @@ mod tests;
 // Large presentations can keep their grid without an implicit coarse-quality fallback.
 const VIEW_SCRATCH_BYTES: u64 = 1280 << 20;
 
-pub(crate) struct Processed {
-    pub source: Arc<Acquired>,
+pub struct ProcessedView {
+    pub source: Arc<AcquiredViewRaster>,
     pub grade: Option<Arc<Grading>>,
     pub plan: crate::acquisition::Plan,
     pub definition: Arc<crate::gpu::evaluation::ImageNode>,
@@ -22,8 +28,8 @@ pub(crate) struct Processed {
     pub submitted: Mutex<bool>,
 }
 
-impl Processed {
-    pub(crate) fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+impl ProcessedView {
+    pub fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         let Some(stages) = &self.stages else {
             return;
         };
@@ -36,7 +42,7 @@ impl Processed {
     fn supplies(
         &self,
         definition: &Arc<crate::gpu::evaluation::ImageNode>,
-        source: &Acquired,
+        source: &AcquiredViewRaster,
     ) -> bool {
         match (self.definition.identity(), definition.identity()) {
             (Some(a), Some(b)) => a == b,
@@ -44,7 +50,7 @@ impl Processed {
         }
     }
 
-    pub(crate) fn matches(&self, limits: &wgpu::Limits, input: &ProcessingInput) -> bool {
+    pub fn matches(&self, limits: &wgpu::Limits, input: &ProcessingInput) -> bool {
         Self::definition(
             limits,
             &self.source.spec,
@@ -54,7 +60,7 @@ impl Processed {
         .is_ok_and(|(root, _)| self.supplies(&root, &self.source))
     }
 
-    pub(crate) fn definition(
+    pub fn definition(
         limits: &wgpu::Limits,
         spec: &SourceRequest,
         neutral: Arc<crate::gpu::evaluation::ImageNode>,
@@ -67,17 +73,6 @@ impl Processed {
         Error,
     > {
         let presentation = spec.frame();
-        let output = crate::gpu::evaluation::Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new(
-                [0, 0],
-                presentation.output,
-            )),
-            grid: crate::gpu::evaluation::Grid {
-                coverage: neutral.domain().grid.coverage,
-                ..crate::gpu::evaluation::Grid::from_frame(presentation)
-            },
-            meaning: crate::gpu::evaluation::Meaning::Graded,
-        };
         if spec.is_inspection() {
             let parameters = input.parameters();
             let matrix = DMat3::from_cols(
@@ -95,16 +90,17 @@ impl Processed {
                     "physical-view source inspection identity differs".into(),
                 ));
             }
-            let root = crate::gpu::evaluation::window(
-                crate::gpu::evaluation::inspect(neutral, parameters)?,
-                output.finite()?,
+            let root = crate::gpu::photograph::PhotographGraph::inspection_view(
+                neutral,
+                parameters,
+                presentation,
             )?;
             return Ok((root, spec.plan.as_ref().clone()));
         }
-        let program = input.source_program().ok_or_else(|| {
+        let program = input.source_transform().ok_or_else(|| {
             Error::Gpu("positive view requires captured source interpretation".into())
         })?;
-        if crate::gpu::evaluation::Photograph::input_program(&neutral)
+        if crate::gpu::photograph::PhotographGraph::input_transform(&neutral)
             .is_some_and(|captured| captured != *program)
         {
             return Err(Error::Gpu("physical-view source is stale".into()));
@@ -118,20 +114,21 @@ impl Processed {
         input.validate_repairs(limits, input.repairs.bound())?;
         let stages = input.pixel_pipeline();
         let plan = spec.processing_plan(&stages)?;
-        let scale = std::array::from_fn(|i| {
-            f64::from(plan.output().output[i]) / f64::from(presentation.output[i])
-        });
         let grading = input
             .grade()
             .unwrap()
             .for_grid(neutral.domain().grid.coverage);
-        let root = crate::gpu::evaluation::Photograph::filtered(
-            &grading, neutral, &stages, output, [0; 2], scale,
+        let root = crate::gpu::photograph::PhotographGraph::filtered(
+            &grading,
+            neutral,
+            &stages,
+            presentation,
+            plan.output(),
         )?;
         Ok((root, plan))
     }
 
-    pub(crate) fn request(
+    pub fn request(
         context: &crate::gpu::evaluation::Context,
         root: Arc<crate::gpu::evaluation::ImageNode>,
     ) -> Result<crate::gpu::evaluation::Evaluation, Error> {
@@ -150,8 +147,8 @@ impl Processed {
         )
     }
 
-    pub(crate) fn produced(
-        source: Arc<Acquired>,
+    pub fn produced(
+        source: Arc<AcquiredViewRaster>,
         definition: Arc<crate::gpu::evaluation::ImageNode>,
         plan: crate::acquisition::Plan,
         input: &ProcessingInput,
@@ -177,7 +174,7 @@ impl Processed {
     #[cfg(test)]
     pub fn prepare(
         device: &wgpu::Device,
-        source: Arc<Acquired>,
+        source: Arc<AcquiredViewRaster>,
         input: &ProcessingInput,
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
@@ -190,9 +187,9 @@ impl Processed {
         Self::prepare_calculation(device, source, input, root, plan, previous)
     }
 
-    pub(crate) fn prepare_calculation(
+    pub fn prepare_calculation(
         device: &wgpu::Device,
-        source: Arc<Acquired>,
+        source: Arc<AcquiredViewRaster>,
         input: &ProcessingInput,
         root: Arc<crate::gpu::evaluation::ImageNode>,
         plan: crate::acquisition::Plan,
@@ -221,7 +218,7 @@ impl Processed {
 
     pub(super) fn record(
         device: &wgpu::Device,
-        source: Arc<Acquired>,
+        source: Arc<AcquiredViewRaster>,
         input: &ProcessingInput,
         root: Arc<crate::gpu::evaluation::ImageNode>,
         plan: crate::acquisition::Plan,

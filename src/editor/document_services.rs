@@ -107,7 +107,7 @@ pub(super) fn candidate(
     }
     let correction = Correction::prepare(device, &document, previous_correction.as_ref())?;
     for record in &document.project.sources {
-        crate::gpu::ProcessingSource::new(
+        crate::gpu::source::ProcessingSource::new(
             device,
             &[[0; 4]],
             glam::DMat3::from_cols_array_2d(&record.development.camera_to_ap1),

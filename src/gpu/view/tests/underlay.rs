@@ -1,5 +1,7 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::submission::SubmissionGate;
 use crate::processing::{NegativeInput, Response};
 
 fn source(

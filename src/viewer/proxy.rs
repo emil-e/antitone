@@ -1,5 +1,9 @@
 //! One immutable camera proxy, with only the active target's mutable output retained.
 use super::*;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
 #[cfg(test)]
 mod tests;
 
@@ -11,7 +15,7 @@ struct ProxyState {
     renderer: Arc<GpuRenderer>,
     source: Arc<ProcessingSource>,
     #[cfg(feature = "editor")]
-    identity: Option<crate::gpu::execution::source::Identity>,
+    identity: Option<crate::gpu::source::identity::Identity>,
     size: [u32; 2],
     active: std::sync::Mutex<Option<(OutputTarget, Arc<GpuImage>)>>,
 }
@@ -78,7 +82,7 @@ impl GpuProxy {
     #[cfg(feature = "editor")]
     pub(crate) fn with_identity(
         mut self,
-        identity: crate::gpu::execution::source::Identity,
+        identity: crate::gpu::source::identity::Identity,
     ) -> Result<Self, Error> {
         let state = Arc::get_mut(&mut self.0).ok_or(Error::InvalidParameter(
             "proxy identity must be captured before sharing",
@@ -105,10 +109,10 @@ impl GpuProxy {
     pub(crate) fn view_source(
         &self,
         queue: &wgpu::Queue,
-        submissions: &crate::gpu::SubmissionGate,
+        submissions: &crate::gpu::submission::SubmissionGate,
         kernels: Arc<crate::gpu::view::ViewKernels>,
         input: &ProcessingInput,
-        spec: crate::gpu::view::SourceRequest,
+        spec: crate::gpu::view::request::SourceRequest,
     ) -> Result<Arc<crate::gpu::view::ViewSource>, Error> {
         crate::gpu::view::ViewSource::from_processing(
             &self.0.device,
@@ -119,7 +123,7 @@ impl GpuProxy {
             self.0.source.clone(),
             input,
             spec.with_identity(self.0.identity.clone().unwrap_or_else(|| {
-                crate::gpu::execution::source::Identity::Resident(Arc::downgrade(&self.0.source))
+                crate::gpu::source::identity::Identity::Resident(Arc::downgrade(&self.0.source))
             })),
         )
     }
@@ -128,14 +132,14 @@ impl GpuProxy {
     pub(crate) fn preview(
         &self,
         queue: &wgpu::Queue,
-        submissions: &crate::gpu::SubmissionGate,
+        submissions: &crate::gpu::submission::SubmissionGate,
         kernels: Arc<crate::gpu::view::ViewKernels>,
         input: &ProcessingInput,
-        spec: crate::gpu::view::SourceRequest,
+        spec: crate::gpu::view::request::SourceRequest,
     ) -> Result<
         (
             Arc<crate::gpu::view::ViewSource>,
-            Arc<crate::gpu::execution::footprints::Processed>,
+            Arc<crate::gpu::view::processing::ProcessedView>,
         ),
         Error,
     > {
@@ -148,7 +152,7 @@ impl GpuProxy {
             self.0.source.clone(),
             input,
             spec.capture(self.0.identity.clone().unwrap_or_else(|| {
-                crate::gpu::execution::source::Identity::Resident(Arc::downgrade(&self.0.source))
+                crate::gpu::source::identity::Identity::Resident(Arc::downgrade(&self.0.source))
             }))?,
         )
     }

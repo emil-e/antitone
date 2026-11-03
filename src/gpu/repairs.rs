@@ -1,6 +1,7 @@
 //! Immutable sparse neutral-AP1 repairs; originals and unmodified view sources remain untouched.
-use super::*;
+use crate::Error;
 use crate::{dust_repair::EvaluatedRepair, geometry::SourceRegion};
+use glam::DVec3;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 

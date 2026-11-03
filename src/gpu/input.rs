@@ -1,4 +1,9 @@
-use super::{GpuInputProgram, Grading, ProcessingParameters, ProcessingSource};
+//! Lowered photographic controls or directly supplied mathematical processing inputs.
+
+use crate::gpu::grading::Grading;
+use crate::gpu::interpretation::InputTransform;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::source::ProcessingSource;
 use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
@@ -21,7 +26,7 @@ pub struct ProcessingInput {
 enum Processing {
     Parameters(Arc<ProcessingParameters>),
     Photograph {
-        source: Arc<GpuInputProgram>,
+        source: Arc<InputTransform>,
         grading: Arc<Grading>,
         area: SourceRegion,
     },
@@ -82,7 +87,7 @@ impl ProcessingInput {
     ) -> Result<Self, Error> {
         Self::compose(
             limits,
-            GpuInputProgram::new(input, matrix)?,
+            InputTransform::new(input, matrix)?,
             Arc::new(Grading::new(limits, roll, layers, area)?),
             area,
         )
@@ -90,7 +95,7 @@ impl ProcessingInput {
 
     pub fn compose(
         limits: &wgpu::Limits,
-        input: GpuInputProgram,
+        input: InputTransform,
         grading: Arc<Grading>,
         area: SourceRegion,
     ) -> Result<Self, Error> {
@@ -129,7 +134,7 @@ impl ProcessingInput {
         matrix: DMat3,
         area: SourceRegion,
     ) -> Result<(), Error> {
-        super::photograph::prepare(
+        super::photograph::admission::prepare(
             limits,
             input.into(),
             roll,
@@ -150,7 +155,7 @@ impl ProcessingInput {
         area: SourceRegion,
         bound: DVec3,
     ) -> Result<(), Error> {
-        super::photograph::prepare(
+        super::photograph::admission::prepare(
             &device.limits(),
             input.into(),
             roll,
@@ -173,7 +178,7 @@ impl ProcessingInput {
             area,
         } = &self.processing
         {
-            super::photograph::prepare(
+            super::photograph::admission::prepare(
                 limits,
                 source.input,
                 grading.roll,
@@ -186,7 +191,7 @@ impl ProcessingInput {
         Ok(())
     }
 
-    pub fn input_program(&self) -> &GpuInputProgram {
+    pub fn input_transform(&self) -> &InputTransform {
         match &self.processing {
             Processing::Photograph { source, .. } => source,
             _ => panic!("source inspection has no photographic input program"),
@@ -330,14 +335,14 @@ impl ProcessingInput {
         }
     }
 
-    pub(crate) fn grade(&self) -> Option<&super::Grading> {
+    pub(crate) fn grade(&self) -> Option<&Grading> {
         match &self.processing {
             Processing::Photograph { grading, .. } => Some(grading),
             _ => None,
         }
     }
 
-    pub(crate) fn source_program(&self) -> Option<&GpuInputProgram> {
+    pub(crate) fn source_transform(&self) -> Option<&InputTransform> {
         match &self.processing {
             Processing::Photograph { source, .. } => Some(source),
             _ => None,
@@ -473,13 +478,13 @@ mod tests {
         ));
         let captured = ProcessingInput::from_recipe(&wgpu::Limits::default(), &recipe).unwrap();
         assert_eq!(
-            captured.input_program().matrix,
+            captured.input_transform().matrix,
             DMat3::from_diagonal(DVec3::new(1.8, 2.2, 2.4))
         );
         assert_ne!(recipe.roll, RollSettings::default());
         assert!(recipe.grade.layers().iter().any(|layer| layer.is_active()));
         assert_eq!(
-            captured.input_program().input,
+            captured.input_transform().input,
             recipe.neutral.processing_input().unwrap()
         );
         assert_eq!(captured.grade().unwrap().roll, recipe.roll);

@@ -1,4 +1,6 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
 use crate::project::Development;
 mod viewer;
 mod workspace;
@@ -315,7 +317,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
             &[[1000, 1000, 1000, 0]; 256],
             glam::DMat3::IDENTITY,
             None,
-            crate::gpu::SourceGeometry::new([12, 12, 8640, 5760], [16, 16]).unwrap(),
+            crate::gpu::source::SourceGeometry::new([12, 12, 8640, 5760], [16, 16]).unwrap(),
         )
         .unwrap();
         let area = Rect {
@@ -974,7 +976,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         &[[1000, 1000, 1000, 0]],
         glam::DMat3::IDENTITY,
         None,
-        crate::gpu::SourceGeometry::new([12, 7, 864, 576], [1, 1]).unwrap(),
+        crate::gpu::source::SourceGeometry::new([12, 7, 864, 576], [1, 1]).unwrap(),
     )
     .unwrap();
     let floor = editor.floor();

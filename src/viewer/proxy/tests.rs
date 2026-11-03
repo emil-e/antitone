@@ -1,4 +1,8 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
 
 fn shared_source(image: &GpuImage) -> &Arc<ProcessingSource> {
     let ImageSource::Shared(source) = &image.processing.as_ref().unwrap().source else {
@@ -125,8 +129,8 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     )
     .unwrap();
     let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
-    let spec = crate::gpu::view::SourceRequest::inspection(frame).unwrap();
-    let gate = crate::gpu::SubmissionGate::default();
+    let spec = crate::gpu::view::request::SourceRequest::inspection(frame).unwrap();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let count = Arc::new(AtomicUsize::new(0));
     let observed = count.clone();
     gate.observe_submissions(Arc::new(move || {
@@ -163,7 +167,7 @@ fn proxy_preview_validates_the_complete_calculation_before_native_submission() {
     let rendered = crate::gpu::view::RenderedView::from_processed(
         &device,
         source,
-        crate::gpu::view::Capture::Primitive(valid),
+        crate::gpu::view::input::ViewInput::Processing(valid),
         OutputTarget::Srgb,
         processed,
         None,
@@ -219,7 +223,7 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
         )
         .unwrap();
         let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
-        let spec = crate::gpu::view::SourceRequest::new(
+        let spec = crate::gpu::view::request::SourceRequest::new(
             frame,
             crate::processing::InputSettings::Digital,
             DMat3::IDENTITY,
@@ -230,7 +234,7 @@ fn proxy_view_source_accepts_a_cropped_frame_output() {
         let source = proxy
             .view_source(
                 &queue,
-                &crate::gpu::SubmissionGate::default(),
+                &crate::gpu::submission::SubmissionGate::default(),
                 kernels,
                 &spec.processing_fixture(),
                 spec,

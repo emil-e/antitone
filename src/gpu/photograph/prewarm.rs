@@ -1,6 +1,11 @@
 use super::*;
+use crate::gpu::grading::Grading;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::photograph::PhotographGraph;
+use crate::gpu::source::ProcessingSource;
 
-impl Photograph {
+impl PhotographGraph {
     #[cfg(feature = "ui")]
     pub(crate) fn prewarm_resident(
         device: &wgpu::Device,

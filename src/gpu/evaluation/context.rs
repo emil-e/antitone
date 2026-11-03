@@ -209,7 +209,7 @@ impl Context {
     pub(crate) fn submit(
         &self,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         encoder: wgpu::CommandEncoder,
         cancelled: impl Fn() -> bool,
     ) -> Result<Option<()>, Error> {
@@ -219,7 +219,7 @@ impl Context {
     pub(crate) fn submit_with(
         &self,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         encoder: wgpu::CommandEncoder,
         cancelled: impl Fn() -> bool,
         submitted: impl FnOnce(),
@@ -236,7 +236,7 @@ impl Context {
     pub fn evaluate(
         &self,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         sink: impl FnMut(&mut wgpu::CommandEncoder, PlannedImage, &wgpu::Buffer) -> Result<(), Error>,
@@ -257,7 +257,7 @@ impl Context {
     pub fn evaluate_with<E, S>(
         &self,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         mut sink: Sink<E, S>,

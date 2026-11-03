@@ -1,5 +1,10 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::request::SourceRequest;
 #[cfg(feature = "ocio-reference")]
 use crate::raw::sony_fixture as sony;
 

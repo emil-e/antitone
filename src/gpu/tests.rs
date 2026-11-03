@@ -1,5 +1,12 @@
-use super::*;
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::CameraMatrix;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::parameters::matrix_columns;
+use crate::gpu::parameters::source_preview_gain;
+use crate::gpu::photograph::test_support::CameraFixture;
+use crate::gpu::source::ProcessingSource;
+use crate::processing::RollSettings;
+use glam::{DMat3, DVec3, Vec4};
 
 mod adjustment_layer_performance;
 mod camera_raw;
@@ -13,7 +20,7 @@ use crate::processing::Calibration;
 
 #[test]
 fn processing_assembles_shared_photographic_operators_once() {
-    let shader = crate::gpu::photograph::kernel_shader();
+    let shader = crate::gpu::photograph::shader::kernel_shader();
     assert!(!shader.contains("Triple"));
     assert!(!shader.contains("precise_"));
     // Originals, repairs and working views use the same photographic operators.
@@ -38,10 +45,8 @@ fn source_inspection_is_zero_default_and_changes_only_the_source_post_matrix() {
         let gain = exposure.exp2();
         let adjusted = ProcessingParameters::source_inspection(exposure).unwrap();
         assert_eq!(adjusted.post, matrix_columns(DMat3::IDENTITY * gain));
-        let unchanged = ProcessingParameters {
-            post: base.post,
-            ..adjusted
-        };
+        let mut unchanged = adjusted;
+        unchanged.post = base.post;
         assert_eq!(bytemuck::bytes_of(&unchanged), bytemuck::bytes_of(&base));
     }
     for exposure in [f64::NAN, f64::INFINITY, -17., 17.] {
@@ -146,10 +151,8 @@ fn source_preview_restores_green_referenced_headroom_and_keeps_inspection_relati
                 matrix_columns(DMat3::IDENTITY * (2. * headroom * exposure.exp2()))
             );
             let base = ProcessingParameters::source();
-            let unchanged = ProcessingParameters {
-                post: base.post,
-                ..adjusted
-            };
+            let mut unchanged = adjusted;
+            unchanged.post = base.post;
             assert_eq!(bytemuck::bytes_of(&unchanged), bytemuck::bytes_of(&base));
         }
     }

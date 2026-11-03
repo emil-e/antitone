@@ -1,47 +1,78 @@
 //! One ordered photographic definition, shared by complete images and requested prefixes.
 
+use super::operations::{Native, Working};
 use super::*;
-use crate::{gpu::GpuInputProgram, pixel_pipeline::PixelPipeline, processing::RollSettings};
+use crate::gpu::grading::Grading;
+use crate::gpu::photograph::PhotographGraph;
+use crate::{
+    gpu::interpretation::InputTransform, pixel_pipeline::PixelPipeline, processing::RollSettings,
+};
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;
 
-use crate::gpu::photograph::{Boundary, Component, Step, definition};
-
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Interpretation {
-    Program(GpuInputProgram, RollSettings),
-    Packed(ProcessingParameters),
-    Unavailable,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Boundary {
+    Codes,
+    Camera,
+    Native,
+    Unrepaired,
+    Neutral,
+    Roll,
+    Graded,
+    Processed,
 }
 
-impl PartialEq for Interpretation {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Program(a, ar), Self::Program(b, br)) => a == b && ar == br,
-            (Self::Packed(a), Self::Packed(b)) => bytemuck::bytes_of(a) == bytemuck::bytes_of(b),
-            (Self::Unavailable, Self::Unavailable) => true,
-            _ => false,
-        }
-    }
+pub enum Component {
+    Camera,
+    Interpretation,
+    Working,
+    Repairs,
+    Roll,
+    Layers,
+    Effects(PixelPipeline),
 }
 
-impl Interpretation {
-    fn parameters(&self) -> Result<ProcessingParameters, Error> {
-        match self {
-            Self::Program(program, roll) => {
-                ProcessingParameters::interpret(program.input, *roll, glam::DMat3::IDENTITY)
-            }
-            Self::Packed(parameters) => Ok(*parameters),
-            Self::Unavailable => Err(Error::InvalidParameter(
-                "neutral prefix requires captured input interpretation",
-            )),
-        }
-    }
+pub struct Step {
+    pub boundary: Option<Boundary>,
+    pub component: Component,
+}
+
+pub fn definition(stages: &PixelPipeline) -> Vec<Step> {
+    vec![
+        Step {
+            boundary: Some(Boundary::Camera),
+            component: Component::Camera,
+        },
+        Step {
+            boundary: Some(Boundary::Native),
+            component: Component::Interpretation,
+        },
+        Step {
+            boundary: Some(Boundary::Unrepaired),
+            component: Component::Working,
+        },
+        Step {
+            boundary: Some(Boundary::Neutral),
+            component: Component::Repairs,
+        },
+        Step {
+            boundary: Some(Boundary::Roll),
+            component: Component::Roll,
+        },
+        Step {
+            boundary: Some(Boundary::Graded),
+            component: Component::Layers,
+        },
+        Step {
+            boundary: Some(Boundary::Processed),
+            component: Component::Effects(stages.clone()),
+        },
+    ]
 }
 
 #[derive(Clone)]
-pub(super) struct Assembly {
+pub struct Assembly {
     pub capture: Option<Arc<Captured>>,
     pub grading: Option<Grading>,
     pub interpretation: Interpretation,
@@ -84,7 +115,7 @@ impl EffectOutput {
             ));
         }
         let image = prefix.compose(input)?;
-        let image = if image.domain.same_grid(self.domain) {
+        let image = if image.domain().same_grid(self.domain) {
             window(image, self.domain.finite()?)?
         } else {
             reconstruct_cells(image, self.domain, self.offset.map(f64::from), self.scale)?
@@ -122,7 +153,7 @@ impl Assembly {
     }
 
     #[cfg(feature = "editor")]
-    pub fn native(program: GpuInputProgram, encoding: RollSettings) -> Self {
+    pub fn native(program: InputTransform, encoding: RollSettings) -> Self {
         Self {
             capture: None,
             grading: None,
@@ -146,16 +177,18 @@ impl Assembly {
     }
 
     #[cfg(feature = "editor")]
-    pub(super) fn input_program(image: &Arc<ImageNode>) -> Option<crate::gpu::GpuInputProgram> {
+    pub fn input_transform(
+        image: &Arc<ImageNode>,
+    ) -> Option<crate::gpu::interpretation::InputTransform> {
         let mut image = Some(image);
         while let Some(node) = image {
             if let Some(native) =
-                (node.operation.as_ref() as &dyn std::any::Any).downcast_ref::<Native>()
+                (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<Native>()
                 && let Interpretation::Program(program, _) = native.interpretation
             {
                 return Some(program);
             }
-            image = node.input.as_ref();
+            image = node.input();
         }
         None
     }
@@ -175,7 +208,7 @@ impl Assembly {
         self,
         source: Arc<ImageNode>,
         stages: &PixelPipeline,
-    ) -> Result<Photograph, Error> {
+    ) -> Result<PhotographGraph, Error> {
         let images = self.build(
             source.clone(),
             Boundary::Codes,
@@ -183,7 +216,7 @@ impl Assembly {
             &definition(stages),
         )?;
 
-        Ok(Photograph {
+        Ok(PhotographGraph {
             camera: source,
             unrepaired: images.at(Boundary::Unrepaired),
             neutral: images.at(Boundary::Neutral),
@@ -200,7 +233,7 @@ impl Assembly {
         stages: &PixelPipeline,
         frame: crate::frame_raster::FrameRaster,
         native_grid: Option<crate::frame_raster::FrameRaster>,
-    ) -> Result<(Photograph, crate::acquisition::Plan), Error> {
+    ) -> Result<(PhotographGraph, crate::acquisition::Plan), Error> {
         let layout = crate::pixel_pipeline::sampling::ViewSampling::new(
             frame,
             stages,
@@ -268,7 +301,7 @@ impl Assembly {
             &definition(stages),
         )?;
         Ok((
-            Photograph {
+            PhotographGraph {
                 camera: source,
                 unrepaired: native.at(Boundary::Unrepaired),
                 neutral,
@@ -308,7 +341,7 @@ impl Assembly {
         ImageNode::new(
             Domain {
                 meaning: Meaning::Camera,
-                ..source.domain
+                ..source.domain()
             },
             Some(source),
             Camera {
@@ -355,7 +388,7 @@ impl Assembly {
                 Component::Interpretation => ImageNode::new(
                     Domain {
                         meaning: Meaning::NativePositive,
-                        ..image.domain
+                        ..image.domain()
                     },
                     Some(image),
                     Native::new(self.interpretation)?,
@@ -367,7 +400,7 @@ impl Assembly {
                     ImageNode::new(
                         Domain {
                             meaning: Meaning::Neutral,
-                            ..image.domain
+                            ..image.domain()
                         },
                         Some(image),
                         Working::new(capture.interpretation, capture.matrix)?,
@@ -423,107 +456,5 @@ impl Assembly {
         Err(Error::InvalidParameter(
             "photographic endpoint is outside the supplied composition",
         ))
-    }
-}
-
-fn native_parameters(interpretation: &Interpretation) -> Result<ProcessingParameters, Error> {
-    let parameters = interpretation.parameters()?;
-    if parameters.graded() {
-        Ok(parameters)
-    } else {
-        ProcessingParameters::digital(Default::default(), glam::DMat3::IDENTITY)
-    }
-}
-
-struct Native {
-    interpretation: Interpretation,
-}
-
-impl Native {
-    fn new(interpretation: Interpretation) -> Result<Self, Error> {
-        native_parameters(&interpretation)?;
-        Ok(Self { interpretation })
-    }
-}
-
-#[derive(Debug, PartialEq)]
-struct NativeIdentity(Interpretation);
-
-impl Operation for Native {
-    fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(NativeIdentity(self.interpretation)))
-    }
-
-    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(Some(region))
-    }
-
-    fn pointwise(&self) -> Option<Function> {
-        let parameters =
-            native_parameters(&self.interpretation).expect("captured interpretation was admitted");
-        Some(
-            Function::new(
-                format!(
-                    "{}\n{}",
-                    crate::gpu::photograph::pixel_shader(),
-                    include_str!("native.wgsl")
-                ),
-                "native_response",
-            )
-            .with_uniform(2, &parameters),
-        )
-    }
-}
-
-struct Working {
-    interpretation: Interpretation,
-    matrix: glam::DMat3,
-}
-
-impl Working {
-    fn new(interpretation: Interpretation, matrix: glam::DMat3) -> Result<Self, Error> {
-        interpretation.parameters()?;
-        crate::gpu::CameraMatrix::new(matrix)?;
-        Ok(Self {
-            interpretation,
-            matrix,
-        })
-    }
-}
-
-#[derive(Debug, PartialEq)]
-struct WorkingIdentity(Interpretation, glam::DMat3);
-
-impl Operation for Working {
-    fn identity(&self) -> Option<RetainedKey> {
-        Some(RetainedKey::new(WorkingIdentity(
-            self.interpretation,
-            self.matrix,
-        )))
-    }
-
-    fn input(&self, region: CellRegion) -> Result<Option<CellRegion>, Error> {
-        Ok(Some(region))
-    }
-
-    fn pointwise(&self) -> Option<Function> {
-        let parameters = self
-            .interpretation
-            .parameters()
-            .expect("captured interpretation was admitted");
-        let matrix = crate::gpu::CameraMatrix::new(self.matrix)
-            .expect("captured camera matrix was admitted");
-        Some(
-            Function::new(
-                format!(
-                    "{}\n{}",
-                    crate::gpu::photograph::pixel_shader(),
-                    include_str!("working.wgsl")
-                ),
-                "native_to_working",
-            )
-            .with_uniform(2, &parameters)
-            .with_uniform(3, &matrix),
-        )
     }
 }

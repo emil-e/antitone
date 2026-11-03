@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 use crate::{
     gpu::evaluation::{self, ImageNode},
     pixel_pipeline::{EffectDefinition, PixelPipeline, PixelStage, test_effects::NeighbourEffect},

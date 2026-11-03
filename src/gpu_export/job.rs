@@ -1,5 +1,7 @@
 //! Immutable, source-validated preparation for the shared TIFF/EXR engine.
 use super::*;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::submission::SubmissionGate;
 use crate::{dust_repair::Execution, image_recipe::ImageRecipe};
 
 pub(crate) struct Job<'a> {

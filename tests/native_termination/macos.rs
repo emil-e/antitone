@@ -1,8 +1,8 @@
 //! Explicit native termination negotiation. --run uses only isolated child apps;
 //! it never requests logout/shutdown or changes personal projects/preferences.
-use antitone::platform::{
-    SubmissionGate,
-    host::{self, QuitState},
+use antitone::{
+    gpu::submission::SubmissionGate,
+    platform::host::{self, QuitState},
 };
 use objc2::{
     ClassType, MainThreadMarker,

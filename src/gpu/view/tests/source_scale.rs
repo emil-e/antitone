@@ -1,4 +1,7 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_headroom() {

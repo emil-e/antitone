@@ -30,7 +30,7 @@ fn initial_brush_size(active: SourceRegion) -> u32 {
     ((active.width.min(active.height) as f64 * 0.01).round() as u32).clamp(4, 128)
 }
 
-pub(super) type Signature = crate::gpu::GpuInputProgram;
+pub(super) type Signature = crate::gpu::interpretation::InputTransform;
 
 #[derive(Clone)]
 pub(super) struct Request {
@@ -1388,8 +1388,11 @@ mod tests {
         let mut state = State::default();
         let source = SourceId(1);
         let signature = |gain| {
-            crate::gpu::GpuInputProgram::new(InputSettings::Digital, glam::DMat3::IDENTITY * gain)
-                .unwrap()
+            crate::gpu::interpretation::InputTransform::new(
+                InputSettings::Digital,
+                glam::DMat3::IDENTITY * gain,
+            )
+            .unwrap()
         };
         let mut committed = RepairSet::default();
         for origin in [[20, 20], [30, 30]] {

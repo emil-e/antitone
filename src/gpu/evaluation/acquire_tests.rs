@@ -127,7 +127,7 @@ fn inspection_transforms_only_covered_signed_hdr_light_and_preserves_floor_flags
     );
     let root = inspect(
         borrowed_input(domain),
-        crate::gpu::ProcessingParameters::source_with_matrix(matrix).unwrap(),
+        crate::gpu::parameters::ProcessingParameters::source_with_matrix(matrix).unwrap(),
     )
     .unwrap();
     let prepared = crate::gpu::pixel_pipeline::Prepared::from_composition(

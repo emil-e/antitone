@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    gpu::SubmissionGate,
+    gpu::submission::SubmissionGate,
     looks::{LookAsset, LookOrigin, Lut3D},
     processing::Pipeline,
     rendering::CpuRenderer,

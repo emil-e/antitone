@@ -26,7 +26,7 @@ fn scratch_pool_obeys_a_smaller_subsequent_budget() {
     let node = source(Arc::new(fixture()));
     let large = make_plan(node.clone(), [41, 35]);
     let mut executor = execute::Executor::default();
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let result = executor
         .run(&device, &queue, &gate, &large, || false)
         .unwrap()

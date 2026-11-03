@@ -322,14 +322,21 @@ impl Fit {
             }
             let record = project.source(*id)?;
             let mut input = if record.development.lens_correction.is_some() {
-                crate::gpu::ProcessingSource::new_continuous(device, &[[0.; 4]], self.matrix)?
+                crate::gpu::source::ProcessingSource::new_continuous(
+                    device,
+                    &[[0.; 4]],
+                    self.matrix,
+                )?
             } else {
-                crate::gpu::ProcessingSource::new(device, &[[0; 4]], self.matrix)?
+                crate::gpu::source::ProcessingSource::new(device, &[[0; 4]], self.matrix)?
             };
             if let Some(correction) = &self.correction {
                 input.set_flat_field(
                     Some(correction.gpu.clone()),
-                    crate::gpu::SourceGeometry::new(record.development.active_area, [1, 1])?,
+                    crate::gpu::source::SourceGeometry::new(
+                        record.development.active_area,
+                        [1, 1],
+                    )?,
                 )?;
             }
         }

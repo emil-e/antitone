@@ -1,4 +1,7 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::request::SourceRequest;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings},
     geometry::{SourcePoint, SourceRegion},

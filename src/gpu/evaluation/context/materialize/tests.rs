@@ -85,7 +85,7 @@ fn equivalent_awaiters_produce_once_and_larger_stored_regions_supply_smaller_req
     let pixels = fixture();
     let one = source(Arc::new(pixels.clone()));
     let two = source(Arc::new(pixels.clone()));
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let first = context
         .materialize(
             &queue,
@@ -160,7 +160,7 @@ fn awaiting_a_composed_image_submits_its_gpu_work_without_a_consumer_submission(
     let root =
         super::super::super::reconstruction::reconstruct(source(Arc::new(data)), output).unwrap();
     let key = root.identity().unwrap().clone();
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let submits = Arc::new(AtomicUsize::new(0));
     let observed = submits.clone();
     gate.observe_submissions(Arc::new(move || {

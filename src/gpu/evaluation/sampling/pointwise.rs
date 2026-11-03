@@ -2,7 +2,7 @@
 use super::*;
 
 impl Sampled {
-    pub(in crate::gpu::evaluation) fn map(
+    pub(crate) fn map(
         self,
         fragment: &mut Fragment,
         domain: Domain,

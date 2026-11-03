@@ -1,14 +1,27 @@
 #![cfg(feature = "gpu")]
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::photograph::test_support::CameraFixture;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+use antitone::adjustment_layers::AdjustmentLayer;
+use antitone::adjustment_layers::AdjustmentLayerCoverage;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
-use antitone::{
-    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
-    color::{AP1_TO_XYZ, BRADFORD, Balance},
-    flat_field::FlatField,
-    geometry::{SourcePoint, SourceRaster, SourceRegion},
-    gpu::{GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSource, SourceGeometry},
-    processing::{Calibration, DEFAULT_GAMMA, InputSettings, Pipeline, Response, RollSettings},
-};
+use antitone::adjustment_layers::AdjustmentLayerSnapshot;
+use antitone::color::AP1_TO_XYZ;
+use antitone::color::BRADFORD;
+use antitone::color::Balance;
+use antitone::flat_field::FlatField;
+use antitone::geometry::SourcePoint;
+use antitone::geometry::SourceRaster;
+use antitone::geometry::SourceRegion;
+use antitone::processing::Calibration;
+use antitone::processing::DEFAULT_GAMMA;
+use antitone::processing::InputSettings;
+use antitone::processing::Pipeline;
+use antitone::processing::Response;
+use antitone::processing::RollSettings;
 use glam::{DMat3, DVec2, DVec3};
 use std::sync::Arc;
 #[path = "../../../tests/support/photographic_reference.rs"]

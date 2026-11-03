@@ -111,7 +111,7 @@ fn complete_stack_preflight_is_read_only_with_adapter_or_default_limits() {
         uncalibrated.validate_for_device(&device).unwrap();
         uncalibrated.validate().unwrap();
         assert!(
-            crate::gpu::ProcessingInput::new(
+            crate::gpu::input::ProcessingInput::new(
                 &device.limits(),
                 uncalibrated.project.input,
                 uncalibrated.project.roll,

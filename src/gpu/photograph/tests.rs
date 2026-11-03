@@ -1,10 +1,14 @@
 use super::*;
-use crate::{
-    adjustment_layers::AdjustmentLayerStack,
-    geometry::{SourcePoint, SourceRegion},
-    gpu::{GpuFlatField, ProcessingInput},
-    processing::{Calibration, InputPipeline, InputSettings, RollPipeline},
-};
+use crate::adjustment_layers::AdjustmentLayerStack;
+use crate::geometry::SourcePoint;
+use crate::geometry::SourceRegion;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::photograph::PhotographGraph;
+use crate::processing::Calibration;
+use crate::processing::InputPipeline;
+use crate::processing::InputSettings;
+use crate::processing::RollPipeline;
 use glam::DVec3;
 
 #[derive(Debug, PartialEq)]
@@ -66,7 +70,7 @@ fn evaluate(
         .run(device, queue, &Default::default(), &plan, || false)
         .unwrap()
         .unwrap();
-    (execute::read(device, queue, &pixels.pixels), computes)
+    (read_buffer(device, queue, &pixels.pixels), computes)
 }
 
 #[test]
@@ -111,7 +115,7 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
         meaning: Meaning::Graded,
     };
     let compose = |stages: &crate::pixel_pipeline::PixelPipeline| {
-        let photograph = Photograph::new_with_stages(
+        let photograph = PhotographGraph::new_with_stages(
             &device.limits(),
             source(codes.clone()),
             None,
@@ -215,7 +219,7 @@ fn photographic_identities_follow_captured_operations_not_physical_fusion() {
             area,
         )
         .unwrap();
-        Photograph::new(
+        PhotographGraph::new(
             &device.limits(),
             source(codes.clone()),
             None,
@@ -295,7 +299,7 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
         .unwrap(),
     );
     let region = SourceRegion::from([12, 18, 10, 7]);
-    let root = Photograph::camera_light(
+    let root = PhotographGraph::camera_light(
         source(Arc::new(Codes {
             area,
             pixels: pixels.clone(),
@@ -303,7 +307,7 @@ fn camera_light_uses_original_coordinates_and_shared_correction_before_interpret
         Some(Arc::new(GpuFlatField::new(&device, field.clone()).unwrap())),
     )
     .unwrap();
-    assert_eq!(root.domain.meaning, Meaning::Camera);
+    assert_eq!(root.domain().meaning, Meaning::Camera);
     let evaluation = renderer
         .evaluation()
         .request(
@@ -407,8 +411,8 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
         Arc::new(crate::dust_repair::evaluate(&repair, area, |_| Ok([-0.4, 2.6, 0.7])).unwrap());
     let snapshot = crate::gpu::repairs::Snapshot::logical(vec![repaired.clone()]).unwrap();
     let region = SourceRegion::from([area.x + 7, area.y + 9, 51, 35]);
-    let matrix = super::tests::matrix();
-    let (roll, stack) = super::tests::settings(area.try_into().unwrap());
+    let matrix = super::test_support::matrix();
+    let (roll, stack) = super::test_support::settings(area.try_into().unwrap());
     let scalar_roll = RollPipeline::new(roll).unwrap();
     let scalar_stack = AdjustmentLayerStack::new(stack.layers().to_vec()).unwrap();
     for settings in [
@@ -434,7 +438,7 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
         let scalar_input = InputPipeline::new(settings, matrix).unwrap();
         let mut input = ProcessingInput::from(pipeline);
         input.repairs = snapshot.clone();
-        let photo = Photograph::new(
+        let photo = PhotographGraph::new(
             &device.limits(),
             source(codes.clone()),
             Some(gpu_field.clone()),
@@ -628,7 +632,7 @@ fn keeping_a_neutral_image_does_not_retain_its_downstream_grade() {
     let grade = Arc::downgrade(pipeline.grade_shared().unwrap());
     let input = ProcessingInput::from(pipeline);
     let pixels = vec![[0.25 * 65535., 0.5 * 65535., 1.5 * 65535., 0.]; 6];
-    let photo = Photograph::new(
+    let photo = PhotographGraph::new(
         &device.limits(),
         source(Arc::new(Codes { area, pixels })),
         None,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::source::SourceGeometry;
 use crate::{
     frame_raster::FrameRaster,
     gpu::view::{RenderedView, SourceRequest, ViewKernels, ViewSource},

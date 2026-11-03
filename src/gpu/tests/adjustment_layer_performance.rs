@@ -1,15 +1,19 @@
 #![cfg(all(feature = "ui", feature = "render"))]
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::photograph::test_support::CameraFixture;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+use antitone::adjustment_layers::AdjustmentLayer;
+use antitone::adjustment_layers::AdjustmentLayerCoverage;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
-use antitone::{
-    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
-    color::Balance,
-    geometry::{SourcePoint, SourceRegion},
-    gpu::{ProcessingInput, ProcessingSource, SourceGeometry},
-    processing::{Calibration, RollSettings},
-    rendering::OutputTarget,
-    viewer::GpuImage,
-};
+use antitone::adjustment_layers::AdjustmentLayerSnapshot;
+use antitone::color::Balance;
+use antitone::geometry::SourcePoint;
+use antitone::geometry::SourceRegion;
+use antitone::processing::Calibration;
+use antitone::processing::RollSettings;
+use antitone::rendering::OutputTarget;
+use antitone::viewer::GpuImage;
 use glam::{DMat3, DVec3};
 use std::{sync::Arc, time::Instant};
 

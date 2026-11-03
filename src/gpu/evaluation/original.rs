@@ -1,7 +1,9 @@
 //! Original-camera operators. Existing photographic, repair, grain and look shaders own the math.
 
 use super::*;
-use crate::gpu::{GpuFlatField, ProcessingInput};
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::photograph::PhotographGraph;
 
 struct Native {
     scan: crate::scan::Scan,
@@ -67,7 +69,7 @@ impl Source for Native {
             region.width,
             region.height,
         )?;
-        crate::gpu::ProcessingSource::validate_continuous(&values)?;
+        crate::gpu::source::ProcessingSource::validate_continuous(&values)?;
         Ok(values)
     }
 }
@@ -102,7 +104,7 @@ pub(crate) fn original_chain(
     if scan.flat_field() != field.as_ref().map(|f| f.field()) {
         return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
     }
-    let matrix = if let Some(program) = input.source_program() {
+    let matrix = if let Some(program) = input.source_transform() {
         if !program.matches_native(scan)? {
             return Err(Error::Gpu(
                 "original input differs from captured camera source".into(),
@@ -114,7 +116,7 @@ pub(crate) fn original_chain(
     };
     let node = camera_source(scan)?;
     let photograph =
-        Photograph::new_with_stages(&device.limits(), node, field, input, matrix, stages)?;
+        PhotographGraph::new_with_stages(&device.limits(), node, field, input, matrix, stages)?;
     Reference::capture(device, renderer, reference, input.luts())?
         .compose(photograph.processed, renderer)
 }

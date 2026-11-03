@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
 use crate::project::Development;
 use crate::viewer::readback::image_pixels;
 

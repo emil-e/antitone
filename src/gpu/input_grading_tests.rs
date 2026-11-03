@@ -1,11 +1,21 @@
 use super::*;
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::Error;
+use crate::gpu::grading::Grading;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::interpretation::InputTransform;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::photograph::test_support::CameraFixture;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+use crate::processing::{InputSettings, RollSettings};
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
     color::Balance,
     geometry::SourceRegion,
     processing::{Calibration, NegativeInput, Response},
 };
+use glam::{DMat3, DVec3};
+use std::sync::Arc;
 
 #[test]
 fn packed_camera_constants_do_not_stand_in_for_a_captured_photograph() {
@@ -117,7 +127,7 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
                     ),
                 ];
                 for (geometry, source_area) in cases {
-                    let program = GpuInputProgram::new(input, matrix).unwrap();
+                    let program = InputTransform::new(input, matrix).unwrap();
                     let mut source = program.source_continuous(&device, &pixels).unwrap();
                     source.set_geometry(geometry).unwrap();
                     let pipeline = ProcessingInput::compose(

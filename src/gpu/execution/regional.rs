@@ -1,12 +1,14 @@
 //! Original-source compositions with bounded lazy evaluation and affine reconstruction.
 
-use crate::{
-    Error,
-    gpu::{GpuFlatField, ProcessingInput, SubmissionGate, evaluation},
-    renderer::GpuRenderer,
-    rendering::{OutputReference, OutputTarget},
-    scan::Scan,
-};
+use crate::Error;
+use crate::gpu::evaluation;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::submission::SubmissionGate;
+use crate::renderer::GpuRenderer;
+use crate::rendering::OutputReference;
+use crate::rendering::OutputTarget;
+use crate::scan::Scan;
 use std::sync::Arc;
 
 #[cfg(all(test, target_os = "macos"))]

@@ -1,18 +1,30 @@
 #![cfg(all(feature = "ui", feature = "render", feature = "ocio-reference"))]
+use antitone::adjustment_layers::AdjustmentLayer;
+use antitone::adjustment_layers::AdjustmentLayerCoverage;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
-use antitone::{
-    adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
-    color::Balance,
-    flat_field::FlatField,
-    frame_raster::FrameRaster,
-    geometry::{Composition, SourcePoint, SourceRegion},
-    gpu::{GpuFlatField, ProcessingInput, ProcessingParameters, SourceGeometry},
-    gpu_scopes::{GpuScopes, ScopePaint},
-    processing::{Calibration, Pipeline, RollSettings},
-    rendering::{CpuRenderer, OutputTarget},
-    scopes::{self, Plot, Settings},
-    viewer::{GpuImage, ImagePaint},
-};
+use antitone::adjustment_layers::AdjustmentLayerSnapshot;
+use antitone::color::Balance;
+use antitone::flat_field::FlatField;
+use antitone::frame_raster::FrameRaster;
+use antitone::geometry::Composition;
+use antitone::geometry::SourcePoint;
+use antitone::geometry::SourceRegion;
+use antitone::gpu::flat::GpuFlatField;
+use antitone::gpu::input::ProcessingInput;
+use antitone::gpu::parameters::ProcessingParameters;
+use antitone::gpu::source::SourceGeometry;
+use antitone::gpu_scopes::GpuScopes;
+use antitone::gpu_scopes::ScopePaint;
+use antitone::processing::Calibration;
+use antitone::processing::Pipeline;
+use antitone::processing::RollSettings;
+use antitone::rendering::CpuRenderer;
+use antitone::rendering::OutputTarget;
+use antitone::scopes;
+use antitone::scopes::Plot;
+use antitone::scopes::Settings;
+use antitone::viewer::GpuImage;
+use antitone::viewer::ImagePaint;
 use egui_wgpu::CallbackTrait;
 use glam::{DMat3, DVec3};
 use std::sync::Arc;

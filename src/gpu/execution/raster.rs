@@ -1,13 +1,16 @@
 //! Source interpretation, photographic grade, original repairs and ordered pixel stages.
 
-use crate::{
-    Error,
-    acquisition::{Plan, Request as AcquisitionRequest, Sampling},
-    frame_raster::FrameRaster,
-    geometry::Composition,
-    gpu::{ProcessingInput, ProcessingSource, pixel_pipeline::Prepared, raster::Raster},
-    renderer::GpuRenderer,
-};
+use crate::Error;
+use crate::acquisition::Plan;
+use crate::acquisition::Request as AcquisitionRequest;
+use crate::acquisition::Sampling;
+use crate::frame_raster::FrameRaster;
+use crate::geometry::Composition;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::pixel_pipeline::Prepared;
+use crate::gpu::raster::Raster;
+use crate::gpu::source::ProcessingSource;
+use crate::renderer::GpuRenderer;
 
 #[cfg(all(test, target_os = "macos", feature = "render"))]
 #[path = "raster_tests.rs"]
@@ -107,7 +110,7 @@ impl<'a> Request<'a> {
             .plan
             .map(|plan| plan.pipeline().clone())
             .unwrap_or_default();
-        let root = crate::gpu::evaluation::Photograph::from_resident_with_stages(
+        let root = crate::gpu::photograph::PhotographGraph::from_resident_with_stages(
             &device.limits(),
             self.source,
             self.input,

@@ -1,6 +1,9 @@
 //! Stage factoring and asymmetric source coverage on production working views.
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+use crate::gpu::submission::SubmissionGate;
 
 #[test]
 fn resident_acquisition_inverts_before_fractional_coverage_with_rounded_proxy_dimensions() {

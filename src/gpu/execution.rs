@@ -11,13 +11,7 @@ pub(crate) use originals::{Stats, TILE, execute};
 #[cfg(feature = "raw")]
 pub(crate) use request::{OutputBlock, Request, SampleEncoding};
 
-#[cfg(feature = "editor")]
-pub(crate) mod footprints;
-
 pub(crate) mod raster;
 
 #[cfg(feature = "editor")]
 pub(crate) mod regional;
-
-#[cfg(feature = "editor")]
-pub(crate) mod source;

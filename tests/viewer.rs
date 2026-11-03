@@ -2,11 +2,11 @@
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
-use antitone::gpu::ProcessingInput;
+use antitone::gpu::input::ProcessingInput;
 use antitone::{
     color::{Balance, ap1_to_ap0},
     flat_field::FlatField,
-    gpu::{GpuFlatField, ProcessingParameters, SourceGeometry},
+    gpu::{flat::GpuFlatField, parameters::ProcessingParameters, source::SourceGeometry},
     processing::{Calibration, DEFAULT_GAMMA, InputSettings, Pipeline, Response, RollSettings},
     rendering::{CpuRenderer, OutputTarget},
     viewer::GpuImage,

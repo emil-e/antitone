@@ -1,6 +1,9 @@
 //! Production working-view model, mapped masks and encoded-resource lifetime checks.
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::request::SourceRequest;
 mod model;
 mod oracles;
 use crate::{

@@ -1,6 +1,7 @@
-use super::tests::{fixture, make_plan, matrix, settings};
+use super::tests::{fixture, make_plan};
 use super::*;
-use crate::{gpu::Grading, gpu::evaluation::CellRegion as Rect};
+use crate::gpu::photograph::test_support::{matrix, settings};
+use crate::{gpu::evaluation::CellRegion as Rect, gpu::grading::Grading};
 
 #[test]
 fn independent_code_reference_can_be_composed_and_replaced_without_planner_changes() {
@@ -137,7 +138,7 @@ fn cancellation_at_submission_does_not_read_or_submit_another_source_tile() {
         reads: reads.clone(),
     }));
     let plan = make_plan(node, [16, 16]);
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let stop = Arc::new(AtomicBool::new(false));
     let (changed, submissions) = (stop.clone(), Arc::new(AtomicUsize::new(0)));
     let observed = submissions.clone();

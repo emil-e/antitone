@@ -6,11 +6,14 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
-use super::{
-    QuitGuard, SubmissionGate, configure_presentation, fullscreen::PhotoFullscreen, latency::Trace,
-    menu, presentation, quit_cancel_on_unwind,
-};
 use crate::application::{Application, UiContext};
+use {
+    super::{
+        QuitGuard, configure_presentation, fullscreen::PhotoFullscreen, latency::Trace, menu,
+        presentation, quit_cancel_on_unwind,
+    },
+    crate::gpu::submission::SubmissionGate,
+};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

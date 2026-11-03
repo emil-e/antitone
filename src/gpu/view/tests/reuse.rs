@@ -1,4 +1,8 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn equal_acquired_calculations_share_inspection_work_across_independent_view_handles() {
@@ -220,7 +224,7 @@ fn original_adapter_rejects_a_different_capture_even_when_program_and_layout_mat
         let unrelated = Scan::open(file.path(), None).unwrap();
         let spec = SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, None)
             .unwrap()
-            .with_identity(crate::gpu::execution::source::Identity::camera(
+            .with_identity(crate::gpu::source::identity::Identity::camera(
                 unrelated.source().identity(),
             ));
         let gate = SubmissionGate::default();

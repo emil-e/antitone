@@ -1,5 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerPipeline;
+use crate::gpu::submission::SubmissionGate;
 use crate::processing::Calibration;
 use crate::working_precision;
 use exr::prelude::*;

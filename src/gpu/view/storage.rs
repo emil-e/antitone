@@ -1,6 +1,7 @@
-use super::*;
+use crate::Error;
+use wgpu::util::DeviceExt;
 
-pub(crate) fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
+pub fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
         contents: bytes,
@@ -8,7 +9,7 @@ pub(crate) fn uniform(device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
     })
 }
 
-pub(crate) fn view_bytes(device: &wgpu::Device, size: [u32; 2]) -> Result<u64, Error> {
+pub fn view_bytes(device: &wgpu::Device, size: [u32; 2]) -> Result<u64, Error> {
     let bytes = u64::from(size[0])
         .checked_mul(u64::from(size[1]))
         .and_then(|n| n.checked_mul(16))
@@ -25,7 +26,7 @@ pub(crate) fn view_bytes(device: &wgpu::Device, size: [u32; 2]) -> Result<u64, E
     Ok(bytes)
 }
 
-pub(crate) fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, Error> {
+pub fn float_buffer(device: &wgpu::Device, size: [u32; 2]) -> Result<wgpu::Buffer, Error> {
     let bytes = view_bytes(device, size)?;
     Ok(device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("physical-view signed/HDR AP1"),

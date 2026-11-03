@@ -20,16 +20,19 @@ fn max_error(expected: &[DVec3], actual: &[[f32; 4]]) -> f64 {
         .fold(0., f64::max)
 }
 
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::geometry::Composition;
+use crate::geometry::FramePoint;
+use crate::gpu::input::ProcessingInput;
 #[cfg(feature = "ocio-reference")]
-use crate::gpu::SourceGeometry;
-use crate::{
-    adjustment_layers::AdjustmentLayerSnapshot,
-    geometry::{Composition, FramePoint},
-    gpu::{ProcessingInput, SubmissionGate},
-    pixel_pipeline::{PixelPipeline, PixelStage, test_effects::NeighbourEffect},
-    processing::InputSettings,
-    rendering::{OutputReference, OutputTarget},
-};
+use crate::gpu::source::SourceGeometry;
+use crate::gpu::submission::SubmissionGate;
+use crate::pixel_pipeline::PixelPipeline;
+use crate::pixel_pipeline::PixelStage;
+use crate::pixel_pipeline::test_effects::NeighbourEffect;
+use crate::processing::InputSettings;
+use crate::rendering::OutputReference;
+use crate::rendering::OutputTarget;
 use glam::{DMat3, DVec3};
 use wgpu::util::DeviceExt;
 
@@ -248,10 +251,11 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
 
 #[test]
 fn the_same_effect_uses_affine_source_coordinates_and_declared_support_in_physical_views() {
-    use crate::{
-        frame_raster::FrameRaster,
-        gpu::view::{RenderedView, SourceRequest, ViewKernels, ViewSource},
-    };
+    use crate::frame_raster::FrameRaster;
+    use crate::gpu::view::RenderedView;
+    use crate::gpu::view::ViewKernels;
+    use crate::gpu::view::ViewSource;
+    use crate::gpu::view::request::SourceRequest;
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let kernels = pollster::block_on(ViewKernels::new(&device)).unwrap();
     let area = [100, 80, 6000, 4000].into();

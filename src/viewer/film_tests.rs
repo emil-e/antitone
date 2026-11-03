@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::source::SourceGeometry;
 
 #[test]
 fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_representation() {
@@ -6,7 +7,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         adjustment_layers::AdjustmentLayerSnapshot,
         frame_raster::FrameRaster,
         geometry::Composition,
-        gpu::ProcessingInput,
+        gpu::input::ProcessingInput,
         gpu_scopes::{GpuScopes, ScopePaint},
         grain::GrainPreset,
         processing::InputSettings,
@@ -114,11 +115,14 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
 
 #[test]
 fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
-    use crate::{
-        adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
-        gpu::{GpuInputProgram, Grading, ProcessingInput},
-        processing::{InputSettings, RollSettings},
-    };
+    use crate::adjustment_layers::AdjustmentLayer;
+    use crate::adjustment_layers::AdjustmentLayerSettings;
+    use crate::adjustment_layers::AdjustmentLayerSnapshot;
+    use crate::gpu::grading::Grading;
+    use crate::gpu::input::ProcessingInput;
+    use crate::gpu::interpretation::InputTransform;
+    use crate::processing::InputSettings;
+    use crate::processing::RollSettings;
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -156,7 +160,7 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
         let render = |grade, area, frame_size| {
             let pipeline = ProcessingInput::compose(
                 &device.limits(),
-                GpuInputProgram::new(InputSettings::Digital, DMat3::IDENTITY).unwrap(),
+                InputTransform::new(InputSettings::Digital, DMat3::IDENTITY).unwrap(),
                 grade,
                 area,
             )

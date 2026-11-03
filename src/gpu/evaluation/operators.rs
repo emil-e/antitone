@@ -3,7 +3,7 @@
 use super::CellRegion as Rect;
 use super::*;
 #[cfg(all(test, feature = "editor"))]
-use crate::gpu::Grading;
+use crate::gpu::grading::Grading;
 #[cfg(feature = "render")]
 use crate::rendering::OutputTarget;
 #[cfg(all(test, feature = "editor"))]
@@ -156,7 +156,7 @@ pub fn interpret(
             "interpretation requires camera samples",
         ));
     }
-    let columns = crate::gpu::CameraMatrix::new(matrix)?.columns;
+    let columns = crate::gpu::parameters::CameraMatrix::new(matrix)?.columns;
     let constants = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("evaluation immutable source interpretation"),
         contents: bytemuck::cast_slice(&columns),

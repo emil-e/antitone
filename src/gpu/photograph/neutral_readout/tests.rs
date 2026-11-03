@@ -1,8 +1,10 @@
 use super::*;
+use crate::gpu::interpretation::InputTransform;
+use crate::gpu::photograph::PhotographGraph;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::SourceRegion,
-    gpu::ProcessingInput,
+    gpu::input::ProcessingInput,
     processing::{Calibration, InputSettings},
 };
 use glam::{DMat3, DVec3};
@@ -50,7 +52,7 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
     );
     let scalar = crate::processing::InputPipeline::new(input, DMat3::IDENTITY).unwrap();
     let context = Context::new(&device, CachePolicy { generated_bytes: 0 });
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
 
     for raw in [DVec3::ZERO, DVec3::new(0.008, 0.016, 0.024)] {
         let codes = (raw * 65535.).as_vec3();
@@ -62,10 +64,10 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
             },
             value: [codes.x, codes.y, codes.z, 0.],
         }));
-        let readout = Photograph::neutral_readout(
+        let readout = PhotographGraph::neutral_readout(
             camera,
             None,
-            GpuInputProgram::new(input, DMat3::IDENTITY).unwrap(),
+            InputTransform::new(input, DMat3::IDENTITY).unwrap(),
         )
         .unwrap();
         assert!(readout.decode_gain > 1.);
@@ -77,7 +79,7 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
                 readout.image.clone(),
                 Region {
                     bounds: region.try_into().unwrap(),
-                    grid: readout.image.domain.grid,
+                    grid: readout.image.domain().grid,
                 },
                 Budget {
                     tile: [2, 1],
@@ -135,7 +137,7 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
                     image.clone(),
                     Region {
                         bounds: region.try_into().unwrap(),
-                        grid: image.domain.grid,
+                        grid: image.domain().grid,
                     },
                     Budget {
                         tile: [2, 1],

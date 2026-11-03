@@ -1,11 +1,17 @@
 use super::*;
-use crate::{
-    adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
-    geometry::{Composition, FramePoint},
-    gpu::{GpuFlatField, ProcessingInput, repairs::Snapshot},
-    processing::{Calibration, InputSettings, RollSettings},
-    rendering::{OutputReference, OutputTarget},
-};
+use crate::adjustment_layers::AdjustmentLayer;
+use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::geometry::Composition;
+use crate::geometry::FramePoint;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::repairs::Snapshot;
+use crate::processing::Calibration;
+use crate::processing::InputSettings;
+use crate::processing::RollSettings;
+use crate::rendering::OutputReference;
+use crate::rendering::OutputTarget;
 use glam::DVec3;
 
 fn canonical(

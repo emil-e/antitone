@@ -1,5 +1,7 @@
 use super::*;
 use crate::editor::tests::UiFixture;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
 
 fn source_input() -> source::Context {
     source::Context {
@@ -43,7 +45,7 @@ fn original_request_is_readonly_and_its_owner_rejects_departed_completion() {
         owner.observe(OriginalPurpose::Tool, signature);
         owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
         let captured = owner.request().unwrap();
-        assert!(captured.demand.capture == working_view::Capture::Primitive(input));
+        assert!(captured.demand.capture == crate::gpu::view::input::ViewInput::Processing(input));
         assert!(!owner.refining(), "capturing input does not stage work");
         let completion = captured.begin().unwrap();
         retired.get_or_insert(completion);

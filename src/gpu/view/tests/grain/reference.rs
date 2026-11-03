@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 
 fn render_configured(
     device: &wgpu::Device,

@@ -1,5 +1,6 @@
 use super::*;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage};
+use crate::gpu::input::ProcessingInput;
 
 #[test]
 fn film_seed_routing_uses_source_identity_not_visit_identity() {

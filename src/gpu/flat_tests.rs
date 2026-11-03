@@ -1,11 +1,21 @@
 use super::*;
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::CameraMatrix;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::photograph::test_support::CameraFixture;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+use crate::processing::RollSettings;
 #[cfg(target_os = "macos")]
 use crate::{
     adjustment_layers::AdjustmentLayerSettings,
     flat_field::FlatField,
     processing::{Calibration, Response},
 };
+use glam::{DMat3, DVec3, Vec4};
+use std::sync::Arc;
+use wgpu::util::DeviceExt;
 
 #[cfg(all(feature = "raw", feature = "export"))]
 #[test]

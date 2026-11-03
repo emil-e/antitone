@@ -1,4 +1,6 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::view::request::SourceRequest;
 
 fn rotated_frame(pitch: [f64; 2]) -> FrameRaster {
     let composition = Composition::with_crop(
@@ -105,7 +107,7 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
         view.ensure_submitted(
             &device,
             &queue,
-            &crate::gpu::SubmissionGate::default(),
+            &crate::gpu::submission::SubmissionGate::default(),
             &egui::Context::default(),
         );
         let pixels = read(&device, &queue, &view.graded.as_ref().unwrap().pixels);

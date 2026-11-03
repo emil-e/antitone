@@ -1,5 +1,6 @@
 use super::*;
-use crate::gpu::ProcessingParameters;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::submission::SubmissionGate;
 #[cfg(feature = "ocio-reference")]
 use crate::{
     adjustment_layers::{
@@ -8,7 +9,7 @@ use crate::{
     crop::Crop,
     frame_raster::FrameRaster,
     geometry::{Composition, FramePoint},
-    gpu::ProcessingInput,
+    gpu::input::ProcessingInput,
     processing::{InputSettings, RollSettings},
 };
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

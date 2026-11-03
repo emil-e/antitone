@@ -1,12 +1,13 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::photograph::test_support::CameraFixture;
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
-use antitone::{geometry::SourceRegion, gpu::ProcessingInput};
+use antitone::geometry::SourceRegion;
 
+use crate::gpu::{parameters::ProcessingParameters, source::ProcessingSource};
 use antitone::color::Balance;
-use antitone::gpu::{ProcessingParameters, ProcessingSource};
 use antitone::processing::{Calibration, InputSettings, NegativeInput, Response, RollSettings};
 use glam::{DMat3, DVec3, Vec4};
 

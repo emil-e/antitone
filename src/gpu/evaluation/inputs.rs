@@ -76,7 +76,7 @@ impl Context {
     pub(crate) async fn prepare_input(
         &self,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         scope: &Materializations,
         source: Arc<ImageNode>,
         cancelled: impl Fn() -> bool,

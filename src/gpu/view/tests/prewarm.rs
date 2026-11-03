@@ -1,4 +1,8 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {

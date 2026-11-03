@@ -1,11 +1,12 @@
 use super::*;
-use crate::{
-    application::test_support::with_application,
-    editor::{
-        OriginalPurpose, OutputTarget, ProcessingInput, ProcessingParameters, ViewRequest,
-        source_loading, tests::fixture,
-    },
-};
+use crate::application::test_support::with_application;
+use crate::editor::OriginalPurpose;
+use crate::editor::OutputTarget;
+use crate::editor::ViewRequest;
+use crate::editor::source_loading;
+use crate::editor::tests::fixture;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
 use std::time::{Duration, Instant};
 
 fn editor() -> (Editor, source_loading::SourceLoader) {
@@ -190,7 +191,7 @@ fn rapid_output_demand_drops_queued_inputs_and_only_latest_reconstruction_can_pu
                     .as_ref()
                     .unwrap()
                     .capture
-                    == crate::gpu::view::Capture::Primitive(ProcessingInput::from(
+                    == crate::gpu::view::input::ViewInput::Processing(ProcessingInput::from(
                         ProcessingParameters::source_inspection(0.39).unwrap()
                     ))
             );

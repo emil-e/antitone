@@ -1,5 +1,6 @@
 //! File-export adapter for codec-independent original-sample execution.
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 use crate::{
     gpu::execution::{self, SampleEncoding},
     rendering::OutputReference,

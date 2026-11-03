@@ -1,4 +1,6 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
 use crate::looks::{LookOrigin, Lut3D};
 
 fn asset() -> Arc<LookAsset> {

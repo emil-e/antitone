@@ -1,9 +1,11 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
 use crate::project::Development;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::SourcePoint,
-    gpu::SourceGeometry,
+    gpu::source::SourceGeometry,
     project::{AdjustmentLayers, SourceDevelopment},
 };
 
@@ -381,7 +383,7 @@ fn correction_changes_captured_processing_without_mutating_earlier_stacks() {
             .processing_calibration(editor.calibration().unwrap())
             .unwrap();
         let expected = ProcessingInput::from(Arc::new(
-            crate::gpu::ProcessingInput::new(
+            crate::gpu::input::ProcessingInput::new(
                 &device.limits(),
                 calibration,
                 editor.document.roll,
@@ -556,7 +558,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         assert_eq!(request.demand.target, editor.document.target);
         assert!(matches!(
             request.demand.capture,
-            working_view::Capture::Photograph(_)
+            crate::gpu::view::input::ViewInput::Recipe(_)
         ));
         let (captured, view) = (
             request
@@ -633,12 +635,14 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
     });
 }
 
-fn tracked_grade(input: &ProcessingInput) -> (std::sync::Weak<crate::gpu::Grading>, u64) {
+fn tracked_grade(input: &ProcessingInput) -> (std::sync::Weak<crate::gpu::grading::Grading>, u64) {
     let grading = input.grade_shared().unwrap();
     (Arc::downgrade(grading), grading.byte_len())
 }
 
-fn live_grade_snapshots(grades: &[(std::sync::Weak<crate::gpu::Grading>, u64)]) -> (usize, u64) {
+fn live_grade_snapshots(
+    grades: &[(std::sync::Weak<crate::gpu::grading::Grading>, u64)],
+) -> (usize, u64) {
     grades
         .iter()
         .filter(|(grade, _)| grade.strong_count() != 0)

@@ -1,4 +1,6 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
 use crate::project::Development;
 use crate::project::SourceDevelopment;
 
@@ -361,7 +363,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     let input = ProcessingInput::from(ProcessingParameters::source());
     editor.document.visit.working_view.observe(
         frame,
-        super::super::working_view::Capture::Primitive(input.clone()),
+        crate::gpu::view::input::ViewInput::Processing(input.clone()),
         editor.document.target,
     );
     assert!(editor.document.visit.working_view.revision().is_some());

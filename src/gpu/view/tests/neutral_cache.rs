@@ -1,4 +1,7 @@
 use super::*;
+use crate::gpu::interpretation::InputTransform;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn neutral_definitions_and_live_values_do_not_change_with_processing_padding() {
@@ -147,7 +150,7 @@ fn independent_neutral_consumers_share_the_value_with_and_without_optional_reten
         if let InputSettings::Negative { gamma, .. } = &mut changed_input {
             *gamma = gamma.next_up();
         }
-        let changed_program = GpuInputProgram::new(changed_input, program.matrix).unwrap();
+        let changed_program = InputTransform::new(changed_input, program.matrix).unwrap();
         assert_ne!(program, changed_program);
         assert_eq!(
             bytemuck::bytes_of(&program.neutral_parameters().unwrap()),

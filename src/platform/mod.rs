@@ -27,7 +27,7 @@ pub(crate) use native::{
     quit_cancel_on_unwind,
 };
 
-pub use crate::gpu::SubmissionGate;
+pub use crate::gpu::submission::SubmissionGate;
 
 /// The surface formats a platform can present the shared sRGB-encoded output in, best first,
 /// and the colour space those values are interpreted in.

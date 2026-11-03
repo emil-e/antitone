@@ -1,16 +1,19 @@
 //! Opt-in bounded resource observation, not pressure or physical interaction acceptance.
 use super::*;
+use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::cache_observation as observation;
-use crate::{
-    adjustment_layers::AdjustmentLayerSettings,
-    crop::Crop,
-    frame_raster::FrameRaster,
-    geometry::{PhotoOrientation, QuarterTurns, RollOrientation},
-    gpu::{
-        ProcessingInput,
-        view::{RenderedView, SourceRequest, ViewKernels, ViewSource},
-    },
-};
+use crate::crop::Crop;
+use crate::frame_raster::FrameRaster;
+use crate::geometry::PhotoOrientation;
+use crate::geometry::QuarterTurns;
+use crate::geometry::RollOrientation;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::RenderedView;
+use crate::gpu::view::ViewKernels;
+use crate::gpu::view::ViewSource;
+use crate::gpu::view::request::SourceRequest;
 use std::time::{Duration, Instant};
 
 #[test]

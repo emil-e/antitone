@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::ProcessingInput;
+use crate::gpu::input::ProcessingInput;
 use crate::processing::InputSettings;
 
 #[cfg(test)]
@@ -107,7 +107,7 @@ impl Editor {
     pub(super) fn neutral_source_signature(
         &self,
         input: &InputSettings,
-    ) -> Result<crate::gpu::GpuInputProgram, Error> {
+    ) -> Result<crate::gpu::interpretation::InputTransform, Error> {
         let ready = self
             .document
             .visit
@@ -122,7 +122,7 @@ impl Editor {
                 .as_ref()
                 .map(|correction| correction.settings.map.clone()),
         )?;
-        crate::gpu::GpuInputProgram::for_scan(&scan, *input)
+        crate::gpu::interpretation::InputTransform::for_scan(&scan, *input)
     }
 
     pub(super) fn validate_repaired_source(
@@ -145,7 +145,7 @@ impl Editor {
             Some(base) => input.with_calibration(self.processing_calibration(base)?),
             None => *input,
         };
-        crate::gpu::ProcessingInput::validate_repaired(
+        crate::gpu::input::ProcessingInput::validate_repaired(
             device,
             input,
             roll,

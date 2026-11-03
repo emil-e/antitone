@@ -509,7 +509,9 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
     scheduler.close_and_wait().unwrap();
 
     fn digital_proxy_pixels(e: &Editor, ready: &crate::editor::Ready) -> Vec<[f32; 4]> {
-        use crate::gpu::view::{RenderedView, SourceRequest, ViewKernels};
+        use crate::gpu::view::RenderedView;
+        use crate::gpu::view::ViewKernels;
+        use crate::gpu::view::request::SourceRequest;
         let services = e.source_services.as_ref().unwrap();
         let (device, queue) = (&services.device, &services.queue);
         let composition =
@@ -523,14 +525,14 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             .proxy
             .view_source(
                 queue,
-                &crate::gpu::SubmissionGate::default(),
+                &crate::gpu::submission::SubmissionGate::default(),
                 pollster::block_on(ViewKernels::new(device)).unwrap(),
                 &spec.processing_fixture(),
                 spec,
             )
             .unwrap();
-        let parameters = crate::gpu::ProcessingInput::from(Arc::new(
-            crate::gpu::ProcessingInput::new(
+        let parameters = crate::gpu::input::ProcessingInput::from(Arc::new(
+            crate::gpu::input::ProcessingInput::new(
                 &device.limits(),
                 InputSettings::Digital,
                 Default::default(),

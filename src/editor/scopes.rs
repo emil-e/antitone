@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::gpu::input::ProcessingInput;
 use crate::{
     frame_raster::FrameRaster,
     gpu_scopes::{GpuScopes, ScopePaint},
@@ -203,7 +205,7 @@ impl ScopeInput {
         &self,
         gpu: Arc<GpuScopes>,
         settings: Settings,
-        submissions: crate::gpu::SubmissionGate,
+        submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
     ) -> ScopePaint {
         ScopePaint::mapped_rendered(

@@ -1,6 +1,6 @@
 //! Captured sample provenance; neither visit epochs nor publication tickets are content.
 
-use crate::{gpu::ProcessingSource, scan::CameraIdentity};
+use crate::{gpu::source::ProcessingSource, scan::CameraIdentity};
 use std::sync::{Arc, Weak};
 
 #[derive(Clone)]

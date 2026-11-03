@@ -1,5 +1,7 @@
 use super::*;
 use crate::gpu::evaluation as e;
+use crate::gpu::input::ProcessingInput;
+use crate::{frame_raster::FrameRaster, geometry::Composition};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct ConstantSamples {
@@ -65,14 +67,20 @@ fn preview_can_choose_an_existing_finer_grid_but_rejects_insufficient_or_differe
     let reads = Arc::new(AtomicUsize::new(0));
     let source = e::source(samples(reads.clone()));
     let input = input(&limits, 1.);
-    let (default, _) =
-        e::Photograph::preview_with_input(&limits, source.clone(), None, &input, frame(), None)
-            .unwrap();
+    let (default, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
+        &limits,
+        source.clone(),
+        None,
+        &input,
+        frame(),
+        None,
+    )
+    .unwrap();
     let grid = FrameRaster {
         output: [8, 6],
         ..frame()
     };
-    let (finer, plan) = e::Photograph::preview_with_input(
+    let (finer, plan) = crate::gpu::photograph::PhotographGraph::preview_with_input(
         &limits,
         source.clone(),
         None,
@@ -96,7 +104,7 @@ fn preview_can_choose_an_existing_finer_grid_but_rejects_insufficient_or_differe
         },
     ] {
         assert!(
-            e::Photograph::preview_with_input(
+            crate::gpu::photograph::PhotographGraph::preview_with_input(
                 &limits,
                 source.clone(),
                 None,
@@ -117,7 +125,7 @@ fn original_to_processed_definition_requires_no_device_or_source_read() {
     let samples = samples(reads.clone());
     let camera = e::source(samples.clone());
     let photographs = [1., 2.].map(|exposure| {
-        e::Photograph::preview_with_input(
+        crate::gpu::photograph::PhotographGraph::preview_with_input(
             &limits,
             camera.clone(),
             None,
@@ -167,9 +175,15 @@ fn native_view_regions_follow_the_graphs_neighbourhood_contracts() {
                 )],
             });
         }
-        let (photo, _) =
-            e::Photograph::preview_with_input(&limits, source.clone(), None, &input, frame(), None)
-                .unwrap();
+        let (photo, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
+            &limits,
+            source.clone(),
+            None,
+            &input,
+            frame(),
+            None,
+        )
+        .unwrap();
         assert_eq!(
             photo
                 .processed
@@ -219,7 +233,7 @@ fn complete_graph_precedes_io_and_uses_its_live_neutral_value_without_another_so
         let context = e::Context::new(&device, e::CachePolicy { generated_bytes: 0 });
         let scope = context.materializations();
         let reads = Arc::new(AtomicUsize::new(0));
-        let (photograph, _) = e::Photograph::preview_with_input(
+        let (photograph, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
             &device.limits(),
             e::source(samples(reads.clone())),
             None,
@@ -231,7 +245,7 @@ fn complete_graph_precedes_io_and_uses_its_live_neutral_value_without_another_so
         let complete = photograph.processed;
         assert_eq!(reads.load(Ordering::Relaxed), 0);
         assert!(complete.identity().is_some());
-        let gate = crate::gpu::SubmissionGate::default();
+        let gate = crate::gpu::submission::SubmissionGate::default();
         let request = |root: Arc<e::ImageNode>| {
             let grid = root.domain().grid;
             context

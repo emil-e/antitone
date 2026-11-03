@@ -377,9 +377,12 @@ impl Developed {
                 .correction
                 .as_ref()
                 .map(|correction| correction.gpu.clone()),
-            crate::gpu::SourceGeometry::new([a.x, a.y, a.width, a.height], [width, height])?,
+            crate::gpu::source::SourceGeometry::new(
+                [a.x, a.y, a.width, a.height],
+                [width, height],
+            )?,
         )?
-        .with_identity(crate::gpu::execution::source::Identity::camera(
+        .with_identity(crate::gpu::source::identity::Identity::camera(
             scan.source().identity(),
         ))?;
         let images_seconds = tick.elapsed().as_secs_f64();

@@ -1,3 +1,6 @@
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
 use super::*;
 use crate::rendering::CpuRenderer;
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 
 pub(super) struct Composite {
     detail: Arc<RenderedView>,
@@ -7,7 +8,7 @@ pub(super) struct Composite {
 }
 
 impl RenderedView {
-    pub(crate) fn composite(
+    pub fn composite(
         device: &wgpu::Device,
         detail: Arc<Self>,
         underlay: Arc<Self>,

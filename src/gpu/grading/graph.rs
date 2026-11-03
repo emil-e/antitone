@@ -1,7 +1,8 @@
 //! Captured photographic functions over neutral AP1, independent of raster acquisition.
 
-use super::*;
-use crate::gpu::Grading;
+use crate::Error;
+use crate::gpu::evaluation::*;
+use crate::gpu::grading::Grading;
 use std::sync::Arc;
 
 struct Functions {
@@ -41,12 +42,12 @@ enum GradeDefinition {
         layers: crate::adjustment_layers::AdjustmentLayerSnapshot,
         area: crate::geometry::SourceRegion,
         coverage: u32,
-        coordinates: Option<crate::gpu::SourceGeometry>,
+        coordinates: Option<crate::gpu::source::SourceGeometry>,
     },
 }
 
 impl Grade {
-    fn coordinates(&self) -> Option<crate::gpu::SourceGeometry> {
+    fn coordinates(&self) -> Option<crate::gpu::source::SourceGeometry> {
         match self.definition {
             GradeDefinition::Layers { coordinates, .. } => coordinates,
             GradeDefinition::Roll(..) => None,
@@ -113,7 +114,7 @@ impl Operation for Grade {
 
 impl Grading {
     #[cfg(feature = "editor")]
-    pub(super) fn prewarm(
+    pub(crate) fn prewarm(
         device: &wgpu::Device,
         context: &Context,
         domain: Domain,
@@ -135,7 +136,7 @@ impl Grading {
     pub(crate) fn shader() -> String {
         format!(
             "{}\n{}",
-            crate::gpu::photograph::kernel_shader(),
+            crate::gpu::photograph::shader::kernel_shader(),
             include_str!("grading.wgsl")
         )
     }
@@ -146,22 +147,22 @@ impl Grading {
         prepared
     }
 
-    pub(super) fn with_camera_coordinates(
+    pub(crate) fn with_camera_coordinates(
         mut self,
-        geometry: Option<crate::gpu::SourceGeometry>,
+        geometry: Option<crate::gpu::source::SourceGeometry>,
     ) -> Self {
         self.coordinates = geometry;
         self
     }
 
     pub fn roll(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
-        if input.domain.meaning != Meaning::Neutral {
+        if input.domain().meaning != Meaning::Neutral {
             return Err(Error::InvalidParameter("Roll requires neutral AP1"));
         }
         Ok(ImageNode::new(
             Domain {
                 meaning: Meaning::Graded,
-                ..input.domain
+                ..input.domain()
             },
             Some(input),
             Grade {
@@ -172,14 +173,14 @@ impl Grading {
     }
 
     pub fn layers(&self, input: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
-        if input.domain.meaning != Meaning::Graded {
+        if input.domain().meaning != Meaning::Graded {
             return Err(Error::InvalidParameter(
                 "adjustment layers require graded AP1",
             ));
         }
         Ok(if self.active_layers {
             ImageNode::new(
-                input.domain,
+                input.domain(),
                 Some(input),
                 Grade {
                     definition: GradeDefinition::Layers {

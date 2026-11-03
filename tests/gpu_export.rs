@@ -10,7 +10,7 @@ use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu::SubmissionGate,
+    gpu::submission::SubmissionGate,
     gpu_export::{self, Format, Request},
     processing::{Calibration, InputSettings, RollSettings},
     renderer::GpuRenderer,
@@ -294,7 +294,7 @@ fn corrected_ordered_locals_reopen_after_native_permutations_and_rotated_coverag
         flat_field::FlatField,
         frame_raster::FrameRaster,
         geometry::{Flips, QuarterTurns, SourcePoint},
-        gpu::GpuFlatField,
+        gpu::flat::GpuFlatField,
     };
     use exr::prelude::*;
     let (device, queue, renderer) = context();

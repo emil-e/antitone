@@ -4,7 +4,7 @@
 //! Checks focus/size forwarding, native resize, submitted frames, clean exit and explicit completion.
 //! Early close, timeout, absent completion or zero frames fail. A process watchdog bounds hangs.
 //! Does not establish physical gestures, native dialogs, monitor colour or broader-device acceptance.
-use antitone::platform::{SubmissionGate, host};
+use antitone::{gpu::submission::SubmissionGate, platform::host};
 use std::{
     sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},

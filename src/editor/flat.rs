@@ -8,7 +8,7 @@ mod testing;
 mod tests;
 mod worker;
 use crate::{
-    gpu::{GpuFlatField, SourceGeometry},
+    gpu::{flat::GpuFlatField, source::SourceGeometry},
     project::FlatFieldSettings,
 };
 pub(super) use worker::CorrectionInput;
@@ -40,9 +40,13 @@ impl Correction {
                 settings.require_source(&source.development)?;
                 let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
                 let mut input = if source.development.lens_correction.is_some() {
-                    crate::gpu::ProcessingSource::new_continuous(device, &[[0.; 4]], matrix)?
+                    crate::gpu::source::ProcessingSource::new_continuous(
+                        device,
+                        &[[0.; 4]],
+                        matrix,
+                    )?
                 } else {
-                    crate::gpu::ProcessingSource::new(device, &[[0; 4]], matrix)?
+                    crate::gpu::source::ProcessingSource::new(device, &[[0; 4]], matrix)?
                 };
                 input.set_flat_field(
                     Some(gpu.clone()),

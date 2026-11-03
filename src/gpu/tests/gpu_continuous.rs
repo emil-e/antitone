@@ -1,12 +1,12 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::photograph::test_support::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 
-use antitone::{
-    gpu::{ProcessingParameters, ProcessingSource},
-    processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
-};
 use glam::{DMat3, DVec3};
+use {
+    crate::gpu::{parameters::ProcessingParameters, source::ProcessingSource},
+    antitone::processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
+};
 
 #[path = "../../../tests/support/gpu_headroom.rs"]
 mod headroom;
@@ -29,7 +29,7 @@ fn process(
     source: &ProcessingSource,
     count: usize,
     parameters: ProcessingParameters,
-    grade: Option<&antitone::gpu::ProcessingInput>,
+    grade: Option<&antitone::gpu::input::ProcessingInput>,
 ) -> Vec<[f32; 4]> {
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("continuous camera test"),
@@ -112,7 +112,7 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
         };
         let parameters =
             ProcessingParameters::positive(calibration, roll, DMat3::IDENTITY).unwrap();
-        let grade = antitone::gpu::ProcessingInput::new(
+        let grade = antitone::gpu::input::ProcessingInput::new(
             &device.limits(),
             calibration,
             roll,
@@ -173,11 +173,11 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
 
 #[test]
 fn camera_gain_headroom_is_checked_before_a_compensating_matrix() {
-    use antitone::{
-        flat_field::FlatField,
-        gpu::{GpuFlatField, SourceGeometry},
-    };
     use std::sync::Arc;
+    use {
+        crate::gpu::{flat::GpuFlatField, source::SourceGeometry},
+        antitone::flat_field::FlatField,
+    };
 
     pollster::block_on(async {
         let (device, queue, kernel) = context().await;

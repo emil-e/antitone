@@ -1,4 +1,51 @@
 use super::*;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::source::ProcessingSource;
+use crate::{
+    adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
+    },
+    geometry::SourcePoint,
+    processing::RollSettings,
+};
+use glam::{DMat3, DVec3};
+
+pub fn matrix() -> DMat3 {
+    DMat3::from_cols(
+        DVec3::new(1.07, 0.03, -0.08),
+        DVec3::new(0.01, 0.95, 0.02),
+        DVec3::new(-0.08, 0.02, 1.06),
+    )
+}
+
+pub fn settings(area: CellRegion) -> (RollSettings, AdjustmentLayerSnapshot) {
+    let roll = RollSettings {
+        exposure: 0.15,
+        ..Default::default()
+    };
+    let mut local = AdjustmentLayer::global(AdjustmentLayerSettings {
+        exposure: -0.2,
+        contrast: 1.3,
+        saturation: 0.85,
+        ..Default::default()
+    });
+    local.mask = AdjustmentLayerCoverage::Linear {
+        start: SourcePoint([f64::from(area.x), f64::from(area.y)]),
+        end: SourcePoint([f64::from(area.right()), f64::from(area.bottom())]),
+    };
+    let snapshot = AdjustmentLayerSnapshot::new(vec![
+        AdjustmentLayer::global(AdjustmentLayerSettings {
+            contrast: 1.15,
+            saturation: 1.1,
+            ..Default::default()
+        }),
+        local,
+    ])
+    .unwrap();
+    (roll, snapshot)
+}
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::photograph::PhotographGraph;
 
 pub(crate) struct CameraFixture {
     context: Context,
@@ -78,7 +125,7 @@ impl CameraFixture {
         input: &ProcessingInput,
     ) -> Result<(), Error> {
         let stages = input.pixel_pipeline();
-        let image = Photograph::from_resident_with_stages(
+        let image = PhotographGraph::from_resident_with_stages(
             &device.limits(),
             source,
             input,
@@ -101,13 +148,13 @@ impl CameraFixture {
         let plan = self.context.request(
             image.clone(),
             Region {
-                bounds: image.domain.finite().unwrap(),
-                grid: image.domain.grid,
+                bounds: image.domain().finite().unwrap(),
+                grid: image.domain().grid,
             },
             Budget {
                 tile: [
-                    image.domain.finite().unwrap().width,
-                    image.domain.finite().unwrap().height,
+                    image.domain().finite().unwrap().width,
+                    image.domain().finite().unwrap().height,
                 ],
                 scratch_bytes: device.limits().max_buffer_size.saturating_mul(4),
             },

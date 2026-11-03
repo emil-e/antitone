@@ -1,7 +1,7 @@
 //! Pinned authoring-reference transforms for GPU conformance checks.
 use crate::{
     Error,
-    gpu::{SubmissionGate, aces},
+    gpu::{aces, submission::SubmissionGate},
 };
 use std::{borrow::Cow, sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;

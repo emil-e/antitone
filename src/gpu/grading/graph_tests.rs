@@ -1,13 +1,14 @@
-use super::*;
+use crate::gpu::evaluation::*;
 use crate::{
     adjustment_layers::{
         AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
     },
     geometry::{SourcePoint, SourceRegion},
-    gpu::Grading,
+    gpu::grading::Grading,
     processing::RollSettings,
 };
 use glam::DVec3;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 fn buffer(device: &wgpu::Device, values: &[[f32; 4]]) -> wgpu::Buffer {
@@ -64,7 +65,7 @@ fn record(
         .encode_into(device, &mut encoder, input, &destination)
         .unwrap();
     queue.submit([encoder.finish()]);
-    (execute::read(device, queue, &destination), computes)
+    (read_buffer(device, queue, &destination), computes)
 }
 
 #[test]
@@ -74,7 +75,7 @@ fn photographic_constants_and_layer_queries_can_be_captured_without_a_device() {
         exposure: 0.5,
         ..Default::default()
     });
-    let input = crate::gpu::ProcessingInput::new(
+    let input = crate::gpu::input::ProcessingInput::new(
         &wgpu::Limits::default(),
         crate::processing::InputSettings::Digital,
         RollSettings::default(),
@@ -91,7 +92,7 @@ fn photographic_constants_and_layer_queries_can_be_captured_without_a_device() {
     let grade = input.grade().unwrap().compose(source.clone()).unwrap();
     let weights = Grading::weight_image(source, layer).unwrap();
     for node in [grade, weights] {
-        let function = node.operation.pointwise().unwrap();
+        let function = node.operation().pointwise().unwrap();
         assert!(
             function.bindings.iter().all(|(_, binding)| matches!(
                 binding,
@@ -131,7 +132,7 @@ fn a_borrowed_source_can_deliver_a_whole_or_partial_region_without_processing() 
             .collect();
         assert_eq!(actual, expected);
     }
-    assert_eq!(execute::read(&device, &queue, &input), pixels);
+    assert_eq!(read_buffer(&device, &queue, &input), pixels);
 }
 
 #[test]
@@ -185,7 +186,7 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
     let root = borrowed_input(domain);
     let roll_image = grading.roll(root.clone()).unwrap();
     let full_image = grading.compose(root).unwrap();
-    let roll_function = roll_image.operation.pointwise().unwrap();
+    let roll_function = roll_image.operation().pointwise().unwrap();
     assert!(
         roll_function
             .bindings
@@ -201,7 +202,7 @@ fn a_region_can_stop_after_roll_or_include_layers_without_mutating_its_neutral_s
         "compatible Roll and layer functions do not require another traversal"
     );
     assert_eq!(
-        execute::read(&device, &queue, &source),
+        read_buffer(&device, &queue, &source),
         pixels,
         "prefix and full requests preserve the captured neutral samples"
     );

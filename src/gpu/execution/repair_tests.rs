@@ -1,6 +1,9 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
-use crate::gpu::SourceGeometry;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+use crate::gpu::submission::SubmissionGate;
 use crate::processing::Calibration;
 use crate::processing::RollSettings;
 use crate::{
@@ -51,8 +54,9 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         )
         .unwrap(),
     );
-    let kernel =
-        crate::gpu::camera_fixture::CameraFixture::with_context(renderer.evaluation.clone());
+    let kernel = crate::gpu::photograph::test_support::CameraFixture::with_context(
+        renderer.evaluation.clone(),
+    );
     let reconstruction = Reconstructor::new(&device).unwrap();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -90,7 +94,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         });
         let render = |repaired| {
             let mut encoder = device.create_command_encoder(&Default::default());
-            let mut input = crate::gpu::ProcessingInput::from(grade.clone());
+            let mut input = crate::gpu::input::ProcessingInput::from(grade.clone());
             if repaired {
                 input.repairs = logical.clone();
             }

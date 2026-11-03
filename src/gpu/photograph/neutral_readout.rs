@@ -1,10 +1,10 @@
 //! Readout representation for ungraded AP1 whose full-domain bound needs folded exposure.
 
 use super::*;
-use crate::{
-    gpu::{GpuFlatField, GpuInputProgram},
-    processing::RollSettings,
-};
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::interpretation::InputTransform;
+use crate::gpu::photograph::PhotographGraph;
+use crate::processing::RollSettings;
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;
@@ -33,7 +33,7 @@ impl NeutralReadout {
     }
 }
 
-pub(super) fn readout_roll(program: &GpuInputProgram) -> RollSettings {
+pub(super) fn readout_roll(program: &InputTransform) -> RollSettings {
     let mut roll = RollSettings::default();
     if program.neutral_parameters().is_err() {
         // This is a numerical readout encoding, not the photograph's Roll. Keep it solely
@@ -43,11 +43,11 @@ pub(super) fn readout_roll(program: &GpuInputProgram) -> RollSettings {
     roll
 }
 
-impl Photograph {
+impl PhotographGraph {
     pub(crate) fn neutral_readout(
         camera: Arc<ImageNode>,
         field: Option<Arc<GpuFlatField>>,
-        program: GpuInputProgram,
+        program: InputTransform,
     ) -> Result<NeutralReadout, Error> {
         let roll = readout_roll(&program);
         let image = Self::unrepaired_readout(camera, field, program, roll)?;

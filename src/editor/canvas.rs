@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
 use crate::viewport::CanvasLayout;
 
 mod source_view;
@@ -572,8 +573,8 @@ impl Editor {
             .active_canvas()
             .grade
             .recipe()
-            .map(working_view::Capture::Photograph)
-            .unwrap_or_else(|| working_view::Capture::Primitive(parameters.clone()));
+            .map(crate::gpu::view::input::ViewInput::Recipe)
+            .unwrap_or_else(|| crate::gpu::view::input::ViewInput::Processing(parameters.clone()));
         if (working || !parameters.repairs.0.is_empty())
             && self.document.visit.working_view.observe(
                 physical_frame,
@@ -753,8 +754,8 @@ impl Editor {
             .active_canvas()
             .grade
             .recipe()
-            .map(crate::gpu::view::Capture::Photograph)
-            .unwrap_or_else(|| crate::gpu::view::Capture::Primitive(parameters.clone()));
+            .map(crate::gpu::view::input::ViewInput::Recipe)
+            .unwrap_or_else(|| crate::gpu::view::input::ViewInput::Processing(parameters.clone()));
         if let Some((source, requested_frame, rendered)) = &self.active_canvas().preview_rendered
             && source.same_source(proxy)
             && rendered.capture == capture
@@ -769,9 +770,9 @@ impl Editor {
             ));
         }
         let spec = if inspection {
-            crate::gpu::view::SourceRequest::inspection(frame)
+            crate::gpu::view::request::SourceRequest::inspection(frame)
         } else {
-            crate::gpu::view::SourceRequest::for_processing(frame, parameters)
+            crate::gpu::view::request::SourceRequest::for_processing(frame, parameters)
         }
         .ok()?
         .with_repairs(parameters.repairs.clone())

@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
 
 fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     harness.step();
@@ -36,7 +37,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             .as_ref()
             .expect("review uses original-source tool presentation");
         assert!(
-            signature.capture == super::super::working_view::Capture::Primitive(source.clone())
+            signature.capture == crate::gpu::view::input::ViewInput::Processing(source.clone())
         );
         assert_eq!(
             signature.composition,

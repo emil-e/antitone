@@ -1,10 +1,12 @@
-use crate::{
-    Error,
-    geometry::TextureMapping,
-    gpu::{GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSource, SourceGeometry},
-    renderer::GpuRenderer,
-    rendering::OutputTarget,
-};
+use crate::Error;
+use crate::geometry::TextureMapping;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+use crate::renderer::GpuRenderer;
+use crate::rendering::OutputTarget;
 use glam::{DMat3, Vec4};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -487,7 +489,7 @@ impl GpuImage {
 
     pub(crate) fn begin_look_check_tracked(
         &self,
-        submissions: &crate::gpu::SubmissionGate,
+        submissions: &crate::gpu::submission::SubmissionGate,
         ready: impl FnOnce() + Send + 'static,
     ) {
         let pending = submissions.track();
@@ -680,7 +682,7 @@ pub struct ImagePaint {
     #[cfg(feature = "editor")]
     rendered: Option<(
         Arc<crate::gpu::view::RenderedView>,
-        crate::gpu::SubmissionGate,
+        crate::gpu::submission::SubmissionGate,
         egui::Context,
     )>,
     image: Arc<GpuImage>,
@@ -695,7 +697,7 @@ impl ImagePaint {
     pub(crate) fn rendered(
         view: Arc<crate::gpu::view::RenderedView>,
         uv: TextureMapping,
-        submissions: crate::gpu::SubmissionGate,
+        submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
     ) -> Self {
         Self {

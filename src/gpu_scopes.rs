@@ -1,11 +1,15 @@
-use crate::{
-    Error,
-    frame_raster::FrameRaster,
-    geometry::TextureMapping,
-    gpu::{ProcessingInput, ProcessingParameters},
-    scopes::{BINS, Basis, Counts, PLANE_LEN, Plot, Settings},
-    viewer::GpuImage,
-};
+use crate::Error;
+use crate::frame_raster::FrameRaster;
+use crate::geometry::TextureMapping;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::scopes::BINS;
+use crate::scopes::Basis;
+use crate::scopes::Counts;
+use crate::scopes::PLANE_LEN;
+use crate::scopes::Plot;
+use crate::scopes::Settings;
+use crate::viewer::GpuImage;
 use std::sync::{Arc, Mutex, Weak};
 use wgpu::util::DeviceExt;
 
@@ -22,7 +26,7 @@ struct Parameters {
 #[derive(Clone)]
 struct Key {
     #[cfg(feature = "editor")]
-    rendered_source: Option<crate::gpu::view::SourceRequest>,
+    rendered_source: Option<crate::gpu::view::request::SourceRequest>,
     image: Weak<GpuImage>,
     source_revision: u64,
     processing: Option<ProcessingInput>,
@@ -557,7 +561,7 @@ pub struct ScopePaint {
     #[cfg(feature = "editor")]
     rendered: Option<(
         Arc<crate::gpu::view::RenderedView>,
-        crate::gpu::SubmissionGate,
+        crate::gpu::submission::SubmissionGate,
     )>,
     pub frame: FrameRaster,
     mapping: TextureMapping,
@@ -573,7 +577,7 @@ impl ScopePaint {
         view: Arc<crate::gpu::view::RenderedView>,
         frame: FrameRaster,
         settings: Settings,
-        submissions: crate::gpu::SubmissionGate,
+        submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
     ) -> Self {
         Self {
@@ -596,7 +600,7 @@ impl ScopePaint {
         frame: FrameRaster,
         mapping: TextureMapping,
         settings: Settings,
-        submissions: crate::gpu::SubmissionGate,
+        submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
     ) -> Self {
         let mut paint = Self::rendered(gpu, view, frame, settings, submissions, context);

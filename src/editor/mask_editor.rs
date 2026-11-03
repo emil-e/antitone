@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::gpu::input::ProcessingInput;
 use crate::processing::InputSettings;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},

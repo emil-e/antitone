@@ -158,7 +158,7 @@ fn active_sources_preserve_native_and_continuous_values_with_no_optional_retenti
         let mut context = Context::new(&device, CachePolicy { generated_bytes: 0 });
         context.active_inputs = cache::Allowance::new(1 << 20);
         let scope = context.test_materializations(false);
-        let gate = crate::gpu::SubmissionGate::default();
+        let gate = crate::gpu::submission::SubmissionGate::default();
         let active = pollster::block_on(context.prepare_input(
             &queue,
             &gate,
@@ -265,7 +265,7 @@ fn cancelling_an_upload_keeps_its_reservation_until_queued_copy_cleanup() {
     let mut context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     context.active_inputs = cache::Allowance::new(256);
     let scope = context.test_materializations(false);
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let (started, starts) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     let resume = Mutex::new(resume);
@@ -312,7 +312,7 @@ fn submitted_work_keeps_admission_after_owner_and_waiter_retirement() {
     let mut context = Context::new(&device, CachePolicy { generated_bytes: 0 });
     context.active_inputs = cache::Allowance::new(256);
     let scope = context.test_materializations(false);
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let active =
         pollster::block_on(context.prepare_input(&queue, &gate, &scope, source.clone(), || false))
             .unwrap()

@@ -400,7 +400,7 @@ fn cancellation_inside_a_nested_worker_does_not_publish_parent_pixels_or_read_mo
     });
     let stopped = Arc::new(AtomicBool::new(false));
     let submissions = Arc::new(AtomicUsize::new(0));
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let (stop, count) = (stopped.clone(), submissions.clone());
     gate.observe_submissions(Arc::new(move || {
         if count.fetch_add(1, Ordering::SeqCst) == 1 {
@@ -925,7 +925,7 @@ fn a_large_resident_aperture_uses_bounded_contributions_without_reacquiring_sour
         tile: [512, 256],
         scratch_bytes: 64 << 20,
     };
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let resident = pollster::block_on(
         context
             .materialize(
@@ -1132,7 +1132,7 @@ fn cancellation_after_a_contribution_prevents_final_output_writes_and_more_sourc
     });
     let stopped = Arc::new(AtomicBool::new(false));
     let submissions = Arc::new(AtomicUsize::new(0));
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let (stop, count) = (stopped.clone(), submissions.clone());
     gate.observe_submissions(Arc::new(move || {
         if count.fetch_add(1, Ordering::SeqCst) == 1 {

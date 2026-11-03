@@ -1,5 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::flat::GpuFlatField;
 use std::time::Instant;
 
 /// Production GPU ownership/dispatch probe, not editor input-to-display or aggregate admission.
@@ -23,7 +24,7 @@ fn cost_and_retirement(with_underlay: bool) {
             _ => [1920, 1080],
         };
         let (device, queue, renderer, kernels) = context().await;
-        let gate = crate::gpu::SubmissionGate::default();
+        let gate = crate::gpu::submission::SubmissionGate::default();
         let (mut scan, cal) = if std::env::var_os("ANTITONE_SCREEN_RAW").is_some() {
             crate::raw_test_support::train_raw::load()
         } else {
@@ -66,7 +67,7 @@ fn cost_and_retirement(with_underlay: bool) {
         )
         .unwrap();
         let roll = RollSettings::default();
-        let native = || crate::gpu::allocated_resource_bytes(&device);
+        let native = || crate::sys::allocated_resource_bytes(&device);
         eprintln!(
             "physical_view_gpu start output={output:?} corrected={corrected} underlay={with_underlay} correction=synthetic_2x2 native_bytes={:?}",
             native()

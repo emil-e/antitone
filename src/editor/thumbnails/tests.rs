@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::parameters::ProcessingParameters;
 use crate::project::Development;
 
 fn controlled() -> (Thumbnails, mpsc::Receiver<workflow::Submission>) {

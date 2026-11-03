@@ -1,4 +1,11 @@
-use super::{CameraMatrix, ProcessingParameters, SourceGeometry, packed_constants};
+mod graph;
+#[cfg(all(test, feature = "editor"))]
+mod graph_tests;
+
+use crate::gpu::{
+    parameters::{CameraMatrix, ProcessingParameters, packed_constants},
+    source::SourceGeometry,
+};
 use crate::{
     Error,
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},

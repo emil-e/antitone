@@ -1,8 +1,5 @@
 //! Opt-in native idle-executor check; ordinary test invocations do not open a window.
-use antitone::{
-    application::UiContext,
-    platform::{SubmissionGate, host},
-};
+use antitone::{application::UiContext, gpu::submission::SubmissionGate, platform::host};
 use futures_channel::oneshot;
 use std::{
     cell::Cell,

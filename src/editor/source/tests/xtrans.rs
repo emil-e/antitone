@@ -1,15 +1,16 @@
 //! Opt-in application-path coverage using private, read-only X-Trans RAFs.
 use super::*;
-use crate::{
-    frame_raster::FrameRaster,
-    geometry::{Composition, FramePoint},
-    gpu::{
-        ProcessingInput, SubmissionGate,
-        view::{RenderedView, SourceRequest, ViewKernels},
-    },
-    processing::{Calibration, InputSettings},
-    rendering::OutputTarget,
-};
+use crate::frame_raster::FrameRaster;
+use crate::geometry::Composition;
+use crate::geometry::FramePoint;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::RenderedView;
+use crate::gpu::view::ViewKernels;
+use crate::gpu::view::request::SourceRequest;
+use crate::processing::Calibration;
+use crate::processing::InputSettings;
+use crate::rendering::OutputTarget;
 use glam::DVec3;
 
 #[test]

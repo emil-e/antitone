@@ -14,7 +14,7 @@ impl Context {
     pub fn read(
         &self,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         evaluation: &Evaluation,
         cancelled: impl Fn() -> bool,
         mut consume: impl FnMut(CellRegion, &[[f32; 4]]) -> Result<(), Error>,

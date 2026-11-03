@@ -1,5 +1,9 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::source::SourceGeometry;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::request::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     color::{Balance, wb_matrix},
@@ -167,7 +171,7 @@ fn render_repaired(
         crate::adjustment_layers::AdjustmentLayer::global(photo),
     ])
     .and_then(|snapshot| {
-        crate::gpu::ProcessingInput::new(
+        crate::gpu::input::ProcessingInput::new(
             &device.limits(),
             calibration(),
             roll,
@@ -425,7 +429,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             crate::adjustment_layers::AdjustmentLayer::global(photo),
         ])
         .and_then(|snapshot| {
-            crate::gpu::ProcessingInput::new(
+            crate::gpu::input::ProcessingInput::new(
                 &device.limits(),
                 calibration(),
                 roll,
@@ -511,7 +515,7 @@ fn neutral_repairs_filter_before_grading_preserve_known_pixels_and_reuse_gpu_con
             let acquired = &first.graded.as_ref().unwrap().source;
             let mut captured = acquired.spec.processing_fixture();
             captured.repairs = patches.clone();
-            let (definition, _) = crate::gpu::evaluation::Photograph::preview_with_input(
+            let (definition, _) = crate::gpu::photograph::PhotographGraph::preview_with_input(
                 &device.limits(),
                 crate::gpu::evaluation::camera_source(&scan).unwrap(),
                 None,

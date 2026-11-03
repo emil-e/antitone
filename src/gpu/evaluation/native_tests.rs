@@ -1,11 +1,11 @@
 use super::*;
-use crate::{
-    adjustment_layers::AdjustmentLayerSnapshot,
-    geometry::Composition,
-    gpu::{Grading, ProcessingInput},
-    processing::{InputSettings, RollSettings},
-    rendering::OutputTarget,
-};
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::geometry::Composition;
+use crate::gpu::grading::Grading;
+use crate::gpu::input::ProcessingInput;
+use crate::processing::InputSettings;
+use crate::processing::RollSettings;
+use crate::rendering::OutputTarget;
 use std::sync::atomic::AtomicU64;
 
 struct Case {
@@ -95,7 +95,7 @@ fn regional(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &Arc<crate::renderer::GpuRenderer>,
-    gate: &crate::gpu::SubmissionGate,
+    gate: &crate::gpu::submission::SubmissionGate,
     case: &Case,
 ) -> Arc<crate::viewer::GpuImage> {
     crate::refinement::refine(
@@ -124,7 +124,7 @@ fn authored_native_source_and_real_grade_mtf_display_match_regional_execution() 
     .write();
     let scan = Arc::new(crate::scan::Scan::open(file.path(), None).unwrap());
     let case = case(&device, &renderer, scan, [73, 59]);
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let original = regional(&device, &queue, &renderer, &gate, &case);
     let original = crate::viewer::readback::image_pixels(&device, &queue, &original);
     assert!(original.iter().flatten().all(|v| v.is_finite()));
@@ -169,7 +169,7 @@ fn native_evaluation_resource_comparison() {
     .write();
     let scan = Arc::new(crate::scan::Scan::open(file.path(), None).unwrap());
     let case = case(&device, &renderer, scan, [147, 113]);
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let peak = Arc::new(AtomicU64::new(0));
     let submissions = Arc::new(AtomicU64::new(0));
     let submitted = submissions.clone();
@@ -179,7 +179,7 @@ fn native_evaluation_resource_comparison() {
     let (observed, observed_device) = (peak.clone(), device.clone());
     gate.observe_encoded_resources(Arc::new(move || {
         observed.fetch_max(
-            crate::gpu::allocated_resource_bytes(&observed_device).unwrap_or(0) as u64,
+            crate::sys::allocated_resource_bytes(&observed_device).unwrap_or(0) as u64,
             Ordering::Relaxed,
         );
     }));
@@ -219,7 +219,7 @@ fn native_evaluation_resource_comparison() {
     };
     println!(
         "evaluation_initial implementation={mode} device={:?}",
-        crate::gpu::allocated_resource_bytes(&device)
+        crate::sys::allocated_resource_bytes(&device)
     );
     for run in 0..6 {
         peak.store(0, Ordering::Relaxed);
@@ -233,7 +233,7 @@ fn native_evaluation_resource_comparison() {
             println!(
                 "evaluation_compare implementation={mode} run={run} seconds={:.9} retained={:?} encoded_peak={} stats={:?}",
                 start.elapsed().as_secs_f64(),
-                crate::gpu::allocated_resource_bytes(&device),
+                crate::sys::allocated_resource_bytes(&device),
                 peak.load(Ordering::Relaxed),
                 result.counts
             );
@@ -248,7 +248,7 @@ fn native_evaluation_resource_comparison() {
             println!(
                 "evaluation_compare implementation={mode} run={run} seconds={:.9} retained={:?} encoded_peak={}",
                 start.elapsed().as_secs_f64(),
-                crate::gpu::allocated_resource_bytes(&device),
+                crate::sys::allocated_resource_bytes(&device),
                 peak.load(Ordering::Relaxed)
             );
             if run == 0
@@ -273,6 +273,6 @@ fn native_evaluation_resource_comparison() {
         .unwrap();
     println!(
         "evaluation_retired implementation={mode} device={:?}",
-        crate::gpu::allocated_resource_bytes(&device)
+        crate::sys::allocated_resource_bytes(&device)
     );
 }

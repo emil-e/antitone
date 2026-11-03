@@ -1,4 +1,5 @@
-use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
 use crate::{halation::HalationSettings, pixel_pipeline::PixelPipeline};
 
 fn base() -> ProcessingInput {

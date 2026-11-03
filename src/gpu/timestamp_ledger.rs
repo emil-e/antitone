@@ -1,6 +1,8 @@
 //! Opt-in pass counters without additional per-tile submissions or completion waits.
-use super::*;
+use crate::Error;
+use crate::gpu::submission::SubmissionGate;
 use objc2_metal::MTLDevice;
+use std::sync::Arc;
 use std::{
     ptr::NonNull,
     sync::{

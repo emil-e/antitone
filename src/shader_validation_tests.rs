@@ -29,7 +29,7 @@ fn validate(name: &str, source: &str, entry_points: &[&str]) {
 fn composed_photographic_kernel_validates() {
     validate(
         "photographic kernel",
-        &gpu::photograph::module_shader(),
+        &gpu::photograph::shader::module_shader(),
         &["main", "repair_original", "repair_copy", "repair_neutral"],
     );
 }
@@ -49,15 +49,15 @@ fn composed_working_view_validates() {
     );
     validate(
         "photographic functions",
-        &gpu::evaluation::Grading::shader(),
+        &gpu::grading::Grading::shader(),
         &[],
     );
     validate(
         "camera-cell adjustments",
         &format!(
             "{}\n{}",
-            gpu::evaluation::Grading::shader(),
-            include_str!("gpu/evaluation/camera_adjustments.wgsl")
+            gpu::grading::Grading::shader(),
+            include_str!("gpu/grading/camera_adjustments.wgsl")
         ),
         &["camera_adjustments"],
     );

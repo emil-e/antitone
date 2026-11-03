@@ -4,7 +4,7 @@ use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::Composition,
-    gpu::GpuFlatField,
+    gpu::flat::GpuFlatField,
     pixel_pipeline::PixelPipeline,
     processing::{InputSettings, RollSettings},
     rendering::{OutputReference, OutputTarget},

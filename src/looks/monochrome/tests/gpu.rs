@@ -1,7 +1,7 @@
 use super::*;
 use crate::gpu::{
-    SubmissionGate,
     lut3d::{Kernel, Lut},
+    submission::SubmissionGate,
 };
 use std::{sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;

@@ -1,15 +1,23 @@
 use super::*;
+use crate::gpu::photograph::PhotographGraph;
 
 mod regions;
-use crate::{
-    adjustment_layers::{
-        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
-        AdjustmentLayerStack,
-    },
-    geometry::{SourcePoint, SourceRegion},
-    gpu::{GpuFlatField, ProcessingInput, ProcessingSource, SourceGeometry},
-    processing::{Calibration, InputPipeline, InputSettings, RollPipeline, RollSettings},
-};
+use crate::adjustment_layers::AdjustmentLayer;
+use crate::adjustment_layers::AdjustmentLayerCoverage;
+use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::adjustment_layers::AdjustmentLayerStack;
+use crate::geometry::SourcePoint;
+use crate::geometry::SourceRegion;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+use crate::processing::Calibration;
+use crate::processing::InputPipeline;
+use crate::processing::InputSettings;
+use crate::processing::RollPipeline;
+use crate::processing::RollSettings;
 use glam::DVec3;
 
 fn recorded(
@@ -66,7 +74,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
     use crate::dust_repair::{Repair, RepairId, RepairOrigin, SupportMask};
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let size = [13, 11];
-    let matrix = super::tests::matrix();
+    let matrix = crate::gpu::photograph::test_support::matrix();
     for region in [
         SourceRegion::from([23, 37, 13, 11]),
         SourceRegion::from([23, 37, 31, 25]),
@@ -204,7 +212,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                         crate::gpu::repairs::Snapshot::logical(vec![repaired.clone()]).unwrap();
                 }
                 let raster = crate::gpu::raster::Raster::region(region, size);
-                let photo = Photograph::from_resident_with_stages(
+                let photo = PhotographGraph::from_resident_with_stages(
                     &device.limits(),
                     &source,
                     &input,
@@ -334,7 +342,7 @@ fn resident_camera_execution_resources() {
         let region = SourceRegion::from([17, 29, side, side]);
         let renderer =
             pollster::block_on(crate::renderer::GpuRenderer::new(device, queue)).unwrap();
-        let matrix = super::tests::matrix();
+        let matrix = crate::gpu::photograph::test_support::matrix();
         let values: Vec<_> = (0..side * side)
             .map(|i| {
                 let x = (i % side) as f32 / side as f32;
@@ -379,13 +387,13 @@ fn resident_camera_execution_resources() {
             .unwrap()
             .unwrap();
         let raster = crate::gpu::raster::Raster::planned(&plan);
-        let gate = crate::gpu::SubmissionGate::default();
+        let gate = crate::gpu::submission::SubmissionGate::default();
         let peak = Arc::new(AtomicU64::new(0));
         let observed = peak.clone();
         let gpu = device.clone();
         gate.observe_encoded_resources(Arc::new(move || {
             observed.fetch_max(
-                crate::gpu::allocated_resource_bytes(&gpu).unwrap() as u64,
+                crate::sys::allocated_resource_bytes(&gpu).unwrap() as u64,
                 Ordering::Relaxed,
             );
         }));
@@ -417,7 +425,7 @@ fn resident_camera_execution_resources() {
                         renderer.evaluation.clone(),
                     )
                     .unwrap();
-                    crate::gpu::camera_fixture::CameraFixture::with_context(renderer.evaluation.clone())
+                    crate::gpu::photograph::test_support::CameraFixture::with_context(renderer.evaluation.clone())
                         .encode_grade(device, &mut encoder, &source, &output, &pipeline)
                         .unwrap();
                     prepared
@@ -437,7 +445,7 @@ fn resident_camera_execution_resources() {
                 println!(
                     "resident_resource common={common} iteration={iteration} seconds={:.9} retained_device={} encoded_device_peak={} evaluation_buffer_creations={creations} evaluation_buffer_bytes={bytes}",
                     started.elapsed().as_secs_f64(),
-                    crate::gpu::allocated_resource_bytes(device).unwrap(),
+                    crate::sys::allocated_resource_bytes(device).unwrap(),
                     peak.load(Ordering::Relaxed)
                 );
             }
@@ -458,7 +466,7 @@ fn resident_camera_execution_resources() {
             .map_err(|e| e.to_string())?;
         println!(
             "resident_resource retired_device={}",
-            crate::gpu::allocated_resource_bytes(device).unwrap()
+            crate::sys::allocated_resource_bytes(device).unwrap()
         );
         monitor.check()?;
         Ok(())

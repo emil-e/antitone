@@ -1,7 +1,10 @@
 //! Explicit AppKit menu/event-loop check. Ordinary invocation never opens a window.
-use antitone::platform::{
-    SubmissionGate, host,
-    menu::{self, Action},
+use antitone::{
+    gpu::submission::SubmissionGate,
+    platform::{
+        host,
+        menu::{self, Action},
+    },
 };
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSMenu};

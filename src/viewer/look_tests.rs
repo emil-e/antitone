@@ -1,8 +1,9 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
 #[test]
 fn idle_host_polling_completes_projected_look_admission_without_another_frame_or_submission() {
     use crate::{
-        gpu::SubmissionGate,
+        gpu::submission::SubmissionGate,
         looks::{LookAsset, LookOrigin, Lut3D},
         processing::{Calibration, RollSettings},
     };

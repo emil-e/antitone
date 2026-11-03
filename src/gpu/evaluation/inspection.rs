@@ -11,7 +11,7 @@ struct Inspection {
 
 pub(crate) fn inspect(
     input: Arc<ImageNode>,
-    parameters: crate::gpu::ProcessingParameters,
+    parameters: crate::gpu::parameters::ProcessingParameters,
 ) -> Result<Arc<ImageNode>, Error> {
     if input.domain.meaning != Meaning::Neutral {
         return Err(Error::InvalidParameter("inspection requires neutral AP1"));

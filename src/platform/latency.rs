@@ -140,7 +140,7 @@ impl Trace {
         revision: Option<(u64, u64)>,
         device: &wgpu::Device,
     ) {
-        let bytes = crate::gpu::allocated_resource_bytes(device);
+        let bytes = crate::sys::allocated_resource_bytes(device);
         self.peak_resource_bytes = self.peak_resource_bytes.max(bytes.unwrap_or(0));
         let ns = |at: Option<Instant>| at.map(|at| self.ns(at));
         log::info!(
@@ -239,7 +239,7 @@ mod tests {
             let mut frame = trace.begin();
             trace.submitting(&mut frame);
             let encoder = device.create_command_encoder(&Default::default());
-            let index = crate::gpu::SubmissionGate::default().submit_with_completion(
+            let index = crate::gpu::submission::SubmissionGate::default().submit_with_completion(
                 &queue,
                 [encoder.finish()],
                 trace.completion(&frame),

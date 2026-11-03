@@ -1,5 +1,7 @@
 //! Purpose-bound original-sample reconstruction, independent of normal working-view acceptance.
 use super::*;
+#[cfg(test)]
+use crate::gpu::input::ProcessingInput;
 use std::sync::{Mutex, Weak};
 #[cfg(test)]
 mod tests;
@@ -12,7 +14,7 @@ pub(super) enum OriginalPurpose {
 
 #[derive(Clone, PartialEq)]
 pub(super) struct Demand {
-    pub capture: working_view::Capture,
+    pub capture: crate::gpu::view::input::ViewInput,
     pub repairs: crate::gpu::repairs::Snapshot,
     pub target: OutputTarget,
     pub view: Option<ViewRequest>,
@@ -31,7 +33,7 @@ impl Demand {
     ) -> Self {
         Self {
             repairs: input.repairs.clone(),
-            capture: working_view::Capture::Primitive(input),
+            capture: crate::gpu::view::input::ViewInput::Processing(input),
             target,
             view,
             composition,
@@ -247,10 +249,9 @@ impl OriginalView {
         purpose: OriginalPurpose,
         limits: &wgpu::Limits,
     ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
-        use crate::{
-            frame_raster::FrameRaster,
-            gpu::view::{RenderedView, SourceRequest},
-        };
+        use crate::frame_raster::FrameRaster;
+        use crate::gpu::view::RenderedView;
+        use crate::gpu::view::request::SourceRequest;
         let owner = &*self;
         let Some((view, image)) = owner.settled() else {
             return Ok(None);
@@ -274,7 +275,7 @@ impl OriginalView {
         };
         let input = wanted.capture.processing(limits, &wanted.repairs)?;
         let identity =
-            crate::gpu::execution::source::Identity::camera(wanted.source.source.identity());
+            crate::gpu::source::identity::Identity::camera(wanted.source.source.identity());
         let spec = if input.grade().is_none() {
             SourceRequest::inspection(frame)?
         } else {

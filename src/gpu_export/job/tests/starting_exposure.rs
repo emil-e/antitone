@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 use crate::{processing::InputSettings, rendering::CpuRenderer};
 
 use crate::exposure_fixture;

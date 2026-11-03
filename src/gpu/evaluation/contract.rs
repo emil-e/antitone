@@ -240,6 +240,14 @@ impl ImageNode {
         self.domain
     }
 
+    pub(crate) fn input(&self) -> Option<&Arc<ImageNode>> {
+        self.input.as_ref()
+    }
+
+    pub(crate) fn operation(&self) -> &Arc<dyn Operation> {
+        &self.operation
+    }
+
     pub fn source(&self) -> Option<Arc<dyn Source>> {
         self.operation.source()
     }

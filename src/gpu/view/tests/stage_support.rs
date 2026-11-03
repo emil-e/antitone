@@ -1,4 +1,7 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {

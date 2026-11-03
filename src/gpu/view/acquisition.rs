@@ -4,27 +4,22 @@ use crate::{
     Error,
     frame_raster::FrameRaster,
     geometry::Composition,
-    gpu::{GpuFlatField, ProcessingSource, SourceGeometry, SubmissionGate},
+    gpu::{
+        flat::GpuFlatField,
+        source::{ProcessingSource, SourceGeometry},
+        submission::SubmissionGate,
+    },
     scan::Scan,
 };
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
-
-mod processing;
-
-pub(crate) use processing::Processed;
 
 mod repairs;
 
-mod request;
+use super::storage::float_buffer;
+use crate::gpu::view::processing::ProcessedView;
+use crate::gpu::view::request::SourceRequest;
 
-pub(crate) use request::SourceRequest;
-
-mod storage;
-
-pub(crate) use storage::{float_buffer, uniform};
-
-pub(crate) struct Acquired {
+pub struct AcquiredViewRaster {
     pub spec: SourceRequest,
     pub renderer: Arc<crate::renderer::GpuRenderer>,
     pub pixels: crate::gpu::evaluation::BufferImage,
@@ -32,33 +27,8 @@ pub(crate) struct Acquired {
     pub basis: Arc<crate::gpu::evaluation::ImageNode>,
 }
 
-fn neutral_definition(
-    source: &ProcessingSource,
-    interpretation: crate::gpu::SourceInterpretation,
-    repairs: crate::gpu::repairs::Snapshot,
-) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
-    let geometry = source
-        .geometry()
-        .ok_or(Error::InvalidParameter("neutral source requires geometry"))?;
-    let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
-    let root = crate::gpu::evaluation::Neutral {
-        interpretation,
-        field: source.flat_field.clone(),
-        repairs,
-    }
-    .resident(source, raster)?;
-    let output_domain = crate::gpu::evaluation::Domain {
-        grid: crate::gpu::evaluation::Grid {
-            coverage: 8,
-            ..root.domain().grid
-        },
-        ..root.domain()
-    };
-    crate::gpu::evaluation::reconstruct(root, output_domain)
-}
-
-impl Acquired {
-    pub(crate) fn supplied(&self) -> Result<crate::gpu::evaluation::SuppliedImage, Error> {
+impl AcquiredViewRaster {
+    pub fn supplied(&self) -> Result<crate::gpu::evaluation::SuppliedImage, Error> {
         let region = match &self.pixels {
             crate::gpu::evaluation::BufferImage::Produced(value) => value.descriptor.region,
             crate::gpu::evaluation::BufferImage::Submitted(_) => self.spec.input_region()?,
@@ -72,7 +42,7 @@ impl Acquired {
 
     /// Navigation positives process the already-sampled camera raster, not the originals.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn camera_preview(
+    pub fn camera_preview(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
@@ -80,12 +50,12 @@ impl Acquired {
         proxy: &crate::scan::CameraProxy,
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
-        input: &crate::gpu::ProcessingInput,
-    ) -> Result<(Arc<Self>, Arc<Processed>), Error> {
-        let program = input.source_program().ok_or(Error::InvalidParameter(
+        input: &crate::gpu::input::ProcessingInput,
+    ) -> Result<(Arc<Self>, Arc<ProcessedView>), Error> {
+        let program = input.source_transform().ok_or(Error::InvalidParameter(
             "camera preview requires captured source interpretation",
         ))?;
-        let spec = spec.capture(crate::gpu::execution::source::Identity::proxy(proxy))?;
+        let spec = spec.capture(crate::gpu::source::identity::Identity::proxy(proxy))?;
         let mut frame = FrameRaster::full(Composition::new(
             spec.area,
             Default::default(),
@@ -117,13 +87,14 @@ impl Acquired {
                 proxy.dimensions(),
             )?,
         )?;
-        let definition = neutral_definition(
-            &camera,
-            crate::gpu::SourceInterpretation::Photograph(*program),
-            input.repairs.clone(),
-        )?;
+        let definition = crate::gpu::photograph::NeutralInput {
+            interpretation: crate::gpu::interpretation::SourceInterpretation::Photograph(*program),
+            field: camera.flat_field.clone(),
+            repairs: input.repairs.clone(),
+        }
+        .resident_view(&camera)?;
         let (root, plan) =
-            Processed::definition(&device.limits(), &spec, definition.clone(), input)?;
+            ProcessedView::definition(&device.limits(), &spec, definition.clone(), input)?;
         let geometry = camera.geometry().unwrap();
         let native = crate::gpu::pixel_pipeline::Prepared::from_composition(
             device,
@@ -143,37 +114,37 @@ impl Acquired {
             definition,
             renderer,
         });
-        let processed = Processed::record(device, source.clone(), input, root, plan)?;
+        let processed = ProcessedView::record(device, source.clone(), input, root, plan)?;
         Self::submit_preview(device, queue, submissions, source, native, processed)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn processing_preview(
+    pub fn processing_preview(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         renderer: Arc<crate::renderer::GpuRenderer>,
         source: Arc<ProcessingSource>,
-        input: &crate::gpu::ProcessingInput,
+        input: &crate::gpu::input::ProcessingInput,
         spec: SourceRequest,
-    ) -> Result<(Arc<Self>, Arc<Processed>), Error> {
+    ) -> Result<(Arc<Self>, Arc<ProcessedView>), Error> {
         let (spec, definition) = Self::processing_definition(&source, input, spec)?;
         let (root, plan) =
-            Processed::definition(&device.limits(), &spec, definition.clone(), input)?;
+            ProcessedView::definition(&device.limits(), &spec, definition.clone(), input)?;
         let (acquired, native) = Self::record_processing(device, renderer, spec, definition)?;
-        let processed = Processed::record(device, acquired.clone(), input, root, plan)?;
+        let processed = ProcessedView::record(device, acquired.clone(), input, root, plan)?;
         Self::submit_preview(device, queue, submissions, acquired, native, processed)
     }
 
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_processing(
+    pub fn from_processing(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         renderer: Arc<crate::renderer::GpuRenderer>,
         source: Arc<ProcessingSource>,
-        input: &crate::gpu::ProcessingInput,
+        input: &crate::gpu::input::ProcessingInput,
         spec: SourceRequest,
     ) -> Result<Arc<Self>, Error> {
         let (spec, definition) = Self::processing_definition(&source, input, spec)?;
@@ -190,7 +161,7 @@ impl Acquired {
 
     fn processing_definition(
         source: &Arc<ProcessingSource>,
-        input: &crate::gpu::ProcessingInput,
+        input: &crate::gpu::input::ProcessingInput,
         spec: SourceRequest,
     ) -> Result<(SourceRequest, Arc<crate::gpu::evaluation::ImageNode>), Error> {
         if !spec.repairs.0.is_empty() {
@@ -201,13 +172,13 @@ impl Acquired {
         let spec = if spec.identity.captured() {
             spec
         } else {
-            spec.capture(crate::gpu::execution::source::Identity::Resident(
+            spec.capture(crate::gpu::source::identity::Identity::Resident(
                 Arc::downgrade(source),
             ))?
         };
-        let interpretation = input.source_program().map_or(
-            crate::gpu::SourceInterpretation::Inspection(source.camera_to_ap1),
-            |program| crate::gpu::SourceInterpretation::Photograph(*program),
+        let interpretation = input.source_transform().map_or(
+            crate::gpu::interpretation::SourceInterpretation::Inspection(source.camera_to_ap1),
+            |program| crate::gpu::interpretation::SourceInterpretation::Photograph(*program),
         );
         let source = source.with_matrix(interpretation.matrix())?;
         let geometry = source
@@ -225,7 +196,7 @@ impl Acquired {
             size: geometry.size(),
         })?;
         let input = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
-        let root = crate::gpu::evaluation::Neutral {
+        let root = crate::gpu::photograph::NeutralInput {
             interpretation,
             field: source.flat_field.clone(),
             repairs: spec.repairs.clone(),
@@ -243,28 +214,34 @@ impl Acquired {
         Ok((spec, root))
     }
 
-    pub(crate) fn reprocess(
+    pub fn process_from_retained(
         self: &Arc<Self>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         definition: Arc<crate::gpu::evaluation::ImageNode>,
-        input: &crate::gpu::ProcessingInput,
-        previous: Option<&Arc<Processed>>,
-    ) -> Result<(Arc<Self>, Arc<Processed>), Error> {
+        input: &crate::gpu::input::ProcessingInput,
+        previous: Option<&Arc<ProcessedView>>,
+    ) -> Result<(Arc<Self>, Arc<ProcessedView>), Error> {
         let (root, plan) =
-            Processed::definition(&device.limits(), &self.spec, definition.clone(), input)?;
+            ProcessedView::definition(&device.limits(), &self.spec, definition.clone(), input)?;
         let region = root
             .region_for(&definition, root.domain().finite()?)?
             .ok_or(Error::InvalidParameter("preview has no neutral dependency"))?;
         if self.supplied()?.covers(&definition, region) {
-            let processed =
-                Processed::prepare_calculation(device, self.clone(), input, root, plan, previous)?;
+            let processed = ProcessedView::prepare_calculation(
+                device,
+                self.clone(),
+                input,
+                root,
+                plan,
+                previous,
+            )?;
             return Ok((self.clone(), processed));
         }
         let (source, native) =
             Self::record_processing(device, self.renderer.clone(), self.spec.clone(), definition)?;
-        let processed = Processed::record(device, source.clone(), input, root, plan)?;
+        let processed = ProcessedView::record(device, source.clone(), input, root, plan)?;
         Self::submit_preview(device, queue, submissions, source, native, processed)
     }
 
@@ -274,8 +251,8 @@ impl Acquired {
         submissions: &SubmissionGate,
         source: Arc<Self>,
         native: crate::gpu::pixel_pipeline::Prepared,
-        mut processed: Processed,
-    ) -> Result<(Arc<Self>, Arc<Processed>), Error> {
+        mut processed: ProcessedView,
+    ) -> Result<(Arc<Self>, Arc<ProcessedView>), Error> {
         let mut encoder = device.create_command_encoder(&Default::default());
         native.encode_result(device, &mut encoder, &source.pixels)?;
         processed.encode(device, &mut encoder);
@@ -325,7 +302,7 @@ impl Acquired {
 
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn acquire_many(
+    pub async fn acquire_many(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
@@ -340,7 +317,7 @@ impl Acquired {
             return Ok(None);
         }
         renderer.evaluation.require_device(device)?;
-        let identity = crate::gpu::execution::source::Identity::camera(scan.source().identity());
+        let identity = crate::gpu::source::identity::Identity::camera(scan.source().identity());
         let specs: Vec<_> = specs
             .into_iter()
             .map(|spec| spec.capture(identity.clone()))
@@ -369,7 +346,7 @@ impl Acquired {
                 "physical-view source authority differs from originals".into(),
             ));
         }
-        let roots = Self::definitions(scan, field, &spec.processing_fixture(), &specs)?;
+        let roots = Self::source_graphs(scan, field, &spec.processing_fixture(), &specs)?;
         let requests = roots
             .iter()
             .cloned()
@@ -403,7 +380,7 @@ impl Acquired {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn materialize_many(
+    pub async fn materialize_many(
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         renderer: Arc<crate::renderer::GpuRenderer>,
@@ -460,39 +437,27 @@ impl Acquired {
         ))
     }
 
-    pub(crate) fn definitions(
+    pub fn source_graphs(
         scan: &Scan,
         field: Option<Arc<GpuFlatField>>,
-        input: &crate::gpu::ProcessingInput,
+        input: &crate::gpu::input::ProcessingInput,
         specs: &[SourceRequest],
     ) -> Result<Vec<Arc<crate::gpu::evaluation::ImageNode>>, Error> {
         use crate::gpu::evaluation as e;
         let spec = specs
             .first()
             .ok_or(Error::InvalidParameter("empty physical-view acquisition"))?;
-        let neutral = e::Neutral {
-            interpretation: input.source_program().map_or(
-                crate::gpu::SourceInterpretation::Inspection(scan.camera_to_ap1),
-                |program| crate::gpu::SourceInterpretation::Photograph(*program),
+        crate::gpu::photograph::NeutralInput {
+            interpretation: input.source_transform().map_or(
+                crate::gpu::interpretation::SourceInterpretation::Inspection(scan.camera_to_ap1),
+                |program| crate::gpu::interpretation::SourceInterpretation::Photograph(*program),
             ),
             field,
             repairs: spec.repairs.clone(),
         }
-        .originals(e::camera_source(scan)?)?;
-        specs
-            .iter()
-            .map(|spec| {
-                let mut grid = e::Grid::from_frame(spec.plan.output());
-                grid.coverage = 8;
-                e::reconstruct(
-                    neutral.clone(),
-                    e::Domain {
-                        bounds: None,
-                        grid,
-                        meaning: e::Meaning::Neutral,
-                    },
-                )
-            })
-            .collect()
+        .original_views(
+            e::camera_source(scan)?,
+            specs.iter().map(|spec| spec.plan.output()),
+        )
     }
 }

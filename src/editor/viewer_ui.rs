@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::parameters::ProcessingParameters;
 
 pub(super) fn surface() -> egui::Color32 {
     egui::Color32::from_gray(16)

@@ -1,4 +1,6 @@
 use super::*;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::submission::SubmissionGate;
 
 fn candidate(
     device: &wgpu::Device,

@@ -1,15 +1,17 @@
 #![cfg(feature = "gpu")]
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::photograph::test_support::CameraFixture;
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
-use antitone::gpu::ProcessingInput;
-use antitone::{
-    color::Balance,
-    gpu::{ProcessingParameters, ProcessingSource},
-    processing::{Calibration, NegativeInput, Response, RollSettings},
-};
 use glam::{DMat3, DVec3};
+use {
+    crate::gpu::{parameters::ProcessingParameters, source::ProcessingSource},
+    antitone::{
+        color::Balance,
+        processing::{Calibration, NegativeInput, Response, RollSettings},
+    },
+};
 
 fn negative(cal: Calibration, response: Response, gamma: f64, balance: Balance) -> NegativeInput {
     NegativeInput {

@@ -1,14 +1,17 @@
 //! Codec-independent bounded original-sample execution and destination-only readback.
 
 use super::{OutputBlock, Request, SampleEncoding};
-use crate::gpu::{ProcessingInput, SubmissionGate, evaluation, rgb16};
+use crate::gpu::evaluation;
+use crate::gpu::input::ProcessingInput;
+use crate::gpu::rgb16;
+use crate::gpu::submission::SubmissionGate;
+#[cfg(all(test, target_os = "macos"))]
+use crate::scan::Scan;
 use crate::{
     Error,
     renderer::GpuRenderer,
     rendering::{OutputReference, OutputTarget},
 };
-#[cfg(all(test, target_os = "macos"))]
-use crate::{gpu::ProcessingSource, scan::Scan};
 use std::sync::Arc;
 
 #[cfg(feature = "export")]
@@ -325,8 +328,9 @@ pub(crate) fn execute(
     {
         return Err(Error::Gpu("processing source/recipe mismatch".into()));
     }
-    let program = crate::gpu::GpuInputProgram::for_scan(request.scan, request.input)?;
-    let photographic = Arc::new(crate::gpu::Grading::new(
+    let program =
+        crate::gpu::interpretation::InputTransform::for_scan(request.scan, request.input)?;
+    let photographic = Arc::new(crate::gpu::grading::Grading::new(
         &device.limits(),
         request.roll,
         request.grade.clone(),
@@ -345,7 +349,7 @@ pub(crate) fn execute(
         grade.validate_repairs(&device.limits(), repairs.bound())?;
     }
     let mut processing =
-        crate::gpu::ProcessingInput::from(grade.clone()).with_luts(request.luts.clone());
+        crate::gpu::input::ProcessingInput::from(grade.clone()).with_luts(request.luts.clone());
     processing.repairs = repairs.clone();
     let _lut_resources = if request.output.display_target().is_some() {
         request

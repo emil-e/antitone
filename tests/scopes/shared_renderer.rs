@@ -1,8 +1,9 @@
 use super::*;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
+use antitone::gpu::parameters::ProcessingParameters;
 use antitone::{
     color::Balance,
-    gpu::{GpuFlatField, SourceGeometry},
+    gpu::{flat::GpuFlatField, source::SourceGeometry},
     processing::{Calibration, RollSettings},
     renderer::GpuRenderer,
     viewer::ImagePaint,
@@ -36,7 +37,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                         input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
                     })
                     .unwrap();
-                let parameters = antitone::gpu::ProcessingInput::new(
+                let parameters = antitone::gpu::input::ProcessingInput::new(
                     &device.limits(),
                     calibration,
                     RollSettings::default(),
@@ -159,7 +160,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                         ),
                     ])
                     .and_then(|snapshot| {
-                        antitone::gpu::ProcessingInput::new(
+                        antitone::gpu::input::ProcessingInput::new(
                             &device.limits(),
                             calibration,
                             RollSettings::default(),
@@ -168,7 +169,9 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                             [0, 0, 32, 1].into(),
                         )
                     })
-                    .map(|grade| antitone::gpu::ProcessingInput::from(std::sync::Arc::new(grade)))
+                    .map(|grade| {
+                        antitone::gpu::input::ProcessingInput::from(std::sync::Arc::new(grade))
+                    })
                     .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 assert!(thumbnail.prepare(&device, &mut encoder, ProcessingParameters::source()));

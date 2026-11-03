@@ -1,5 +1,6 @@
 use super::presentation::ContactSheetLayout;
 use super::*;
+use crate::gpu::input::ProcessingInput;
 use crate::project::SourceDevelopment;
 pub(super) use crate::source::FileKey;
 #[cfg(test)]
@@ -105,7 +106,7 @@ impl Product {
             + if positive {
                 std::mem::size_of::<crate::gpu::view::ViewSource>()
                     + std::mem::size_of::<crate::gpu::view::RenderedView>()
-                    + 2 * std::mem::size_of::<crate::gpu::ProcessingInput>()
+                    + 2 * std::mem::size_of::<crate::gpu::input::ProcessingInput>()
             } else {
                 0
             }
@@ -188,7 +189,7 @@ impl ImageKey {
                 )?;
             }
             bytes = bytes.checked_add(
-                2 * (crate::gpu::ProcessingInput::byte_len_for(&recipe.grade)
+                2 * (crate::gpu::input::ProcessingInput::byte_len_for(&recipe.grade)
                     + recipe.grade.retained_bytes() as u64),
             )?;
         }
@@ -237,7 +238,7 @@ impl Proxy {
         }
         image.set_flat_field(
             correction.map(|c| c.gpu.clone()),
-            crate::gpu::SourceGeometry::new(source.active_area, [self.width, self.height])?,
+            crate::gpu::source::SourceGeometry::new(source.active_area, [self.width, self.height])?,
         )?;
         Ok(Arc::new(image))
     }
@@ -480,12 +481,12 @@ impl Thumbnails {
                 &proxy.pixels,
                 proxy.matrix,
                 correction.map(|c| c.gpu.clone()),
-                crate::gpu::SourceGeometry::new(
+                crate::gpu::source::SourceGeometry::new(
                     source.development.active_area,
                     [proxy.width, proxy.height],
                 )?,
             )?
-            .with_identity(crate::gpu::execution::source::Identity::proxy(&proxy))?,
+            .with_identity(crate::gpu::source::identity::Identity::proxy(&proxy))?,
         };
         if !preview.current(request, document, Some(id), correction) {
             return Ok(None);

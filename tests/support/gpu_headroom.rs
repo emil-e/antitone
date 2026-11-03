@@ -1,7 +1,9 @@
 use super::*;
+use antitone::gpu::parameters::ProcessingParameters;
+use antitone::gpu::source::ProcessingSource;
 use antitone::{
     flat_field::FlatField,
-    gpu::{GpuFlatField, SourceGeometry},
+    gpu::{flat::GpuFlatField, source::SourceGeometry},
     processing::{
         DEFAULT_GAMMA, InputSettings, MAX_CAMERA_SOURCE_CODE, MAX_SOURCE_GAIN, Response,
         RollSettings,
