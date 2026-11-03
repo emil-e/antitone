@@ -5,6 +5,7 @@ fn open(h: &mut Harness<'_, Editor>, kind: Pick) {
         Pick::Dmin => ("Roll", "Pick Dmin (film base)"),
         Pick::Dmax => ("Roll", "Pick Dmax"),
         Pick::Gamma => ("Roll", "Pick neutral for gamma balance"),
+        Pick::GammaPivot => ("Roll", "Gamma colour pivot"),
         Pick::RollWb => ("Roll", "Pick neutral for white balance"),
         Pick::Wb => ("Photo", "Pick neutral for white balance"),
         Pick::Analysis => unreachable!("legacy area selection is not a measurement mode"),
@@ -25,8 +26,18 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
             (egui::vec2(800., 600.), 270., "narrow"),
         ] {
             set_layout(&mut h, size, width);
-            for kind in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::RollWb, Pick::Wb] {
-                let source_preference = matches!(kind, Pick::Gamma | Pick::RollWb | Pick::Wb);
+            for kind in [
+                Pick::Dmin,
+                Pick::Dmax,
+                Pick::Gamma,
+                Pick::GammaPivot,
+                Pick::RollWb,
+                Pick::Wb,
+            ] {
+                let source_preference = matches!(
+                    kind,
+                    Pick::Gamma | Pick::GammaPivot | Pick::RollWb | Pick::Wb
+                );
                 h.update(|editor| editor.document.source = source_preference);
                 h.step();
                 let viewport = h.read(|editor| editor.document.visit.canvas.viewport);
@@ -81,6 +92,7 @@ fn measurement_modes_own_apply_readiness_and_leave_normal_view_preferences_intac
                             Pick::Dmin => "dmin",
                             Pick::Dmax => "dmax",
                             Pick::Gamma => "gamma",
+                            Pick::GammaPivot => "gamma-pivot",
                             Pick::RollWb => "roll-wb",
                             Pick::Wb => "layer-wb",
                             Pick::Analysis => unreachable!(),

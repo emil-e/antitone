@@ -16,6 +16,7 @@ mod export;
 #[cfg(feature = "ocio-reference")]
 mod exposure;
 mod fullscreen;
+mod gamma_pivot;
 mod grain;
 mod guide_shots;
 mod halation;

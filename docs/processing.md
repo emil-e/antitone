@@ -78,6 +78,12 @@ Photographic WB instead acts on the interpreted positive. Antitone uses Bradford
 
 Manual gamma-neutral fitting uses individually inverted, full-resolution samples; neutral means AP1 white, not equal camera channels. WB picks estimate a replacement at their own scope. The Photo pick measures after preceding layers and fits the selected layer's WB before its contrast/saturation, accounting for coverage, inversion, strength and exposure. An uncovered patch or correction outside the control range rejects. The Roll pick bypasses layer grading and Roll WB.
 
+### Picked-colour gamma pivot
+
+The **Gamma colour pivot** holds a picked area's chromaticity through manual gamma and gamma-balance edits by compensating Roll WB. Its measurement boundary is after Roll WB, before Photo layers, look and output; brightness remains free, and nonlinear downstream processing can still change rendered appearance. Deliberate Roll WB establishes the colour held by subsequent gamma gestures.
+
+Capture freezes corrected original camera light, before inversion. Small selections retain exact source-cell coverage; large quadrilaterals use deterministic stratified evidence, bounded to 4096 weighted originals. Each proposed gamma individually inverts those frozen samples through the shared f32 GPU response before positive averaging. Camera-to-AP1 and Bradford conversion then give log-cone opponents; their difference is added to Roll WB. Undefined colour, source-floor evidence and out-of-range compensation reject the whole edit. A continuous gesture references its starting gamma/WB pair, allowing an exact return with no net edit.
+
 ## Grade in a common working space
 
 After input interpretation, each source's metadata-derived camera matrix maps the positive to AP1/ACEScg with a D60 white. This gives grading and rendering a common basis — a pragmatic colour conversion, not proof that the original scene's spectra or film dyes have been recovered. Roll and layer exposure use stops; the working result retains signed and above-one values, so a negative AP1 component is not by itself a failed scan.

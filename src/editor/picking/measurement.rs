@@ -63,10 +63,20 @@ where
                 Some(
                     crate::background::run(move |cancelled| {
                         #[cfg(test)]
-                        if let Some(gate) = gate {
+                        if let Some(gate) = &gate
+                            && !gate.is_after_work()
+                        {
                             gate.wait(cancelled.clone())?;
                         }
-                        measure(region, cancelled).map_err(|error| error.to_string())
+                        let result =
+                            measure(region, cancelled.clone()).map_err(|error| error.to_string());
+                        #[cfg(test)]
+                        if let Some(gate) = &gate
+                            && gate.is_after_work()
+                        {
+                            gate.wait(cancelled)?;
+                        }
+                        result
                     })
                     .await
                     .map_err(|_| "Measurement worker panicked".to_owned())

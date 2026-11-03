@@ -517,7 +517,14 @@ fn film_settings_do_not_change_neutral_repair_admission_or_trigger_rehealing() {
             assert_eq!(previous.0.len(), 1);
             let controls = crate::editor::editing::ControlSettings::capture(e);
             e.document.grain = GrainPreset::ThirtyFiveMm.settings();
-            e.validate_frame_edits(controls);
+            e.accept_manual_controls(
+                controls,
+                crate::editor::editing::ControlSettings::capture(e),
+                false,
+                None,
+                cx,
+            )
+            .unwrap();
             assert!(e.document.grain.enabled);
             let current = e.dust_gpu_snapshot(None).unwrap();
             assert_eq!(current.0.len(), 1);

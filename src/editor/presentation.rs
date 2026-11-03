@@ -16,7 +16,7 @@ pub(super) use progress::{ACTIVITY_BAR_HEIGHT, Progress, ProgressContent};
 mod hierarchy;
 pub(super) use hierarchy::{
     SectionHeader, SectionTool, collect_expansion, draggable_icon_row, restore_expansion, section,
-    section_disclosure, stage_tabs,
+    section_disclosure, section_with_secondary_tool, stage_tabs,
 };
 
 mod application;

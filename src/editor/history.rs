@@ -242,6 +242,7 @@ impl Editor {
 
     pub(super) fn history_available(&self) -> bool {
         !self.busy
+            && !self.document.gamma_pivot.pending()
             && self.failure.is_none()
             && self.menus.panel.is_none()
             && self.document.look.is_none()
@@ -349,6 +350,14 @@ impl Editor {
             .map(|entry| entry.label)
     }
 
+    pub(super) fn record_gamma_edit(&mut self, before: Project, group: Option<egui::Id>) {
+        self.sync_document();
+        let after = self.clone_history_project();
+        self.document
+            .history
+            .record(before, after, "Gamma & balance", None, group);
+    }
+
     pub(super) fn record_controls(&mut self, photo: Option<SourceId>, ui: &egui::Ui) {
         let controls = self.history_controls.take().expect("control transaction");
         let changed = controls.before.is_some() || controls.state != ControlState::capture(self);
@@ -371,7 +380,7 @@ impl Editor {
                     .record(before, after, controls.label, photo, group);
             }
         }
-        if !ui.input(|input| input.pointer.any_down()) {
+        if !ui.input(|input| input.pointer.any_down()) && !self.document.gamma_pivot.pending() {
             self.document.history.finish_group();
         }
     }
