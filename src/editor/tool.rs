@@ -227,10 +227,6 @@ impl Editor {
         let activity = self.tool_activity();
         match self.document.tool.as_ref() {
             Some(legacy_tool::Tool::Mask(_)) => self.finish_mask(false),
-            Some(legacy_tool::Tool::Area) => {
-                self.cancel_legacy_picker();
-                self.document.tool.clear();
-            }
             Some(legacy_tool::Tool::Analyze(_)) => self.close_analysis(),
             Some(legacy_tool::Tool::AutoCrop(_)) => self.finish_auto_crop(false),
             Some(legacy_tool::Tool::Flat(_)) => self.finish_flat_edit(),

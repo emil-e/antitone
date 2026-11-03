@@ -77,7 +77,6 @@ mod analysis_workflow;
 mod dust;
 mod flat;
 mod spatial;
-mod support_workflow;
 use flat::{Correction, FlatEdit};
 mod auto_crop;
 mod crop_editor;
@@ -122,7 +121,6 @@ enum Pick {
     GammaPivot,
     RollWb,
     Wb,
-    Analysis,
 }
 
 #[derive(Clone)]
@@ -888,7 +886,6 @@ impl Editor {
             self.scopes.visible = self.preferences.scopes_visible;
             self.document.visit.picking = Default::default();
         }
-        self.document.visit.support = Default::default();
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.preview_rendered = None;
         self.document.visit.canvas.selection_timing = None;
@@ -967,10 +964,7 @@ impl Editor {
         let editable = !self.busy
             && !self.creating_mask()
             && !gamma_pending
-            && matches!(
-                self.document.tool.as_ref(),
-                None | Some(legacy_tool::Tool::Area)
-            )
+            && self.document.tool.is_none()
             && self.document.input.ready();
         let can_pick = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
         let mut start_pick = None;

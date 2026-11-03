@@ -17,7 +17,6 @@ pub(super) struct AutoCrop {
 /// Legacy interactions not yet migrated to the shared tool host.
 pub(super) enum Tool {
     Mask(Box<MaskEdit>),
-    Area,
     Analyze(Box<Analyze>),
     AutoCrop(Box<AutoCrop>),
     Flat(Box<FlatEdit>),
@@ -128,7 +127,7 @@ impl DocumentScope {
     }
 
     pub fn is_photo_bound(&self) -> bool {
-        matches!(self.tool.as_ref(), Some(Tool::Mask(_)) | Some(Tool::Area))
+        matches!(self.tool.as_ref(), Some(Tool::Mask(_)))
     }
 
     pub fn analysis_operation(&self) -> Option<&analysis_workflow::Operation> {

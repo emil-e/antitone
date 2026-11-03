@@ -12,8 +12,6 @@ use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
 #[cfg(all(test, feature = "ocio-reference"))]
 mod diagnostics;
 #[cfg(test)]
-mod lazy_support_tests;
-#[cfg(test)]
 mod tests;
 
 #[derive(Clone, Copy)]
@@ -206,53 +204,6 @@ impl Editor {
                     .as_ref()
                     .and_then(|r| r.analysis_support.flatten())
             })
-    }
-
-    pub(super) fn analysis_picture(&self) -> Option<Rect> {
-        self.document
-            .state
-            .project
-            .analysis_area
-            .map(rect)
-            .or_else(|| self.analysis_support().map(suggest))
-    }
-
-    pub(super) fn analysis_support_result(
-        &mut self,
-        request: u64,
-        loaded: u64,
-        result: Result<Option<Rect>, String>,
-    ) {
-        if self
-            .document
-            .visit
-            .support
-            .pending
-            .as_ref()
-            .map(|pending| (pending.id, pending.loaded))
-            != Some((request, loaded))
-            || loaded != self.id
-            || self.legacy_pick() != Some(Pick::Analysis.display())
-            || self.document_pending.is_some()
-        {
-            return;
-        }
-        self.document.visit.support = Default::default();
-        let Some(ready) = &mut self.document.visit.canvas.ready else {
-            return;
-        };
-        match result {
-            Ok(support) => {
-                ready.analysis_support = Some(support);
-                // A delayed suggestion must never overwrite a rectangle already drawn.
-                if self.legacy_pick_region().is_none()
-                    && self.document.visit.canvas.pick_drag.is_none()
-                {
-                    self.set_legacy_pick_region(support.map(suggest).map(Coverage::rectangle));
-                }
-            }
-            Err(error) => self.status = error,
-        }
     }
 
     pub(super) fn apply_roll_orientation(&mut self, action: Orientation) {
@@ -471,34 +422,5 @@ impl Editor {
             Err(error) => self.status = format!("Analysis failed: {error}. Grade unchanged."),
         }
         self.end_analysis_review(cx);
-    }
-
-    pub(super) fn apply_analysis_area(&mut self, cx: &UiContext<'_, Self>) {
-        let Some(coverage) = self.legacy_pick_region() else {
-            return;
-        };
-        let Some(area) = self
-            .document
-            .visit
-            .current_source
-            .and_then(|id| self.document.state.project.source(id).ok())
-            .and_then(|source| coverage.exact_rectangle(source.development.active_area.into()))
-        else {
-            self.status = "Picture area must be a source-aligned rectangle".into();
-            return;
-        };
-        self.sync_document();
-        let mut candidate = self.document.capture();
-        candidate.project.analysis_area = Some(array(area));
-        match self.validate_document_candidate(&candidate) {
-            Ok(()) => {
-                let before = self.history_snapshot();
-                self.document.install(candidate);
-                self.record_edit(before, "Picture statistics area", None);
-                self.status = "Picture statistics area updated; processing unchanged".into();
-                self.finish_pick(cx);
-            }
-            Err(error) => self.status = format!("Area rejected: {error}"),
-        }
     }
 }

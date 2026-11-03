@@ -77,7 +77,6 @@ impl Editor {
         }
         let started = std::time::Instant::now();
         let selecting_photo = persistent && !self.picking() && self.document.flat_edit().is_none();
-        self.document.visit.support = Default::default();
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.selection_timing = None;

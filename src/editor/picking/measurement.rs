@@ -93,7 +93,6 @@ where
                     if let Some(Err(error)) = &result {
                         editor.status = error.clone();
                     }
-                    editor.document.visit.support = Default::default();
                     editor.end_tool();
                     result.and_then(Result::ok)
                 })

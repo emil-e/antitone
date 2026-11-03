@@ -25,7 +25,6 @@ pub(super) struct PhotoScope {
     pub current_source: Option<super::SourceId>,
     pub source: super::source_workflow::State,
     pub working: super::working_workflow::State,
-    pub support: super::support_workflow::State,
     pub adjustment_layers: super::AdjustmentLayerEditor,
 }
 

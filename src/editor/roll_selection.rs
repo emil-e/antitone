@@ -235,7 +235,6 @@ impl Editor {
             self.replace_photo_scope(self.id);
             self.source_epoch
                 .store(self.id, std::sync::atomic::Ordering::Relaxed);
-            self.document.visit.support = Default::default();
             self.document.thumbnails.release_selected();
             self.document.thumbnails.refresh_hidden_memory();
             self.document.visit.current_source = None;

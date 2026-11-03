@@ -88,7 +88,7 @@ impl Editor {
         let cancelled = operation.cancelled.clone();
         let retire = cancelled.cancel_on_drop();
         self.document.set_analysis_operation(Some(operation));
-        let decision = self.open_analysis_review(&request, Ok(Some(approved)), cx);
+        let decision = self.open_analysis_review(&request, Ok(Some(approved)));
         let task = cx.spawn(move |cx| async move {
             let _retire = retire;
             await_review(request, decision, cancelled, &cx).await;
