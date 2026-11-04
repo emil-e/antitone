@@ -167,9 +167,7 @@ impl Editor {
                         " · Look unavailable"
                     } else if self.document.visit.working_view.error.is_some() {
                         " · View unavailable"
-                    } else if self.comparing_original()
-                        && self.active_canvas().original.failed()
-                    {
+                    } else if self.comparing_original() && self.active_canvas().original.failed() {
                         " · Reference unavailable"
                     } else if self.comparing_original()
                         && self.document.visit.working_view.reference_ready()

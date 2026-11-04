@@ -377,11 +377,9 @@ impl Editor {
         demand: Option<Demand>,
     ) {
         match (purpose, demand) {
-            (Some(purpose), Some(demand)) => self
-                .active_canvas_mut()
-                
-                .original
-                .observe(purpose, demand),
+            (Some(purpose), Some(demand)) => {
+                self.active_canvas_mut().original.observe(purpose, demand)
+            }
             _ => self.leave_original(),
         }
     }
