@@ -2,7 +2,7 @@ use super::FlatPreview;
 use crate::{
     Error,
     cancellation::Cancellation,
-    editor::{Document, Source, SourceId, document_services, source},
+    editor::{Document, Source, SourceId, document, source},
     raw::Rect,
 };
 use std::sync::Arc;
@@ -19,7 +19,7 @@ pub(in crate::editor) struct CorrectionInput {
 }
 
 impl CorrectionInput {
-    fn estimate(mut self) -> Result<document_services::Request, Error> {
+    fn estimate(mut self) -> Result<document::Request, Error> {
         if self.source.correction.is_some() {
             return Err(Error::InvalidParameter(
                 "flat-field reference must be uncorrected",
@@ -41,8 +41,8 @@ impl CorrectionInput {
             &self.document.exposure_metadata,
             |id| self.document.exposure_origin(id),
         ));
-        Ok(document_services::Request {
-            work: document_services::Preparation::Correction(self.document, self.selected),
+        Ok(document::Request {
+            work: document::Preparation::Correction(self.document, self.selected),
             source: None,
             sources: self.sources,
             exposures: Some(exposures),
@@ -54,7 +54,7 @@ impl CorrectionInput {
 pub(super) async fn estimate(
     input: CorrectionInput,
     cancelled: Cancellation,
-) -> Result<document_services::Request, String> {
+) -> Result<document::Request, String> {
     crate::background::run(move |_| {
         if cancelled.is_cancelled() {
             return Err(Error::UnusableSample("correction retired"));

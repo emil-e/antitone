@@ -216,7 +216,7 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
     target.project = historical;
     let device = &editor.source_services.as_ref().unwrap().device;
     let prepare = |cache| {
-        super::super::super::document_services::candidate(
+        super::super::super::document::candidate(
             crate::editor::DocumentRequest {
                 exposures: None,
                 work: Preparation::History(

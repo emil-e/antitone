@@ -83,7 +83,7 @@ pub(super) fn correct(
         let result = async {
             let services = services.ok_or_else(|| "Correction services unavailable".to_owned())?;
             let request = worker::estimate(input, cancelled.clone()).await?;
-            crate::editor::document_services::PreparationServices(services)
+            crate::editor::document::PreparationServices(services)
                 .prepare(request, cancelled, |_, _| {})
                 .await
         }

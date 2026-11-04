@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, document_services, source, tests::fixture},
+    editor::{Preparation, document, source, tests::fixture},
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -304,7 +304,7 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
     parent
         .publish_source(key.clone(), scan.source().clone())
         .unwrap();
-    let prepared = document_services::candidate(
+    let prepared = document::candidate(
         crate::editor::DocumentRequest {
             exposures: None,
             sources: Some(crate::source::SourceLoader::new().provider(Some(parent.clone()))),
@@ -331,7 +331,7 @@ fn candidate_services_validate_authored_inputs_without_editor_and_leave_parent_o
     .unwrap();
     assert!(Arc::ptr_eq(&reused, scan.source()));
     drop(prepared);
-    let bad = document_services::candidate(
+    let bad = document::candidate(
         crate::editor::DocumentRequest {
             exposures: None,
             sources: Some(crate::source::SourceLoader::new().provider(Some(parent.clone()))),

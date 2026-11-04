@@ -159,7 +159,7 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
             let active = e.document.visit.canvas.ready.as_ref().unwrap().area;
             let captured = e.document.capture();
             e.start_save(
-                crate::editor::document_services::Write {
+                crate::editor::document::Write {
                     document: captured.clone(),
                     path: path.clone(),
                     policy: crate::project::Save::New,
@@ -225,7 +225,7 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
             let path = directory.path().join("save-as.antitone");
             let captured = e.document.capture();
             e.start_save(
-                crate::editor::document_services::Write {
+                crate::editor::document::Write {
                     document: captured.clone(),
                     path: path.clone(),
                     policy: crate::project::Save::New,
@@ -252,7 +252,7 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
             e.reset_dust_repairs(source);
             let before = e.document.state.project.clone();
             e.start_save(
-                crate::editor::document_services::Write {
+                crate::editor::document::Write {
                     document: e.document.capture(),
                     path: path.clone(),
                     policy: crate::project::Save::New,

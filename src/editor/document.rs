@@ -1,17 +1,23 @@
+//! Document snapshots, candidate preparation and transactional editor installation.
+use super::{
+    AdjustmentLayerEditor, Correction, Editor, FailureKind, OutputTarget, Ready, RollSelection,
+    Task, TaskProgress, TaskRequest, dust, history, source,
+};
 use crate::{
     Error,
+    processing::InputSettings,
     project::{Project, Save, Source, SourceId},
     raw::Metadata,
 };
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 pub(super) use crate::source::{
     metadata_development, open_source, source_metadata, verify_scan, verify_source,
 };
-type Result<T> = std::result::Result<T, Error>;
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::Project(error.to_string())
@@ -734,3 +740,545 @@ pub(super) fn read_source(path: &Path, wb: Option<[f64; 4]>) -> Result<Source> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod workflow_tests;
+
+pub(super) enum Preparation {
+    Import(Document, Vec<PathBuf>, Option<(u64, SourceId)>),
+    Open(PathBuf),
+    New,
+    Correction(Document, Option<SourceId>),
+    Input(Document, Option<SourceId>),
+    History(Document, Option<SourceId>, history::Direction),
+}
+
+pub(super) struct Request {
+    pub work: Preparation,
+    pub source: Option<(u64, Ready)>,
+    pub correction: Option<Arc<Correction>>,
+    pub sources: Option<Arc<dyn crate::source::SourceProvider>>,
+    pub exposures: Option<Arc<crate::exposure_metadata::Store>>,
+}
+
+pub(super) struct Prepared {
+    pub document: Document,
+    pub ready: Option<Ready>,
+    pub selected: Option<SourceId>,
+    pub reuse_ready: bool,
+    pub correction: Option<Arc<Correction>>,
+    pub preserve_view: bool,
+}
+
+pub(super) struct Write {
+    pub document: Document,
+    pub path: PathBuf,
+    pub policy: Save,
+}
+
+impl Write {
+    pub fn save(self, device: &wgpu::Device) -> Result<Document, Error> {
+        self.document
+            .save_with_device(&self.path, self.policy, Some(device))
+    }
+}
+
+pub(super) struct Candidate {
+    pub prepared: Prepared,
+    pub source: Option<source::Request>,
+}
+
+/// The synchronous admission/preparation stage contains metadata, validation and
+/// GPU preflight only. Selected native development is a separate awaited service.
+pub(super) fn candidate(
+    request: Request,
+    device: &wgpu::Device,
+    mut progress: impl FnMut(usize, usize),
+) -> Result<Candidate, Error> {
+    let Request {
+        work,
+        source: previous,
+        correction: previous_correction,
+        sources,
+        exposures,
+    } = request;
+    let preserve_view = matches!(
+        work,
+        Preparation::Correction(..) | Preparation::Input(..) | Preparation::History(..)
+    );
+    let selected_override = match &work {
+        Preparation::Correction(_, selected)
+        | Preparation::Input(_, selected)
+        | Preparation::History(_, selected, _) => Some(*selected),
+        _ => None,
+    };
+    let (mut document, reuse) = match work {
+        Preparation::Import(mut document, paths, reuse) => {
+            document.import_with_progress(&paths, Some(device), &mut progress)?;
+            (document, reuse)
+        }
+        Preparation::Open(path) => (
+            Document::open_with_progress(&path, Some(device), progress)?,
+            None,
+        ),
+        Preparation::New => (Document::default(), None),
+        Preparation::Correction(document, _) => (document, None),
+        Preparation::Input(mut document, _) => {
+            let target = document.project.input;
+            document.redevelop_for_input(target)?;
+            (document, None)
+        }
+        Preparation::History(mut document, _, _) => {
+            if let Some(exposures) = &exposures {
+                document.capture_exposure(exposures);
+            }
+            document.validate_for_device(device)?;
+            for id in document.project.order.clone() {
+                document.refresh_source(id)?;
+            }
+            (document, None)
+        }
+    };
+    if let Some(exposures) = &exposures {
+        document.capture_exposure(exposures);
+    }
+    let correction = Correction::prepare(device, &document, previous_correction.as_ref())?;
+    for record in &document.project.sources {
+        crate::gpu::parameters::CameraMatrix::require_source(
+            glam::DMat3::from_cols_array_2d(&record.development.camera_to_ap1),
+            false,
+        )?;
+    }
+    if let Some((loaded, selected)) = reuse
+        && let Some((_, ready)) = previous.filter(|(active, _)| *active == loaded)
+        && document
+            .project
+            .source(selected)
+            .is_ok_and(|source| source.development == ready.record.development)
+        && (document.project.input.is_negative() || ready.reference.is_some())
+    {
+        return Ok(Candidate {
+            prepared: Prepared {
+                document,
+                ready: Some(ready),
+                selected: Some(selected),
+                reuse_ready: true,
+                correction,
+                preserve_view,
+            },
+            source: None,
+        });
+    }
+    let selected = selected_override.unwrap_or_else(|| {
+        reuse
+            .map(|(_, selected)| selected)
+            .or_else(|| document.project.order.first().copied())
+    });
+    let source = selected
+        .map(|id| {
+            source_request(
+                &document,
+                id,
+                correction.clone(),
+                sources.clone(),
+                exposures.as_deref(),
+            )
+        })
+        .transpose()?;
+    Ok(Candidate {
+        prepared: Prepared {
+            document,
+            ready: None,
+            selected,
+            reuse_ready: false,
+            correction,
+            preserve_view,
+        },
+        source,
+    })
+}
+
+fn source_request(
+    document: &Document,
+    id: SourceId,
+    correction: Option<Arc<Correction>>,
+    sources: Option<Arc<dyn crate::source::SourceProvider>>,
+    exposures: Option<&crate::exposure_metadata::Store>,
+) -> Result<source::Request, Error> {
+    let path = document.source_path(id)?;
+    let expected = document.project.source(id)?.clone();
+    let wb = Some(expected.development.decode.fixed_wb);
+    let file = document.file_key(&path);
+    Ok(source::Request {
+        reference: exposures.map_or_else(
+            || {
+                Arc::new(
+                    document
+                        .reference_exposure(&expected)
+                        .cloned()
+                        .map_or_else(std::sync::OnceLock::new, std::sync::OnceLock::from),
+                )
+            },
+            |store| document.exposure_slot(store, id),
+        ),
+        input: document.project.input,
+        path,
+        expected: Some(expected),
+        wb,
+        sources,
+        file,
+        correction,
+    })
+}
+
+#[derive(Clone)]
+pub(super) struct PreparationServices(pub source::Services);
+
+impl PreparationServices {
+    pub async fn prepare(
+        self,
+        mut request: Request,
+        cancelled: crate::cancellation::Cancellation,
+        progress: impl FnMut(usize, usize) + Send + 'static,
+    ) -> Result<Prepared, String> {
+        let sources = request.sources.take();
+        let exposures = request.exposures.clone();
+        let device = self.0.device.clone();
+        let retired = cancelled.clone();
+        let Candidate {
+            mut prepared,
+            source,
+        } = crate::background::run(move |_| {
+            if retired.is_cancelled() {
+                return Err(Error::UnusableSample("document preparation retired"));
+            }
+            candidate(request, &device, progress)
+        })
+        .await
+        .map_err(|_| "Document preparation worker panicked".to_owned())?
+        .map_err(|error| error.to_string())?;
+        if cancelled.is_cancelled() {
+            return Err("Document preparation retired".into());
+        }
+        if let Some(mut source) = source {
+            source.sources = sources;
+            prepared.ready = Some(self.0.clone().prepare(source, cancelled).await?);
+        }
+        if let Some(id) = prepared.selected
+            && let Some(ready) = &prepared.ready
+            && let Some(reference) = &ready.reference
+        {
+            let metadata = Arc::make_mut(&mut prepared.document.exposure_metadata);
+            metadata.entries.retain(|entry| entry.source != id);
+            metadata.entries.push(crate::exposure_metadata::Entry {
+                source: id,
+
+                reference: reference.clone(),
+            });
+        }
+        let device = self.0.device.clone();
+        crate::background::run(move |_| {
+            if let Some(exposures) = &exposures {
+                prepared.document.capture_exposure(exposures);
+            }
+            prepared.document.validate_with_device(Some(&device))?;
+            Ok(prepared)
+        })
+        .await
+        .map_err(|_| "Document admission worker panicked".to_owned())?
+        .map_err(|error: Error| error.to_string())
+    }
+}
+
+#[derive(Default)]
+pub(super) struct State {
+    task: Option<async_executor::Task<()>>,
+}
+
+#[derive(Default)]
+struct Progress {
+    latest: Mutex<Option<(usize, usize)>>,
+    changed: event_listener::Event,
+}
+
+impl Progress {
+    fn report(&self, completed: usize, total: usize) {
+        *self.latest.lock().unwrap() = Some((completed, total));
+        self.changed.notify(usize::MAX);
+    }
+}
+
+impl Editor {
+    pub(super) fn start_document(
+        &mut self,
+        work: Preparation,
+        cx: &crate::application::UiContext<'_, Self>,
+    ) {
+        if self.dust_search_pending() {
+            self.status = "Wait for donor selection before changing the document".into();
+            return;
+        }
+        self.retire_pick_actions();
+        self.cancel_spatial();
+        self.finish_gamma_edit();
+        self.control_commands.clear();
+        self.history_pending = match &work {
+            Preparation::New | Preparation::Open(_) => Some(history::Pending::Reset),
+            Preparation::Import(..) | Preparation::Correction(..) | Preparation::Input(..) => {
+                Some(history::Pending::Edit {
+                    before: Box::new(self.document.state.project.clone()),
+                    label: if matches!(&work, Preparation::Import(..)) {
+                        "Import photos"
+                    } else if matches!(&work, Preparation::Input(..)) {
+                        "Input stage"
+                    } else {
+                        "Correction"
+                    },
+                    photo: None,
+                })
+            }
+            Preparation::History(_, _, direction) => Some(history::Pending::Restore {
+                direction: *direction,
+                cleanup: self.dusting().then(|| self.dust_outlines()),
+            }),
+        };
+        self.cancel_active_tool();
+        self.document.visit.masks.cancel();
+        let id =
+            self.begin_document_operation(matches!(&work, Preparation::New | Preparation::Open(_)));
+        self.tasks.begin(match &work {
+            Preparation::Import(..) => Task::Import(id),
+            Preparation::Open(_) => Task::Open(id),
+            Preparation::New => Task::New(id),
+            Preparation::Correction(..) => Task::Correction(id),
+            Preparation::Input(..) => Task::Input(id),
+            Preparation::History(..) => Task::History(id),
+        });
+        self.document_failure =
+            matches!(&work, Preparation::Correction(..)).then_some(FailureKind::FlatCorrection);
+        self.new_project_pending = matches!(work, Preparation::New);
+        let source = if matches!(&work, Preparation::Import(_, _, Some(_))) {
+            self.document
+                .visit
+                .canvas
+                .ready
+                .as_ref()
+                .map(|ready| (self.id, ready.clone()))
+        } else {
+            None
+        };
+        let cache = (!matches!(work, Preparation::New | Preparation::Open(_)))
+            .then(|| self.document.cache.clone());
+        let request = Request {
+            exposures: cache.as_ref().map(|_| self.document.exposures.clone()),
+            sources: self
+                .source_services
+                .as_ref()
+                .map(|services| services.provider(cache)),
+            work,
+            source,
+            correction: self.document.correction.clone(),
+        };
+        let source = self.source_services.clone();
+        let progress = Arc::new(Progress::default());
+        let produced = progress.clone();
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
+        let Some(task) = cx.spawn(move |cx| async move {
+            let _retire = retire;
+            let preparation = async {
+                let source = source.ok_or_else(|| "Document services unavailable".to_owned())?;
+                PreparationServices(source)
+                    .prepare(request, cancelled, move |done, total| {
+                        produced.report(done, total)
+                    })
+                    .await
+            };
+            let reports = async {
+                loop {
+                    let changed = progress.changed.listen();
+                    let latest = progress.latest.lock().unwrap().take();
+                    if let Some((done, total)) = latest {
+                        cx.update(|editor| editor.document_progress(id, done, total));
+                    }
+                    changed.await;
+                }
+            };
+            let result = futures_lite::future::or(preparation, reports)
+                .await
+                .map(Box::new);
+            cx.update(|editor| {
+                editor.document_prepared(id, result);
+                editor.acquire_working(&cx);
+            });
+        }) else {
+            self.document_prepared(id, Err("Application stopped".into()));
+            return;
+        };
+        self.candidate_operation.task = Some(task);
+    }
+
+    pub(super) fn document_progress(&mut self, id: u64, completed: usize, total: usize) {
+        if self.document_pending == Some(id) {
+            self.tasks.report(
+                TaskRequest::Document(id),
+                TaskProgress::Counted { completed, total },
+            );
+        }
+    }
+}
+
+impl Editor {
+    pub(super) fn document_prepared(&mut self, id: u64, result: Result<Box<Prepared>, String>) {
+        if self.document_pending != Some(id) {
+            return;
+        }
+        self.candidate_operation = State::default();
+        self.tasks.finish(TaskRequest::Document(id));
+        let new_project = std::mem::take(&mut self.new_project_pending);
+        let failure_kind = self.document_failure.take();
+        let pending_history = self.history_pending.take();
+        self.document_pending = None;
+        self.busy = false;
+        match result {
+            Ok(prepared) => {
+                let input_changed = self.document.input.is_negative()
+                    != prepared.document.project.input.is_negative();
+
+                if self.reset_repairs_pending {
+                    self.document.dust = dust::State::default();
+                }
+                self.reset_repairs_pending = false;
+                let replacement = matches!(pending_history, Some(history::Pending::Reset));
+                let same_visit = !replacement
+                    && self.document.visit.current_source == prepared.selected
+                    && self
+                        .document
+                        .same_visit(prepared.ready.as_ref(), prepared.reuse_ready);
+                let layer_selection =
+                    if !replacement && self.document.visit.current_source == prepared.selected {
+                        self.document.visit.adjustment_layers.selection_only()
+                    } else {
+                        AdjustmentLayerEditor::default()
+                    };
+                self.document.visit.source = source::State::default();
+                if replacement {
+                    self.document = self.document.replacement(prepared.document);
+                } else {
+                    self.document.install(prepared.document);
+                }
+                self.document.correction = prepared.correction;
+                if let Some(ready) = &prepared.ready {
+                    self.document.cache_ready(ready);
+                }
+                self.remember_imported_look();
+                self.document.visit.adjustment_layers = layer_selection;
+                if new_project {
+                    self.tab = 0;
+                    self.preferences
+                        .sections
+                        .insert("roll-calibration".into(), true);
+                }
+                self.id = id;
+                if !same_visit {
+                    self.replace_photo_scope(self.id);
+                }
+                self.document.visit.current_source = prepared.selected;
+                if !prepared.reuse_ready && !prepared.preserve_view {
+                    self.document.roll_selection = RollSelection::default();
+                }
+                self.document.roll_selection.reconcile(
+                    &self.document.state.project.order,
+                    self.document.visit.current_source,
+                );
+                self.document.selected = prepared
+                    .selected
+                    .and_then(|id| {
+                        self.document
+                            .state
+                            .project
+                            .order
+                            .iter()
+                            .position(|candidate| *candidate == id)
+                    })
+                    .unwrap_or(0);
+                self.document.roll = self.document.state.project.roll;
+                self.document.roll_orientation = self.document.state.project.orientation;
+                self.load_input(self.document.state.project.input);
+                if let InputSettings::Negative { input_floor, .. } = &mut self.document.input
+                    && *input_floor == 0.
+                {
+                    *input_floor = crate::processing::CAMERA_INPUT_FLOOR;
+                    self.document.state.project.input = self.document.input;
+                }
+                self.document.visit.adjustment_layer_settings = prepared
+                    .selected
+                    .and_then(|id| self.document.state.project.source(id).ok())
+                    .and_then(|source| source.adjustment_layers.as_ref())
+                    .and_then(|layers| layers.layers.last())
+                    .map(|record| record.adjustment.photo)
+                    .unwrap_or_default();
+                self.refresh_adjustment_layer_selection();
+                self.document.visit.photo_orientation = prepared
+                    .selected
+                    .and_then(|id| self.document.state.project.source(id).ok())
+                    .map(|source| source.orientation)
+                    .unwrap_or_default();
+                self.document.visit.crop = prepared
+                    .selected
+                    .and_then(|id| self.document.state.project.source(id).ok())
+                    .and_then(|source| source.crop);
+                self.document.clear_crop_edit();
+                self.document.visit.canvas.last_layout = None;
+                self.document.grain = self.document.state.project.output.grain;
+                self.document.halation = self.document.state.project.output.halation;
+                self.document.target = match self.document.state.project.output.tiff {
+                    crate::project::TiffTarget::Srgb => OutputTarget::Srgb,
+                    crate::project::TiffTarget::DisplayP3 => OutputTarget::DisplayP3,
+                };
+                self.document.visit.canvas.ready = prepared.ready;
+                if !prepared.reuse_ready && !prepared.preserve_view {
+                    self.document.visit.canvas.viewport.fit();
+                    self.document.source = !self.document.input.ready();
+                }
+                if input_changed {
+                    self.document.source = !self.document.input.ready();
+                }
+                self.document.visit.return_notice = None;
+                self.document.export.draft = None;
+                self.document.export.summary = None;
+                self.invalidate_original();
+                self.status = if !input_changed && self.document.state.project.active_flat_field().is_some()
+                {
+                    "Project ready. Flat-field changes keep Dmin/Dmax RGB; re-pick calibration for this setup."
+                } else {
+                    "Project ready"
+                }
+                .into();
+                log::info!(request = id; "document_ready");
+                self.history_prepared(pending_history);
+                self.observe_gamma_pivot();
+                if let Some(kind) = failure_kind {
+                    self.resolve_failure(kind);
+                }
+            }
+            Err(error) => {
+                log::warn!(
+                    request = id,
+                    error = error.as_str();
+                    "document_failed"
+                );
+                self.history_failed(pending_history);
+                self.resume_source_after_document();
+                self.status = error.to_string();
+                if self.document.visit.source.pending() {
+                    self.document.visit.return_notice = Some(self.status.clone());
+                }
+                self.source_epoch
+                    .store(self.id, std::sync::atomic::Ordering::Relaxed);
+                if let Some(kind) = failure_kind {
+                    self.report_failure(kind, error);
+                }
+            }
+        }
+    }
+}

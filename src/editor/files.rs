@@ -91,7 +91,7 @@ impl Editor {
         self.sync_document();
         self.after_save = after;
         self.start_save(
-            document_services::Write {
+            document::Write {
                 document: self.document.capture(),
                 path,
                 policy,

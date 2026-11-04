@@ -89,10 +89,10 @@ mod cache_preferences_tests;
 mod calibration;
 mod canvas;
 mod canvas_view;
-mod document_services;
-mod document_workflow;
 mod gamma_pivot;
-use document_services::{Preparation, Prepared, Request as DocumentRequest};
+use document::Preparation;
+#[cfg(test)]
+use document::{Prepared, Request as DocumentRequest};
 #[cfg(all(test, feature = "raw", feature = "export"))]
 mod ab_probe_tests;
 mod export;
@@ -250,7 +250,7 @@ pub struct Editor {
     preference_store: Option<preferences::Store>,
     new_project_pending: bool,
     document: DocumentScope,
-    candidate_operation: document_workflow::State,
+    candidate_operation: document::State,
     history_pending: Option<history::Pending>,
     history_controls: Option<history::Controls>,
     #[cfg(test)]
@@ -377,7 +377,7 @@ impl Editor {
             history_snapshot_clones: 0,
             control_commands: Vec::new(),
             document,
-            candidate_operation: document_workflow::State::default(),
+            candidate_operation: document::State::default(),
             next_request: 0,
             document_pending: None,
             export_services: None,
@@ -866,7 +866,7 @@ impl Editor {
 
     pub(super) fn begin_document_operation(&mut self, replacement: bool) -> u64 {
         self.document.write = save::State::default();
-        self.candidate_operation = document_workflow::State::default();
+        self.candidate_operation = document::State::default();
         self.retire_look_selection();
         if self.dusting() {
             self.end_tool();
