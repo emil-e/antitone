@@ -20,6 +20,27 @@ where
     .await
 }
 
+/// Run a captured calculation, acknowledging explicit cancellation after worker cleanup.
+pub(crate) async fn compute<T: Send + 'static>(
+    cancelled: &Cancellation,
+    job: impl FnOnce() -> Result<T, crate::Error> + Send + 'static,
+) -> Result<Option<T>, crate::Error> {
+    let stopped = cancelled.clone();
+    let result = run(move |_| {
+        if stopped.is_cancelled() {
+            return Ok(None);
+        }
+        job().map(Some)
+    })
+    .await
+    .map_err(|_| crate::Error::UnusableSample("background calculation panicked"))?;
+    if cancelled.is_cancelled() {
+        Ok(None)
+    } else {
+        result
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod testing {
     use std::{
@@ -204,6 +225,55 @@ mod tests {
             assert!(!second.await.unwrap());
             second_done.recv_timeout(Duration::from_secs(5)).unwrap();
             first_done.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+    }
+
+    #[test]
+    fn cancelling_a_calculation_before_poll_or_while_queued_prevents_its_body() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        for queued in [false, true] {
+            let cancelled = Cancellation::default();
+            let ran = Arc::new(AtomicBool::new(false));
+            let observed = ran.clone();
+            let admission = testing::pause();
+            let mut work = Box::pin(compute(&cancelled, move || {
+                observed.store(true, Ordering::Relaxed);
+                Ok(42)
+            }));
+            if queued {
+                assert!(
+                    futures_lite::future::block_on(futures_lite::future::poll_once(&mut work))
+                        .is_none()
+                );
+            }
+            cancelled.cancel();
+            drop(admission);
+            assert_eq!(futures_lite::future::block_on(work).unwrap(), None);
+            assert!(!ran.load(Ordering::Relaxed));
+        }
+    }
+
+    #[test]
+    fn calculations_preserve_results_and_failures_and_report_panics() {
+        futures_lite::future::block_on(async {
+            let cancelled = Cancellation::default();
+            assert_eq!(compute(&cancelled, || Ok(42)).await.unwrap(), Some(42));
+            let error = crate::Error::UnusableSample("missing evidence");
+            let expected = error.clone();
+            assert_eq!(
+                compute::<usize>(&cancelled, move || Err(error)).await,
+                Err(expected)
+            );
+            assert!(matches!(
+                compute::<usize>(&cancelled, || panic!("failed calculation")).await,
+                Err(crate::Error::UnusableSample(
+                    "background calculation panicked"
+                ))
+            ));
         });
     }
 

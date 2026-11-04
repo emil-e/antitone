@@ -1,4 +1,4 @@
-use super::tests::{LIMIT, await_native, fixture, preparing, start};
+use super::workflow_tests::{LIMIT, await_native, fixture, preparing, start};
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},

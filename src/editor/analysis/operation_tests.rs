@@ -1,4 +1,4 @@
-use super::tests::{LIMIT, fixture};
+use super::workflow_tests::{LIMIT, fixture};
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},

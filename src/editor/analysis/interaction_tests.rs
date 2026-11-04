@@ -2,10 +2,9 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{
-        analysis_services::Services,
-        analysis_workflow::{
+        analysis::{
             testing,
-            tests::{LIMIT, fixture},
+            workflow_tests::{LIMIT, fixture},
         },
         source_loading,
     },
@@ -120,8 +119,10 @@ impl Drop for Retirement {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn held_work<T: Send + 'static>(
-    services: Services,
+    sources: Arc<dyn SourceProvider>,
+    exposures: Arc<crate::exposure_metadata::Store>,
     output: T,
     entered: mpsc::Sender<Weak<crate::scan::DevelopedSource>>,
     release: mpsc::Receiver<()>,
@@ -134,20 +135,25 @@ fn held_work<T: Send + 'static>(
             let _retired = retired;
             // This scripted task acquires an unviewed original to probe physical-input
             // cleanup, not to model production review assembly's metadata-only input.
-            let scan = services
-                .acquire(Arc::new(request), 1, stopped.clone())
+            let scan = request
+                .document
+                .acquire_source(
+                    request.document.project.order[1],
+                    sources.as_ref(),
+                    &exposures,
+                    &stopped,
+                )
                 .await
                 .map_err(|error| error.to_string())?
                 .expect("unviewed original");
-            let result = services
-                .cpu(&stopped, move || {
-                    entered.send(Arc::downgrade(scan.source())).unwrap();
-                    release.recv_timeout(LIMIT).unwrap();
-                    drop(scan);
-                    returned.send(()).unwrap();
-                    Ok(output)
-                })
-                .await;
+            let result = background::compute(&stopped, move || {
+                entered.send(Arc::downgrade(scan.source())).unwrap();
+                release.recv_timeout(LIMIT).unwrap();
+                drop(scan);
+                returned.send(()).unwrap();
+                Ok(output)
+            })
+            .await;
             probe.continued.set(true);
             result.map_err(|error| error.to_string())
         })
@@ -170,11 +176,8 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                 let probe = ContinuationProbe::default();
                 let (before, proposed) = app.enter(|editor, cx| {
                     let reviewed = editor.document.analysis_review().unwrap().approved.clone();
-                    let services = Services::new(
-                        editor.source_services.as_ref().unwrap(),
-                        editor.source_provider().unwrap(),
-                        editor.document.exposures.clone(),
-                    );
+                    let sources = editor.source_provider().unwrap();
+                    let exposures = editor.document.exposures.clone();
                     let before = editor.document.project.clone();
                     if fitting {
                         let mut document = editor.document.capture();
@@ -183,7 +186,8 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                         editor.validate_document_candidate(&document).unwrap();
                         let proposed = document.project.clone();
                         editor.document.analysis_fit_work = Some(held_work(
-                            services,
+                            sources,
+                            exposures,
                             Box::new(analysis::Outcome {
                                 document,
                                 frames: 2,
@@ -199,7 +203,8 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                     } else {
                         editor.finish_pick(cx);
                         editor.document.analysis_preparation_work = Some(held_work(
-                            services,
+                            sources,
+                            exposures,
                             reviewed,
                             entered,
                             resume,

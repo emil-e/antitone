@@ -33,7 +33,7 @@ pub(in crate::editor) fn request<T>(
 ) -> analysis::Request {
     let captured = std::cell::RefCell::new(None);
     let request = std::cell::RefCell::new(&mut reply.request);
-    app.run_until(super::tests::LIMIT, |_| {
+    app.run_until(super::workflow_tests::LIMIT, |_| {
         *captured.borrow_mut() = request
             .borrow_mut()
             .try_recv()
@@ -43,7 +43,7 @@ pub(in crate::editor) fn request<T>(
     captured.into_inner().unwrap()
 }
 
-pub(in crate::editor) fn preparation(editor: &mut Editor) -> Reply<analysis_review::Approved> {
+pub(in crate::editor) fn preparation(editor: &mut Editor) -> Reply<analysis::Approved> {
     let (work, reply) = reply();
     editor.document.analysis_preparation_work = Some(work);
     reply
@@ -63,7 +63,7 @@ impl Editor {
     ) {
         self.document
             .set_analysis_operation(Some(Operation::new(Phase::Review)));
-        let (id, services) = self.begin_analysis_preparation();
+        let (id, device) = self.begin_analysis_preparation();
         let cancelled = self
             .document
             .analysis_operation()
@@ -73,7 +73,7 @@ impl Editor {
         let retire = cancelled.cancel_on_drop();
         let task = cx.spawn(move |cx| async move {
             let _retire = retire;
-            sampling_review(request, id, services, cancelled, cx).await;
+            sampling_review(request, id, device, cancelled, cx).await;
         });
         self.document.analysis_operation_mut().unwrap().task = task;
     }
@@ -81,7 +81,7 @@ impl Editor {
     pub(in crate::editor) fn prepared_analysis_review(
         &mut self,
         request: analysis::Request,
-        approved: analysis_review::Approved,
+        approved: analysis::Approved,
         cx: &UiContext<'_, Self>,
     ) {
         let operation = Operation::new(Phase::Review);

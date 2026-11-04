@@ -1,5 +1,4 @@
 use super::*;
-use crate::editor::analysis_services::Services;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -61,39 +60,18 @@ pub(in crate::editor) fn observed() -> (source_loading::SourceLoader, Arc<Atomic
     )
 }
 
-struct NoSources;
-impl crate::source::SourceProvider for NoSources {
-    fn load_source(
-        &self,
-        _: crate::source::SourceKey,
-        _: crate::source::Priority,
-    ) -> crate::source::SourceFuture<'_> {
-        panic!("review assembly must not request source pixels")
-    }
-}
-
-pub(super) fn review_services(device: &wgpu::Device, queue: &wgpu::Queue) -> Services {
-    Services {
-        sampling_inputs: Default::default(),
-        exposures: Arc::default(),
-        sources: Arc::new(NoSources),
-        device: device.clone(),
-        queue: queue.clone(),
-        renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
-    }
-}
-
 pub(super) fn detect(
     request: &mut analysis::Request,
     scheduler: &source_loading::SourceLoader,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    _queue: &wgpu::Queue,
 ) {
-    let mut services = review_services(device, queue);
-    services.sources = scheduler.provider(None);
     let metadata = futures_lite::future::block_on(crate::editor::spatial::preparation::prepare(
         Arc::new(request.document.clone()),
-        services,
+        device.clone(),
+        scheduler.provider(None),
+        Default::default(),
+        Arc::default(),
         Default::default(),
         |_, _| {},
     ))
@@ -115,10 +93,10 @@ fn finished_shared_sampling_is_reused_without_changing_accepted_state() {
         "both authored sources must exercise detection"
     );
     let ready = request.document.spatial_metadata.clone();
-    let first = preparation::assemble(&request, &device, || false, |_, _| {})
+    let first = assemble_review(&request, &device, || false, |_, _| {})
         .unwrap()
         .unwrap();
-    let second = preparation::assemble(&request, &device, || false, |_, _| {})
+    let second = assemble_review(&request, &device, || false, |_, _| {})
         .unwrap()
         .unwrap();
     assert_eq!(first.entries, second.entries);
@@ -139,7 +117,7 @@ fn cancelling_review_assembly_does_not_return_partial_areas_or_discard_detection
     let before = request.document.project.clone();
     let ready = request.document.spatial_metadata.clone();
     let cancelled = std::cell::Cell::new(false);
-    let result = preparation::assemble(
+    let result = assemble_review(
         &request,
         &device,
         || cancelled.get(),
@@ -188,7 +166,7 @@ fn authored_windows_override_suggestions_without_changing_shared_results() {
     ];
     let before = request.document.project.clone();
     let ready = request.document.spatial_metadata.clone();
-    let approved = preparation::assemble(&request, &device, || false, |_, _| {})
+    let approved = assemble_review(&request, &device, || false, |_, _| {})
         .unwrap()
         .unwrap();
     assert_eq!(approved.entries[0].areas, first);
@@ -221,7 +199,7 @@ fn unavailable_detected_components_are_reviewable_without_redetection() {
     metadata.groups[0].sources[0].picture = None;
     metadata.validate().unwrap();
     request.document.spatial_metadata = Arc::new(metadata.clone());
-    let approved = preparation::assemble(&request, &device, || false, |_, _| {})
+    let approved = assemble_review(&request, &device, || false, |_, _| {})
         .unwrap()
         .unwrap();
     assert!(
@@ -245,6 +223,6 @@ fn unavailable_detected_components_are_reviewable_without_redetection() {
 #[test]
 fn missing_shared_detection_is_not_replaced_with_an_operation_local_detector() {
     let (request, _directory, device, _queue) = request();
-    assert!(preparation::assemble(&request, &device, || false, |_, _| {}).is_err());
+    assert!(assemble_review(&request, &device, || false, |_, _| {}).is_err());
     assert!(request.document.spatial_metadata.groups.is_empty());
 }

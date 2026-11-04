@@ -1,4 +1,5 @@
 use super::{Ready, document::Document, history::History, photo_scope::PhotoScope};
+use crate::{project::SourceId, scan::AnalysisInput, source::SourceKey};
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -9,6 +10,61 @@ mod tests;
 
 #[cfg(test)]
 mod spatial_tests;
+
+#[derive(Clone)]
+struct SamplingEntry {
+    source: SourceId,
+    key: SourceKey,
+    input: Arc<AnalysisInput>,
+}
+
+/// Retained original camera patches; compatibility follows the captured source development.
+#[derive(Clone, Default)]
+pub struct SamplingInputs {
+    entries: Arc<Vec<SamplingEntry>>,
+}
+
+impl SamplingInputs {
+    pub fn get(&self, source: SourceId, key: &SourceKey) -> Option<Arc<AnalysisInput>> {
+        self.entries
+            .iter()
+            .find(|e| e.source == source && &e.key == key)
+            .map(|e| e.input.clone())
+    }
+
+    pub fn insert(&mut self, source: SourceId, key: SourceKey, input: Arc<AnalysisInput>) {
+        let entries = Arc::make_mut(&mut self.entries);
+        entries.retain(|e| e.source != source);
+        entries.push(SamplingEntry { source, key, input });
+    }
+
+    pub fn retain(&mut self, document: &Document) {
+        let matches = |e: &SamplingEntry| {
+            document
+                .project
+                .source(e.source)
+                .is_ok_and(|source| !source.reference_only)
+                && document.source_key(e.source).is_ok_and(|key| key == e.key)
+        };
+        if self.entries.iter().all(&matches) {
+            return;
+        }
+        Arc::make_mut(&mut self.entries).retain(matches);
+    }
+
+    /// Owned patch payloads, once per allocation; lookup/Arc/allocator overhead is excluded.
+    pub fn retained_bytes(&self) -> u64 {
+        let mut seen = std::collections::HashSet::new();
+        self.entries
+            .iter()
+            .filter(|e| seen.insert(Arc::as_ptr(&e.input)))
+            .map(|e| e.input.retained_bytes())
+            .sum()
+    }
+}
+
+#[cfg(test)]
+mod sampling_tests;
 
 /// Accepted document authority, cross-photo tool context and the dependent visit.
 /// Captured documents are data snapshots, not histories or continuation owners.
@@ -39,7 +95,7 @@ pub(super) struct DocumentScope {
     pub cache: Arc<crate::source::SourceCache>,
     pub exposures: Arc<crate::exposure_metadata::Store>,
     pub spatial: crate::spatial_metadata::Store,
-    pub sampling_inputs: super::analysis_inputs::Inputs,
+    pub sampling_inputs: SamplingInputs,
     pub spatial_preparing: Option<super::spatial::Pending>,
     #[cfg(test)]
     pub spatial_reply: Option<
@@ -58,10 +114,9 @@ pub(super) struct DocumentScope {
     pub dust: super::dust::State,
     #[cfg(test)]
     pub analysis_preparation_work:
-        Option<super::analysis_workflow::testing::Work<super::analysis_review::Approved>>,
+        Option<super::analysis::testing::Work<super::analysis::Approved>>,
     #[cfg(test)]
-    pub analysis_fit_work:
-        Option<super::analysis_workflow::testing::Work<Box<super::analysis::Outcome>>>,
+    pub analysis_fit_work: Option<super::analysis::testing::Work<Box<super::analysis::Outcome>>>,
 }
 
 impl DocumentScope {

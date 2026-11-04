@@ -3,7 +3,7 @@ mod private;
 use crate::{project::SourceAnalysis, scan_regions::Areas};
 
 // Review-only cases install prepared areas; operation cases exercise the preceding workers.
-fn approved(request: &Request) -> analysis_review::Approved {
+fn approved(request: &Request) -> analysis::Approved {
     let entries = request
         .document
         .project
@@ -41,7 +41,7 @@ fn approved(request: &Request) -> analysis_review::Approved {
         .iter()
         .map(|&id| thumbnails::FileKey::new(&request.document.source_path(id).unwrap()))
         .collect();
-    analysis_review::Approved { entries, files }
+    analysis::Approved { entries, files }
 }
 
 pub(super) fn prepared(editor: &mut Editor, cx: &UiContext<'_, Editor>) {
@@ -285,7 +285,7 @@ fn all_ordered_photo_fields_control_the_warning_in_one_review_not_a_second_dialo
 }
 
 #[test]
-fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
+fn unavailable_analysis_device_tears_down_review_and_restore_working_photo() {
     crate::application::test_support::with_application(ready_state(), |app| {
         let (before, first, other) = app.enter(|editor, cx| {
             let first = editor.document.visit.current_source;
@@ -405,7 +405,7 @@ fn preparation_cancellation_and_failed_work_preserve_grade_and_areas() {
             let before = app.enter(|editor, cx| {
                 let request = editor.analysis_request().unwrap();
                 let approved = approved(&request);
-                let reply = analysis_workflow::testing::preparation(editor);
+                let reply = analysis::testing::preparation(editor);
                 let before = editor.document.state.project.clone();
                 editor.prepare_analysis_review(request, cx);
                 if !fail {
@@ -460,12 +460,12 @@ fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() 
                     .opening_edited
             );
             assert_eq!(editor.review_areas(other).unwrap(), &original);
-            let reply = analysis_workflow::testing::fitting(editor);
+            let reply = analysis::testing::fitting(editor);
             editor.confirm_analysis_review(cx);
             assert_eq!(editor.document.state.project, before);
             (before, reply)
         });
-        let request = analysis_workflow::testing::request(app, &mut reply);
+        let request = analysis::testing::request(app, &mut reply);
         assert!(
             request.areas.as_ref().unwrap().entries[0]
                 .areas
@@ -527,7 +527,7 @@ fn roll_review_controls_restore_scope_visibility_and_context() {
                         editor.finish_pick(cx);
                         None
                     } else {
-                        let reply = analysis_workflow::testing::fitting(editor);
+                        let reply = analysis::testing::fitting(editor);
                         editor.confirm_analysis_review(cx);
                         if exit == 4 {
                             editor.cancel_analysis();
@@ -536,7 +536,7 @@ fn roll_review_controls_restore_scope_visibility_and_context() {
                     }
                 });
                 if let Some(mut reply) = reply {
-                    let request = analysis_workflow::testing::request(app, &mut reply);
+                    let request = analysis::testing::request(app, &mut reply);
                     let result = match exit {
                         1 => Err("numerical rejection".into()),
                         3 => Ok(Some(Box::new(outcome(&request)))),

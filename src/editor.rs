@@ -75,12 +75,7 @@ use selected_preview::{SelectionPaint, SelectionTiming};
 mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
 mod analysis;
-mod analysis_inputs;
-mod analysis_interaction;
-mod analysis_review;
-use analysis_interaction::AnalyzeTool;
-mod analysis_services;
-mod analysis_workflow;
+use analysis::AnalyzeTool;
 mod dust;
 mod flat;
 mod spatial;
@@ -884,7 +879,7 @@ impl Editor {
         if self
             .document
             .analysis_operation()
-            .is_some_and(|op| op.phase != analysis_workflow::Phase::Regions)
+            .is_some_and(|op| op.phase != analysis::Phase::Regions)
         {
             self.close_analysis();
         }
