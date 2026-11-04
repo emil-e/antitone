@@ -169,7 +169,7 @@ fn shared_outline_shades_outside_but_not_inside_rotated_and_reflected_frames() {
 
 #[test]
 fn batch_view_and_margin_edits_preserve_accepted_composition_and_normal_navigation() {
-    let (mut editor, _directory) = super::super::tests::fixture();
+    let (mut editor, _directory) = super::tests::fixture();
     let accepted = Crop::from_region([200, 150, 100, 90].into());
     editor.document.visit.crop = Some(accepted);
     editor.document.visit.canvas.viewport.zoom = Some(1.5);

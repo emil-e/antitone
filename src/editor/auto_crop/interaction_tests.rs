@@ -9,7 +9,7 @@ const LIMIT: Duration = Duration::from_secs(5);
 fn retiring_batch_preparation_releases_its_owner_without_retiring_shared_work_or_its_successor() {
     for polled in [false, true] {
         for failed in [false, true] {
-            let (editor, _files) = super::super::tests::fixture();
+            let (editor, _files) = super::tests::fixture();
             let accepted = editor.document.state.project.clone();
             with_application(editor, |app| {
                 let (reply, old) = app.enter(|editor, cx| {
@@ -138,7 +138,7 @@ fn replacing_the_document_retires_a_preparing_batch_and_its_publication_rights()
 #[test]
 fn captured_loaded_source_keys_accept_locator_aliases_but_reject_foreign_inputs() {
     for foreign in [false, true] {
-        let (mut editor, directory) = super::super::tests::fixture();
+        let (mut editor, directory) = super::tests::fixture();
         let id = editor.document.visit.current_source.unwrap();
         let path = editor.document.source_path(id).unwrap();
         let alias = directory.path().join("alias");
