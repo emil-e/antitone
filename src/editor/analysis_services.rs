@@ -33,6 +33,7 @@ fn source_input(
 #[derive(Clone)]
 pub(super) struct Services {
     pub sources: Arc<dyn SourceProvider>,
+    pub sampling_inputs: super::analysis_inputs::Inputs,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub renderers: Arc<crate::renderer::RendererCache>,
@@ -47,6 +48,7 @@ impl Services {
     ) -> Self {
         Self {
             sources,
+            sampling_inputs: Default::default(),
             device: source.device.clone(),
             queue: source.queue.clone(),
             renderers: source.renderers.clone(),

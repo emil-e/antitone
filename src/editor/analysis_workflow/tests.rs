@@ -56,13 +56,18 @@ pub(in crate::editor) fn fixture(scheduler: source_loading::SourceLoader) -> Edi
     editor
 }
 
+pub(super) fn preparing(editor: &Editor) -> bool {
+    editor.document.spatial_preparing.is_some() || editor.analysis_preparing()
+}
+
 pub(super) fn start(app: &TestApplication<'_, Editor>) {
-    app.enter(|e, access| {
-        // These cases isolate sampling preparation after shared metadata. The composed
-        // Analyze entry and both consumer orders are covered by spatial workflow tests.
-        let request = e.analysis_request().expect("eligible analysis request");
-        e.prepare_analysis_review(request, access);
-        assert!(e.analysis_preparing());
+    app.enter(|editor, cx| {
+        editor.request_analysis(cx);
+        assert!(
+            editor.document.analysis_operation().is_some(),
+            "{}",
+            editor.status
+        );
     });
 }
 
@@ -107,7 +112,7 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
     let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         start(app);
-        app.run_until(LIMIT, |e| !e.analysis_preparing());
+        app.run_until(LIMIT, |e| !preparing(e));
         app.read(|e| {
             let review = e.document.analysis_review().expect("prepared review");
             assert_eq!(review.approved.entries.len(), 2);
@@ -133,7 +138,7 @@ fn queued_user_cancel_acknowledges_without_starting_native_work() {
         app.pump();
         app.update(Editor::cancel_analysis);
         drop(admission);
-        app.run_until(LIMIT, |e| !e.analysis_preparing());
+        app.run_until(LIMIT, |e| !preparing(e));
         app.read(|e| {
             assert!(!e.busy && e.document.analysis_review().is_none());
             assert_eq!(e.document.state.project, before);
@@ -153,7 +158,7 @@ fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work()
         start(app);
         await_native(app, &starts);
         app.update(Editor::cancel_analysis);
-        app.run_until(LIMIT, |e| !e.analysis_preparing());
+        app.run_until(LIMIT, |e| !preparing(e));
         app.read(|e| {
             assert!(!e.busy && e.document.analysis_review().is_none());
             assert_eq!(e.document.state.project, before);
@@ -238,8 +243,8 @@ fn unavailable_services_finish_the_activity_without_opening_review() {
     editor.source_services = None;
     with_application(editor, |app| {
         start(app);
-        assert!(app.read(|e| e.analysis_preparing() && e.busy));
-        app.run_until(LIMIT, |e| !e.analysis_preparing());
+        assert!(app.read(|e| preparing(e) && e.busy));
+        app.run_until(LIMIT, |e| !preparing(e));
         app.read(|e| {
             assert!(!e.analysis_preparing());
             assert!(e.document.analysis_review().is_none());

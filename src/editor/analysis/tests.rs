@@ -302,7 +302,6 @@ fn state() -> Editor {
 
 fn capture_request(editor: &Editor) -> Request {
     Request {
-        revision: 0,
         document: editor.document.capture(),
         selected: editor.document.visit.current_source.unwrap(),
         film: Some(rect([12, 12, 800, 600])),

@@ -27,6 +27,7 @@ fn metadata(document: &Document, inset: f64) -> Metadata {
                 observation: Some(picture),
                 film: None,
                 holder_opening: None,
+                sampling: Default::default(),
                 material: None,
             }
         })

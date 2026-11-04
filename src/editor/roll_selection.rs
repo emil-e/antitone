@@ -208,6 +208,8 @@ impl Editor {
                 .remove_from_filmstrip(id)
                 .expect("confirmed ordered source");
         }
+        let scope = &mut self.document;
+        scope.sampling_inputs.retain(&scope.state);
         if active_removed {
             self.document.visit.current_source = None;
         }

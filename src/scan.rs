@@ -14,6 +14,8 @@ use std::{path::Path, sync::Arc};
 type Result<T> = std::result::Result<T, Error>;
 
 mod analysis;
+#[cfg(feature = "editor")]
+pub(crate) use analysis::AnalysisInput;
 mod identity;
 pub use identity::CameraIdentity;
 mod image_source;

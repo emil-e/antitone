@@ -39,6 +39,7 @@ pub(super) struct DocumentScope {
     pub cache: Arc<crate::source::SourceCache>,
     pub exposures: Arc<crate::exposure_metadata::Store>,
     pub spatial: crate::spatial_metadata::Store,
+    pub sampling_inputs: super::analysis_inputs::Inputs,
     pub spatial_preparing: Option<super::spatial::Pending>,
     #[cfg(test)]
     pub spatial_reply: Option<
@@ -92,6 +93,7 @@ impl DocumentScope {
 
     pub fn install(&mut self, document: Document) {
         self.flat_correction = None;
+        self.sampling_inputs.retain(&document);
         self.exposures.restore(&document.exposure_metadata, |id| {
             document.exposure_origin(id)
         });
@@ -198,6 +200,7 @@ impl From<Document> for DocumentScope {
             auto_crop: Default::default(),
             spatial: crate::spatial_metadata::Store::restored((*state.spatial_metadata).clone()),
             spatial_preparing: None,
+            sampling_inputs: Default::default(),
             #[cfg(test)]
             spatial_reply: None,
             spatial_resumed: Arc::default(),

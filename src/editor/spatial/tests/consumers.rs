@@ -34,6 +34,7 @@ pub(super) fn declared(editor: &Editor) -> Metadata {
                 picture: Some(region),
                 film: None,
                 holder_opening: None,
+                sampling: Default::default(),
                 material: None,
             }
         })

@@ -12,13 +12,15 @@ use std::collections::HashSet;
 pub use crate::source::FileRevision;
 
 mod geometry;
+mod sampling;
 mod store;
+pub use sampling::SamplingAreas;
 pub use store::{Request, Store};
 
 #[cfg(test)]
 mod tests;
 
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 
 pub(crate) fn read_cached<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -279,12 +281,18 @@ pub struct SourceRegions {
     pub picture: Option<Region>,
     pub film: Option<Region>,
     pub holder_opening: Option<Region>,
+    pub sampling: SamplingAreas,
     /// Coarse film/holder/light/unknown classification, not a precise physical contour.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<crate::scan_regions::Material>,
 }
 
 impl SourceRegions {
+    /// Finished automatic suggestions, copied for review without changing shared results.
+    pub fn sampling_areas(&self) -> crate::scan_regions::Areas {
+        self.sampling.areas(self.material.clone())
+    }
+
     /// Nominal picture framing. Missing film or holder coverage does not move its edges.
     pub fn picture_crop(&self) -> Result<Crop, Error> {
         self.input.development.validate()?;
@@ -408,6 +416,7 @@ impl Metadata {
                 }
                 let active = SourceRegion::from(source.input.development.active_area);
                 active.validate()?;
+                source.sampling.validate(active)?;
                 if let Some(observation) = &source.observation {
                     let camera = crate::coverage::Coverage::rectangle(active).corners();
                     for boundary in &observation.boundaries {

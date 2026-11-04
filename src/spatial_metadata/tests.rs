@@ -48,6 +48,16 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
             })
             .unwrap();
         let observation = region([16., 112., 12., 84.]);
+        let sampling = SamplingAreas::new(&crate::scan_regions::Areas {
+            opening: Some(
+                crate::coverage::Coverage::rectangle(development.active_area.into())
+                    .corners()
+                    .map(|p| p.0),
+            ),
+            picture: observation.physical_quad(),
+            opening_shared: true,
+            ..Default::default()
+        });
         sources.push(SourceRegions {
             input: Input {
                 source: id,
@@ -60,6 +70,7 @@ fn fixture() -> (TempDir, Project, Metadata, Vec<Input>) {
             picture: Some(observation),
             film: None,
             holder_opening: None,
+            sampling,
             material: None,
         });
     }
@@ -465,6 +476,16 @@ fn invalid_or_unsupported_derived_payload_is_discardable_but_accepted_unknown_fi
         {
             let mut old = serde_json::to_value(&metadata).unwrap();
             old["version"] = serde_json::json!(2);
+            old
+        },
+        {
+            let mut old = serde_json::to_value(&metadata).unwrap();
+            old["version"] = serde_json::json!(3);
+            for group in old["groups"].as_array_mut().unwrap() {
+                for source in group["sources"].as_array_mut().unwrap() {
+                    source.as_object_mut().unwrap().remove("sampling");
+                }
+            }
             old
         },
         serde_json::json!({"unexpected":true}),

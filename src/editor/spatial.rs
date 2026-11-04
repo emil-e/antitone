@@ -8,7 +8,7 @@ use crate::spatial_metadata::{Metadata, Request};
 use futures_channel::oneshot;
 use std::sync::{Arc, Mutex};
 
-mod preparation;
+pub(super) mod preparation;
 
 #[cfg(test)]
 mod tests;
@@ -37,18 +37,50 @@ impl Editor {
         &mut self,
         cx: &UiContext<'scope, Self>,
     ) -> Option<impl Future<Output = Option<Arc<Metadata>>> + use<'scope>> {
+        self.prepare_region_inputs(cx, false)
+    }
+
+    pub(super) fn prepare_analysis_regions<'scope>(
+        &mut self,
+        cx: &UiContext<'scope, Self>,
+    ) -> Option<impl Future<Output = Option<Arc<Metadata>>> + use<'scope>> {
+        self.prepare_region_inputs(cx, true)
+    }
+
+    fn prepare_region_inputs<'scope>(
+        &mut self,
+        cx: &UiContext<'scope, Self>,
+        sampling: bool,
+    ) -> Option<impl Future<Output = Option<Arc<Metadata>>> + use<'scope>> {
         if self.busy && self.document.spatial_preparing.is_none() {
             return None;
         }
         self.sync_document();
         let (send, receive) = oneshot::channel();
-        if let Some(pending) = &mut self.document.spatial_preparing {
+        let document = Arc::new(self.document.capture());
+        let ready = document.ready_spatial_metadata();
+        let inputs = document.spatial_inputs();
+        let complete = ready.groups.iter().map(|g| g.sources.len()).sum::<usize>() == inputs.len()
+            && document
+                .project
+                .order
+                .iter()
+                .all(|id| inputs.iter().any(|input| input.source == *id));
+        let pixels_ready = !sampling
+            || inputs.iter().all(|input| {
+                self.document
+                    .sampling_inputs
+                    .get(&document, input.source)
+                    .is_ok_and(|p| p.is_some())
+            });
+        if self.document.spatial_preparing.is_none() && complete && pixels_ready {
+            let _ = send.send(Some(Arc::new(ready)));
+        } else if let Some(pending) = &mut self.document.spatial_preparing {
             pending.completion.push(send);
             self.tasks.begin(Task::Regions(pending.id));
             self.busy = true;
         } else {
             let request = self.document.spatial.begin()?;
-            let document = Arc::new(self.document.capture());
             let id = self.request_id();
             let cancelled = Cancellation::default();
             self.document.spatial_preparing = Some(Pending {
@@ -61,11 +93,13 @@ impl Editor {
             self.busy = true;
             self.status = "Preparing film and picture regions…".into();
             let services = self.source_services.as_ref().map(|source| {
-                Services::new(
+                let mut services = Services::new(
                     source,
                     source.provider(Some(self.document.cache.clone())),
                     self.document.exposures.clone(),
-                )
+                );
+                services.sampling_inputs = self.document.sampling_inputs.clone();
+                services
             });
             let progress = Arc::new(Progress::default());
             let produced = progress.clone();
@@ -80,7 +114,13 @@ impl Editor {
                     if let Some(programmed) = programmed {
                         return programmed
                             .await
-                            .unwrap_or_else(|_| Err("Programmed preparation dropped".into()));
+                            .unwrap_or_else(|_| Err("Programmed preparation dropped".into()))
+                            .map(|metadata| {
+                                metadata.map(|metadata| preparation::Prepared {
+                                    metadata,
+                                    sampling_inputs: Default::default(),
+                                })
+                            });
                     }
                     let services =
                         services.ok_or_else(|| "Source services unavailable".to_owned())?;
@@ -165,7 +205,7 @@ impl Editor {
         id: u64,
         document: Arc<Document>,
         request: Request,
-        result: Result<Option<Metadata>, String>,
+        result: Result<Option<preparation::Prepared>, String>,
     ) {
         if !self
             .document
@@ -192,6 +232,10 @@ impl Editor {
                 return;
             }
         };
+        let preparation::Prepared {
+            metadata,
+            sampling_inputs,
+        } = metadata;
         let paths_match = metadata.groups.iter().flat_map(|g| &g.sources).all(|row| {
             match (
                 self.document.source_path(row.input.source),
@@ -216,6 +260,8 @@ impl Editor {
             }
             return;
         }
+        scope.sampling_inputs = sampling_inputs;
+        log::info!(bytes = scope.sampling_inputs.retained_bytes(); "analysis_inputs_prepared");
         for completion in pending.completion.drain(..) {
             let _ = completion.send(Some(self.document.spatial.ready()));
         }

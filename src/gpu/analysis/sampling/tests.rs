@@ -151,6 +151,65 @@ fn camera_sampling_requires_every_cell_of_the_selected_capture_footprint() {
 }
 
 #[test]
+fn retained_original_patches_match_native_sampling_after_area_and_correction_edits() {
+    let (device, queue, renderer) = crate::gpu::test_support::render_context();
+    let gate = SubmissionGate::default();
+    for rgb in [[6000, 12000, 9000], [2; 3], [65535; 3]] {
+        let file = crate::raw::fixture::bayer_dng_with_rgb(rgb);
+        let mut scan = Scan::open(file.path(), None).unwrap();
+        scan.area = SourceRegion::from([scan.area.x + 8, scan.area.y + 8, 48, 48]);
+        let a = scan.area;
+        let retained = Arc::new(
+            crate::scan::AnalysisInput::capture(&scan, 16, || false)
+                .unwrap()
+                .unwrap(),
+        );
+        let variable = Arc::new(
+            crate::flat_field::FlatField::from_nodes(
+                [a.x, a.y, a.width, a.height],
+                [2, 2],
+                vec![
+                    DVec3::splat(0.4),
+                    DVec3::new(2., 1.3, 1.8),
+                    DVec3::splat(0.4),
+                    DVec3::new(2., 1.3, 1.8),
+                ],
+            )
+            .unwrap(),
+        );
+        for field in [None, Some(variable)] {
+            scan.set_flat_field(field.clone()).unwrap();
+            let native = CameraSampler::new(&device, &renderer, (&queue, &gate), &scan).unwrap();
+            let cached = CameraSampler::retained(
+                &device,
+                &renderer,
+                (&queue, &gate),
+                retained.clone(),
+                field,
+            )
+            .unwrap();
+            assert_eq!(native.effective_floor(), cached.effective_floor());
+            for edited in [false, true] {
+                let inside = |f: SourceRegion| !edited || f.x >= a.x + 12;
+                let direct = native.sample(a, 16, inside, || false).unwrap().unwrap();
+                let reused = cached.sample(a, 16, inside, || false).unwrap().unwrap();
+                assert_eq!(direct.attempted, reused.attempted);
+                assert_eq!(direct.rejected_floor, reused.rejected_floor);
+                assert_eq!(direct.pixels, reused.pixels);
+                assert!(direct.attempted > 0);
+            }
+            assert!(cached.sample(a, 16, |_| true, || true).unwrap().is_none());
+        }
+        let weak = Arc::downgrade(&retained);
+        drop(retained);
+        assert!(
+            weak.upgrade().is_none(),
+            "completed GPU queries must not retain document sampling inputs"
+        );
+    }
+}
+
+#[test]
 fn camera_sampling_accepts_native_white_without_a_capture_or_white_value_veto() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let file = crate::raw::fixture::bayer_dng_with_rgb([65535; 3]);

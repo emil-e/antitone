@@ -1,4 +1,4 @@
-use super::tests::{LIMIT, await_native, fixture, start};
+use super::tests::{LIMIT, await_native, fixture, preparing, start};
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
@@ -8,7 +8,7 @@ use std::sync::mpsc;
 
 fn review(app: &mut TestApplication<'_, Editor>) {
     start(app);
-    app.run_until(LIMIT, |e| !e.analysis_preparing());
+    app.run_until(LIMIT, |e| !preparing(e));
     app.read(|e| assert!(e.document.analysis_review().is_some(), "{}", e.status));
 }
 
@@ -192,6 +192,8 @@ fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cp
     let before = editor.document.state.project.clone();
     with_application(editor, |app| {
         review(app);
+        // Exercise the native-acquisition fallback explicitly; normal confirmation uses patches.
+        app.update(|e| e.document.sampling_inputs = Default::default());
         enabled.store(true, Ordering::Relaxed);
         confirm(app);
         await_native(app, &starts);
@@ -222,12 +224,13 @@ fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cp
 }
 
 #[test]
-fn fitting_document_and_application_retirement_cannot_publish_late_results() {
+fn native_fallback_document_and_application_retirement_cannot_publish_late_results() {
     for close_application in [false, true] {
         let (scheduler, enabled, starts, release) = gated();
         let editor = fixture(scheduler.clone());
         with_application(editor, |app| {
             review(app);
+            app.update(|e| e.document.sampling_inputs = Default::default());
             enabled.store(true, Ordering::Relaxed);
             confirm(app);
             await_native(app, &starts);
@@ -246,6 +249,83 @@ fn fitting_document_and_application_retirement_cannot_publish_late_results() {
         });
         scheduler.close_and_wait().unwrap();
     }
+}
+
+#[test]
+fn cached_fit_cancellation_waits_for_worker_cleanup_without_blocking_other_cpu_jobs() {
+    let scheduler = source_loading::SourceLoader::new();
+    let editor = fixture(scheduler.clone());
+    let before = editor.document.state.project.clone();
+    with_application(editor, |app| {
+        review(app);
+        scheduler.close_and_wait().unwrap();
+        let (entered, starts) = mpsc::channel();
+        let (release, resume) = mpsc::channel();
+        let resume = Mutex::new(resume);
+        let enabled = AtomicBool::new(true);
+        app.read(|e| {
+            e.source_services
+                .as_ref()
+                .unwrap()
+                .renderers
+                .submissions()
+                .observe_submissions(Arc::new(move || {
+                    if enabled.swap(false, Ordering::SeqCst) {
+                        entered.send(()).unwrap();
+                        resume.lock().unwrap().recv_timeout(LIMIT).unwrap();
+                    }
+                }))
+        });
+        confirm(app);
+        let deadline = std::time::Instant::now() + LIMIT;
+        loop {
+            app.pump();
+            if starts.try_recv().is_ok() {
+                break;
+            }
+            app.read(|e| {
+                assert!(
+                    e.analysis_fitting(),
+                    "fit ended before GPU gate: {}",
+                    e.status
+                )
+            });
+            assert!(
+                std::time::Instant::now() < deadline,
+                "GPU fitting did not reach the observed submission"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        app.update(Editor::cancel_analysis);
+        assert!(app.read(|e| {
+            e.busy
+                && e.document
+                    .analysis_operation()
+                    .unwrap()
+                    .cancelled
+                    .is_cancelled()
+        }));
+        let (entered, observed) = mpsc::channel();
+        let probe = app
+            .access()
+            .spawn(move |_| async move {
+                crate::background::run(move |_| entered.send(()).unwrap())
+                    .await
+                    .unwrap();
+            })
+            .unwrap();
+        app.run_until(LIMIT, |_| observed.try_recv().is_ok());
+        release.send(()).unwrap();
+        app.run_until(LIMIT, |e| {
+            !e.busy && e.document.analysis_operation().is_none()
+        });
+        app.read(|e| {
+            assert_eq!(e.document.state.project, before);
+            assert!(e.history_label(Direction::Undo).is_none());
+            assert!(e.document.sampling_inputs.retained_bytes() > 0);
+        });
+        drop(probe);
+    });
 }
 
 #[test]

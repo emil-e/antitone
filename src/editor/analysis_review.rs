@@ -1,13 +1,5 @@
 use super::*;
-use crate::region_timing::timed;
-use crate::{
-    project::SourceAnalysis,
-    scan_regions::{Areas, Capture, Evidence, RollModel},
-};
-#[cfg(test)]
-use std::sync::atomic::{AtomicU64, Ordering};
-
-mod measurements;
+use crate::{project::SourceAnalysis, scan_regions::Areas};
 #[cfg(all(test, target_os = "macos"))]
 mod performance;
 pub(super) mod preparation;
@@ -83,54 +75,6 @@ fn verify_areas(document: &Document, approved: Option<&Approved>) -> Result<(), 
         verify_file(document, approved)?;
     }
     Ok(())
-}
-
-fn fine_measurement(scan: &Scan, code_scale: f64) -> Result<([u32; 2], Vec<[u16; 3]>), Error> {
-    let (w, h, rgb) = timed!("fine_preview", scan.measurement_preview(3072, code_scale))?;
-    let rgb = timed!(
-        "fine_pack",
-        rgb.into_iter().map(|p| [p[0], p[1], p[2]]).collect()
-    );
-    Ok(([w, h], rgb))
-}
-
-#[cfg(test)]
-pub(super) fn prepare(
-    request: &analysis::Request,
-    generation: &AtomicU64,
-    developments: &source_loading::SourceLoader,
-    device: &wgpu::Device,
-    progress: impl FnMut(usize, usize),
-) -> Result<Option<Approved>, Error> {
-    preparation::prepare_with_measurements(
-        request,
-        generation,
-        developments,
-        device,
-        progress,
-        measurements::Measurements::default(),
-        &Arc::new(crate::source::SourceCache::new(0)),
-    )
-}
-
-#[cfg(test)]
-fn prepare_with_measurements(
-    request: &analysis::Request,
-    generation: &AtomicU64,
-    developments: &source_loading::SourceLoader,
-    device: &wgpu::Device,
-    progress: impl FnMut(usize, usize),
-    measurements: &mut measurements::Measurements,
-) -> Result<Option<Approved>, Error> {
-    preparation::prepare_with_measurements(
-        request,
-        generation,
-        developments,
-        device,
-        progress,
-        std::mem::take(measurements),
-        &Arc::new(crate::source::SourceCache::new(0)),
-    )
 }
 
 impl Editor {

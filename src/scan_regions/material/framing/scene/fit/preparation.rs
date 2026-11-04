@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     project::Development,
-    spatial_metadata::{Boundary, CommonSize, Group, Input, Region, SourceRegions},
+    spatial_metadata::{Boundary, CommonSize, Group, Input, Region, SamplingAreas, SourceRegions},
 };
 
 fn native_observation(
@@ -116,18 +116,28 @@ pub(in super::super::super) fn run(
     let scene = Scene::fit(captures, &model);
     let prepared = Prepared::new(&scene, captures);
     let mut baselines = vec![];
+    for (index, capture) in captures.iter().enumerate() {
+        checkpoint()?;
+        baselines.push(
+            model
+                .areas(index, capture, capture.size, &capture.rgb)
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    let mut sampling = baselines.clone();
+    model
+        .refine_areas(&mut sampling)
+        .map_err(|e| e.to_string())?;
     let mut source_lines = vec![];
     let mut sources = vec![];
     for (index, (capture, input)) in captures.iter().zip(inputs).enumerate() {
         checkpoint()?;
-        let mut baseline = model
-            .areas(index, capture, capture.size, &capture.rgb)
-            .map_err(|e| e.to_string())?;
+        let baseline = &mut baselines[index];
         let (native, lines) = native_observation(
             &scene,
             capture,
             &prepared.roles[index],
-            &baseline,
+            baseline,
             selected_lines(&model, index, capture),
             &checkpoint,
         )?;
@@ -175,9 +185,9 @@ pub(in super::super::super) fn run(
             observation,
             film: film_limits(capture, &prepared.roles[index]),
             holder_opening,
+            sampling: SamplingAreas::new(&sampling[index]),
             material: baseline.material.clone(),
         });
-        baselines.push(baseline);
         source_lines.push(lines);
     }
     let common_size = CommonSize::fit(&sources);

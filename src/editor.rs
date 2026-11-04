@@ -71,6 +71,7 @@ use selected_preview::{SelectionPaint, SelectionTiming};
 mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
 mod analysis;
+mod analysis_inputs;
 mod analysis_review;
 mod analysis_services;
 mod analysis_workflow;

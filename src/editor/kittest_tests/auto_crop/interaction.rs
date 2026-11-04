@@ -100,6 +100,7 @@ fn preparation_keeps_footer_cancel_available_and_apply_waits_for_ready_proposals
                 });
                 // Hold region publication while the real tool continuation waits for it.
                 let reply = h.update(|editor| {
+                    editor.document.spatial = crate::spatial_metadata::Store::default();
                     let (reply, receive) = futures_channel::oneshot::channel();
                     editor.document.spatial_reply = Some(receive);
                     reply
@@ -113,6 +114,10 @@ fn preparation_keeps_footer_cancel_available_and_apply_waits_for_ready_proposals
                 h.step();
                 h.read(|editor| {
                     assert!(editor.busy && editor.document.spatial_preparing.is_some());
+                    assert!(
+                        editor.document.spatial_reply.is_none(),
+                        "producer must capture the held reply rather than reuse ready metadata"
+                    );
                     assert!(
                         editor.document.auto_crop.active()
                             && !editor.document.auto_crop.reviewing()
