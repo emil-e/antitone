@@ -1,17 +1,21 @@
 //! Worker-side original-grid inputs and weighted statistics for interactive measurements.
 
-use crate::{
-    Error,
-    adjustment_layers::AdjustmentLayerSnapshot,
-    coverage::Coverage,
-    gpu::{
-        GpuFlatField, Grading, ProcessingInput,
-        evaluation::{self, Budget, Grid, ImageNode, Photograph, Region},
-    },
-    processing::{InputSettings, NegativeInput, RollSettings},
-    renderer::GpuRenderer,
-    scan::Scan,
-};
+use crate::Error;
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::coverage::Coverage;
+use crate::gpu::evaluation;
+use crate::gpu::evaluation::Budget;
+use crate::gpu::evaluation::Grid;
+use crate::gpu::evaluation::ImageNode;
+use crate::gpu::evaluation::Region;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::grading::Grading;
+use crate::gpu::photograph::PhotographGraph;
+use crate::processing::InputSettings;
+use crate::processing::NegativeInput;
+use crate::processing::RollSettings;
+use crate::renderer::GpuRenderer;
+use crate::scan::Scan;
 use glam::DVec3;
 use std::sync::Arc;
 
@@ -104,7 +108,7 @@ impl<'a> Samples<'a> {
     }
 
     pub(in crate::editor) fn camera_light(&self) -> Result<Arc<ImageNode>, Error> {
-        Photograph::camera_light(self.source.clone(), self.field.clone())
+        PhotographGraph::camera_light(self.source.clone(), self.field.clone())
     }
 
     pub(in crate::editor) fn require_precision(
@@ -130,8 +134,11 @@ impl<'a> Samples<'a> {
     pub(in crate::editor) fn camera_response(
         &self,
         negative: NegativeInput,
-    ) -> Result<evaluation::CameraReadout, Error> {
-        evaluation::CameraReadout::normalized(self.camera_light()?, negative)
+    ) -> Result<crate::gpu::photograph::camera_response::CameraReadout, Error> {
+        crate::gpu::photograph::camera_response::CameraReadout::normalized(
+            self.camera_light()?,
+            negative,
+        )
     }
 
     pub(in crate::editor) fn photograph(
@@ -139,29 +146,16 @@ impl<'a> Samples<'a> {
         input: InputSettings,
         roll: RollSettings,
         layers: AdjustmentLayerSnapshot,
-    ) -> Result<Photograph, Error> {
-        let program = crate::gpu::GpuInputProgram::for_scan(self.scan, input)?;
-        let matrix = self.scan.positive_matrix(&input)?;
-
-        let grade = Arc::new(Grading::new(
-            &self.services.device.limits(),
-            roll,
-            layers,
-            self.scan.area,
-        )?);
-        let pipeline = Arc::new(ProcessingInput::compose(
-            &self.services.device.limits(),
-            program,
-            grade,
-            self.scan.area,
-        )?);
-
-        Photograph::new(
+    ) -> Result<PhotographGraph, Error> {
+        let program = crate::gpu::interpretation::InputTransform::for_scan(self.scan, input)?;
+        PhotographGraph::original(
             &self.services.device.limits(),
             self.source.clone(),
             self.field.clone(),
-            &ProcessingInput::from(pipeline),
-            matrix,
+            program,
+            Grading::new(&self.services.device.limits(), roll, layers, self.scan.area)?,
+            Default::default(),
+            &Default::default(),
         )
     }
 

@@ -1,4 +1,7 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     halation::{HalationSettings, reference},
@@ -32,7 +35,7 @@ fn independent_halation_acquires_real_neighbours_beyond_a_rotated_physical_view(
         size: 0.5,
         strength: 0.4,
     };
-    let processing = ProcessingInput::new(
+    let processing = AuthoredPhotograph::new(
         &device.limits(),
         InputSettings::Digital,
         Default::default(),

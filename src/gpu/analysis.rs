@@ -1,12 +1,12 @@
 //! Shared pointwise photographic response over the captured camera samples used by roll fitting.
 
-use super::{SubmissionGate, evaluation};
 use crate::{Error, processing::NegativeInput, roll_analysis::ForwardModel};
 use glam::DVec3;
 use std::{
     cell::{Cell, RefCell},
     sync::Arc,
 };
+use {super::evaluation, crate::gpu::submission::SubmissionGate};
 
 mod sampling;
 pub(crate) use sampling::CameraSampler;
@@ -97,7 +97,8 @@ impl ForwardModel for ResponseModel<'_> {
             domain,
             points: points.to_vec().into(),
         }));
-        let readout = evaluation::CameraReadout::normalized(camera, negative)?;
+        let readout =
+            crate::gpu::photograph::camera_response::CameraReadout::normalized(camera, negative)?;
         let request = self.context.request(
             readout.image.clone(),
             evaluation::Region {

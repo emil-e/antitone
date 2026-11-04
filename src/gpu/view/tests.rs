@@ -1,11 +1,17 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 use crate::processing::Calibration;
+use crate::processing::{InputSettings, RollSettings};
 use crate::{
     color::Balance,
     geometry::{Composition, FramePoint},
     viewer::readback::image_pixels as image,
 };
+use glam::{DMat3, DVec3};
 use std::sync::atomic::AtomicU64;
 
 #[cfg(target_os = "macos")]
@@ -108,8 +114,8 @@ fn processing_input(
     roll: RollSettings,
     photo: AdjustmentLayerSettings,
     scan: &Scan,
-) -> ProcessingInput {
-    crate::gpu::ProcessingInput::new(
+) -> AuthoredPhotograph {
+    crate::gpu::test_inputs::AuthoredPhotograph::new(
         &device.limits(),
         input,
         roll,
@@ -159,7 +165,7 @@ fn native_graph_identity_captures_source_response_correction_and_grid() {
         let frame = frame(&scan);
         let settings = negative(0.6);
         let native = |scan: &Scan, frame, settings, field| {
-            let input = ProcessingInput::new(
+            let input = AuthoredPhotograph::new(
                 &device.limits(),
                 settings,
                 RollSettings::default(),
@@ -169,9 +175,14 @@ fn native_graph_identity_captures_source_response_correction_and_grid() {
             )
             .unwrap();
             let spec = SourceRequest::for_processing(frame, &input).unwrap();
-            crate::gpu::execution::footprints::Acquired::definitions(scan, field, &input, &[spec])
-                .unwrap()
-                .remove(0)
+            crate::gpu::view::acquisition::AcquiredViewRaster::source_graphs(
+                scan,
+                field,
+                &input,
+                &[spec],
+            )
+            .unwrap()
+            .remove(0)
         };
         let original = native(&scan, frame, settings, None);
         assert!(original.same_definition(&native(&scan, frame, settings, None)));

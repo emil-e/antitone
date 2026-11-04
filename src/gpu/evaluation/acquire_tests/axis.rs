@@ -39,7 +39,7 @@ fn reconstructed(
         values: values.to_vec(),
     }));
     let scope = context.test_materializations(false);
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let mut images = Vec::new();
     for x in (0..size[0]).step_by(columns as usize) {
         let region = [x, 0, columns.min(size[0] - x), size[1]]

@@ -34,7 +34,7 @@ fn nested_production_counts_source_work_submissions_and_allocations() {
 
     for delivery in ["read", "sink", "production"] {
         reads.lock().unwrap().clear();
-        let gate = crate::gpu::SubmissionGate::default();
+        let gate = crate::gpu::submission::SubmissionGate::default();
         let submissions = Arc::new(AtomicUsize::new(0));
         let observed = submissions.clone();
         gate.observe_submissions(Arc::new(move || {

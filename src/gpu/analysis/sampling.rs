@@ -1,8 +1,9 @@
 //! Original-coordinate camera-light samples for the statistical roll analysis.
 
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 use crate::{
-    gpu::{GpuFlatField, ProcessingSource},
+    gpu::{flat::GpuFlatField, source::ProcessingSource},
     renderer::GpuRenderer,
     scan::{AnalysisSamples, DevelopedSource, Scan},
 };
@@ -165,7 +166,11 @@ impl<'a> CameraSampler<'a> {
             domain,
         }));
 
-        evaluation::Photograph::camera_footprints(codes, self.field.clone(), &origins)
+        crate::gpu::photograph::PhotographGraph::camera_footprints(
+            codes,
+            self.field.clone(),
+            &origins,
+        )
     }
 
     pub(crate) fn sample(

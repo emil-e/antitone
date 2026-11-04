@@ -5,7 +5,7 @@ impl Context {
     pub(crate) fn materialize_many(
         &self,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         scope: &Materializations,
         evaluations: Vec<Evaluation>,
     ) -> Result<Vec<ImageFuture<ImageLayout>>, Error> {

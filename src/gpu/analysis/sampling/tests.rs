@@ -1,5 +1,6 @@
 use super::*;
 use crate::geometry::SourceRegion;
+use crate::gpu::submission::SubmissionGate;
 
 #[test]
 fn camera_sampling_keeps_the_original_grid_correction_and_deliberate_exposure_omission() {

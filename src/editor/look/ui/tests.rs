@@ -1,4 +1,6 @@
 use super::*;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::looks::{LookOrigin, Lut3D};
 
 fn asset() -> Arc<LookAsset> {
@@ -59,14 +61,14 @@ fn loaded_menu_names_are_unique_without_relabelling_the_accepted_assets() {
 fn positive_input_adopts_look_but_source_inspection_cannot() {
     let look = asset();
     let source =
-        ProcessingInput::from(ProcessingParameters::source()).with_luts(Some(look.clone()));
+        AuthoredPhotograph::from(ProcessingParameters::source()).with_luts(Some(look.clone()));
     assert!(source.luts().is_empty());
     let calibration = Calibration {
         dmin: DVec3::splat(0.7),
         dmax: DVec3::splat(0.003),
         input_floor: crate::processing::CAMERA_INPUT_FLOOR,
     };
-    let input = ProcessingInput::from(
+    let input = AuthoredPhotograph::from(
         ProcessingParameters::positive(calibration, RollSettings::default(), glam::DMat3::IDENTITY)
             .unwrap(),
     );

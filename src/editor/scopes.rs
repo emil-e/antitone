@@ -1,4 +1,7 @@
 use super::*;
+#[cfg(test)]
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::{
     frame_raster::FrameRaster,
     gpu_scopes::{GpuScopes, ScopePaint},
@@ -203,7 +206,7 @@ impl ScopeInput {
         &self,
         gpu: Arc<GpuScopes>,
         settings: Settings,
-        submissions: crate::gpu::SubmissionGate,
+        submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
     ) -> ScopePaint {
         ScopePaint::mapped_rendered(
@@ -248,7 +251,7 @@ impl Editor {
     #[cfg(test)]
     pub(super) fn scope_input(
         &self,
-    ) -> Result<(Arc<GpuImage>, ProcessingInput, FrameRaster), &'static str> {
+    ) -> Result<(Arc<GpuImage>, AuthoredPhotograph, FrameRaster), &'static str> {
         let ScopeInput { view, frame, .. } = self.scope_request()?;
         let device = self
             .document

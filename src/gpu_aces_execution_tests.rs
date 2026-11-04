@@ -1,3 +1,6 @@
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
 use super::*;
 use crate::rendering::CpuRenderer;
 
@@ -512,13 +515,10 @@ fn performance_input(
     if std::env::var_os("ANTITONE_SCREEN_RAW").is_some() {
         let (scan, calibration) = crate::raw_test_support::train_raw::load();
         let raster = InputRaster::raw(&scan, calibration, size);
-        let mut source =
-            ProcessingSource::new_continuous(device, &raster.pixels, raster.matrix).unwrap();
         let r = raster.region;
-        source
-            .set_geometry(SourceGeometry::new([r.x, r.y, r.width, r.height], size).unwrap())
-            .unwrap();
-        let grade = ProcessingInput::new(
+        let source = ProcessingSource::new_continuous(device, &raster.pixels, raster.matrix,
+            Some(SourceGeometry::new([r.x, r.y, r.width, r.height], size).unwrap())).unwrap();
+        let grade = AuthoredPhotograph::new(
             &device.limits(),
             calibration,
             RollSettings::default(),

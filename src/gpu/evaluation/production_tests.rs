@@ -1,18 +1,24 @@
 use super::*;
-use crate::{
-    adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
-    geometry::{Composition, FramePoint},
-    gpu::{GpuFlatField, ProcessingInput, repairs::Snapshot},
-    processing::{Calibration, InputSettings, RollSettings},
-    rendering::{OutputReference, OutputTarget},
-};
+use crate::adjustment_layers::AdjustmentLayer;
+use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::geometry::Composition;
+use crate::geometry::FramePoint;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::repairs::Snapshot;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::processing::Calibration;
+use crate::processing::InputSettings;
+use crate::processing::RollSettings;
+use crate::rendering::OutputReference;
+use crate::rendering::OutputTarget;
 use glam::DVec3;
 
 fn canonical(
     renderer: &crate::renderer::GpuRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    request: crate::gpu::execution::Request<'_>,
+    request: crate::gpu::execution::test_support::OriginalControls<'_>,
 ) -> Vec<[f32; 4]> {
     let composition = request.composition;
     let mut pixels = None;
@@ -20,7 +26,7 @@ fn canonical(
         renderer,
         device,
         (queue, &Default::default()),
-        request,
+        request.lower(device, renderer).unwrap(),
         |render, finish| {
             let size = composition.size();
             let mut values = vec![[0.; 4]; (size[0] * size[1]) as usize];
@@ -122,7 +128,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     let evaluated = Arc::new(crate::repair_source::evaluate(&neutral, &repair).unwrap());
     let snapshot = Snapshot::logical(vec![evaluated.clone()]).unwrap();
     let pipeline = Arc::new(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             settings,
             roll,
@@ -132,7 +138,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
         )
         .unwrap(),
     );
-    let mut input = ProcessingInput::from(pipeline).with_pixel_pipeline(
+    let mut input = AuthoredPhotograph::from(pipeline).with_pixel_pipeline(
         crate::pixel_pipeline::PixelPipeline::emulation(
             crate::grain::GrainSettings {
                 enabled: true,
@@ -175,7 +181,7 @@ fn complete_negative_correction_repairs_mtf_grain_and_look_preserve_original_pro
     input = input.with_luts(Some(look.clone()));
     let stages = input.pixel_pipeline();
     let repairs = vec![evaluated];
-    let request = || crate::gpu::execution::Request {
+    let request = || crate::gpu::execution::test_support::OriginalControls {
         scan: &scan,
         field: Some(field.clone()),
         input: InputSettings::from(base),
@@ -375,8 +381,8 @@ fn immutable_programs_are_reused_without_retaining_the_native_source() {
     let mut count = 0;
     let mut result = None;
     for exposure in [0., 0.5] {
-        let input = ProcessingInput::from(Arc::new(
-            ProcessingInput::new(
+        let input = AuthoredPhotograph::from(Arc::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 RollSettings {

@@ -782,7 +782,8 @@ fn corrected_repair_evaluation_uses_only_the_ungraded_positive_and_retains_signe
         loaded: 1,
         source: SourceId(1),
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        signature: crate::gpu::GpuInputProgram::for_scan(&scan, calibration.into()).unwrap(),
+        signature: crate::gpu::interpretation::InputTransform::for_scan(&scan, calibration.into())
+            .unwrap(),
         repair,
         input: calibration.into(),
     };

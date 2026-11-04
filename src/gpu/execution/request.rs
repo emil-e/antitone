@@ -1,21 +1,12 @@
 //! Captured processing and sample-storage choices, independent of file encoding.
 
-use crate::{
-    Error,
-    adjustment_layers::AdjustmentLayerSnapshot,
-    geometry::Composition,
-    gpu::GpuFlatField,
-    pixel_pipeline::PixelPipeline,
-    processing::{InputSettings, RollSettings},
-    rendering::{OutputReference, OutputTarget},
-    scan::Scan,
-};
+use crate::{Error, geometry::Composition, gpu::evaluation::ImageNode, rendering::OutputTarget};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SampleEncoding {
     LinearFloat,
-    Rgb16,
+    Rgb16(OutputTarget),
 }
 
 pub(crate) enum OutputBlock {
@@ -46,17 +37,9 @@ impl OutputBlock {
     }
 }
 
-/// Source/photographic intent and raster demand. Publication rights stay with the consumer.
-pub(crate) struct Request<'a> {
-    pub scan: &'a Scan,
-    pub field: Option<Arc<GpuFlatField>>,
-    pub input: InputSettings,
-    pub roll: RollSettings,
-    pub grade: AdjustmentLayerSnapshot,
-    pub repairs: &'a [Arc<crate::dust_repair::EvaluatedRepair>],
+/// A complete calculation and its output footprint. Publication rights stay with the consumer.
+pub(crate) struct Request {
+    pub definition: Arc<ImageNode>,
     pub composition: Composition,
-    pub stages: PixelPipeline,
-    pub output: OutputReference,
-    pub luts: crate::looks::LutChain,
     pub encoding: SampleEncoding,
 }

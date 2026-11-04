@@ -1,4 +1,8 @@
 use super::*;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
@@ -8,10 +12,10 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
             GpuImage::new_shared(
                 &renderer,
                 &device,
-                2,
-                2,
+                [2, 2],
                 &[[32000, 20000, 10000, 0]; 4],
                 DMat3::IDENTITY,
+                None,
                 OutputTarget::Srgb,
             )
             .await
@@ -33,7 +37,7 @@ fn fallible_paint_admission_rejects_uncaptured_photos_but_accepts_inspection() {
                 "photographic input requires captured interpretation and grading"
             ))
         ));
-        let inspection = ProcessingInput::from(ProcessingParameters::source());
+        let inspection = AuthoredPhotograph::from(ProcessingParameters::source());
         assert!(
             crate::viewer::ImagePaint::with_processing(image, Some(inspection), [0., 0., 1., 1.],)
                 .is_ok()
@@ -48,18 +52,18 @@ fn fresh_resident_camera_paints_without_incidental_acquisition_or_thumbnail_comp
         let image = GpuImage::new_shared(
             &renderer,
             &device,
-            4,
-            2,
+            [4, 2],
             &[[32000, 20000, 10000, 0]; 8],
             DMat3::IDENTITY,
+            None,
             OutputTarget::Srgb,
         )
         .await
         .unwrap();
         let compiled = renderer.evaluation.programs.len();
         for input in [
-            ProcessingInput::from(ProcessingParameters::source()),
-            ProcessingInput::new(
+            AuthoredPhotograph::from(ProcessingParameters::source()),
+            AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 Default::default(),
@@ -143,7 +147,7 @@ fn fresh_context_support_can_paint_default_grading_inspection_and_first_active_l
                 "paint must reuse background-initialized component programs"
             );
         }
-        let input = ProcessingInput::from(ProcessingParameters::source_inspection(1.2).unwrap());
+        let input = AuthoredPhotograph::from(ProcessingParameters::source_inspection(1.2).unwrap());
         let view =
             RenderedView::inspection(&device, inspection, &input, OutputTarget::DisplayP3, None)
                 .unwrap();

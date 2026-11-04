@@ -3,7 +3,7 @@
 use super::CellRegion as Rect;
 use super::*;
 #[cfg(all(test, feature = "editor"))]
-use crate::gpu::Grading;
+use crate::gpu::grading::Grading;
 #[cfg(feature = "render")]
 use crate::rendering::OutputTarget;
 #[cfg(all(test, feature = "editor"))]
@@ -156,7 +156,7 @@ pub fn interpret(
             "interpretation requires camera samples",
         ));
     }
-    let columns = crate::gpu::CameraMatrix::new(matrix)?.columns;
+    let columns = crate::gpu::parameters::CameraMatrix::new(matrix)?.columns;
     let constants = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("evaluation immutable source interpretation"),
         contents: bytemuck::cast_slice(&columns),
@@ -335,7 +335,7 @@ impl Operation for Gaussian {
         ];
         let parameters = fragment.uniform(&crop);
         fragment.compute(
-            include_str!("../../shaders/raster_crop.wgsl"),
+            include_str!("raster_crop.wgsl"),
             "main",
             vec![
                 (1, Binding::Write(output.resource)),
@@ -411,7 +411,10 @@ impl Display {
         renderer: &crate::renderer::GpuRenderer,
         target: OutputTarget,
     ) -> Result<Self, Error> {
-        if !matches!(domain.meaning, Meaning::Graded | Meaning::Neutral) {
+        if !matches!(
+            domain.meaning,
+            Meaning::Graded | Meaning::Neutral | Meaning::Inspection
+        ) {
             return Err(Error::InvalidParameter(
                 "display rendering requires working AP1",
             ));

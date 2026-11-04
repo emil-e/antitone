@@ -16,7 +16,7 @@ use antitone::{
     export::{self, Overwrite},
     flat_field::FlatField,
     geometry::{Composition, SourcePoint, SourceRegion},
-    gpu::{GpuFlatField, SubmissionGate},
+    gpu::{flat::GpuFlatField, submission::SubmissionGate},
     gpu_export::{self, Format, Request},
     processing::{InputSettings, RollSettings},
     renderer::GpuRenderer,

@@ -1,4 +1,6 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 
 fn candidate(
     device: &wgpu::Device,
@@ -13,7 +15,7 @@ fn candidate(
         )])
         .unwrap();
     let grade = Arc::new(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             RollSettings::default(),
@@ -23,7 +25,7 @@ fn candidate(
         )
         .unwrap(),
     );
-    let input = ProcessingInput::from(grade).with_pixel_pipeline(
+    let input = AuthoredPhotograph::from(grade).with_pixel_pipeline(
         crate::pixel_pipeline::PixelPipeline::emulation(
             film,
             Default::default(),
@@ -63,7 +65,7 @@ fn halation_strength_refreshes_pixels_but_reuses_completed_grain_at_fixed_suppor
         );
         let source = base.graded.as_ref().unwrap().source.clone();
         let make = |strength, previous: &Arc<RenderedView>| {
-            let input = ProcessingInput::new(
+            let input = AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 RollSettings::default(),

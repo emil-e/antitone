@@ -28,7 +28,8 @@ fn run(
         .encode(device, &mut encoder, &input, &output, values.len() as u32)
         .unwrap();
     encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output.size());
-    let submission = crate::gpu::SubmissionGate::default().submit(queue, [encoder.finish()]);
+    let submission =
+        crate::gpu::submission::SubmissionGate::default().submit(queue, [encoder.finish()]);
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     readback.map_async(wgpu::MapMode::Read, .., move |r| tx.send(r).unwrap());
     device
@@ -126,7 +127,7 @@ fn rgb16_boundaries_and_binary_fallback_do_not_depend_on_the_float_estimate() {
         assert_eq!(quantize(bits), expected);
         assert_eq!(quantize(bits - 1), expected - 1);
     }
-    let shader = include_str!("../../shaders/rgb16.wgsl");
+    let shader = include_str!("../rgb16.wgsl");
     let estimate = "min(u32(floor(transfer(value) * 65535.0 + 0.5)), 65535u)";
     assert_eq!(
         shader.matches(estimate).count(),

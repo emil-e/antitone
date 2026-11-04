@@ -177,10 +177,10 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
             GpuImage::new_shared(
                 &shared,
                 &device,
-                25,
-                17,
+                [25, 17],
                 &pixels,
                 glam::DMat3::IDENTITY,
+                None,
                 OutputTarget::DisplayP3,
             )
             .await

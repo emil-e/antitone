@@ -1,5 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::submission::SubmissionGate;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerPipeline},
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},

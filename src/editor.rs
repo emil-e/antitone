@@ -1,24 +1,28 @@
+use crate::Error;
 use crate::adjustment_layers::AdjustmentLayerSettings;
-use crate::{
-    Error,
-    adjustment_layers::AdjustmentLayerSnapshot,
-    application::UiContext,
-    color::Balance,
-    coverage::Coverage,
-    crop::Crop,
-    export::ExrPrecision,
-    geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu::{ProcessingInput, ProcessingParameters},
-    grain::{GrainPreset, GrainSettings},
-    platform::host,
-    processing::{Calibration, InputSettings, RollSettings},
-    raw::Rect,
-    refinement::ViewRequest,
-    rendering::OutputTarget,
-    scan::Scan,
-    viewer::{GpuImage, ImagePaint},
-    viewport::{PickDrag, Viewport},
-};
+use crate::adjustment_layers::AdjustmentLayerSnapshot;
+use crate::application::UiContext;
+use crate::color::Balance;
+use crate::coverage::Coverage;
+use crate::crop::Crop;
+use crate::export::ExrPrecision;
+use crate::geometry::Composition;
+use crate::geometry::PhotoOrientation;
+use crate::geometry::RollOrientation;
+use crate::grain::GrainPreset;
+use crate::grain::GrainSettings;
+use crate::platform::host;
+use crate::processing::Calibration;
+use crate::processing::InputSettings;
+use crate::processing::RollSettings;
+use crate::raw::Rect;
+use crate::refinement::ViewRequest;
+use crate::rendering::OutputTarget;
+use crate::scan::Scan;
+use crate::viewer::GpuImage;
+use crate::viewer::ImagePaint;
+use crate::viewport::PickDrag;
+use crate::viewport::Viewport;
 use glam::DVec3;
 #[cfg(test)]
 use std::sync::mpsc;

@@ -1,11 +1,12 @@
 use super::*;
-use crate::{
-    application::test_support::with_application,
-    editor::{
-        OriginalPurpose, OutputTarget, ProcessingInput, ProcessingParameters, ViewRequest,
-        source_loading, tests::fixture,
-    },
-};
+use crate::application::test_support::with_application;
+use crate::editor::OriginalPurpose;
+use crate::editor::OutputTarget;
+use crate::editor::ViewRequest;
+use crate::editor::source_loading;
+use crate::editor::tests::fixture;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use std::time::{Duration, Instant};
 
 fn editor() -> (Editor, source_loading::SourceLoader) {
@@ -45,7 +46,7 @@ fn demand_input(ev: f64) -> (Demand, std::sync::Weak<crate::scan::DevelopedSourc
     let composition =
         crate::geometry::Composition::new(view.area, Default::default(), Default::default())
             .unwrap();
-    let input = ProcessingInput::from(ProcessingParameters::source_inspection(ev).unwrap());
+    let input = AuthoredPhotograph::from(ProcessingParameters::source_inspection(ev).unwrap());
     (
         Demand::fixture(input, OutputTarget::Srgb, Some(view), composition, source),
         resource,
@@ -190,9 +191,11 @@ fn rapid_output_demand_drops_queued_inputs_and_only_latest_reconstruction_can_pu
                     .as_ref()
                     .unwrap()
                     .capture
-                    == crate::gpu::view::Capture::Primitive(ProcessingInput::from(
-                        ProcessingParameters::source_inspection(0.39).unwrap()
-                    ))
+                    == crate::gpu::photograph::request::PhotographRequest::Fixture(
+                        AuthoredPhotograph::from(
+                            ProcessingParameters::source_inspection(0.39).unwrap()
+                        )
+                    )
             );
             assert!(!e.document.visit.canvas.grade.original.refining());
         });
@@ -283,7 +286,8 @@ fn malformed_original_request_latches_error_and_retires_its_demand() {
             let composition =
                 crate::geometry::Composition::new(area, Default::default(), Default::default())
                     .unwrap();
-            let input = ProcessingInput::from(ProcessingParameters::source_inspection(0.).unwrap());
+            let input =
+                AuthoredPhotograph::from(ProcessingParameters::source_inspection(0.).unwrap());
             let mut view = ViewRequest {
                 area,
                 output: [16, 12],

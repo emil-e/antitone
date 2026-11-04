@@ -41,7 +41,7 @@ Where each area's implementation lives — navigation, not specification. Follow
 | Scan correction | [flat-field](../src/flat_field.rs), [GPU map](../src/gpu/flat.rs) | Source-coordinate illumination gains |
 | Image recipe and repairs | [accepted recipe](../src/image_recipe.rs), [source evaluator](../src/repair_source.rs), [repair model](../src/dust_repair.rs), [interaction](../src/editor/dust/interaction.rs), [repair evaluation](../src/editor/dust.rs), [GPU patches](../src/gpu/repairs.rs) | Shared accepted recipe; consumer-owned repair execution |
 | Roll analysis | [spatial support](../src/scan_regions.rs), [estimator](../src/roll_analysis.rs), [fitter](../src/roll_analysis/gamma.rs) | Source-owned sampling hypotheses, sample-derived starting settings |
-| GPU | [processing](../src/gpu.rs), [renderer](../src/renderer.rs) | Interactive processing and reusable rendering resources |
+| GPU | [setup](../src/gpu.rs), [photographic calculations](../src/gpu/photograph.rs), [evaluation](../src/gpu/evaluation.rs), [renderer](../src/renderer.rs) | Device setup, photographic graphs, bounded evaluation and rendering resources |
 | Rendering/output | [rendering](../src/rendering.rs), [export](../src/export.rs), [native transform](../native/rendering_transform.h) | ACES, file encoding and output safety |
 | Film texture | [coupled grain settings](../src/grain/settings.rs), [stage executor](../src/gpu/pixel_pipeline.rs) | Coordinated source-scale image MTF and RGB grain, with independent halation |
 | Colour treatments | [asset/import](../src/looks.rs), [film/paper model](../src/looks/spektrafilm.rs), [GPU resources](../src/gpu/lut3d.rs), [selection](../src/editor/look.rs) | Independent embedded LUT and Film & paper stages before output ACES |

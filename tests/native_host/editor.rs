@@ -1,4 +1,5 @@
 use super::*;
+use antitone::gpu::submission::SubmissionGate;
 use antitone::{
     editor::Editor,
     project::{Project, Save, Source, SourceDevelopment, SourceId},

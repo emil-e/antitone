@@ -40,11 +40,6 @@ pub(crate) use execute::read as read_buffer;
 #[cfg(all(test, feature = "editor"))]
 mod fusion_tests;
 
-pub(crate) mod grading;
-
-#[cfg(all(test, feature = "editor"))]
-mod grading_tests;
-
 mod grain;
 
 mod halation;
@@ -60,7 +55,6 @@ pub(crate) use inputs::ActiveInput;
 use materialized::Stored;
 pub(crate) use supplied::SuppliedImage;
 
-pub(crate) use crate::gpu::Grading;
 pub(crate) use materializations::BufferImage;
 pub use materializations::{
     GpuImage, Image, ImageBacking, ImageFormat, ImageFuture, ImageLayout, Materializations,
@@ -71,30 +65,8 @@ mod native_tests;
 
 mod operators;
 
-mod photograph;
-
-#[cfg(all(test, feature = "editor"))]
-mod photograph_tests;
-
-#[cfg(feature = "editor")]
-pub(crate) use photograph::Neutral;
-pub use photograph::Photograph;
-#[cfg(test)]
-pub(crate) use photograph::test_support as camera_fixture;
-
 #[cfg(all(feature = "raw", feature = "render"))]
 mod original;
-
-#[cfg(feature = "editor")]
-mod camera_response;
-#[cfg(all(
-    feature = "raw",
-    feature = "project",
-    any(feature = "editor", feature = "export")
-))]
-mod neutral_readout;
-#[cfg(feature = "editor")]
-pub(crate) use camera_response::CameraReadout;
 
 mod plan;
 
@@ -150,7 +122,7 @@ use operators::*;
 pub use operators::{pointwise, source};
 #[cfg(all(feature = "raw", feature = "render"))]
 pub use original::camera_source;
-#[cfg(all(feature = "raw", feature = "render"))]
+#[cfg(all(test, feature = "raw", feature = "render"))]
 pub(crate) use original::original_chain;
 pub(crate) use plan::{Job, Plan, Policy, Tile};
 #[cfg(test)]

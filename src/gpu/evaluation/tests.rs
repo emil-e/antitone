@@ -1,15 +1,9 @@
 use super::*;
 use crate::{
-    adjustment_layers::{
-        AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
-    },
-    geometry::SourcePoint,
-    gpu::Grading,
-    gpu::evaluation::CellRegion as Rect,
-    processing::{RollPipeline, RollSettings},
-    rendering::OutputTarget,
+    geometry::SourcePoint, gpu::evaluation::CellRegion as Rect, gpu::grading::Grading,
+    processing::RollPipeline, rendering::OutputTarget,
 };
-use glam::{DMat3, DVec3};
+use glam::DVec3;
 
 #[derive(Clone)]
 pub(super) struct Authored {
@@ -65,40 +59,7 @@ pub(super) fn fixture() -> Authored {
     }
 }
 
-pub(super) fn matrix() -> DMat3 {
-    DMat3::from_cols(
-        DVec3::new(1.07, 0.03, -0.08),
-        DVec3::new(0.01, 0.95, 0.02),
-        DVec3::new(-0.08, 0.02, 1.06),
-    )
-}
-
-pub(super) fn settings(area: Rect) -> (RollSettings, AdjustmentLayerSnapshot) {
-    let roll = RollSettings {
-        exposure: 0.15,
-        ..Default::default()
-    };
-    let mut local = AdjustmentLayer::global(AdjustmentLayerSettings {
-        exposure: -0.2,
-        contrast: 1.3,
-        saturation: 0.85,
-        ..Default::default()
-    });
-    local.mask = AdjustmentLayerCoverage::Linear {
-        start: SourcePoint([f64::from(area.x), f64::from(area.y)]),
-        end: SourcePoint([f64::from(area.right()), f64::from(area.bottom())]),
-    };
-    let snapshot = AdjustmentLayerSnapshot::new(vec![
-        AdjustmentLayer::global(AdjustmentLayerSettings {
-            contrast: 1.15,
-            saturation: 1.1,
-            ..Default::default()
-        }),
-        local,
-    ])
-    .unwrap();
-    (roll, snapshot)
-}
+use crate::gpu::photograph::test_support::{matrix, settings};
 
 pub(super) fn reduced(domain: Domain, size: [u32; 2]) -> Domain {
     let area = domain.finite().unwrap();
@@ -346,7 +307,7 @@ fn composed_real_grade_and_multi_pass_fragment_match_independent_signed_hdr_edge
         .run(
             &device,
             &queue,
-            &crate::gpu::SubmissionGate::default(),
+            &crate::gpu::submission::SubmissionGate::default(),
             &plan,
             || false,
         )
@@ -375,7 +336,7 @@ fn composed_real_grade_and_multi_pass_fragment_match_independent_signed_hdr_edge
         .run(
             &device,
             &queue,
-            &crate::gpu::SubmissionGate::default(),
+            &crate::gpu::submission::SubmissionGate::default(),
             &whole,
             || false,
         )
@@ -427,7 +388,7 @@ fn both_sampling_orders_are_compositions_with_independent_ocio_expectations() {
                 .run(
                     &device,
                     &queue,
-                    &crate::gpu::SubmissionGate::default(),
+                    &crate::gpu::submission::SubmissionGate::default(),
                     &p,
                     || false,
                 )

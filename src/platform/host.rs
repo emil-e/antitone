@@ -6,11 +6,14 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
-use super::{
-    QuitGuard, SubmissionGate, configure_presentation, fullscreen::PhotoFullscreen, latency::Trace,
-    menu, presentation, quit_cancel_on_unwind,
-};
 use crate::application::{Application, UiContext};
+use {
+    super::{
+        QuitGuard, configure_presentation, fullscreen::PhotoFullscreen, latency::Trace, menu,
+        presentation, quit_cancel_on_unwind,
+    },
+    crate::gpu::submission::SubmissionGate,
+};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -706,9 +709,7 @@ impl Bridge {
     fn new(device: &wgpu::Device, surface: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("presentation copy"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/presentation_copy.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("host/presentation_copy.wgsl").into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("presentation source"),

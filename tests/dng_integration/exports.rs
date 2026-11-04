@@ -5,7 +5,7 @@ use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu::SubmissionGate,
+    gpu::submission::SubmissionGate,
     gpu_export::{self, Format, Request},
     processing::{Calibration, InputSettings},
     renderer::GpuRenderer,

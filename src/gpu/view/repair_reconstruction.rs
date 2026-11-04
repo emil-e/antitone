@@ -1,8 +1,9 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 impl ViewSource {
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn reconstruct_repairs(
+    pub fn reconstruct_repairs(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
@@ -23,11 +24,11 @@ impl ViewSource {
             cancelled,
         ))
     }
-    pub(crate) fn acquired(&self) -> Arc<crate::gpu::execution::footprints::Acquired> {
+    pub fn acquired(&self) -> Arc<crate::gpu::view::acquisition::AcquiredViewRaster> {
         self.data.clone()
     }
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn reconstruct_images(
+    pub async fn reconstruct_images(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
@@ -39,7 +40,7 @@ impl ViewSource {
     ) -> Result<Option<Arc<Self>>, Error> {
         let acquired = base.acquired();
         let previous_acquired = previous.map(|previous| previous.acquired());
-        let result = crate::gpu::execution::footprints::Acquired::reconstruct_repairs(
+        let result = crate::gpu::view::acquisition::AcquiredViewRaster::reconstruct_repairs(
             device,
             queue,
             submissions,

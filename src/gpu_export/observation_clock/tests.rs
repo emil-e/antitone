@@ -4,7 +4,7 @@ use crate::{
     crop::Crop,
     export::Overwrite,
     geometry::Composition,
-    gpu::SubmissionGate,
+    gpu::submission::SubmissionGate,
     gpu_export::{self, Format, Request},
     processing::{Calibration, RollSettings},
     renderer::GpuRenderer,

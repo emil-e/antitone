@@ -1,4 +1,11 @@
-use super::{CameraMatrix, ProcessingParameters, SourceGeometry, packed_constants};
+mod graph;
+#[cfg(all(test, feature = "editor"))]
+mod graph_tests;
+
+use crate::gpu::{
+    parameters::{CameraMatrix, ProcessingParameters, packed_constants},
+    source::SourceGeometry,
+};
 use crate::{
     Error,
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSnapshot},
@@ -100,7 +107,7 @@ impl Grading {
         let code = format!(
             "{}\n{}",
             Self::shader(),
-            include_str!("evaluation/layer_weight.wgsl")
+            include_str!("grading/layer_weight.wgsl")
         );
 
         Ok(pointwise(
@@ -130,6 +137,18 @@ impl Grading {
 
     pub fn snapshot(&self) -> &AdjustmentLayerSnapshot {
         &self.snapshot
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn byte_len_for(layers: &AdjustmentLayerSnapshot) -> u64 {
+        let active = layers
+            .layers()
+            .iter()
+            .filter(|layer| layer.is_active())
+            .count()
+            .max(1);
+        (active * std::mem::size_of::<AdjustmentLayerParameters>()
+            + std::mem::size_of::<AdjustmentLayerContext>()) as u64
     }
 
     pub fn byte_len(&self) -> u64 {

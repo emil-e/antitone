@@ -1,5 +1,7 @@
 use super::presentation::ContactSheetLayout;
 use super::*;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::project::SourceDevelopment;
 pub(super) use crate::source::FileKey;
 #[cfg(test)]
@@ -105,7 +107,7 @@ impl Product {
             + if positive {
                 std::mem::size_of::<crate::gpu::view::ViewSource>()
                     + std::mem::size_of::<crate::gpu::view::RenderedView>()
-                    + 2 * std::mem::size_of::<crate::gpu::ProcessingInput>()
+                    + 2 * std::mem::size_of::<crate::gpu::photograph::request::PhotographRequest>()
             } else {
                 0
             }
@@ -188,7 +190,7 @@ impl ImageKey {
                 )?;
             }
             bytes = bytes.checked_add(
-                2 * (crate::gpu::ProcessingInput::byte_len_for(&recipe.grade)
+                2 * (crate::gpu::grading::Grading::byte_len_for(&recipe.grade)
                     + recipe.grade.retained_bytes() as u64),
             )?;
         }
@@ -220,25 +222,20 @@ impl Proxy {
         device: &wgpu::Device,
         target: OutputTarget,
         source: &SourceDevelopment,
-        correction: Option<&Arc<Correction>>,
     ) -> Result<Arc<GpuImage>, Error> {
-        let mut image = GpuImage::new_continuous_shared(
+        let image = GpuImage::new_continuous_shared(
             renderer,
             device,
-            self.width,
-            self.height,
+            [self.width, self.height],
             &self.pixels,
             self.matrix,
+            Some(crate::gpu::source::SourceGeometry::new(
+                source.active_area,
+                [self.width, self.height],
+            )?),
             target,
         )
         .await?;
-        if let Some(correction) = correction {
-            correction.settings.require_source(source)?;
-        }
-        image.set_flat_field(
-            correction.map(|c| c.gpu.clone()),
-            crate::gpu::SourceGeometry::new(source.active_area, [self.width, self.height])?,
-        )?;
         Ok(Arc::new(image))
     }
 }
@@ -246,7 +243,6 @@ impl Proxy {
 pub(super) struct SelectedPreview {
     request: u64,
     key: SourceKey,
-    field: Option<FieldKey>,
     pub(super) composition: crate::geometry::Composition,
     pub(super) proxy: crate::viewer::GpuProxy,
 }
@@ -256,14 +252,8 @@ impl SelectedPreview {
         self.key.source.active_area.into()
     }
 
-    pub(super) fn current_source(
-        &self,
-        document: &Document,
-        source: Option<SourceId>,
-        correction: Option<&Arc<Correction>>,
-    ) -> bool {
+    pub(super) fn current_source(&self, document: &Document, source: Option<SourceId>) -> bool {
         source == Some(self.key.id)
-            && self.field == correction.map(|c| FieldKey(c.settings.map.clone()))
             && document
                 .project
                 .source(self.key.id)
@@ -280,20 +270,8 @@ impl SelectedPreview {
         request: u64,
         document: &Document,
         source: Option<SourceId>,
-        correction: Option<&Arc<Correction>>,
     ) -> bool {
-        self.request == request
-            && source == Some(self.key.id)
-            && self.field == correction.map(|c| FieldKey(c.settings.map.clone()))
-            && document
-                .project
-                .source(self.key.id)
-                .ok()
-                .zip(document.source_path(self.key.id).ok())
-                .is_some_and(|(source, path)| {
-                    !source.reference_only
-                        && SourceKey::new(source, document.file_key(&path)) == self.key
-                })
+        self.request == request && self.current_source(document, source)
     }
 }
 
@@ -471,7 +449,6 @@ impl Thumbnails {
         let preview = SelectedPreview {
             request,
             key: key.clone(),
-            field: correction.map(|c| FieldKey(c.settings.map.clone())),
             composition,
             proxy: crate::viewer::GpuProxy::new_continuous(
                 renderer,
@@ -479,15 +456,14 @@ impl Thumbnails {
                 [proxy.width, proxy.height],
                 &proxy.pixels,
                 proxy.matrix,
-                correction.map(|c| c.gpu.clone()),
-                crate::gpu::SourceGeometry::new(
+                crate::gpu::source::SourceGeometry::new(
                     source.development.active_area,
                     [proxy.width, proxy.height],
                 )?,
             )?
-            .with_identity(crate::gpu::execution::source::Identity::proxy(&proxy))?,
+            .with_identity(crate::gpu::source::identity::Identity::proxy(&proxy))?,
         };
-        if !preview.current(request, document, Some(id), correction) {
+        if !preview.current(request, document, Some(id)) {
             return Ok(None);
         }
         self.selected_key = Some(native_key.clone());
@@ -923,12 +899,16 @@ fn make_image(
     let renderer = renderers.get(device, queue)?;
     metrics.renderer_seconds = tick.elapsed().as_secs_f64();
     let tick = std::time::Instant::now();
+    if let Some(correction) = &job.correction {
+        correction
+            .settings
+            .require_source(&job.source.development)?;
+    }
     let image = pollster::block_on(proxy.image(
         &renderer,
         device,
         job.key.target,
         &job.source.development,
-        job.correction.as_ref(),
     ))?;
     metrics.image_seconds = tick.elapsed().as_secs_f64();
     Ok(active().then(|| Product::camera(image)))
@@ -1019,20 +999,37 @@ impl Editor {
         }
     }
 
-    fn thumbnail_parameters(&self, source: &Source) -> Result<ProcessingInput, Error> {
-        if self.document.analysis_review().is_some() {
+    fn thumbnail_request(
+        &self,
+        source: &Source,
+    ) -> Result<crate::gpu::photograph::request::PhotographRequest, Error> {
+        use crate::gpu::photograph::request::PhotographRequest;
+        if self.document.analysis_review().is_some() || !self.input().ready() {
             return self
                 .source_parameters_for(source, self.source_exposure)
-                .map(Into::into);
+                .and_then(PhotographRequest::inspection);
         }
-        let photo = self.document.visit.adjustment_layer_settings;
-        let input = self.input();
-        if input.ready() {
-            self.positive_processing_for_source(input, self.document.roll, source, photo)
-        } else {
-            self.source_parameters_for(source, self.source_exposure)
-                .map(Into::into)
-        }
+        self.positive_recipe_for_source(
+            self.input(),
+            self.document.roll,
+            source,
+            self.document.visit.adjustment_layer_settings,
+        )
+        .map(|recipe| PhotographRequest::Recipe(Arc::new(recipe)))
+    }
+
+    #[cfg(test)]
+    fn thumbnail_parameters(&self, source: &Source) -> Result<AuthoredPhotograph, Error> {
+        self.thumbnail_request(source)?.processing(
+            &self
+                .document
+                .visit
+                .working_view
+                .device()
+                .map(|device| device.limits())
+                .unwrap_or_default(),
+            &Default::default(),
+        )
     }
 
     fn thumbnail_work_allowed(&self) -> bool {
@@ -1236,7 +1233,7 @@ impl Editor {
                         .and_then(|entry| entry.as_ref().ok())
                         .is_some_and(|product| product.positive.is_none())
                     {
-                        self.thumbnail_parameters(source).map(Some)
+                        self.thumbnail_request(source).map(Some)
                     } else {
                         Ok(None)
                     };
@@ -1284,6 +1281,10 @@ impl Editor {
                                 match processing::image_paint(
                                     image.image.clone(),
                                     parameters,
+                                    self.document
+                                        .correction
+                                        .as_ref()
+                                        .map(|correction| correction.gpu.clone()),
                                     mapping,
                                     ui.ctx(),
                                 ) {

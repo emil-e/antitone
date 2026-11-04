@@ -574,7 +574,7 @@ fn constant_scene_lut_changes_view_thumbnails_and_scope_contents_and_none_restor
     fn read_bins(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        gate: &crate::gpu::SubmissionGate,
+        gate: &crate::gpu::submission::SubmissionGate,
         source: &wgpu::Buffer,
     ) -> Vec<u32> {
         let staging = device.create_buffer(&wgpu::BufferDescriptor {

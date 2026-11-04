@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::source::SourceGeometry;
 
 #[test]
 fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_representation() {
@@ -6,7 +7,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         adjustment_layers::AdjustmentLayerSnapshot,
         frame_raster::FrameRaster,
         geometry::Composition,
-        gpu::ProcessingInput,
+        gpu::test_inputs::AuthoredPhotograph,
         gpu_scopes::{GpuScopes, ScopePaint},
         grain::GrainPreset,
         processing::InputSettings,
@@ -20,15 +21,15 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
         let image = GpuImage::new_shared(
             &renderer,
             &device,
-            2,
-            2,
+            [2, 2],
             &[[12000, 16000, 18000, 0]; 4],
             DMat3::IDENTITY,
+            None,
             OutputTarget::Srgb,
         )
         .await
         .unwrap();
-        let grade = ProcessingInput::new(
+        let grade = AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             Default::default(),
@@ -37,7 +38,7 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
             area.into(),
         )
         .unwrap();
-        let clean = ProcessingInput::from(Arc::new(grade));
+        let clean = AuthoredPhotograph::from(Arc::new(grade));
         let film = clean.clone().with_pixel_pipeline(
             crate::pixel_pipeline::PixelPipeline::emulation(
                 GrainPreset::ThirtyFiveMm.settings(),
@@ -88,11 +89,19 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
                 .unwrap()
         );
         queue.submit([encoder.finish()]);
-        let mut image = Arc::try_unwrap(image).ok().unwrap();
+        drop(image);
         for region in [[120, 73, 8, 8], [120, 73, 2, 2]] {
-            image
-                .set_geometry(SourceGeometry::new(region, [2, 2]).unwrap())
-                .unwrap();
+            let image = GpuImage::new_shared(
+                &renderer,
+                &device,
+                [2, 2],
+                &[[12000, 16000, 18000, 0]; 4],
+                DMat3::IDENTITY,
+                Some(SourceGeometry::new(region, [2, 2]).unwrap()),
+                OutputTarget::Srgb,
+            )
+            .await
+            .unwrap();
             image.require_processing(&film).unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());
             assert!(
@@ -114,11 +123,14 @@ fn pixel_processing_requires_declared_geometry_not_a_particular_preceding_repres
 
 #[test]
 fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
-    use crate::{
-        adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
-        gpu::{GpuInputProgram, Grading, ProcessingInput},
-        processing::{InputSettings, RollSettings},
-    };
+    use crate::adjustment_layers::AdjustmentLayer;
+    use crate::adjustment_layers::AdjustmentLayerSettings;
+    use crate::adjustment_layers::AdjustmentLayerSnapshot;
+    use crate::gpu::grading::Grading;
+    use crate::gpu::interpretation::InputTransform;
+    use crate::gpu::test_inputs::AuthoredPhotograph;
+    use crate::processing::InputSettings;
+    use crate::processing::RollSettings;
     pollster::block_on(async {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
@@ -139,29 +151,26 @@ fn cropped_frame_not_grade_source_or_tile_dimensions_controls_film_scale() {
         let shared =
             Arc::new(Grading::new(&device.limits(), roll, snapshot.clone(), small).unwrap());
         let fresh = Arc::new(Grading::new(&device.limits(), roll, snapshot, large).unwrap());
-        let mut image = GpuImage::new_continuous_shared(
+        let image = GpuImage::new_continuous_shared(
             &renderer,
             &device,
-            64,
-            64,
+            [64, 64],
             &vec![[6000., 10000., 14000., 0.]; 64 * 64],
             DMat3::IDENTITY,
+            Some(SourceGeometry::new([0, 0, 64, 64], [64, 64]).unwrap()),
             OutputTarget::Srgb,
         )
         .await
         .unwrap();
-        image
-            .set_geometry(SourceGeometry::new([0, 0, 64, 64], [64, 64]).unwrap())
-            .unwrap();
         let render = |grade, area, frame_size| {
-            let pipeline = ProcessingInput::compose(
+            let pipeline = AuthoredPhotograph::compose(
                 &device.limits(),
-                GpuInputProgram::new(InputSettings::Digital, DMat3::IDENTITY).unwrap(),
+                InputTransform::new(InputSettings::Digital, DMat3::IDENTITY).unwrap(),
                 grade,
                 area,
             )
             .unwrap();
-            let input = ProcessingInput::from(Arc::new(pipeline)).with_pixel_pipeline(
+            let input = AuthoredPhotograph::from(Arc::new(pipeline)).with_pixel_pipeline(
                 crate::pixel_pipeline::PixelPipeline::emulation(
                     crate::grain::GrainSettings {
                         enabled: true,

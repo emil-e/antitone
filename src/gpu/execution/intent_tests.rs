@@ -1,4 +1,28 @@
 use super::*;
+use crate::rendering::OutputReference;
+use std::sync::Arc;
+
+use crate::gpu::execution::test_support::OriginalControls as Request;
+
+fn execute(
+    renderer: &GpuRenderer,
+    device: &wgpu::Device,
+    gpu: (&wgpu::Queue, &SubmissionGate),
+    request: Request<'_>,
+    sink: impl FnOnce(&mut RenderBlock<'_>, &mut Complete<'_>) -> Result<(), Error>,
+    mut check: impl FnMut() -> Result<(), Error>,
+) -> Result<Stats, Error> {
+    check()?;
+    super::execute(
+        renderer,
+        device,
+        gpu,
+        request.lower(device, renderer)?,
+        sink,
+        check,
+    )
+}
+use crate::gpu::submission::SubmissionGate;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
     crop::Crop,
@@ -221,7 +245,7 @@ fn display_reference_can_deliver_linear_float_or_encoded_rgb16_without_a_file_co
             &device,
             &queue,
             &renderer,
-            request(&scan, output, SampleEncoding::Rgb16),
+            request(&scan, output, SampleEncoding::Rgb16(target)),
         )
         .unwrap()
         else {
@@ -268,7 +292,11 @@ fn scene_rgb16_is_rejected_before_the_sink_and_valid_float_execution_remains_usa
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let scan = scan();
     let called = Cell::new(false);
-    let invalid = request(&scan, OutputReference::SceneReferred, SampleEncoding::Rgb16);
+    let invalid = request(
+        &scan,
+        OutputReference::SceneReferred,
+        SampleEncoding::Rgb16(OutputTarget::Srgb),
+    );
     let result = execute(
         &renderer,
         &device,

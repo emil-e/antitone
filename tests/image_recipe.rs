@@ -48,6 +48,31 @@ fn project() -> (Project, SourceId) {
 }
 
 #[test]
+fn uncalibrated_intent_can_be_captured_without_claiming_a_positive_is_ready() {
+    let (mut project, id) = project();
+    project.input = InputSettings::default();
+    assert!(!project.input.ready());
+    let recipe = project.image_recipe(id).unwrap();
+    assert_eq!(recipe.neutral.input, project.input);
+    assert!(
+        recipe
+            .neutral
+            .processing_input()
+            .unwrap()
+            .calibration()
+            .is_none()
+    );
+
+    let captured = recipe.neutral.clone();
+    project.input = InputSettings::Digital;
+    assert_ne!(captured, project.image_recipe(id).unwrap().neutral);
+    assert!(
+        !captured.input.ready(),
+        "later calibration cannot change captured intent"
+    );
+}
+
+#[test]
 fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair_metadata() {
     let (mut project, id) = project();
     let empty = project.image_recipe(id).unwrap();

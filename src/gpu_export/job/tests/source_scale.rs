@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 use crate::processing::InputSettings;
 
 #[test]

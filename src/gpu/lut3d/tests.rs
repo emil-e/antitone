@@ -1,7 +1,7 @@
 use crate::{
     gpu::{
-        SubmissionGate,
         lut3d::{Kernel, Lut, Validation},
+        submission::SubmissionGate,
     },
     looks::Lut3D,
 };

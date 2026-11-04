@@ -1,8 +1,9 @@
 use super::*;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 #[test]
 fn idle_host_polling_completes_projected_look_admission_without_another_frame_or_submission() {
     use crate::{
-        gpu::SubmissionGate,
+        gpu::submission::SubmissionGate,
         looks::{LookAsset, LookOrigin, Lut3D},
         processing::{Calibration, RollSettings},
     };
@@ -19,10 +20,10 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
         let image = GpuImage::new_shared(
             &renderer,
             &device,
-            2,
-            2,
+            [2, 2],
             &[[32000, 32000, 32000, 0]; 4],
             DMat3::IDENTITY,
+            None,
             OutputTarget::Srgb,
         )
         .await
@@ -35,7 +36,7 @@ fn idle_host_polling_completes_projected_look_admission_without_another_frame_or
             )
             .unwrap(),
         );
-        let input = ProcessingInput::new(
+        let input = AuthoredPhotograph::new(
             &device.limits(),
             Calibration {
                 dmin: DVec3::splat(0.7),

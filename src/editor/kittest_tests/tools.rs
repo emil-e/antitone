@@ -164,9 +164,11 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                     [2, 2],
                     &[[0.; 4]; 4],
                     ready.proxy.matrix(),
-                    None,
-                    crate::gpu::SourceGeometry::new(ready.record.development.active_area, [2, 2])
-                        .unwrap(),
+                    crate::gpu::source::SourceGeometry::new(
+                        ready.record.development.active_area,
+                        [2, 2],
+                    )
+                    .unwrap(),
                 )
                 .unwrap();
             });

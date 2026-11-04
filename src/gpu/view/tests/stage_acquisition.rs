@@ -1,4 +1,7 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     dust_repair::{Repair, RepairId, RepairOrigin, SupportMask},
@@ -12,9 +15,9 @@ fn capture(
     scan: &Scan,
     film: GrainSettings,
     frame_size: [u32; 2],
-) -> ProcessingInput {
-    ProcessingInput::from(Arc::new(
-        ProcessingInput::new(
+) -> AuthoredPhotograph {
+    AuthoredPhotograph::from(Arc::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             Default::default(),
@@ -34,7 +37,7 @@ fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     source: Arc<ViewSource>,
-    input: &ProcessingInput,
+    input: &AuthoredPhotograph,
 ) -> Vec<[f32; 4]> {
     let view = RenderedView::new(device, source, input, OutputTarget::Srgb, None).unwrap();
     view.ensure_submitted(

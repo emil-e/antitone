@@ -1,5 +1,7 @@
 //! Immutable, source-validated preparation for the shared TIFF/EXR engine.
 use super::*;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::submission::SubmissionGate;
 use crate::{dust_repair::Execution, image_recipe::ImageRecipe};
 
 pub(crate) struct Job<'a> {
@@ -44,7 +46,6 @@ pub(crate) fn write(
     let mut scan = prepared.scan();
     scan.set_flat_field(job.scan.flat_field().cloned())?;
     job.recipe.neutral.require_scan(&scan)?;
-    let input = job.recipe.neutral.input;
     let stages = job.recipe.pixel_pipeline()?;
     let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
         output: FrameRaster::full(job.recipe.composition)?,
@@ -61,19 +62,34 @@ pub(crate) fn write(
     )?
     .ok_or(Error::Cancelled)?;
     check()?;
-    let request = Request {
-        scan: &scan,
-        field: job.field,
-        input,
-        roll: job.recipe.roll,
-        grade: job.recipe.grade.clone(),
-        repairs: &repairs,
-        composition: job.recipe.composition,
-        format: job.format,
-        luts: job.recipe.luts.clone(),
-        pipeline: stages,
+    // Preparation may resolve an unrecorded positive exposure baseline; freeze it with this job.
+    let mut recipe = job.recipe.clone();
+    recipe.neutral.reference = scan.reference_exposure.clone();
+    let photograph = crate::gpu::photograph::PhotographGraph::from_recipe(
+        &device.limits(),
+        crate::gpu::evaluation::camera_source(&scan)?,
+        job.field,
+        &recipe,
+        &crate::gpu::repairs::Snapshot::logical(repairs)?,
+    )?;
+    let output = match job.format {
+        Format::Tiff(target) => crate::rendering::OutputReference::DisplayReferred(target),
+        Format::Exr(_) => crate::rendering::OutputReference::SceneReferred,
     };
-    super::area::write(renderer, device, gpu, request, destination, check).map(|_| ())
+    let definition =
+        crate::gpu::evaluation::Reference::capture(device, renderer, output, &recipe.luts)?
+            .compose(photograph.processed, renderer)?;
+    super::area::write_calculation(
+        renderer,
+        device,
+        gpu,
+        definition,
+        recipe.composition,
+        job.format,
+        destination,
+        check,
+    )
+    .map(|_| ())
 }
 
 #[cfg(all(test, target_os = "macos"))]

@@ -1,11 +1,11 @@
 use super::*;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
+use antitone::gpu::parameters::ProcessingParameters;
 use antitone::{
     color::Balance,
-    gpu::{GpuFlatField, SourceGeometry},
+    gpu::{flat::GpuFlatField, source::SourceGeometry},
     processing::{Calibration, RollSettings},
     renderer::GpuRenderer,
-    viewer::ImagePaint,
 };
 use glam::DVec3;
 
@@ -36,37 +36,30 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                         input_floor: antitone::processing::CAMERA_INPUT_FLOOR,
                     })
                     .unwrap();
-                let parameters = antitone::gpu::ProcessingInput::new(
+                let parameters = calculation::photograph_with_field(
                     &device.limits(),
                     calibration,
                     RollSettings::default(),
                     antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![]).unwrap(),
                     DMat3::IDENTITY,
                     [12, 7, 8, 4].into(),
+                    Some(Arc::new(GpuFlatField::new(&device, field.clone()).unwrap())),
                 )
                 .unwrap();
                 let pixels: Vec<_> = (0..32u16)
                     .map(|i| [2000 + i * 900, 3000 + i * 700, 4000 + i * 1100, 0])
                     .collect();
-                let mut image = GpuImage::new_shared(
+                let image = GpuImage::new_shared(
                     &renderer,
                     &device,
-                    8,
-                    4,
+                    [8, 4],
                     &pixels,
                     DMat3::IDENTITY,
+                    Some(SourceGeometry::new([12, 7, 8, 4], [8, 4]).unwrap()),
                     target,
                 )
                 .await
                 .unwrap();
-                let revision = image.source_revision();
-                image
-                    .set_flat_field(
-                        Some(Arc::new(GpuFlatField::new(&device, field).unwrap())),
-                        SourceGeometry::new([12, 7, 8, 4], [8, 4]).unwrap(),
-                    )
-                    .unwrap();
-                assert_eq!(image.source_revision(), revision + 1);
                 let image = Arc::new(image);
                 let frame = full_frame([8, 4]);
                 let settings = Settings {
@@ -75,7 +68,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     ..Default::default()
                 };
                 let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
-                let scope = ScopePaint::with_processing(
+                let scope = calculation::scope_paint(
                     gpu.clone(),
                     image.clone(),
                     parameters.clone(),
@@ -84,7 +77,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     egui::Context::default(),
                 )
                 .unwrap();
-                let viewer = ImagePaint::with_processing(
+                let viewer = calculation::image_paint(
                     image.clone(),
                     Some(parameters.clone()),
                     [0.25, 0., 0.5, 1.],
@@ -95,7 +88,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     viewer.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
                     assert!(
                         !image
-                            .prepare_processing(&device, &mut encoder, &parameters)
+                            .prepare_authored(&device, &mut encoder, &parameters)
                             .unwrap()
                     );
                     scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
@@ -103,7 +96,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
                     assert!(
                         !image
-                            .prepare_processing(&device, &mut encoder, &parameters)
+                            .prepare_authored(&device, &mut encoder, &parameters)
                             .unwrap()
                     );
                     viewer.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
@@ -111,7 +104,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 let counts = gpu
-                    .status_processing(&image, &parameters, frame, settings)
+                    .status_authored(&image, &parameters, frame, settings)
                     .unwrap()
                     .unwrap();
                 assert_eq!(
@@ -125,10 +118,10 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                     GpuImage::new_shared(
                         &renderer,
                         &device,
-                        4,
-                        2,
+                        [4, 2],
                         &[[42000, 12000, 6000, 0]; 8],
                         DMat3::from_diagonal(DVec3::new(0.8, 1.1, 0.9)),
+                        None,
                         target,
                     )
                     .await
@@ -137,10 +130,10 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                 let tile = GpuImage::new_shared(
                     &renderer,
                     &device,
-                    8,
-                    4,
+                    [8, 4],
                     &[[17000, 24000, 31000, 0]; 32],
                     DMat3::from_diagonal(DVec3::new(1.2, 0.7, 1.1)),
+                    None,
                     target,
                 )
                 .await
@@ -159,7 +152,7 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                         ),
                     ])
                     .and_then(|snapshot| {
-                        antitone::gpu::ProcessingInput::new(
+                        calculation::photograph(
                             &device.limits(),
                             calibration,
                             RollSettings::default(),
@@ -168,55 +161,77 @@ fn shared_renderer_keeps_scope_viewer_and_background_image_state_independent() {
                             [0, 0, 32, 1].into(),
                         )
                     })
-                    .map(|grade| antitone::gpu::ProcessingInput::from(std::sync::Arc::new(grade)))
                     .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 assert!(thumbnail.prepare(&device, &mut encoder, ProcessingParameters::source()));
-                tile.encode_processing(&device, &mut encoder, &tile_parameters)
+                tile.encode_authored(&device, &mut encoder, &tile_parameters)
                     .unwrap();
                 scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
                 assert!(
                     !image
-                        .prepare_processing(&device, &mut encoder, &parameters)
+                        .prepare_authored(&device, &mut encoder, &parameters)
                         .unwrap()
                 );
                 queue.submit([encoder.finish()]);
                 device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
                 assert_eq!(gpu.reduction_count(), 1);
                 assert_eq!(
-                    gpu.status_processing(&image, &parameters, frame, settings)
+                    gpu.status_authored(&image, &parameters, frame, settings)
                         .unwrap()
                         .unwrap(),
                     counts
                 );
                 assert_eq!(read(&device, &queue, &gpu.bins), bins);
                 assert!(
-                    gpu.status_processing(&thumbnail, &parameters, frame, settings)
+                    gpu.status_authored(&thumbnail, &parameters, frame, settings)
                         .is_none(),
                     "renderer identity must not substitute for image identity"
                 );
 
-                let revision = image.source_revision();
-                assert!(image.write_source(&queue, &pixels[..31]).is_err());
-                assert_eq!(image.source_revision(), revision);
-                assert!(
-                    gpu.status_processing(&image, &parameters, frame, settings)
-                        .is_some()
+                let original = image.clone();
+                let image = Arc::new(
+                    GpuImage::new_shared(
+                        &renderer,
+                        &device,
+                        [8, 4],
+                        &[[8000, 16000, 24000, 0]; 32],
+                        DMat3::IDENTITY,
+                        Some(SourceGeometry::new([12, 7, 8, 4], [8, 4]).unwrap()),
+                        target,
+                    )
+                    .await
+                    .unwrap(),
                 );
-                image
-                    .write_source(&queue, &[[8000, 16000, 24000, 0]; 32])
-                    .unwrap();
-                assert_eq!(image.source_revision(), revision + 1);
                 assert!(
-                    gpu.status_processing(&image, &parameters, frame, settings)
+                    gpu.status_authored(&original, &parameters, frame, settings)
+                        .is_some(),
+                    "replacement samples leave the old image and its result valid"
+                );
+                assert!(
+                    gpu.status_authored(&image, &parameters, frame, settings)
                         .is_none()
                 );
+                let scope = calculation::scope_paint(
+                    gpu.clone(),
+                    image.clone(),
+                    parameters.clone(),
+                    frame,
+                    settings,
+                    egui::Context::default(),
+                )
+                .unwrap();
+                let viewer = calculation::image_paint(
+                    image.clone(),
+                    Some(parameters.clone()),
+                    [0.25, 0., 0.5, 1.],
+                )
+                .unwrap();
                 let mut encoder = device.create_command_encoder(&Default::default());
                 scope.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
                 viewer.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
                 assert!(
                     !image
-                        .prepare_processing(&device, &mut encoder, &parameters)
+                        .prepare_authored(&device, &mut encoder, &parameters)
                         .unwrap()
                 );
                 queue.submit([encoder.finish()]);

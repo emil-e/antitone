@@ -1,12 +1,12 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::photograph::test_support::CameraFixture;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
 
-use antitone::{
-    gpu::{ProcessingParameters, ProcessingSource},
-    processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
-};
 use glam::{DMat3, DVec3};
+use {
+    crate::gpu::{parameters::ProcessingParameters, source::ProcessingSource},
+    antitone::processing::{CAMERA_INPUT_FLOOR, Calibration, RollSettings},
+};
 
 #[path = "../../../tests/support/gpu_headroom.rs"]
 mod headroom;
@@ -29,7 +29,7 @@ fn process(
     source: &ProcessingSource,
     count: usize,
     parameters: ProcessingParameters,
-    grade: Option<&antitone::gpu::ProcessingInput>,
+    grade: Option<&antitone::gpu::test_inputs::AuthoredPhotograph>,
 ) -> Vec<[f32; 4]> {
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("continuous camera test"),
@@ -83,7 +83,8 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
                 ]
             })
             .collect();
-        let source = ProcessingSource::new_continuous(&device, &pixels, DMat3::IDENTITY).unwrap();
+        let source =
+            ProcessingSource::new_continuous(&device, &pixels, DMat3::IDENTITY, None).unwrap();
         assert_eq!(source.byte_len(), pixels.len() as u64 * 16);
         let inspected = process(
             &device,
@@ -112,7 +113,7 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
         };
         let parameters =
             ProcessingParameters::positive(calibration, roll, DMat3::IDENTITY).unwrap();
-        let grade = antitone::gpu::ProcessingInput::new(
+        let grade = antitone::gpu::test_inputs::AuthoredPhotograph::new(
             &device.limits(),
             calibration,
             roll,
@@ -159,13 +160,17 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
             }
             assert_eq!(actual[3], 0.);
         }
-        assert!(source.write(&queue, &[[0; 4]; 67]).is_err());
         assert!(
-            ProcessingSource::new_continuous(&device, &[[f32::NAN, 0., 0., 0.]], DMat3::IDENTITY)
-                .is_err()
+            ProcessingSource::new_continuous(
+                &device,
+                &[[f32::NAN, 0., 0., 0.]],
+                DMat3::IDENTITY,
+                None
+            )
+            .is_err()
         );
         assert!(
-            ProcessingSource::new_continuous(&device, &[[-0.1, 0., 0., 0.]], DMat3::IDENTITY)
+            ProcessingSource::new_continuous(&device, &[[-0.1, 0., 0., 0.]], DMat3::IDENTITY, None)
                 .is_err()
         );
     });
@@ -173,17 +178,23 @@ fn fractional_camera_values_survive_source_inspection_and_continuous_inversion()
 
 #[test]
 fn camera_gain_headroom_is_checked_before_a_compensating_matrix() {
-    use antitone::{
-        flat_field::FlatField,
-        gpu::{GpuFlatField, SourceGeometry},
-    };
     use std::sync::Arc;
+    use {
+        crate::gpu::{flat::GpuFlatField, source::SourceGeometry},
+        antitone::flat_field::FlatField,
+    };
 
     pollster::block_on(async {
         let (device, queue, kernel) = context().await;
         let matrix = DMat3::from_diagonal(DVec3::new(2f64.powi(-80), 2f64.powi(40), 2f64.powi(40)));
         let pixels = [[8. * 65535., 65535., 65535., 0.]];
-        let mut source = ProcessingSource::new_continuous(&device, &pixels, matrix).unwrap();
+        let source = ProcessingSource::new_continuous(
+            &device,
+            &pixels,
+            matrix,
+            Some(SourceGeometry::new([0, 0, 1, 1], [1, 1]).unwrap()),
+        )
+        .unwrap();
 
         for exponent in [126, 110] {
             let gain = 2f64.powi(exponent);
@@ -201,10 +212,7 @@ fn camera_gain_headroom_is_checked_before_a_compensating_matrix() {
                 )
                 .unwrap(),
             );
-            let result = source.set_flat_field(
-                Some(field),
-                SourceGeometry::new([0, 0, 1, 1], [1, 1]).unwrap(),
-            );
+            let result = field.validate_matrix(matrix, crate::processing::MAX_SOURCE_GAIN);
             if exponent == 126 {
                 // The final red value fits, but applying the gain before the matrix overflows.
                 assert!(result.is_err());
@@ -217,7 +225,12 @@ fn camera_gain_headroom_is_checked_before_a_compensating_matrix() {
                     &source,
                     1,
                     ProcessingParameters::source(),
-                    None,
+                    Some(
+                        &crate::gpu::test_inputs::AuthoredPhotograph::from(
+                            ProcessingParameters::source(),
+                        )
+                        .with_flat_field(Some(field)),
+                    ),
                 );
                 let expected = matrix * DVec3::new(8. * gain, 1., 1.);
                 for c in 0..3 {
@@ -237,9 +250,9 @@ fn integer_values_preserve_output_bits_in_native_and_continuous_transport() {
             .map(|i| [(i * 977) as u16, (i * 431) as u16, (i * 167) as u16, 0])
             .collect();
         let floats: Vec<_> = codes.iter().map(|p| p.map(f32::from)).collect();
-        let integer = ProcessingSource::new(&device, &codes, DMat3::IDENTITY).unwrap();
+        let integer = ProcessingSource::new(&device, &codes, DMat3::IDENTITY, None).unwrap();
         let continuous =
-            ProcessingSource::new_continuous(&device, &floats, DMat3::IDENTITY).unwrap();
+            ProcessingSource::new_continuous(&device, &floats, DMat3::IDENTITY, None).unwrap();
         let calibration = Calibration {
             dmin: DVec3::splat(0.7),
             dmax: DVec3::splat(0.01),

@@ -1,13 +1,16 @@
 //! Source interpretation, photographic grade, original repairs and ordered pixel stages.
 
-use crate::{
-    Error,
-    acquisition::{Plan, Request as AcquisitionRequest, Sampling},
-    frame_raster::FrameRaster,
-    geometry::Composition,
-    gpu::{ProcessingInput, ProcessingSource, pixel_pipeline::Prepared, raster::Raster},
-    renderer::GpuRenderer,
-};
+use crate::Error;
+use crate::acquisition::Plan;
+use crate::acquisition::Request as AcquisitionRequest;
+use crate::acquisition::Sampling;
+use crate::frame_raster::FrameRaster;
+use crate::geometry::Composition;
+use crate::gpu::pixel_pipeline::Prepared;
+use crate::gpu::raster::Raster;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::renderer::GpuRenderer;
 
 #[cfg(all(test, target_os = "macos", feature = "render"))]
 #[path = "raster_tests.rs"]
@@ -17,7 +20,7 @@ mod tests;
 /// Original tiles instead supply their acquisition plan, including real-source support.
 pub(crate) fn resident_plan(
     source: &ProcessingSource,
-    input: &ProcessingInput,
+    input: &AuthoredPhotograph,
 ) -> Result<Option<Plan>, Error> {
     input.require_source(source)?;
     let stages = input.pixel_pipeline();
@@ -47,7 +50,7 @@ pub(crate) fn resident_plan(
 
 pub(crate) struct Request<'a> {
     pub source: &'a ProcessingSource,
-    pub input: &'a ProcessingInput,
+    pub input: &'a AuthoredPhotograph,
     pub plan: Option<&'a Plan>,
     /// Supplied sample arrangement, not a fallback for original-coordinate geometry.
     pub layout: [u32; 2],
@@ -56,7 +59,7 @@ pub(crate) struct Request<'a> {
 impl<'a> Request<'a> {
     pub fn new(
         source: &'a ProcessingSource,
-        input: &'a ProcessingInput,
+        input: &'a AuthoredPhotograph,
         plan: Option<&'a Plan>,
         layout: [u32; 2],
     ) -> Self {
@@ -107,7 +110,7 @@ impl<'a> Request<'a> {
             .plan
             .map(|plan| plan.pipeline().clone())
             .unwrap_or_default();
-        let root = crate::gpu::evaluation::Photograph::from_resident_with_stages(
+        let root = crate::gpu::photograph::PhotographGraph::from_resident_with_stages(
             &device.limits(),
             self.source,
             self.input,

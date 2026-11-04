@@ -1,4 +1,8 @@
 use super::*;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn equal_acquired_calculations_share_inspection_work_across_independent_view_handles() {
@@ -20,7 +24,7 @@ fn equal_acquired_calculations_share_inspection_work_across_independent_view_han
         )
         .unwrap()
         .unwrap();
-        let input = ProcessingInput::from(ProcessingParameters::source());
+        let input = AuthoredPhotograph::from(ProcessingParameters::source());
         let first =
             RenderedView::inspection(&device, source.clone(), &input, OutputTarget::Srgb, None)
                 .unwrap();
@@ -53,8 +57,8 @@ fn submitted_positive_is_reused_by_an_independent_handle_without_regrading_or_ch
         let (device, queue, renderer, kernels) = context().await;
         let scan = scan();
         let matrix = scan.positive_matrix(&InputSettings::Digital).unwrap();
-        let input = ProcessingInput::from(Arc::new(
-            ProcessingInput::new(
+        let input = AuthoredPhotograph::from(Arc::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 Default::default(),
@@ -159,7 +163,7 @@ fn anonymous_supplied_values_with_equal_view_descriptions_do_not_alias_previous_
         assert!(a.definition.identity().is_none());
         assert!(b.definition.identity().is_none());
         assert!(a.spec == b.spec);
-        let input = ProcessingInput::new(
+        let input = AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             RollSettings {
@@ -220,7 +224,7 @@ fn original_adapter_rejects_a_different_capture_even_when_program_and_layout_mat
         let unrelated = Scan::open(file.path(), None).unwrap();
         let spec = SourceRequest::inspection_fixture(frame(&scan), scan.camera_to_ap1, None)
             .unwrap()
-            .with_identity(crate::gpu::execution::source::Identity::camera(
+            .with_identity(crate::gpu::source::identity::Identity::camera(
                 unrelated.source().identity(),
             ));
         let gate = SubmissionGate::default();

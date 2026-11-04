@@ -1,7 +1,8 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 use crate::{
     dust_repair::{RepairOrigin, SupportMask},
-    gpu::ProcessingInput,
+    gpu::test_inputs::AuthoredPhotograph,
     project::{Development, Project, Source, SourceDevelopment, SourceId},
 };
 use std::cell::Cell;
@@ -95,7 +96,7 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
     let input = recipe.neutral.processing_input().unwrap();
     let matrix = scan.positive_matrix(&input).unwrap();
     assert!(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             input,
             RollSettings::default(),

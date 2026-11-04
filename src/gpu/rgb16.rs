@@ -12,7 +12,7 @@ pub(crate) struct Rgb16 {
 impl Rgb16 {
     pub fn new(device: &wgpu::Device, target: OutputTarget) -> Result<Self, Error> {
         let source = match target {
-            OutputTarget::Srgb | OutputTarget::DisplayP3 => include_str!("../shaders/rgb16.wgsl"),
+            OutputTarget::Srgb | OutputTarget::DisplayP3 => include_str!("rgb16.wgsl"),
         };
         Self::from_source(device, target, source)
     }

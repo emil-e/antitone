@@ -1,5 +1,10 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 #[cfg(feature = "ocio-reference")]
 use crate::raw::sony_fixture as sony;
 
@@ -18,7 +23,7 @@ fn sony_corrected_source_inspection_preserves_headroom_flat_field_and_rendered_p
         let gate = SubmissionGate::default();
         let ctx = egui::Context::default();
         let cpu = crate::rendering::CpuRenderer::new(OutputTarget::Srgb).unwrap();
-        let input = ProcessingInput::from(ProcessingParameters::source_inspection(0.).unwrap());
+        let input = AuthoredPhotograph::from(ProcessingParameters::source_inspection(0.).unwrap());
         for corrected in [false, true] {
             let field = corrected.then(|| {
                 Arc::new(
@@ -98,9 +103,14 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
         let context = egui::Context::default();
         let mut scan = scan();
         let frame = frame(&scan);
-        let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None).unwrap();
-        let positive = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None).unwrap();
-        assert!(!spec.same_source(&positive));
+        let identity = crate::gpu::source::identity::Identity::camera(scan.source().identity());
+        let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None)
+            .unwrap()
+            .with_identity(identity.clone());
+        let positive = SourceRequest::new(frame, calibration(), scan.camera_to_ap1, None)
+            .unwrap()
+            .with_identity(identity);
+        assert!(spec.same_source(&positive));
         let codes = scan
             .tile_region(scan.area, 0, 0, scan.area.width, scan.area.height)
             .unwrap();
@@ -172,7 +182,7 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                 }
             }
             for ev in [-16., -2., 0., 0.37, 2., 16.] {
-                let input = ProcessingInput::from(
+                let input = AuthoredPhotograph::from(
                     ProcessingParameters::source_preview(Some([2., 1., 1.5, 1.]), ev).unwrap(),
                 );
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
@@ -185,7 +195,9 @@ fn physical_view_source_inspection_preserves_normalization_correction_and_reuses
                     )
                     .unwrap();
                     assert!(
-                        view.graded.as_ref().unwrap().grade.is_none(),
+                        crate::gpu::grading::Grading::captured_bytes(
+                            &view.graded.as_ref().unwrap().definition
+                        ) == 0,
                         "no calibration, inversion, WB, contrast, saturation or layers"
                     );
                     if let Some(old) = &previous
@@ -294,7 +306,7 @@ fn source_view_applies_camera_white_balance_after_acquisition_without_changing_s
         let transform =
             scan.camera_to_ap1 * DMat3::from_diagonal(gains) * scan.camera_to_ap1.inverse();
         let ev = 0.37_f64;
-        let input = ProcessingInput::from(
+        let input = AuthoredPhotograph::from(
             ProcessingParameters::source_preview_with_transform(Some([1.; 4]), ev, transform)
                 .unwrap(),
         );
@@ -358,7 +370,7 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
         let base = sources.pop().unwrap();
         let detail = sources.pop().unwrap();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-            let input = ProcessingInput::from(
+            let input = AuthoredPhotograph::from(
                 ProcessingParameters::source_preview(Some(scan.fixed_wb), 0.37).unwrap(),
             );
             let a =
@@ -386,7 +398,8 @@ fn physical_view_source_inspection_composite_covers_missing_regional_support() {
                     }
                 }
             }
-            let stale = ProcessingInput::from(ProcessingParameters::source_inspection(0.).unwrap());
+            let stale =
+                AuthoredPhotograph::from(ProcessingParameters::source_inspection(0.).unwrap());
             let stale =
                 RenderedView::inspection(&device, base.clone(), &stale, target, None).unwrap();
             assert!(RenderedView::composite(&device, a, stale, full, None).is_err());

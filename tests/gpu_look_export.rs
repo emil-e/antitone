@@ -10,7 +10,7 @@ use antitone::{
     adjustment_layers::{AdjustmentLayerPipeline, AdjustmentLayerSnapshot},
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, PhotoOrientation, RollOrientation},
-    gpu::SubmissionGate,
+    gpu::submission::SubmissionGate,
     gpu_export::{self, Format, Request},
     looks::{LookAsset, LookOrigin, Lut3D},
     processing::{Calibration, InputSettings, RollSettings},

@@ -128,7 +128,7 @@ fn recorded_image_publication_starts_after_submission_and_tracks_independent_liv
     recorded
         .encode_result(&device, &mut encoder, &output)
         .unwrap();
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     context
         .submit_with(
             &queue,

@@ -21,17 +21,25 @@ impl Request {
             }
             let source = &demand.source;
             let scan = source.scan()?;
-            let input = demand
-                .capture
-                .processing(&services.device.limits(), &demand.repairs)?;
             let renderer = services.renderers.get(&services.device, &services.queue)?;
-            crate::refinement::refine_cancellable(
+            let original = demand.capture.original(
+                &services.device,
+                &renderer,
+                &scan,
+                source
+                    .correction
+                    .as_ref()
+                    .map(|correction| correction.gpu.clone()),
+                &demand.repairs,
+                demand.target,
+            )?;
+            crate::refinement::refine_definition(
                 &renderer,
                 &services.device,
                 (&services.queue, &submissions),
-                (&scan, source.correction.as_ref().map(|c| c.gpu.clone())),
-                input,
+                original,
                 (demand.target, demand.view.expect("requested original view")),
+                demand.capture.look_id().is_some(),
                 || stop.is_cancelled(),
             )
         })

@@ -1,5 +1,7 @@
 use super::*;
-use crate::gpu::ProcessingInput;
+use crate::gpu::parameters::ProcessingParameters;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::InputSettings;
 
 #[cfg(test)]
@@ -29,25 +31,16 @@ pub(super) fn validate_source_with_matrix(
     if !input.ready() {
         return Ok(());
     }
-    if let Some(device) = device {
-        ProcessingInput::validate(
-            device,
-            input,
-            roll,
-            &snapshot,
-            matrix,
-            source.development.active_area.into(),
-        )
-    } else {
-        ProcessingInput::validate_limits(
-            &wgpu::Limits::default(),
-            input,
-            roll,
-            &snapshot,
-            matrix,
-            source.development.active_area.into(),
-        )
-    }
+    crate::gpu::photograph::admission::prepare(
+        &device.map(|device| device.limits()).unwrap_or_default(),
+        input,
+        roll,
+        &snapshot,
+        matrix,
+        source.development.active_area.into(),
+        DVec3::ZERO,
+    )
+    .map(|_| ())
 }
 
 impl Editor {
@@ -107,7 +100,7 @@ impl Editor {
     pub(super) fn neutral_source_signature(
         &self,
         input: &InputSettings,
-    ) -> Result<crate::gpu::GpuInputProgram, Error> {
+    ) -> Result<crate::gpu::interpretation::InputTransform, Error> {
         let ready = self
             .document
             .visit
@@ -122,7 +115,7 @@ impl Editor {
                 .as_ref()
                 .map(|correction| correction.settings.map.clone()),
         )?;
-        crate::gpu::GpuInputProgram::for_scan(&scan, *input)
+        crate::gpu::interpretation::InputTransform::for_scan(&scan, *input)
     }
 
     pub(super) fn validate_repaired_source(
@@ -145,8 +138,8 @@ impl Editor {
             Some(base) => input.with_calibration(self.processing_calibration(base)?),
             None => *input,
         };
-        crate::gpu::ProcessingInput::validate_repaired(
-            device,
+        crate::gpu::photograph::admission::prepare(
+            &device.limits(),
             input,
             roll,
             snapshot,
@@ -157,6 +150,7 @@ impl Editor {
             ready.area,
             bound,
         )
+        .map(|_| ())
     }
 
     pub(super) fn validate_document_candidate(&self, document: &Document) -> Result<(), Error> {
@@ -216,13 +210,14 @@ impl Editor {
         Ok(recipe)
     }
 
+    #[cfg(test)]
     pub(super) fn positive_processing_for_source(
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
         source: &Source,
         photo: AdjustmentLayerSettings,
-    ) -> Result<ProcessingInput, Error> {
+    ) -> Result<AuthoredPhotograph, Error> {
         let recipe = self.positive_recipe_for_source(input, roll, source, photo)?;
         let limits = self
             .document
@@ -231,7 +226,7 @@ impl Editor {
             .device()
             .map(|device| device.limits())
             .unwrap_or_default();
-        ProcessingInput::from_recipe(&limits, &recipe)
+        AuthoredPhotograph::from_recipe(&limits, &recipe)
     }
 
     pub(super) fn positive_recipe(
@@ -254,7 +249,7 @@ impl Editor {
         input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: AdjustmentLayerSettings,
-    ) -> Result<ProcessingInput, Error> {
+    ) -> Result<AuthoredPhotograph, Error> {
         match self.document.visit.current_source {
             Some(id) => self.positive_processing_for_source(
                 input,
@@ -306,23 +301,33 @@ impl Editor {
 
 pub(super) fn image_paint(
     image: Arc<GpuImage>,
-    input: Option<ProcessingInput>,
+    capture: Option<crate::gpu::photograph::request::PhotographRequest>,
+    field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
     mapping: crate::geometry::TextureMapping,
     context: &egui::Context,
 ) -> Result<ImagePaint, Error> {
-    if input
-        .as_ref()
-        .is_some_and(|input| input.grade().is_some() || !input.luts().is_empty())
-    {
-        ImagePaint::with_processing(image, input, mapping)
-            .map(|paint| paint.with_context(context.clone()))
-    } else {
-        Ok(
-            ImagePaint::new(image, input.map(|input| input.parameters()), mapping)
-                .with_context(context.clone()),
-        )
-    }
+    use crate::gpu::photograph::request::PhotographRequest;
+    let (root, luts) = match capture {
+        Some(PhotographRequest::Recipe(recipe)) => (
+            Some(image.recipe_calculation(&recipe, field.clone())?),
+            recipe.luts.clone(),
+        ),
+        Some(PhotographRequest::Inspection(view)) => (
+            Some(image.inspection(view.parameters()?, field)?),
+            Default::default(),
+        ),
+        None => (None, Default::default()),
+        #[cfg(test)]
+        Some(PhotographRequest::Fixture(input)) => {
+            return ImagePaint::with_processing(image, Some(input.with_flat_field(field)), mapping)
+                .map(|paint| paint.with_context(context.clone()));
+        }
+    };
+    ImagePaint::with_calculation(image, root, luts, mapping)
+        .map(|paint| paint.with_context(context.clone()))
 }
 
+#[cfg(test)]
+mod immutable_source_tests;
 #[cfg(test)]
 pub(super) mod tests;

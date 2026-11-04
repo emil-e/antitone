@@ -22,7 +22,7 @@ pub(super) fn wait_context(h: &mut Harness<'_, Editor>) {
                 .as_ref()
                 .is_some_and(|v| {
                     v.spec.identity
-                        == crate::gpu::execution::source::Identity::camera(
+                        == crate::gpu::source::identity::Identity::camera(
                             ready.developed.identity(),
                         )
                         && v.spec.frame().composition.crop() == Crop::from_region(ready.area)

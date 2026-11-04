@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
     gpu::{
-        SubmissionGate,
         evaluation::{self, Budget, CellRegion, Domain, Grid, Meaning, Region, Source},
+        submission::SubmissionGate,
     },
     looks::LutChain,
     rendering::{OutputReference, OutputTarget},

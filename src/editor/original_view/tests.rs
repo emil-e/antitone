@@ -1,5 +1,7 @@
 use super::*;
 use crate::editor::tests::UiFixture;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 
 fn source_input() -> source::Context {
     source::Context {
@@ -9,8 +11,8 @@ fn source_input() -> source::Context {
     }
 }
 
-fn request(ev: f64) -> (Demand, ProcessingInput) {
-    let input = ProcessingInput::from(ProcessingParameters::source_inspection(ev).unwrap());
+fn request(ev: f64) -> (Demand, AuthoredPhotograph) {
+    let input = AuthoredPhotograph::from(ProcessingParameters::source_inspection(ev).unwrap());
     let area = Rect {
         x: 0,
         y: 0,
@@ -43,7 +45,10 @@ fn original_request_is_readonly_and_its_owner_rejects_departed_completion() {
         owner.observe(OriginalPurpose::Tool, signature);
         owner.last_edit = std::time::Instant::now() - Duration::from_secs(1);
         let captured = owner.request().unwrap();
-        assert!(captured.demand.capture == working_view::Capture::Primitive(input));
+        assert!(
+            captured.demand.capture
+                == crate::gpu::photograph::request::PhotographRequest::Fixture(input)
+        );
         assert!(!owner.refining(), "capturing input does not stage work");
         let completion = captured.begin().unwrap();
         retired.get_or_insert(completion);

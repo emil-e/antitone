@@ -1,11 +1,13 @@
+use crate::Error;
 pub use crate::gpu::execution::regional::Demand as ViewRequest;
-use crate::{
-    Error,
-    gpu::{GpuFlatField, ProcessingInput},
-    rendering::OutputTarget,
-    scan::Scan,
-    viewer::GpuImage,
-};
+#[cfg(test)]
+use crate::gpu::flat::GpuFlatField;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::rendering::OutputTarget;
+#[cfg(test)]
+use crate::scan::Scan;
+use crate::viewer::GpuImage;
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,7 +19,7 @@ pub fn refine(
     device: &wgpu::Device,
     (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
-    parameters: impl Into<ProcessingInput>,
+    parameters: impl Into<AuthoredPhotograph>,
     target: OutputTarget,
     (generation, expected): (&AtomicU64, u64),
     view: ViewRequest,
@@ -33,12 +35,13 @@ pub fn refine(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn refine_cancellable(
     renderer: &Arc<crate::renderer::GpuRenderer>,
     device: &wgpu::Device,
     (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
     (scan, field): (&Scan, Option<Arc<GpuFlatField>>),
-    parameters: impl Into<ProcessingInput>,
+    parameters: impl Into<AuthoredPhotograph>,
     (target, view): (OutputTarget, ViewRequest),
     cancelled: impl Fn() -> bool,
 ) -> Result<Option<Arc<GpuImage>>, Error> {
@@ -46,14 +49,40 @@ pub(crate) fn refine_cancellable(
     if cancelled() {
         return Ok(None);
     }
-    let request = crate::gpu::execution::regional::Request {
+    scan.validate_area(view.area)?;
+    let root = crate::gpu::evaluation::original_chain(
+        device,
+        renderer,
         scan,
         field,
-        input: &input,
-        target,
-        demand: view,
-    };
-    let root = request.definition(device, renderer)?;
+        &input,
+        crate::rendering::OutputReference::DisplayReferred(target),
+        &input.pixel_pipeline(),
+    )?;
+    refine_definition(
+        renderer,
+        device,
+        (queue, submissions),
+        root,
+        (target, view),
+        !input.luts().is_empty(),
+        cancelled,
+    )
+}
+
+pub(crate) fn refine_definition(
+    renderer: &Arc<crate::renderer::GpuRenderer>,
+    device: &wgpu::Device,
+    (queue, submissions): (&wgpu::Queue, &crate::platform::SubmissionGate),
+    original: Arc<crate::gpu::evaluation::ImageNode>,
+    (target, view): (OutputTarget, ViewRequest),
+    check_look: bool,
+    cancelled: impl Fn() -> bool,
+) -> Result<Option<Arc<GpuImage>>, Error> {
+    if cancelled() {
+        return Ok(None);
+    }
+    let root = crate::gpu::execution::regional::definition(original, view)?;
     let output = pollster::block_on(GpuImage::new_rendered_shared(
         renderer,
         device,
@@ -66,7 +95,7 @@ pub(crate) fn refine_cancellable(
         device,
         (queue, submissions),
         root,
-        !input.luts().is_empty(),
+        check_look,
         &output.linear,
         cancelled,
     )?

@@ -501,7 +501,7 @@ fn corrected_tiff_and_ap0_exr_match_scalar_original_samples_with_and_without_fla
         export::{self, ExrPrecision, Overwrite},
         flat_field::FlatField,
         geometry::{Composition, PhotoOrientation, RollOrientation},
-        gpu::{GpuFlatField, SubmissionGate},
+        gpu::{flat::GpuFlatField, submission::SubmissionGate},
         gpu_export::{self, Format, Request},
         processing::{Calibration, InputSettings, RollSettings},
         renderer::GpuRenderer,

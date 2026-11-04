@@ -54,13 +54,13 @@ fn main(@location(0) uv: vec2f) -> @location(0) vec4f {
 #[derive(Default)]
 pub(crate) struct RendererCache {
     renderer: std::sync::OnceLock<Result<Arc<GpuRenderer>, Error>>,
-    submissions: crate::gpu::SubmissionGate,
+    submissions: crate::gpu::submission::SubmissionGate,
     retention_budget: std::sync::Mutex<Option<u64>>,
 }
 
 #[cfg(feature = "editor")]
 impl RendererCache {
-    pub(crate) fn new(submissions: crate::gpu::SubmissionGate) -> Self {
+    pub(crate) fn new(submissions: crate::gpu::submission::SubmissionGate) -> Self {
         Self {
             submissions,
             ..Default::default()
@@ -97,7 +97,7 @@ impl RendererCache {
         self.renderer.get().is_some()
     }
 
-    pub(crate) fn submissions(&self) -> &crate::gpu::SubmissionGate {
+    pub(crate) fn submissions(&self) -> &crate::gpu::submission::SubmissionGate {
         &self.submissions
     }
 
@@ -181,7 +181,7 @@ pub(crate) struct TargetResources {
 /// Shared processing/rendering infrastructure for foreground images, thumbnails and refinement.
 /// Image storage and processing signatures remain image-owned.
 pub struct GpuRenderer {
-    pub(crate) submissions: crate::gpu::SubmissionGate,
+    pub(crate) submissions: crate::gpu::submission::SubmissionGate,
     #[cfg(feature = "raw")]
     _pressure: crate::sys::MemoryPressureWatch,
     #[cfg(all(
@@ -209,13 +209,18 @@ impl GpuRenderer {
     }
 
     pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Arc<Self>, Error> {
-        Self::new_with_submissions(device, queue, crate::gpu::SubmissionGate::default()).await
+        Self::new_with_submissions(
+            device,
+            queue,
+            crate::gpu::submission::SubmissionGate::default(),
+        )
+        .await
     }
 
     pub async fn new_with_submissions(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        submissions: crate::gpu::SubmissionGate,
+        submissions: crate::gpu::submission::SubmissionGate,
     ) -> Result<Arc<Self>, Error> {
         Self::new_with_cache_policy(device, queue, submissions, Default::default()).await
     }
@@ -223,7 +228,7 @@ impl GpuRenderer {
     pub async fn new_with_cache_policy(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        submissions: crate::gpu::SubmissionGate,
+        submissions: crate::gpu::submission::SubmissionGate,
         policy: crate::gpu::evaluation::CachePolicy,
     ) -> Result<Arc<Self>, Error> {
         let evaluation = crate::gpu::evaluation::Context::new(device, policy);
@@ -251,7 +256,7 @@ impl GpuRenderer {
         }
         crate::gpu::evaluation::Reference::prewarm(&evaluation)?;
         #[cfg(feature = "editor")]
-        crate::gpu::evaluation::Photograph::prewarm_filtered(device, &evaluation)?;
+        crate::gpu::photograph::PhotographGraph::prewarm_filtered(device, &evaluation)?;
         let renderer = Arc::new(Self {
             submissions,
             #[cfg(feature = "raw")]
@@ -272,7 +277,7 @@ impl GpuRenderer {
             look_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
         #[cfg(feature = "ui")]
-        crate::gpu::evaluation::Photograph::prewarm_resident(device, &renderer)?;
+        crate::gpu::photograph::PhotographGraph::prewarm_resident(device, &renderer)?;
         Ok(renderer)
     }
 

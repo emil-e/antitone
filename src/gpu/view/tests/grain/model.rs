@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
 
 fn correlation(values: &[f64], dx: usize, dy: usize) -> f64 {
     let (mut a, mut b, mut aa, mut bb, mut ab, mut count) = (0., 0., 0., 0., 0., 0.);

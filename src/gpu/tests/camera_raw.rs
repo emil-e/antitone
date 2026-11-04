@@ -1,14 +1,16 @@
 #![cfg(all(feature = "raw", feature = "gpu", target_os = "macos"))]
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::photograph::test_support::CameraFixture;
 use crate::raw_test_support::train_raw;
 use antitone as api;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
-use api::{
-    color::Balance,
-    gpu::ProcessingSource,
-    processing::{DEFAULT_GAMMA, InputSettings, Response, RollSettings},
-};
 use glam::Vec4;
+use {
+    crate::gpu::source::ProcessingSource,
+    api::{
+        color::Balance,
+        processing::{DEFAULT_GAMMA, InputSettings, Response, RollSettings},
+    },
+};
 
 #[test]
 #[ignore = "read-only local train RAW and diagnostic calibration; run explicitly in release"]
@@ -58,10 +60,10 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let source =
-            ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1).unwrap();
+            ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1, None).unwrap();
         assert_eq!(source.byte_len(), codes.len() as u64 * 16);
         let kernel = CameraFixture::new(&device).await.unwrap();
-        let grade = antitone::gpu::ProcessingInput::new(
+        let grade = antitone::gpu::test_inputs::AuthoredPhotograph::new(
             &device.limits(),
             input,
             roll,

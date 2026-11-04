@@ -1,4 +1,7 @@
 use super::*;
+use crate::gpu::photograph::request::PhotographRequest;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 use crate::{
     application::test_support::with_application,
     geometry::{Composition, FramePoint},
@@ -50,7 +53,7 @@ fn fixture() -> (
     .unwrap();
     let spec = SourceRequest::inspection_fixture(frame, scan.camera_to_ap1, None)
         .unwrap()
-        .with_identity(crate::gpu::execution::source::Identity::camera(
+        .with_identity(crate::gpu::source::identity::Identity::camera(
             scan.source().identity(),
         ));
     let input = source::Context {
@@ -91,7 +94,7 @@ fn positive_spec(frame: FrameRaster, input: &source::Context, sigma: f64) -> Sou
         )],
     })
     .unwrap()
-    .with_identity(crate::gpu::execution::source::Identity::camera(
+    .with_identity(crate::gpu::source::identity::Identity::camera(
         input.source.identity(),
     ))
 }
@@ -252,7 +255,7 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
     let count_work = |spec: &SourceRequest| {
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let observed = count.clone();
-        let gate = crate::gpu::SubmissionGate::default();
+        let gate = crate::gpu::submission::SubmissionGate::default();
         gate.observe_submissions(Arc::new(move || {
             observed.fetch_add(1, Ordering::Relaxed);
         }));
@@ -285,14 +288,14 @@ fn support_growth_during_input_submission_reuses_source_and_publishes_only_lates
         let requests = images
             .iter()
             .map(|image| {
-                let (root, _) = crate::gpu::execution::footprints::Processed::definition(
+                let (root, _) = crate::gpu::view::processing::ProcessedView::definition(
                     &services.device.limits(),
                     &image.spec,
                     image.definition.clone(),
                     &processing,
                 )
                 .unwrap();
-                crate::gpu::execution::footprints::Processed::request(renderer.evaluation(), root)
+                crate::gpu::view::processing::ProcessedView::request(renderer.evaluation(), root)
                     .unwrap()
             })
             .collect();
@@ -502,14 +505,14 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
     );
     let pixels = e.source_context().unwrap();
     let device = e.document.visit.working_view.device().unwrap().clone();
-    let input = ProcessingInput::from_recipe(&device.limits(), &recipe).unwrap();
+    let input = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
     let mut frame = FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
     let spec = SourceRequest::for_processing(frame, &input).unwrap();
     let demand = Demand {
         spec,
         pixels,
-        capture: Capture::Photograph(recipe.clone()),
+        capture: PhotographRequest::Recipe(recipe.clone()),
     };
     with_application(e, |app| {
         app.enter(|e, cx| e.request_working(demand, cx));
@@ -520,14 +523,14 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         app.update(|e| {
             let working = &mut e.document.visit.working_view;
             let ready = working.frame.as_ref().unwrap().clone();
-            let Capture::Photograph(captured) = &ready.request.capture else {
+            let PhotographRequest::Recipe(captured) = &ready.request.capture else {
                 panic!("recipe capture was replaced");
             };
             assert!(Arc::ptr_eq(captured, &recipe));
             assert_eq!(ready.processed.len(), 2);
             let mut different = (*recipe).clone();
             different.roll.exposure = 2.;
-            let changed = ProcessingInput::from_recipe(&device.limits(), &different).unwrap();
+            let changed = AuthoredPhotograph::from_recipe(&device.limits(), &different).unwrap();
             for value in &ready.processed {
                 assert!(matches!(
                     value.pixels,
@@ -572,7 +575,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         scope.set_retention_enabled(false);
         let mut edited = (*recipe).clone();
         edited.roll.exposure = 2.;
-        wanted.capture = Capture::Photograph(Arc::new(edited));
+        wanted.capture = PhotographRequest::Recipe(Arc::new(edited));
         let input = wanted.processing(&device.limits()).unwrap();
         app.enter(|e, cx| e.request_working(wanted, cx));
         let definition = app.read(|e| {
@@ -713,13 +716,13 @@ fn resolved_repair_arguments_require_new_values_even_when_the_recipe_is_unchange
     let resolved = crate::gpu::repairs::Snapshot(vec![
         crate::gpu::repairs::Patch::new(device, evaluated).unwrap(),
     ]);
-    let processing = ProcessingInput::from_recipe(&device.limits(), &recipe).unwrap();
+    let processing = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
     let mut frame = FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
     let initial = Demand {
         spec: SourceRequest::for_processing(frame, &processing).unwrap(),
         pixels,
-        capture: Capture::Photograph(recipe),
+        capture: PhotographRequest::Recipe(recipe),
     };
     assert!(initial.spec.repairs.0.is_empty());
     with_application(e, |app| {
@@ -797,13 +800,13 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
                     .clone(),
             )
         });
-        let processing = ProcessingInput::from(
-            crate::gpu::ProcessingParameters::source_inspection(1.2).unwrap(),
+        let processing = AuthoredPhotograph::from(
+            crate::gpu::parameters::ProcessingParameters::source_inspection(1.2).unwrap(),
         );
         let edited = Demand {
             spec: spec.clone(),
             pixels: input,
-            capture: Capture::Primitive(processing.clone()),
+            capture: PhotographRequest::Fixture(processing.clone()),
         };
         assert!(
             before.request.capture != edited.capture,

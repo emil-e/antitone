@@ -64,12 +64,12 @@ fn native_output_resources() {
             .unwrap();
     let path = directory.path().join("native-output");
     let peak = Arc::new(AtomicU64::new(0));
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let observed = peak.clone();
     let gpu = device.clone();
     gate.observe_encoded_resources(Arc::new(move || {
         observed.fetch_max(
-            crate::gpu::allocated_resource_bytes(&gpu).unwrap_or(0) as u64,
+            crate::sys::allocated_resource_bytes(&gpu).unwrap_or(0) as u64,
             Ordering::Relaxed,
         );
     }));
@@ -82,33 +82,48 @@ fn native_output_resources() {
                 let (output, encoding) = match format {
                     Format::Tiff(target) => (
                         crate::rendering::OutputReference::DisplayReferred(target),
-                        execution::SampleEncoding::Rgb16,
+                        execution::SampleEncoding::Rgb16(target),
                     ),
                     _ => (
                         crate::rendering::OutputReference::SceneReferred,
                         execution::SampleEncoding::LinearFloat,
                     ),
                 };
+                let photograph = crate::gpu::photograph::PhotographGraph::original(
+                    &device.limits(),
+                    crate::gpu::evaluation::camera_source(&scan)?,
+                    None,
+                    crate::gpu::interpretation::InputTransform::for_scan(
+                        &scan,
+                        crate::processing::InputSettings::Digital,
+                    )?,
+                    crate::gpu::grading::Grading::new(
+                        &device.limits(),
+                        Default::default(),
+                        grade.clone(),
+                        scan.area,
+                    )?,
+                    Default::default(),
+                    &crate::pixel_pipeline::PixelPipeline::film(
+                        film,
+                        composition.size(),
+                        (1 << 60) + 17,
+                    )?,
+                )?;
+                let definition = crate::gpu::evaluation::Reference::capture(
+                    &device,
+                    &renderer,
+                    output,
+                    &Default::default(),
+                )?
+                .compose(photograph.processed, &renderer)?;
                 return execution::execute(
                     &renderer,
                     &device,
                     (&queue, &gate),
                     execution::Request {
-                        scan: &scan,
-                        field: None,
-                        input: crate::processing::InputSettings::Digital,
-                        roll: Default::default(),
-                        grade: grade.clone(),
-                        repairs: &[],
+                        definition,
                         composition,
-                        stages: crate::pixel_pipeline::PixelPipeline::film(
-                            film,
-                            composition.size(),
-                            (1 << 60) + 17,
-                        )
-                        .unwrap(),
-                        output,
-                        luts: (None).into(),
                         encoding,
                     },
                     |render, complete| {
@@ -168,7 +183,7 @@ fn native_output_resources() {
         let usage = unsafe { usage.assume_init() };
         println!(
             "native_output run={run} seconds={seconds:.9} retained={} encoded_peak={} source_cells={} submissions={} evaluation_buffer_allocations={} generated_initializations={} peak_rss={} file_bytes={}",
-            crate::gpu::allocated_resource_bytes(&device).unwrap_or(0),
+            crate::sys::allocated_resource_bytes(&device).unwrap_or(0),
             peak.load(Ordering::Relaxed),
             stats.source_pixels,
             stats.submissions,

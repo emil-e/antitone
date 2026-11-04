@@ -6,7 +6,7 @@ fn grain_gpu_gaussian_energy_and_magnification_limits() {
         let (device, queue, _, _) = context().await;
         let shader = format!(
             "{}\n{}",
-            super::super::super::grain::shader(),
+            crate::gpu::grain::shader(),
             r#"
 @group(0) @binding(9) var<uniform> probe:vec4f;
 @compute @workgroup_size(64)

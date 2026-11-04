@@ -6,8 +6,8 @@ use crate::{
     coverage::Coverage,
     geometry::SourceRegion,
     gpu::{
-        GpuFlatField,
         evaluation::{self, Budget, CellRegion, Domain, Grid, ImageNode, Meaning, Region},
+        flat::GpuFlatField,
     },
     processing::NegativeInput,
     scan::Scan,
@@ -139,7 +139,7 @@ impl Evidence {
             .cloned()
             .map(|field| GpuFlatField::new(&services.device, field).map(Arc::new))
             .transpose()?;
-        let camera = evaluation::Photograph::camera_samples(
+        let camera = crate::gpu::photograph::PhotographGraph::camera_samples(
             evaluation::source(Arc::new(Pixels {
                 pixels: codes,
                 meaning: Meaning::CameraCodes,
@@ -173,7 +173,10 @@ impl Evidence {
         negative: NegativeInput,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<DVec3, Error> {
-        let readout = evaluation::CameraReadout::normalized(self.camera.clone(), negative)?;
+        let readout = crate::gpu::photograph::camera_response::CameraReadout::normalized(
+            self.camera.clone(),
+            negative,
+        )?;
         let pixels = read(services, readout.image, cancelled)?;
         let mut sum = DVec3::ZERO;
         let mut total = 0.;

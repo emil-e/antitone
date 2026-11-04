@@ -1,5 +1,12 @@
-use super::*;
-use crate::gpu::camera_fixture::CameraFixture;
+use crate::gpu::parameters::CameraMatrix;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::parameters::matrix_columns;
+use crate::gpu::parameters::source_preview_gain;
+use crate::gpu::photograph::test_support::CameraFixture;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::processing::RollSettings;
+use glam::{DMat3, DVec3, Vec4};
 
 mod adjustment_layer_performance;
 mod camera_raw;
@@ -13,7 +20,7 @@ use crate::processing::Calibration;
 
 #[test]
 fn processing_assembles_shared_photographic_operators_once() {
-    let shader = crate::gpu::photograph::kernel_shader();
+    let shader = crate::gpu::photograph::shader::functions();
     assert!(!shader.contains("Triple"));
     assert!(!shader.contains("precise_"));
     // Originals, repairs and working views use the same photographic operators.
@@ -38,10 +45,8 @@ fn source_inspection_is_zero_default_and_changes_only_the_source_post_matrix() {
         let gain = exposure.exp2();
         let adjusted = ProcessingParameters::source_inspection(exposure).unwrap();
         assert_eq!(adjusted.post, matrix_columns(DMat3::IDENTITY * gain));
-        let unchanged = ProcessingParameters {
-            post: base.post,
-            ..adjusted
-        };
+        let mut unchanged = adjusted;
+        unchanged.post = base.post;
         assert_eq!(bytemuck::bytes_of(&unchanged), bytemuck::bytes_of(&base));
     }
     for exposure in [f64::NAN, f64::INFINITY, -17., 17.] {
@@ -94,7 +99,7 @@ fn layer_output_bounds_do_not_propagate_scratch_peaks_into_following_layers() {
     ])
     .unwrap();
     assert!(
-        ProcessingInput::validate_limits(
+        AuthoredPhotograph::validate_limits(
             &wgpu::Limits::default(),
             calibration,
             RollSettings::default(),
@@ -111,7 +116,7 @@ fn layer_output_bounds_do_not_propagate_scratch_peaks_into_following_layers() {
     };
     let snapshot = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(settings)]).unwrap();
     assert!(
-        ProcessingInput::validate_limits(
+        AuthoredPhotograph::validate_limits(
             &wgpu::Limits::default(),
             calibration,
             RollSettings::default(),
@@ -146,10 +151,8 @@ fn source_preview_restores_green_referenced_headroom_and_keeps_inspection_relati
                 matrix_columns(DMat3::IDENTITY * (2. * headroom * exposure.exp2()))
             );
             let base = ProcessingParameters::source();
-            let unchanged = ProcessingParameters {
-                post: base.post,
-                ..adjusted
-            };
+            let mut unchanged = adjusted;
+            unchanged.post = base.post;
             assert_eq!(bytemuck::bytes_of(&unchanged), bytemuck::bytes_of(&base));
         }
     }
@@ -229,7 +232,7 @@ fn source_inspection_gpu_matches_scaled_camera_to_ap1_with_zero_diagnostic_flags
             DVec3::new(0.4, 1.2, -0.15),
             DVec3::new(0., -0.22, 1.16),
         );
-        let source = ProcessingSource::new(&device, &codes, matrix).unwrap();
+        let source = ProcessingSource::new(&device, &codes, matrix, None).unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -327,12 +330,20 @@ fn native_and_continuous_transport_preserve_normalization_and_source_addressing(
         let kernel = CameraFixture::new(&device).await.unwrap();
         let codes: Vec<_> = (0..=65535u16).map(|v| [v, 65535 - v, v / 2, 0]).collect();
         let continuous: Vec<_> = codes.iter().map(|p| p.map(f32::from)).collect();
-        let native = ProcessingSource::new(&device, &codes, DMat3::IDENTITY).unwrap();
+        let native = ProcessingSource::new(&device, &codes, DMat3::IDENTITY, None).unwrap();
         let float =
-            ProcessingSource::new_continuous(&device, &continuous, DMat3::IDENTITY).unwrap();
+            ProcessingSource::new_continuous(&device, &continuous, DMat3::IDENTITY, None).unwrap();
         assert_eq!(native.byte_len(), codes.len() as u64 * 8);
-        assert!(native.write(&queue, &codes[..1]).is_err());
-        assert!(ProcessingSource::new(&device, &[], DMat3::IDENTITY).is_err());
+        assert!(
+            ProcessingSource::new(
+                &device,
+                &codes[..1],
+                DMat3::IDENTITY,
+                Some(crate::gpu::source::SourceGeometry::new([0, 0, 2, 1], [2, 1]).unwrap())
+            )
+            .is_err()
+        );
+        assert!(ProcessingSource::new(&device, &[], DMat3::IDENTITY, None).is_err());
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: codes.len() as u64 * 16,

@@ -1,12 +1,13 @@
 use super::*;
 use crate::adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage};
+use crate::gpu::test_inputs::AuthoredPhotograph;
 
 #[test]
 fn film_seed_routing_uses_source_identity_not_visit_identity() {
     pollster::block_on(async {
         let (mut editor, _, _) = processing::tests::fixture().await;
         editor.document.grain.enabled = true;
-        let seed = |input: &ProcessingInput| {
+        let seed = |input: &AuthoredPhotograph| {
             input
                 .pixel_pipeline()
                 .stages

@@ -1,9 +1,11 @@
 use super::*;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     geometry::SourcePoint,
-    gpu::SourceGeometry,
+    gpu::source::SourceGeometry,
     project::{AdjustmentLayers, SourceDevelopment},
 };
 
@@ -49,7 +51,6 @@ pub(in crate::editor) async fn fixture() -> (Editor, wgpu::Device, wgpu::Queue) 
         [7, 5],
         &[[1100, 900, 750, 0]; 35],
         glam::DMat3::IDENTITY,
-        None,
         SourceGeometry::new(record.development.active_area, [7, 5]).unwrap(),
     )
     .unwrap();
@@ -126,7 +127,7 @@ fn local(exposure: f64) -> AdjustmentLayer {
     }
 }
 
-fn positive(editor: &Editor) -> ProcessingInput {
+fn positive(editor: &Editor) -> AuthoredPhotograph {
     editor
         .positive_processing(
             editor.document.input,
@@ -155,6 +156,15 @@ fn captured_grades_follow_processing_not_names_allocator_or_view_state() {
     pollster::block_on(async {
         let (mut editor, _, _) = fixture().await;
         let id = editor.document.visit.current_source.unwrap();
+        let proxy = editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .proxy
+            .clone();
         let first = positive(&editor);
         let unchanged = positive(&editor);
         assert_eq!(first.clone(), unchanged.clone());
@@ -211,32 +221,8 @@ fn captured_grades_follow_processing_not_names_allocator_or_view_state() {
             graded.grade().unwrap().snapshot(),
             roll_graded.grade().unwrap().snapshot()
         );
-        let revision = editor
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .unwrap()
-            .proxy
-            .image(editor.document.target)
-            .unwrap()
-            .source_revision();
         assert_eq!(first.grade().unwrap().snapshot(), &old_snapshot);
-        assert_eq!(
-            editor
-                .document
-                .visit
-                .canvas
-                .ready
-                .as_ref()
-                .unwrap()
-                .proxy
-                .image(editor.document.target)
-                .unwrap()
-                .source_revision(),
-            revision
-        );
+        assert!(proxy.same_source(&editor.document.visit.canvas.ready.as_ref().unwrap().proxy));
     });
 }
 
@@ -380,8 +366,8 @@ fn correction_changes_captured_processing_without_mutating_earlier_stacks() {
         let calibration = field
             .processing_calibration(editor.calibration().unwrap())
             .unwrap();
-        let expected = ProcessingInput::from(Arc::new(
-            crate::gpu::ProcessingInput::new(
+        let expected = AuthoredPhotograph::from(Arc::new(
+            crate::gpu::test_inputs::AuthoredPhotograph::new(
                 &device.limits(),
                 calibration,
                 editor.document.roll,
@@ -556,7 +542,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         assert_eq!(request.demand.target, editor.document.target);
         assert!(matches!(
             request.demand.capture,
-            working_view::Capture::Photograph(_)
+            crate::gpu::photograph::request::PhotographRequest::Recipe(_)
         ));
         let (captured, view) = (
             request
@@ -633,31 +619,27 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
     });
 }
 
-fn tracked_grade(input: &ProcessingInput) -> (std::sync::Weak<crate::gpu::Grading>, u64) {
-    let grading = input.grade_shared().unwrap();
-    (Arc::downgrade(grading), grading.byte_len())
-}
-
-fn live_grade_snapshots(grades: &[(std::sync::Weak<crate::gpu::Grading>, u64)]) -> (usize, u64) {
-    grades
-        .iter()
-        .filter(|(grade, _)| grade.strong_count() != 0)
-        .fold((0, 0), |(count, bytes), (_, size)| {
-            (count + 1, bytes + size)
-        })
-}
-
 #[test]
-fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history() {
+fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
+    use crate::gpu::evaluation::ImageNode;
+    use crate::gpu::photograph::request::PhotographRequest;
     use crate::gpu_scopes::{GpuScopes, ScopePaint};
+    use crate::image_recipe::ImageRecipe;
     use egui_wgpu::CallbackTrait;
-    use std::time::Instant;
+    use std::{sync::Weak, time::Instant};
+
     pollster::block_on(async {
         let (mut editor, device, queue) = fixture().await;
         editor.document.visit.working_view.compare = true;
-        let accepted = positive(&editor);
-        let mut tracked = vec![tracked_grade(&accepted)];
-        let bytes = tracked[0].1;
+        let recipe = Arc::new(
+            editor
+                .positive_recipe(
+                    editor.input(),
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
+                )
+                .unwrap(),
+        );
         let proxy = editor
             .document
             .visit
@@ -671,9 +653,22 @@ fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history(
             proxy.image(OutputTarget::Srgb).unwrap(),
             proxy.image(OutputTarget::DisplayP3).unwrap(),
         ];
-        let image = images[editor.document.target as usize].clone();
+        let roots = [
+            images[0].recipe_calculation(&recipe, None).unwrap(),
+            images[1].recipe_calculation(&recipe, None).unwrap(),
+        ];
+        let tracked: Vec<Weak<ImageNode>> = roots.iter().map(Arc::downgrade).collect();
+        let live_calculations = || {
+            tracked
+                .iter()
+                .filter(|root| root.strong_count() != 0)
+                .count()
+        };
+        let bytes = crate::gpu::grading::Grading::captured_bytes(&roots[0]);
+        assert!(bytes > 0, "the fixture must capture photographic arguments");
         let context = egui::Context::default();
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
+        let index = editor.document.target as usize;
         let source = editor
             .document
             .project
@@ -681,16 +676,17 @@ fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history(
             .unwrap();
         let scope_frame =
             crate::frame_raster::FrameRaster::full(editor.source_composition(source)).unwrap();
-        let image_paint = ImagePaint::with_processing(
-            image.clone(),
-            Some(accepted.clone()),
+        let image_paint = ImagePaint::with_calculation(
+            images[index].clone(),
+            Some(roots[index].clone()),
+            recipe.luts.clone(),
             crate::geometry::TextureMapping::IDENTITY,
         )
         .unwrap();
-        let scope_paint = ScopePaint::with_processing(
+        let scope_paint = ScopePaint::with_calculation(
             gpu.clone(),
-            image,
-            accepted.clone(),
+            images[index].clone(),
+            (roots[index].clone(), recipe.luts.clone()),
             scope_frame,
             crate::scopes::Settings {
                 target: editor.document.target,
@@ -708,38 +704,58 @@ fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history(
         let mut encoder = device.create_command_encoder(&Default::default());
         image_paint.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
         scope_paint.prepare(&device, &queue, &screen, &mut encoder, &mut resources);
-        for image in &images {
+        for (image, root) in images.iter().zip(&roots) {
             image
-                .prepare_processing(&device, &mut encoder, &accepted)
+                .prepare_calculation(&device, &mut encoder, root, &recipe.luts)
                 .unwrap();
         }
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        drop(accepted);
+        drop(roots);
+        drop(recipe);
 
         let observe = |editor: &mut Editor| {
             let layout = editor.document.visit.canvas.last_layout.unwrap().0;
             let frame = layout.physical_frame_raster(1.);
+            let recipe = editor
+                .positive_recipe(
+                    editor.input(),
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
+                )
+                .unwrap();
             editor.document.visit.canvas.grade.original.observe(
                 OriginalPurpose::Reference,
-                original_view::Demand::fixture(
-                    positive(editor).clone(),
-                    editor.document.target,
-                    Some(ViewRequest {
+                original_view::Demand {
+                    capture: PhotographRequest::Recipe(Arc::new(recipe)),
+                    repairs: Default::default(),
+                    target: editor.document.target,
+                    view: Some(ViewRequest {
                         area: frame.bounds().unwrap(),
                         output: frame.output,
                         frame: Some(frame),
                     }),
-                    layout.composition,
-                    editor.source_context().unwrap(),
-                ),
+                    composition: layout.composition,
+                    source: editor.source_context().unwrap(),
+                },
             );
+            editor.document.visit.canvas.grade.original.last_edit =
+                Instant::now() - Duration::from_secs(1);
+        };
+        let track_recipe = |request: &original_view::Request| -> Weak<ImageRecipe> {
+            match &request.demand.capture {
+                PhotographRequest::Recipe(recipe) => Arc::downgrade(recipe),
+                _ => panic!("original demand must capture photographic intent"),
+            }
+        };
+        let live_recipes = |recipes: &[Weak<ImageRecipe>]| {
+            recipes
+                .iter()
+                .filter(|recipe| recipe.strong_count() != 0)
+                .count()
         };
         observe(&mut editor);
-        editor.document.visit.canvas.grade.original.last_edit =
-            Instant::now() - Duration::from_secs(1);
-        // Retain consumer input independently of newer UI demand. Actual task and
-        // running-job admission are covered by the live workflow tests.
+        // Keep a consumer independently of current demand; workflow tests exercise actual jobs.
         let held = editor
             .document
             .visit
@@ -748,20 +764,11 @@ fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history(
             .original
             .request()
             .unwrap();
-        let held_grade = tracked_grade(
-            &held
-                .demand
-                .capture
-                .processing(&device.limits(), &held.demand.repairs)
-                .unwrap(),
-        )
-        .0;
-        let mut requested_grades = vec![(held_grade.clone(), bytes)];
+        let held_recipe = track_recipe(&held);
+        let mut requested = vec![held_recipe.clone()];
         for i in 1..=40 {
             editor.document.visit.adjustment_layer_settings.exposure = f64::from(i) / 100.;
             observe(&mut editor);
-            editor.document.visit.canvas.grade.original.last_edit =
-                Instant::now() - Duration::from_secs(1);
             let latest = editor
                 .document
                 .visit
@@ -770,26 +777,31 @@ fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history(
                 .original
                 .request()
                 .unwrap();
-            let latest_input = latest
-                .demand
-                .capture
-                .processing(&device.limits(), &latest.demand.repairs)
+            let latest_recipe = track_recipe(&latest);
+            let expected = editor
+                .positive_recipe(
+                    editor.input(),
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
+                )
                 .unwrap();
-            assert_eq!(latest_input, positive(&editor));
-            let latest_grade = tracked_grade(&latest_input).0;
-            requested_grades.push((latest_grade.clone(), bytes));
-            drop(latest_input);
-            assert!(held_grade.upgrade().is_some());
-            assert_eq!(live_grade_snapshots(&tracked), (1, bytes));
+            assert_eq!(*latest_recipe.upgrade().unwrap(), expected);
+            requested.push(latest_recipe.clone());
+            assert!(held_recipe.upgrade().is_some());
+            assert_eq!(
+                live_calculations(),
+                2,
+                "edits cannot mutate or withdraw prepared consumers"
+            );
             drop(latest);
             assert!(
-                latest_grade.upgrade().is_some(),
-                "the current request remains an independent consumer"
+                latest_recipe.upgrade().is_some(),
+                "current demand is an independent consumer"
             );
             assert_eq!(
-                live_grade_snapshots(&requested_grades),
-                (2, 2 * bytes),
-                "only held work and current demand retain requested mathematical inputs"
+                live_recipes(&requested),
+                2,
+                "only held work and current demand retain recipe captures"
             );
         }
         let newest = editor
@@ -800,13 +812,6 @@ fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history(
             .original
             .request()
             .unwrap();
-        tracked.push(tracked_grade(
-            &newest
-                .demand
-                .capture
-                .processing(&device.limits(), &newest.demand.repairs)
-                .unwrap(),
-        ));
         assert_ne!(newest.completion(), held.completion());
         assert!(held.completion().receive(Ok(None)).is_none());
         assert!(
@@ -820,43 +825,50 @@ fn captured_original_mathematical_inputs_follow_active_consumers_not_ui_history(
                 .is_none()
         );
         drop(held);
-        assert!(held_grade.upgrade().is_none());
+        assert!(held_recipe.upgrade().is_none());
 
         editor.document.visit.canvas.grade.original.wanted = None;
         editor.document.visit.canvas.grade = Default::default();
-        assert_eq!(live_grade_snapshots(&tracked), (2, 2 * bytes));
+        assert_eq!(
+            live_recipes(&requested),
+            1,
+            "the outstanding consumer owns its capture after UI retirement"
+        );
         drop(newest);
-        assert_eq!(live_grade_snapshots(&tracked), (1, bytes));
+        assert_eq!(live_recipes(&requested), 0);
         drop(image_paint);
         drop(scope_paint);
         gpu.invalidate();
         assert_eq!(
-            live_grade_snapshots(&tracked),
-            (1, bytes),
-            "image preparation independently retains the old signature"
+            live_calculations(),
+            2,
+            "image preparation owns its actual node definitions"
         );
-        let inspection = ProcessingInput::from(ProcessingParameters::source());
         let mut encoder = device.create_command_encoder(&Default::default());
-        images[0]
-            .prepare_processing(&device, &mut encoder, &inspection)
-            .unwrap();
-        assert_eq!(live_grade_snapshots(&tracked), (1, bytes));
-        images[1]
-            .prepare_processing(&device, &mut encoder, &inspection)
-            .unwrap();
-        assert_eq!(live_grade_snapshots(&tracked), (0, 0));
+        for (i, image) in images.iter().enumerate() {
+            let inspection = image
+                .inspection(ProcessingParameters::source(), None)
+                .unwrap();
+            image
+                .prepare_calculation(&device, &mut encoder, &inspection, &Default::default())
+                .unwrap();
+            assert_eq!(
+                live_calculations(),
+                1 - i,
+                "replacing each image releases its former arguments"
+            );
+        }
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         println!(
-            "local_grade_retention edits=40 pending_original_demand=1 peak_arc_owned_grade_bytes={} released_arc_owned_grade_bytes={} excludes=GPU_and_other_snapshot_storage",
-            2 * bytes,
+            "captured_calculation_argument_charge={} excludes=shaders_GPU_and_other_snapshot_storage",
             2 * bytes
         );
     });
 }
 
 #[test]
-fn preparing_other_photos_does_not_retain_unreferenced_grade_snapshots() {
+fn capturing_other_photos_does_not_retain_unreferenced_recipes() {
     pollster::block_on(async {
         let (editor, _, _) = fixture().await;
         let calibration = editor.calibration().unwrap();
@@ -870,48 +882,89 @@ fn preparing_other_photos_does_not_retain_unreferenced_grade_snapshots() {
         for i in 0..36 {
             let mut source = record.clone();
             source.id = SourceId(i);
-            let input = editor
-                .positive_processing_for_source(
-                    calibration,
-                    editor.document.roll,
-                    &source,
-                    editor.document.visit.adjustment_layer_settings,
-                )
-                .unwrap();
-            tracked.push(tracked_grade(&input));
+            let input = Arc::new(
+                editor
+                    .positive_recipe_for_source(
+                        calibration,
+                        editor.document.roll,
+                        &source,
+                        editor.document.visit.adjustment_layer_settings,
+                    )
+                    .unwrap(),
+            );
+            tracked.push(Arc::downgrade(&input));
             if i == 35 {
                 held = Some(input);
             }
         }
-        let bytes = tracked[0].1;
         assert_eq!(
-            live_grade_snapshots(&tracked),
-            (1, bytes),
-            "only the explicitly held photograph owns its snapshot"
+            tracked
+                .iter()
+                .filter(|recipe| recipe.strong_count() != 0)
+                .count(),
+            1,
+            "only the explicitly held photograph owns its capture"
         );
         drop(held);
-        assert_eq!(live_grade_snapshots(&tracked), (0, 0));
+        assert!(tracked.iter().all(|recipe| recipe.upgrade().is_none()));
     });
 }
 
 #[test]
-fn document_replacement_keeps_active_inputs_and_device_infrastructure_not_hidden_grades() {
+fn document_replacement_keeps_active_calculations_and_device_infrastructure_not_hidden_recipes() {
     pollster::block_on(async {
         let (mut editor, _, _) = fixture().await;
-        let input = positive(&editor);
-        let grade = tracked_grade(&input).0;
+        let recipe = Arc::new(
+            editor
+                .positive_recipe(
+                    editor.input(),
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings,
+                )
+                .unwrap(),
+        );
+        let capture = Arc::downgrade(&recipe);
+        let image = editor
+            .document
+            .visit
+            .canvas
+            .ready
+            .as_ref()
+            .unwrap()
+            .proxy
+            .image(editor.document.target)
+            .unwrap();
+        let calculation = image.recipe_calculation(&recipe, None).unwrap();
+        let arguments = Arc::downgrade(&calculation);
         editor.sync_document();
         let captured = editor.document.capture();
         let id = editor.document.visit.current_source;
         editor.document = editor.document.replacement(captured);
         assert!(
-            grade.upgrade().is_some(),
-            "an active consumer owns its captured input independently"
+            capture.upgrade().is_some(),
+            "an active consumer owns its recipe independently"
         );
         assert!(editor.document.visit.working_view.device().is_some());
-        drop(input);
-        assert!(grade.upgrade().is_none());
+        drop(recipe);
+        assert!(
+            capture.upgrade().is_none(),
+            "operations do not retain a second intent representation"
+        );
+        assert!(
+            arguments.upgrade().is_some(),
+            "the active calculation owns its arguments"
+        );
+        drop(calculation);
+        assert!(arguments.upgrade().is_none());
         editor.document.visit.current_source = id;
-        assert!(positive(&editor).grade().is_some());
+        assert!(
+            editor
+                .positive_recipe(
+                    editor.input(),
+                    editor.document.roll,
+                    editor.document.visit.adjustment_layer_settings
+                )
+                .is_ok()
+        );
     });
 }

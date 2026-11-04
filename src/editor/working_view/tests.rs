@@ -1,5 +1,9 @@
 use super::*;
 use crate::geometry::{Composition, FramePoint};
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::photograph::request::PhotographRequest;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn demand_revision_tracks_view_intent_and_idle_requires_presentation() {
@@ -12,7 +16,8 @@ fn demand_revision_tracks_view_intent_and_idle_requires_presentation() {
         .unwrap(),
     )
     .unwrap();
-    let processing = Capture::Primitive(ProcessingInput::from(ProcessingParameters::source()));
+    let processing =
+        PhotographRequest::Fixture(AuthoredPhotograph::from(ProcessingParameters::source()));
 
     let mut working = WorkingView::default();
     assert_eq!(working.revision(), None);
@@ -47,7 +52,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
             .await
             .unwrap();
         let kernels = ViewKernels::new(&device).await.unwrap();
-        let gate = crate::gpu::SubmissionGate::default();
+        let gate = crate::gpu::submission::SubmissionGate::default();
 
         let scan = Scan::open(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -77,7 +82,7 @@ fn completed_frames_keep_their_own_processing_until_scope_retirement() {
         };
         let first = SourceRequest::new(frame, cal, scan.camera_to_ap1, None)
             .unwrap()
-            .with_identity(crate::gpu::execution::source::Identity::camera(
+            .with_identity(crate::gpu::source::identity::Identity::camera(
                 input.source.identity(),
             ));
 
@@ -227,7 +232,7 @@ fn demand_coalesces_navigation_and_rejects_stale_products() {
         source: crate::editor::tests::developed_fixture(),
         correction: None,
     };
-    let identity = crate::gpu::execution::source::Identity::camera(input.source.identity());
+    let identity = crate::gpu::source::identity::Identity::camera(input.source.identity());
     let first = spec(0.).with_identity(identity.clone());
     working.request(Demand::fixture(first.clone(), input.clone()));
     for n in 1..40 {
@@ -283,7 +288,7 @@ fn the_same_captured_demand_does_not_give_a_departed_owner_continuation_rights()
         source: crate::editor::tests::developed_fixture(),
         correction: None,
     };
-    let captured = spec(0.).with_identity(crate::gpu::execution::source::Identity::camera(
+    let captured = spec(0.).with_identity(crate::gpu::source::identity::Identity::camera(
         pixels.source.identity(),
     ));
     let mut former = WorkingView::default();
@@ -338,8 +343,8 @@ fn a_departed_downstream_capture_cannot_latch_failure_for_the_same_native_reques
         result: Err("old downstream failure".into()),
     };
     let mut latest = first;
-    latest.capture = Capture::Primitive(
-        ProcessingInput::new(
+    latest.capture = PhotographRequest::Fixture(
+        AuthoredPhotograph::new(
             &Default::default(),
             crate::processing::InputSettings::Digital,
             RollSettings {

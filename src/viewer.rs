@@ -1,13 +1,16 @@
-use crate::{
-    Error,
-    geometry::TextureMapping,
-    gpu::{GpuFlatField, ProcessingInput, ProcessingParameters, ProcessingSource, SourceGeometry},
-    renderer::GpuRenderer,
-    rendering::OutputTarget,
-};
+use crate::Error;
+use crate::geometry::TextureMapping;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::renderer::GpuRenderer;
+use crate::rendering::OutputTarget;
 use glam::{DMat3, Vec4};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
+mod calculation;
 mod proxy;
 pub(crate) use proxy::GpuProxy;
 #[cfg(test)]
@@ -26,57 +29,18 @@ struct Presentation {
     uv_y: [f32; 4],
 }
 
-enum ImageSource {
-    Owned(Box<ProcessingSource>),
-    Shared(Arc<ProcessingSource>),
-}
-
-impl std::ops::Deref for ImageSource {
-    type Target = ProcessingSource;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Owned(source) => source,
-            Self::Shared(source) => source,
-        }
-    }
-}
-
-impl ImageSource {
-    fn mutable(&mut self) -> Result<&mut ProcessingSource, Error> {
-        match self {
-            Self::Owned(source) => Ok(source),
-            Self::Shared(_) => Err(Error::InvalidParameter("shared proxy source is immutable")),
-        }
-    }
-
-    fn write_continuous(&self, queue: &wgpu::Queue, pixels: &[[f32; 4]]) -> Result<(), Error> {
-        match self {
-            Self::Owned(source) => source.write_continuous(queue, pixels),
-            Self::Shared(_) => Err(Error::InvalidParameter("shared proxy source is immutable")),
-        }
-    }
-
-    fn write(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {
-        match self {
-            Self::Owned(source) => source.write(queue, pixels),
-            Self::Shared(_) => Err(Error::InvalidParameter("shared proxy source is immutable")),
-        }
-    }
-}
-
 struct ImageProcessing {
     renderer: Arc<GpuRenderer>,
     target: OutputTarget,
-    source: ImageSource,
+    source: Arc<ProcessingSource>,
     working: wgpu::Buffer,
     aces_group: std::sync::Mutex<Option<crate::renderer::RenderBinding>>,
+    camera: std::sync::Mutex<Option<Arc<crate::gpu::evaluation::ImageNode>>>,
+    last_calculation: std::sync::Mutex<Option<Arc<crate::gpu::evaluation::ImageNode>>>,
 }
 
 pub struct GpuImage {
     device_limits: wgpu::Limits,
-    last_parameters: std::sync::Mutex<Option<ProcessingInput>>,
-    source_revision: std::sync::atomic::AtomicU64,
     look_check: std::sync::Mutex<Option<Arc<crate::gpu::lut3d::Check>>>,
     look_projections: std::sync::Mutex<Vec<(TextureMapping, Arc<crate::gpu::lut3d::Check>)>>,
     paint_mapping: std::sync::Mutex<Option<TextureMapping>>,
@@ -89,7 +53,7 @@ pub struct GpuImage {
 }
 
 impl GpuImage {
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn device_limits(&self) -> &wgpu::Limits {
         &self.device_limits
     }
@@ -97,71 +61,69 @@ impl GpuImage {
     pub async fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
+        size: [u32; 2],
         pixels: &[[u16; 4]],
         camera_to_ap1: DMat3,
+        geometry: Option<SourceGeometry>,
         target: OutputTarget,
     ) -> Result<Self, Error> {
         let renderer = GpuRenderer::new(device, queue).await?;
         Self::new_shared(
             &renderer,
             device,
-            width,
-            height,
+            size,
             pixels,
             camera_to_ap1,
+            geometry,
             target,
         )
         .await
     }
-    #[allow(clippy::too_many_arguments)]
     pub async fn new_shared(
         renderer: &Arc<GpuRenderer>,
         device: &wgpu::Device,
-        width: u32,
-        height: u32,
+        size: [u32; 2],
         pixels: &[[u16; 4]],
         camera_to_ap1: DMat3,
+        geometry: Option<SourceGeometry>,
         target: OutputTarget,
     ) -> Result<Self, Error> {
-        if width.checked_mul(height).map(u64::from) != Some(pixels.len() as u64) {
+        if size[0].checked_mul(size[1]).map(u64::from) != Some(pixels.len() as u64) {
             return Err(Error::Gpu(
                 "source dimensions do not match the GPU image".into(),
             ));
         }
-        let source = ProcessingSource::new(device, pixels, camera_to_ap1)?;
+        let source = ProcessingSource::new(device, pixels, camera_to_ap1, geometry)?;
         Self::create(
             device,
-            width,
-            height,
-            Some((renderer.clone(), ImageSource::Owned(Box::new(source)))),
+            size[0],
+            size[1],
+            Some((renderer.clone(), Arc::new(source))),
             renderer.display.clone(),
             target,
         )
         .await
     }
-    #[allow(clippy::too_many_arguments)]
     pub async fn new_continuous_shared(
         renderer: &Arc<GpuRenderer>,
         device: &wgpu::Device,
-        width: u32,
-        height: u32,
+        size: [u32; 2],
         pixels: &[[f32; 4]],
         camera_to_ap1: DMat3,
+        geometry: Option<SourceGeometry>,
         target: OutputTarget,
     ) -> Result<Self, Error> {
-        if width.checked_mul(height).map(u64::from) != Some(pixels.len() as u64) {
+        if size[0].checked_mul(size[1]).map(u64::from) != Some(pixels.len() as u64) {
             return Err(Error::Gpu(
                 "source dimensions do not match the GPU image".into(),
             ));
         }
-        let source = ProcessingSource::new_continuous(device, pixels, camera_to_ap1)?;
+        let source = ProcessingSource::new_continuous(device, pixels, camera_to_ap1, geometry)?;
         Self::create(
             device,
-            width,
-            height,
-            Some((renderer.clone(), ImageSource::Owned(Box::new(source)))),
+            size[0],
+            size[1],
+            Some((renderer.clone(), Arc::new(source))),
             renderer.display.clone(),
             target,
         )
@@ -206,7 +168,7 @@ impl GpuImage {
         device: &wgpu::Device,
         width: u32,
         height: u32,
-        source: Option<(Arc<GpuRenderer>, ImageSource)>,
+        source: Option<(Arc<GpuRenderer>, Arc<ProcessingSource>)>,
         display: wgpu::RenderPipeline,
         target: OutputTarget,
     ) -> Result<Self, Error> {
@@ -251,6 +213,8 @@ impl GpuImage {
                     source,
                     working,
                     aces_group: std::sync::Mutex::new(None),
+                    camera: std::sync::Mutex::new(None),
+                    last_calculation: std::sync::Mutex::new(None),
                 })
             })
             .transpose()?;
@@ -267,8 +231,6 @@ impl GpuImage {
         }
         Ok(Self {
             device_limits: device.limits(),
-            last_parameters: std::sync::Mutex::new(None),
-            source_revision: std::sync::atomic::AtomicU64::new(0),
             look_check: std::sync::Mutex::new(None),
             look_projections: std::sync::Mutex::new(Vec::new()),
             paint_mapping: std::sync::Mutex::new(None),
@@ -309,70 +271,6 @@ impl GpuImage {
             })
     }
 
-    pub fn set_geometry(&mut self, geometry: SourceGeometry) -> Result<(), Error> {
-        let processing = self
-            .processing
-            .as_mut()
-            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        processing.source.mutable()?.set_geometry(geometry)?;
-        self.source_revision
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        *self.last_parameters.lock().unwrap() = None;
-        Ok(())
-    }
-
-    pub fn set_flat_field(
-        &mut self,
-        field: Option<Arc<GpuFlatField>>,
-        geometry: SourceGeometry,
-    ) -> Result<(), Error> {
-        let processing = self
-            .processing
-            .as_mut()
-            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        processing
-            .source
-            .mutable()?
-            .set_flat_field(field, geometry)?;
-        self.source_revision
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        *self.last_parameters.lock().unwrap() = None;
-        Ok(())
-    }
-
-    pub fn write_source(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {
-        let processing = self
-            .processing
-            .as_ref()
-            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        processing.source.write(queue, pixels)?;
-        self.source_revision
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        *self.last_parameters.lock().unwrap() = None;
-        Ok(())
-    }
-
-    pub fn write_source_continuous(
-        &self,
-        queue: &wgpu::Queue,
-        pixels: &[[f32; 4]],
-    ) -> Result<(), Error> {
-        let processing = self
-            .processing
-            .as_ref()
-            .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        processing.source.write_continuous(queue, pixels)?;
-        self.source_revision
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        *self.last_parameters.lock().unwrap() = None;
-        Ok(())
-    }
-
-    pub fn source_revision(&self) -> u64 {
-        self.source_revision
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
     /// Shared by viewer and scopes so either callback can prepare the whole proxy first.
     pub fn prepare(
         &self,
@@ -380,11 +278,15 @@ impl GpuImage {
         encoder: &mut wgpu::CommandEncoder,
         parameters: ProcessingParameters,
     ) -> bool {
-        self.prepare_processing(device, encoder, &parameters.into())
+        let root = self
+            .inspection(parameters, None)
+            .expect("processable source inspection");
+        self.prepare_calculation(device, encoder, &root, &Default::default())
             .expect("processable image")
     }
 
-    pub fn require_processing(&self, input: &ProcessingInput) -> Result<(), Error> {
+    #[cfg(test)]
+    pub(crate) fn require_processing(&self, input: &AuthoredPhotograph) -> Result<(), Error> {
         let processing = self
             .processing
             .as_ref()
@@ -397,21 +299,15 @@ impl GpuImage {
     }
 
     /// Prepare an immutable adjustment-layer input; invalid inputs leave the prior preparation intact.
-    pub fn prepare_processing(
+    #[cfg(test)]
+    pub(crate) fn prepare_processing(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
     ) -> Result<bool, Error> {
-        self.require_processing(input)?;
-        let signature = input.clone();
-        let mut previous = self.last_parameters.lock().unwrap();
-        if previous.as_ref() == Some(&signature) {
-            return Ok(false);
-        }
-        self.encode_processing_inner(device, encoder, input)?;
-        *previous = Some(signature);
-        Ok(true)
+        let root = self.legacy_calculation(input)?;
+        self.prepare_calculation(device, encoder, &root, input.luts())
     }
 
     pub fn encode(
@@ -420,59 +316,22 @@ impl GpuImage {
         encoder: &mut wgpu::CommandEncoder,
         parameters: ProcessingParameters,
     ) {
-        self.encode_processing(device, encoder, &parameters.into())
+        let root = self
+            .inspection(parameters, None)
+            .expect("processable source inspection");
+        self.encode_calculation(device, encoder, &root, &Default::default())
             .expect("processable image");
     }
 
-    pub fn encode_processing(
+    #[cfg(test)]
+    pub(crate) fn encode_processing(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
     ) -> Result<(), Error> {
-        self.require_processing(input)?;
-        let mut previous = self.last_parameters.lock().unwrap();
-        self.encode_processing_inner(device, encoder, input)?;
-        // An explicit dispatch must not leave a cached preparation describing another output.
-        *previous = None;
-        Ok(())
-    }
-
-    fn encode_processing_inner(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        input: &ProcessingInput,
-    ) -> Result<(), Error> {
-        let processing = self
-            .processing
-            .as_ref()
-            .expect("validated processing source");
-        let plan = crate::gpu::execution::raster::resident_plan(&processing.source, input)?;
-        let prepared = crate::gpu::execution::raster::Request::new(
-            &processing.source,
-            input,
-            plan.as_ref(),
-            [self.presentation.size[0], self.presentation.size[1]],
-        )
-        .encode(&processing.renderer, device, encoder, &processing.working)?;
-        let mut binding = processing.aces_group.lock().unwrap();
-        let prepared_binding = processing.renderer.render_binding(
-            device,
-            crate::gpu::evaluation::SuppliedImage::from_buffer(
-                prepared.definition.clone(),
-                prepared.definition.domain().finite()?,
-                processing.working.clone().into(),
-            )?,
-            processing.target,
-            input.luts(),
-            &self.linear,
-        )?;
-        let check = prepared_binding.encode(device, encoder)?;
-        *binding = Some(prepared_binding);
-        self.look_projections.lock().unwrap().clear();
-        *self.look_check.lock().unwrap() = check;
-        Ok(())
+        let root = self.legacy_calculation(input)?;
+        self.encode_calculation(device, encoder, &root, input.luts())
     }
 
     pub(crate) fn set_look_check(&self, check: Option<Arc<crate::gpu::lut3d::Check>>) {
@@ -487,7 +346,7 @@ impl GpuImage {
 
     pub(crate) fn begin_look_check_tracked(
         &self,
-        submissions: &crate::gpu::SubmissionGate,
+        submissions: &crate::gpu::submission::SubmissionGate,
         ready: impl FnOnce() + Send + 'static,
     ) {
         let pending = submissions.track();
@@ -536,27 +395,54 @@ impl GpuImage {
             .and_then(Result::err)
     }
 
-    pub fn prepare_rendering(
+    #[cfg(test)]
+    pub(crate) fn prepare_rendering(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         mapping: TextureMapping,
         context: Option<egui::Context>,
     ) -> Result<(), Error> {
-        if input.luts().is_empty() {
-            self.prepare_processing(device, encoder, input)?;
+        let root = self.legacy_calculation(input)?;
+        self.prepare_rendering_calculation(
+            device,
+            queue,
+            encoder,
+            (&root, input.luts()),
+            mapping,
+            context,
+        )
+    }
+
+    pub fn prepare_rendering_calculation(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        (root, luts): (
+            &Arc<crate::gpu::evaluation::ImageNode>,
+            &crate::looks::LutChain,
+        ),
+        mapping: TextureMapping,
+        context: Option<egui::Context>,
+    ) -> Result<(), Error> {
+        if luts.is_empty() {
+            self.prepare_calculation(device, encoder, root, luts)?;
             return Ok(());
         }
-        self.prepare_looked(device, queue, input, mapping, context)
+        self.prepare_looked(device, queue, (root, luts), mapping, context)
     }
 
     fn prepare_looked(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        input: &ProcessingInput,
+        (root, luts): (
+            &Arc<crate::gpu::evaluation::ImageNode>,
+            &crate::looks::LutChain,
+        ),
         mapping: TextureMapping,
         context: Option<egui::Context>,
     ) -> Result<(), Error> {
@@ -565,7 +451,7 @@ impl GpuImage {
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no processing source".into()))?;
         let mut encoder = device.create_command_encoder(&Default::default());
-        if self.prepare_processing(device, &mut encoder, input)? {
+        if self.prepare_calculation(device, &mut encoder, root, luts)? {
             processing
                 .renderer
                 .submissions
@@ -680,11 +566,12 @@ pub struct ImagePaint {
     #[cfg(feature = "editor")]
     rendered: Option<(
         Arc<crate::gpu::view::RenderedView>,
-        crate::gpu::SubmissionGate,
+        crate::gpu::submission::SubmissionGate,
         egui::Context,
     )>,
     image: Arc<GpuImage>,
-    processing: Option<ProcessingInput>,
+    calculation: Option<Arc<crate::gpu::evaluation::ImageNode>>,
+    luts: crate::looks::LutChain,
     context: Option<egui::Context>,
     uv: TextureMapping,
     group: std::sync::Mutex<Option<wgpu::BindGroup>>,
@@ -695,12 +582,13 @@ impl ImagePaint {
     pub(crate) fn rendered(
         view: Arc<crate::gpu::view::RenderedView>,
         uv: TextureMapping,
-        submissions: crate::gpu::SubmissionGate,
+        submissions: crate::gpu::submission::SubmissionGate,
         context: egui::Context,
     ) -> Self {
         Self {
             image: view.image.clone(),
-            processing: None,
+            calculation: None,
+            luts: Default::default(),
             context: Some(context.clone()),
             uv,
             group: std::sync::Mutex::new(None),
@@ -713,34 +601,54 @@ impl ImagePaint {
         parameters: Option<ProcessingParameters>,
         uv: impl Into<TextureMapping>,
     ) -> Self {
-        Self {
-            #[cfg(feature = "editor")]
-            rendered: None,
-            image,
-            processing: parameters.map(Into::into),
-            context: None,
-            uv: uv.into(),
-            group: std::sync::Mutex::new(None),
-        }
+        let calculation = parameters
+            .map(|parameters| image.inspection(parameters, None))
+            .transpose()
+            .expect("admitted source-view transform");
+        Self::with_calculation(image, calculation, Default::default(), uv)
+            .expect("admitted source-view storage")
     }
 
-    pub fn with_processing(
+    pub fn with_calculation(
         image: Arc<GpuImage>,
-        processing: Option<ProcessingInput>,
+        calculation: Option<Arc<crate::gpu::evaluation::ImageNode>>,
+        luts: crate::looks::LutChain,
         uv: impl Into<TextureMapping>,
     ) -> Result<Self, Error> {
-        if let Some(input) = &processing {
-            image.require_processing(input)?;
+        if let Some(root) = &calculation {
+            image.require_calculation(root, &luts)?;
+        } else if !luts.is_empty() {
+            return Err(Error::InvalidParameter(
+                "look rendering requires a calculation",
+            ));
         }
         Ok(Self {
             #[cfg(feature = "editor")]
             rendered: None,
             image,
-            processing,
+            calculation,
+            luts,
             context: None,
             uv: uv.into(),
             group: std::sync::Mutex::new(None),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_processing(
+        image: Arc<GpuImage>,
+        processing: Option<AuthoredPhotograph>,
+        uv: impl Into<TextureMapping>,
+    ) -> Result<Self, Error> {
+        let calculation = processing
+            .as_ref()
+            .map(|input| image.legacy_calculation(input))
+            .transpose()?;
+        let luts = processing
+            .as_ref()
+            .map(|input| input.luts().clone())
+            .unwrap_or_default();
+        Self::with_calculation(image, calculation, luts, uv)
     }
 
     #[cfg(all(test, feature = "editor"))]
@@ -782,13 +690,13 @@ impl egui_wgpu::CallbackTrait for ImagePaint {
         if let Some((view, submissions, context)) = &self.rendered {
             view.ensure_submitted(device, _queue, submissions, context);
         }
-        if let Some(input) = &self.processing {
+        if let Some(root) = &self.calculation {
             self.image
-                .prepare_rendering(
+                .prepare_rendering_calculation(
                     device,
                     _queue,
                     encoder,
-                    input,
+                    (root, &self.luts),
                     self.uv,
                     self.context.clone(),
                 )

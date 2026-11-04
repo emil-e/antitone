@@ -1,4 +1,9 @@
 use super::*;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::photograph::PhotographGraph;
+use crate::gpu::source::ProcessingSource;
+use crate::gpu::source::SourceGeometry;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 
 #[test]
 fn cropped_resident_codes_keep_full_stride_and_integer_nearest_centre_correction() {
@@ -35,15 +40,18 @@ fn cropped_resident_codes_keep_full_stride_and_integer_nearest_centre_correction
                 ]
             })
             .collect();
-        let mut source = if continuous {
-            ProcessingSource::new_continuous(&device, &values, glam::DMat3::IDENTITY).unwrap()
+        let source = if continuous {
+            ProcessingSource::new_continuous(
+                &device,
+                &values,
+                glam::DMat3::IDENTITY,
+                Some(geometry),
+            )
+            .unwrap()
         } else {
-            ProcessingSource::new(&device, &codes, glam::DMat3::IDENTITY).unwrap()
+            ProcessingSource::new(&device, &codes, glam::DMat3::IDENTITY, Some(geometry)).unwrap()
         };
-        source
-            .set_flat_field(Some(gpu_field.clone()), geometry)
-            .unwrap();
-        let input = ProcessingInput::new(
+        let input = AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             RollSettings::default(),
@@ -52,7 +60,8 @@ fn cropped_resident_codes_keep_full_stride_and_integer_nearest_centre_correction
             area,
         )
         .unwrap();
-        let photo = Photograph::from_resident_with_stages(
+        let input = input.with_flat_field(Some(gpu_field.clone()));
+        let photo = PhotographGraph::from_resident_with_stages(
             &device.limits(),
             &source,
             &input,

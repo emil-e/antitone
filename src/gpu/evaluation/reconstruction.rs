@@ -292,7 +292,7 @@ fn reconstruction_admitted(p:vec2i)->bool {
         };
         format!(
             "{}\n{}\nfn reconstruction_sample(p: vec2i) -> vec4f {{ return {}(p); }}\n{}\n{}",
-            include_str!("../../shaders/footprint.wgsl"),
+            include_str!("footprint.wgsl"),
             input.code,
             input.symbol,
             support,

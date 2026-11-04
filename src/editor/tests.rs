@@ -1,4 +1,6 @@
 use super::*;
+use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
 mod viewer;
 mod workspace;
@@ -252,7 +254,7 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
             output: [16, 16],
             frame: None,
         };
-        let input = ProcessingInput::from(ProcessingParameters::source());
+        let input = AuthoredPhotograph::from(ProcessingParameters::source());
         editor.document.visit.canvas.grade.original.observe(
             OriginalPurpose::Tool,
             original_view::Demand::fixture(
@@ -314,8 +316,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
             [16, 16],
             &[[1000, 1000, 1000, 0]; 256],
             glam::DMat3::IDENTITY,
-            None,
-            crate::gpu::SourceGeometry::new([12, 12, 8640, 5760], [16, 16]).unwrap(),
+            crate::gpu::source::SourceGeometry::new([12, 12, 8640, 5760], [16, 16]).unwrap(),
         )
         .unwrap();
         let area = Rect {
@@ -973,8 +974,7 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
         [1, 1],
         &[[1000, 1000, 1000, 0]],
         glam::DMat3::IDENTITY,
-        None,
-        crate::gpu::SourceGeometry::new([12, 7, 864, 576], [1, 1]).unwrap(),
+        crate::gpu::source::SourceGeometry::new([12, 7, 864, 576], [1, 1]).unwrap(),
     )
     .unwrap();
     let floor = editor.floor();

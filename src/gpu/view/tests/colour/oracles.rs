@@ -1,6 +1,10 @@
 //! Original-footprint, scalar-mask and encoded-lifetime regressions on production objects.
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 use crate::{crop::Crop, geometry::Composition};
 
 fn cropped(area: SourceRegion, region: SourceRegion, output: [u32; 2], angle: f64) -> FrameRaster {
@@ -219,12 +223,12 @@ fn physical_view_encoded_versions_survive_owner_release_and_abandoned_encoders_d
             ..Default::default()
         };
         let roll = RollSettings::default();
-        let input = ProcessingInput::from(
+        let input = AuthoredPhotograph::from(
             crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
                 crate::adjustment_layers::AdjustmentLayer::global(photo),
             ])
             .and_then(|snapshot| {
-                crate::gpu::ProcessingInput::new(
+                crate::gpu::test_inputs::AuthoredPhotograph::new(
                     &device.limits(),
                     negative(0.65),
                     roll,

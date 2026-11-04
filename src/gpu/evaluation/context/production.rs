@@ -4,7 +4,7 @@ use super::*;
 pub struct Production<'a> {
     pub context: &'a Context,
     pub queue: &'a wgpu::Queue,
-    pub gate: &'a crate::gpu::SubmissionGate,
+    pub gate: &'a crate::gpu::submission::SubmissionGate,
     pub scope: &'a Materializations,
     pub budget: Budget,
     pub layout: ImageLayout,
@@ -152,7 +152,7 @@ impl Context {
     pub(crate) fn run_sink<E, S>(
         &self,
         executor: &mut Executor,
-        (queue, gate): (&wgpu::Queue, &crate::gpu::SubmissionGate),
+        (queue, gate): (&wgpu::Queue, &crate::gpu::submission::SubmissionGate),
         plan: &Plan,
         (cancelled, progress): (&dyn Fn() -> bool, &dyn Fn()),
         sink: Sink<E, S>,

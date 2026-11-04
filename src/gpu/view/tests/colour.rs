@@ -1,6 +1,9 @@
 //! Production working-view model, mapped masks and encoded-resource lifetime checks.
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 mod model;
 mod oracles;
 use crate::{
@@ -62,7 +65,7 @@ fn render_with_basis(
 ) -> Arc<RenderedView> {
     let settings = input.into();
     let grade = Arc::new(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             settings,
             roll,
@@ -72,7 +75,7 @@ fn render_with_basis(
         )
         .unwrap(),
     );
-    let input = ProcessingInput::from(grade);
+    let input = AuthoredPhotograph::from(grade);
     let view = RenderedView::new(device, source, &input, target, None).unwrap();
     view.ensure_submitted(
         device,

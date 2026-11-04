@@ -84,7 +84,7 @@ fn host_delivery_preserves_grid_coordinates_metadata_and_signed_hdr_values_acros
     let stats = context
         .read(
             &queue,
-            &crate::gpu::SubmissionGate::default(),
+            &crate::gpu::submission::SubmissionGate::default(),
             &evaluation,
             || false,
             |region, pixels| {
@@ -130,7 +130,7 @@ fn host_delivery_stops_before_acquisition_or_between_blocks_and_can_be_reused_af
     let reads = Arc::new(AtomicUsize::new(0));
     let image = image(reads.clone());
     let evaluation = request(context, image.clone(), 4096);
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let cancelled = AtomicBool::new(true);
 
     assert!(

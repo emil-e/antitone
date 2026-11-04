@@ -673,10 +673,10 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
         pollster::block_on(GpuImage::new(
             &device,
             &queue,
-            256,
-            171,
+            [256, 171],
             &vec![[1000, 2000, 3000, 0]; 256 * 171],
             glam::DMat3::IDENTITY,
+            None,
             OutputTarget::DisplayP3,
         ))
         .unwrap(),
@@ -926,10 +926,10 @@ fn filmstrip_camera_preview_replaces_loading_only_and_cannot_become_selected_rea
         GpuImage::new(
             &device,
             &queue,
-            8,
-            4,
+            [8, 4],
             &[[1000, 2000, 3000, 0]; 32],
             glam::DMat3::IDENTITY,
+            None,
             editor.document.target,
         )
         .await

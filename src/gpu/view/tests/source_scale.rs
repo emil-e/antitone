@@ -1,4 +1,7 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 
 #[test]
 fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_headroom() {
@@ -59,7 +62,7 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
             .unwrap()
             .unwrap();
             let proxy = crate::scan::CameraProxy::from_scan(&scan).unwrap();
-            let input = ProcessingInput::new(
+            let input = AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 RollSettings {
@@ -80,7 +83,7 @@ fn digital_original_and_navigation_positive_share_restored_neutral_exposure_and_
                 &proxy,
                 None,
                 spec,
-                &input,
+                &crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone()),
             )
             .unwrap();
             assert!(

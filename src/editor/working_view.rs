@@ -1,9 +1,12 @@
 //! Selected-view ownership: one neutral acquisition, latest-request coalescing, immutable frames.
 use super::*;
-use crate::{
-    frame_raster::FrameRaster,
-    gpu::view::{RenderedView, SourceRequest, ViewKernels, ViewSource},
-};
+use crate::frame_raster::FrameRaster;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::RenderedView;
+use crate::gpu::view::ViewKernels;
+use crate::gpu::view::ViewSource;
+use crate::gpu::view::request::SourceRequest;
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(test)]
@@ -12,7 +15,7 @@ mod tests;
 mod workflow_tests;
 
 mod frame;
-pub(super) use crate::gpu::view::Capture;
+use crate::gpu::photograph::request::PhotographRequest;
 pub(super) use frame::Demand;
 use frame::Frame;
 
@@ -88,7 +91,7 @@ pub(super) struct Acquisition {
 #[derive(Default)]
 pub(super) struct WorkingView {
     gpu: Option<(wgpu::Device, wgpu::Queue)>,
-    intent: Option<(FrameRaster, Capture, OutputTarget)>,
+    intent: Option<(FrameRaster, PhotographRequest, OutputTarget)>,
     revision: u64,
     changed_at: Option<std::time::Instant>,
     mailbox: Arc<Mailbox>,
@@ -123,7 +126,7 @@ impl WorkingView {
     pub(super) fn observe(
         &mut self,
         frame: FrameRaster,
-        capture: Capture,
+        capture: PhotographRequest,
         target: OutputTarget,
     ) -> bool {
         let intent = (frame, capture, target);
@@ -142,7 +145,7 @@ impl WorkingView {
     }
 
     #[cfg(all(test, feature = "ui-tests"))]
-    pub(super) fn processing(&self) -> Option<ProcessingInput> {
+    pub(super) fn processing(&self) -> Option<AuthoredPhotograph> {
         self.intent.as_ref().map(|intent| {
             let repairs = self
                 .wanted
@@ -176,11 +179,8 @@ impl WorkingView {
                             .map(|s| s.spec.repairs.clone())
                             .unwrap_or_default();
                         rendered.spec.frame() == *frame
-                            && capture
-                                .processing(&self.device().unwrap().limits(), &repairs)
-                                .is_ok_and(|input| {
-                                    rendered.matches(&rendered.spec, &input, *target)
-                                })
+                            && rendered.spec.repairs == repairs
+                            && rendered.matches_capture(&rendered.spec, capture, *target)
                             && rendered.target == *target
                             && !rendered.in_flight()
                     })
@@ -283,13 +283,13 @@ impl WorkingView {
     pub(super) fn request(&mut self, mut demand: Demand) {
         demand.spec = demand
             .spec
-            .with_identity(crate::gpu::execution::source::Identity::camera(
+            .with_identity(crate::gpu::source::identity::Identity::camera(
                 demand.pixels.source.identity(),
             ));
         if self
             .wanted
             .as_ref()
-            .is_some_and(|wanted| wanted.spec.is_inspection() != demand.spec.is_inspection())
+            .is_some_and(|wanted| wanted.capture.is_inspection() != demand.capture.is_inspection())
         {
             self.retire_support();
         }
@@ -393,7 +393,7 @@ impl WorkingView {
             (frame.clone(), wanted.clone())
         };
         if frame.source.spec.identity != wanted.spec.identity
-            || frame.source.spec.is_inspection() != wanted.spec.is_inspection()
+            || frame.request.capture.is_inspection() != wanted.capture.is_inspection()
             || frame.source.spec.frame().composition != wanted.spec.frame().composition
         {
             return;
@@ -436,9 +436,19 @@ impl WorkingView {
             .and_then(|frame| frame.underlay.as_ref())
     }
 
+    #[cfg(test)]
     fn render(
         &mut self,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
+        target: OutputTarget,
+        context: &egui::Context,
+    ) -> Result<(), Error> {
+        self.render_capture(&PhotographRequest::Fixture(input.clone()), target, context)
+    }
+
+    fn render_capture(
+        &mut self,
+        capture: &PhotographRequest,
         target: OutputTarget,
         context: &egui::Context,
     ) -> Result<(), Error> {
@@ -460,15 +470,15 @@ impl WorkingView {
             self.updating = true;
             return Ok(());
         };
-        if wanted.spec.is_inspection() && self.mailbox.0.lock().unwrap().demand.is_none() {
-            let capture = Capture::Primitive(input.clone());
-            if frame.request.capture != capture {
-                let mut request = (*frame.request).clone();
-                request.capture = capture;
-                if let Some(updated) = frame.regrade(Arc::new(request))? {
-                    frame = Arc::new(updated);
-                    self.frame = Some(frame.clone());
-                }
+        if wanted.capture.is_inspection()
+            && self.mailbox.0.lock().unwrap().demand.is_none()
+            && frame.request.capture != *capture
+        {
+            let mut request = (*frame.request).clone();
+            request.capture = capture.clone();
+            if let Some(updated) = frame.regrade(Arc::new(request))? {
+                frame = Arc::new(updated);
+                self.frame = Some(frame.clone());
             }
         }
         if frame.processed.len() != 1 + usize::from(frame.underlay.is_some()) {
@@ -552,14 +562,14 @@ impl WorkingView {
         let is_current_source = |rendered: &RenderedView| {
             self.wanted.as_ref().is_some_and(|wanted| {
                 wanted.spec.identity == rendered.spec.identity
-                    && wanted.spec.is_inspection() == rendered.spec.is_inspection()
+                    && wanted.capture.is_inspection() == rendered.capture.is_inspection()
             })
         };
         if self.compare
             && self
                 .wanted
                 .as_ref()
-                .is_some_and(|wanted| !wanted.spec.is_inspection())
+                .is_some_and(|wanted| !wanted.capture.is_inspection())
             && let Some(reference) = self
                 .reference
                 .as_ref()
@@ -610,7 +620,7 @@ pub(super) async fn acquire_images(
     kernels: &Arc<ViewKernels>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    submissions: &crate::gpu::SubmissionGate,
+    submissions: &crate::gpu::submission::SubmissionGate,
 ) -> Option<Completion> {
     mailbox.watch();
     loop {
@@ -636,7 +646,6 @@ pub(super) async fn acquire_images(
                 .correction
                 .as_ref()
                 .map(|field| field.gpu.clone());
-            let processing = demand.processing(&device.limits())?;
             let neutral_specs: Vec<_> = specs
                 .iter()
                 .cloned()
@@ -659,10 +668,10 @@ pub(super) async fn acquire_images(
                     )
                 };
             let (calculations, native_requests) = match &demand.capture {
-                Capture::Photograph(recipe) => specs
+                PhotographRequest::Recipe(recipe) => specs
                     .iter()
                     .map(|spec| {
-                        let (photograph, plan) = crate::gpu::evaluation::Photograph::preview(
+                        let (photograph, plan) = crate::gpu::photograph::PhotographGraph::preview(
                             &device.limits(),
                             &scan,
                             correction.clone(),
@@ -694,35 +703,25 @@ pub(super) async fn acquire_images(
                     .collect::<Result<Vec<_>, Error>>()?
                     .into_iter()
                     .unzip(),
-                Capture::Primitive(_) => {
-                    let native_roots = crate::gpu::execution::footprints::Acquired::definitions(
-                        &scan,
-                        correction.clone(),
-                        &processing,
-                        &specs,
-                    )?;
+                _ => {
+                    let native_roots =
+                        demand
+                            .capture
+                            .source_graphs(&scan, correction.clone(), &specs)?;
                     let calculations = native_roots
                         .into_iter()
                         .zip(&specs)
                         .map(|(native, spec)| {
-                            crate::gpu::execution::footprints::Processed::definition(
-                                &device.limits(),
-                                spec,
-                                native,
-                                &processing,
-                            )
+                            demand.capture.filtered(&device.limits(), spec, native)
                         })
                         .collect::<Result<Vec<_>, Error>>()?;
-                    let requests = crate::gpu::execution::footprints::Acquired::definitions(
-                        &scan,
-                        correction.clone(),
-                        &processing,
-                        &neutral_specs,
-                    )?
-                    .into_iter()
-                    .zip(&neutral_specs)
-                    .map(|(root, spec)| native_request(root, spec.input_region()?))
-                    .collect::<Result<Vec<_>, Error>>()?;
+                    let requests = demand
+                        .capture
+                        .source_graphs(&scan, correction.clone(), &neutral_specs)?
+                        .into_iter()
+                        .zip(&neutral_specs)
+                        .map(|(root, spec)| native_request(root, spec.input_region()?))
+                        .collect::<Result<Vec<_>, Error>>()?;
                     (calculations, requests)
                 }
             };
@@ -812,7 +811,7 @@ pub(super) async fn acquire_images(
             let requests = calculations
                 .iter()
                 .map(|(root, _)| {
-                    crate::gpu::execution::footprints::Processed::request(
+                    crate::gpu::view::processing::ProcessedView::request(
                         renderer.evaluation(),
                         root.clone(),
                     )
@@ -843,11 +842,10 @@ pub(super) async fn acquire_images(
                 .zip(calculations)
                 .zip(values)
                 .map(|((source, (root, plan)), value)| {
-                    crate::gpu::execution::footprints::Processed::produced(
+                    crate::gpu::view::processing::ProcessedView::produced(
                         source.acquired(),
                         root,
                         plan,
-                        &processing,
                         value,
                     )
                 })
@@ -947,7 +945,7 @@ impl Editor {
     pub(super) fn working_view(
         &mut self,
         frame: FrameRaster,
-        input: &ProcessingInput,
+        (capture, repairs): (&PhotographRequest, &crate::gpu::repairs::Snapshot),
         image: super::canvas::ImageMode,
         context: &egui::Context,
         cx: &UiContext<'_, Self>,
@@ -960,7 +958,7 @@ impl Editor {
             .working_view
             .wanted
             .as_ref()
-            .is_some_and(|wanted| wanted.spec.is_inspection() != inspection)
+            .is_some_and(|wanted| wanted.capture.is_inspection() != inspection)
         {
             self.document.visit.working_view.retire_support();
         }
@@ -974,10 +972,11 @@ impl Editor {
             drop(mailbox);
 
             if inspection && self.document.visit.working_view.wanted.is_some() {
-                self.document
-                    .visit
-                    .working_view
-                    .render(input, self.document.target, context)?;
+                self.document.visit.working_view.render_capture(
+                    capture,
+                    self.document.target,
+                    context,
+                )?;
             }
 
             self.document.visit.working_view.displayed = self
@@ -996,7 +995,11 @@ impl Editor {
                         .as_ref()
                         .is_none_or(|rendered| {
                             rendered.spec.frame() != frame
-                                || !rendered.matches(&rendered.spec, input, self.document.target)
+                                || !rendered.matches_capture(
+                                    &rendered.spec,
+                                    capture,
+                                    self.document.target,
+                                )
                         });
             return Ok(self.document.visit.working_view.displayed.clone());
         }
@@ -1007,7 +1010,7 @@ impl Editor {
             return Ok(self.document.visit.working_view.hold(self.document.target));
         }
 
-        if input.repairs.0.is_empty()
+        if repairs.0.is_empty()
             && (image.is_sample() || self.fullscreen.is_none() && self.cropping())
         {
             self.document.visit.working_view.clear();
@@ -1021,19 +1024,20 @@ impl Editor {
 
         let source_input = self.source_context().expect("ready working source");
         if inspection {
-            let spec = SourceRequest::inspection(frame)?;
+            let spec = SourceRequest::for_frame(frame)?;
             self.request_working(
                 Demand {
                     spec,
                     pixels: source_input,
-                    capture: Capture::Primitive(input.clone()),
+                    capture: capture.clone(),
                 },
                 cx,
             );
-            self.document
-                .visit
-                .working_view
-                .render(input, self.document.target, context)?;
+            self.document.visit.working_view.render_capture(
+                capture,
+                self.document.target,
+                context,
+            )?;
             self.document.visit.working_view.reference = None;
 
             self.document.visit.working_view.displayed = self
@@ -1055,27 +1059,25 @@ impl Editor {
                         .wanted
                         .as_ref()
                         .is_none_or(|wanted| {
-                            !rendered.matches(&wanted.spec, &input.clone(), self.document.target)
+                            !rendered.matches_capture(&wanted.spec, capture, self.document.target)
                         })
                 });
             return Ok(self.document.visit.working_view.displayed.clone());
         }
 
-        let spec = SourceRequest::for_processing(frame, input)?;
+        let spec = capture.source_request(frame, repairs.clone())?;
         self.request_working(
             Demand {
                 spec,
                 pixels: source_input,
-                capture: Capture::Photograph(self.active_canvas().grade.recipe().ok_or(
-                    Error::InvalidParameter("working photograph requires its image recipe"),
-                )?),
+                capture: capture.clone(),
             },
             cx,
         );
         self.document
             .visit
             .working_view
-            .render(input, self.document.target, context)?;
+            .render_capture(capture, self.document.target, context)?;
 
         self.document.visit.working_view.reference = self
             .original_rendered(OriginalPurpose::Reference)?
@@ -1100,7 +1102,7 @@ impl Editor {
                     .wanted
                     .as_ref()
                     .is_none_or(|wanted| {
-                        !rendered.matches(&wanted.spec, &input.clone(), self.document.target)
+                        !rendered.matches_capture(&wanted.spec, capture, self.document.target)
                     })
             });
         if self.document.visit.working_view.displayed.is_none()

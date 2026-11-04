@@ -5,17 +5,17 @@ use crate::Error;
 
 pub(crate) fn shader() -> String {
     [
-        include_str!("../shaders/raster.wgsl"),
-        include_str!("../shaders/image_mtf_sample.wgsl"),
-        include_str!("../shaders/image_mtf.wgsl"),
+        sample_shader(),
+        include_str!("image_mtf/kernels.wgsl").to_owned(),
     ]
     .join("\n")
 }
 
 pub(crate) fn sample_shader() -> String {
     [
-        include_str!("../shaders/raster.wgsl"),
-        include_str!("../shaders/image_mtf_sample.wgsl"),
+        include_str!("raster.wgsl"),
+        include_str!("image_mtf/bindings.wgsl"),
+        include_str!("image_mtf/sampling.wgsl"),
     ]
     .join("\n")
 }

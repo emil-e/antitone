@@ -1,11 +1,15 @@
 use super::*;
+use crate::gpu::photograph::request::PhotographRequest;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 
 /// One captured view request and the immutable pixels needed to produce it.
 #[derive(Clone)]
 pub(in crate::editor) struct Demand {
     pub spec: SourceRequest,
     pub pixels: source::Context,
-    pub capture: Capture,
+    pub capture: PhotographRequest,
 }
 
 pub(super) struct Calculation {
@@ -15,7 +19,8 @@ pub(super) struct Calculation {
 }
 
 impl Demand {
-    pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<ProcessingInput, Error> {
+    #[cfg(test)]
+    pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<AuthoredPhotograph, Error> {
         self.capture.processing(limits, &self.spec.repairs)
     }
 
@@ -32,13 +37,13 @@ impl Demand {
         Self {
             spec,
             pixels,
-            capture: Capture::Primitive(processing),
+            capture: PhotographRequest::Fixture(processing),
         }
     }
 
     pub(super) fn same_source(&self, other: &Self) -> bool {
         self.pixels.source.identity() == other.pixels.source.identity()
-            && self.spec.is_inspection() == other.spec.is_inspection()
+            && self.capture.is_inspection() == other.capture.is_inspection()
     }
 
     pub(super) fn calculation(&self, source: &ViewSource) -> Result<Calculation, Error> {
@@ -49,8 +54,8 @@ impl Demand {
             .correction
             .as_ref()
             .map(|field| field.gpu.clone());
-        if let Capture::Photograph(recipe) = &self.capture {
-            let (photo, plan) = crate::gpu::evaluation::Photograph::preview(
+        if let PhotographRequest::Recipe(recipe) = &self.capture {
+            let (photo, plan) = crate::gpu::photograph::PhotographGraph::preview(
                 &limits,
                 &scan,
                 field,
@@ -65,21 +70,12 @@ impl Demand {
                 plan,
             });
         }
-        let input = self.processing(&limits)?;
         let spec = source.spec.clone().with_repairs(self.spec.repairs.clone());
-        let native = crate::gpu::execution::footprints::Acquired::definitions(
-            &scan,
-            field,
-            &input,
-            std::slice::from_ref(&spec),
-        )?
-        .remove(0);
-        let (image, plan) = crate::gpu::execution::footprints::Processed::definition(
-            &limits,
-            &spec,
-            native.clone(),
-            &input,
-        )?;
+        let native = self
+            .capture
+            .source_graphs(&scan, field, std::slice::from_ref(&spec))?
+            .remove(0);
+        let (image, plan) = self.capture.filtered(&limits, &spec, native.clone())?;
         Ok(Calculation {
             image,
             native,
@@ -101,7 +97,7 @@ pub(super) struct Frame {
     pub source: Arc<ViewSource>,
     pub underlay: Option<Arc<ViewSource>>,
     pub request: Arc<Demand>,
-    pub processed: Vec<Arc<crate::gpu::execution::footprints::Processed>>,
+    pub processed: Vec<Arc<crate::gpu::view::processing::ProcessedView>>,
 }
 impl Frame {
     pub(super) fn satisfies(&self, wanted: &Demand) -> bool {
@@ -109,7 +105,7 @@ impl Frame {
     }
 
     #[cfg(test)]
-    pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<ProcessingInput, Error> {
+    pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<AuthoredPhotograph, Error> {
         self.request.processing(limits)
     }
 
@@ -131,16 +127,14 @@ impl Frame {
             }
         }
         let device = self.source.renderer.evaluation().device();
-        let input = request.processing(&device.limits())?;
         let processed = sources
             .into_iter()
             .zip(calculations)
             .enumerate()
             .map(|(index, (source, calculation))| {
-                crate::gpu::execution::footprints::Processed::prepare_calculation(
+                crate::gpu::view::processing::ProcessedView::prepare_calculation(
                     device,
                     source.acquired(),
-                    &input,
                     calculation.image,
                     calculation.plan,
                     self.processed.get(index),

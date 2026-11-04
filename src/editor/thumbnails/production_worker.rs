@@ -108,7 +108,10 @@ impl Worker {
         proxy: Option<&crate::scan::CameraProxy>,
         metrics: &mut ThumbnailMetrics,
     ) -> Result<Option<Arc<Product>>, Error> {
-        use crate::gpu::view::{RenderedView, SourceRequest, ViewKernels, ViewSource};
+        use crate::gpu::view::RenderedView;
+        use crate::gpu::view::ViewKernels;
+        use crate::gpu::view::ViewSource;
+        use crate::gpu::view::request::SourceRequest;
         let Some(recipe) = job
             .key
             .recipe
@@ -147,8 +150,9 @@ impl Worker {
                 Default::default(),
             )?)?;
             frame.output = proxy.dimensions();
-            let input = crate::gpu::ProcessingInput::from_recipe(&self.device.limits(), &recipe)?;
-            let spec = SourceRequest::for_processing(frame, &input)?;
+            let spec = SourceRequest::for_recipe(frame, &recipe)?;
+            let capture =
+                crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
             let kernels = self
                 .kernels
                 .get_or_init(|| pollster::block_on(ViewKernels::new(&self.device)))
@@ -164,13 +168,13 @@ impl Worker {
                     .as_ref()
                     .map(|correction| correction.gpu.clone()),
                 spec,
-                &input,
+                &capture,
             )?;
             metrics.calculation_seconds = tick.elapsed().as_secs_f64();
             (source, Some(produced))
         };
         let tick = std::time::Instant::now();
-        let capture = crate::gpu::view::Capture::Photograph(recipe.clone());
+        let capture = crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
         let (source, view) = if let Some(produced) = produced {
             let view = RenderedView::from_processed(
                 &self.device,
@@ -182,7 +186,7 @@ impl Worker {
             )?;
             (source, view)
         } else {
-            RenderedView::reprocess(
+            RenderedView::render_from_retained(
                 &self.device,
                 &self.queue,
                 submissions,

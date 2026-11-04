@@ -546,7 +546,7 @@ fn named_look_values_keep_logical_identity_and_cached_failures_reach_each_readou
     );
     let context = renderer.evaluation();
     let scope = context.materializations();
-    let gate = crate::gpu::SubmissionGate::default();
+    let gate = crate::gpu::submission::SubmissionGate::default();
     let budget = Budget {
         tile: [1, 1],
         scratch_bytes: 1 << 20,

@@ -5,7 +5,7 @@ use crate::{
     },
     export::{self, ExrPrecision, Overwrite},
     geometry::{Composition, SourcePoint},
-    gpu::SubmissionGate,
+    gpu::submission::SubmissionGate,
     gpu_export::{
         Format, Request,
         tests::{context, exr_pixels, tiff_pixels},

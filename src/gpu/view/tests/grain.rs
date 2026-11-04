@@ -1,4 +1,7 @@
 use super::*;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 
 const N: usize = 96;
 
@@ -145,7 +148,7 @@ fn configured_probe(
     ));
     let snapshot = AdjustmentLayerSnapshot::new(vec![]).unwrap();
     let grade = Arc::new(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             RollSettings::default(),
@@ -155,7 +158,7 @@ fn configured_probe(
         )
         .unwrap(),
     );
-    let input = ProcessingInput::from(grade).with_pixel_pipeline(
+    let input = AuthoredPhotograph::from(grade).with_pixel_pipeline(
         crate::pixel_pipeline::PixelPipeline::emulation(
             settings,
             Default::default(),

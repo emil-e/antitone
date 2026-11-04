@@ -1,5 +1,7 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerPipeline;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::submission::SubmissionGate;
 use tiff::decoder::{Decoder, DecodingResult};
 
 #[test]

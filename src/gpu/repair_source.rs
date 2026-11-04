@@ -1,6 +1,5 @@
 //! Shared photographic image inputs for CPU donor search and healing.
 
-use super::{GpuFlatField, SubmissionGate, evaluation};
 use crate::{
     Error,
     dust_repair::{Ap1, BaseImage, EvaluatedRepair, Execution},
@@ -10,6 +9,10 @@ use crate::{
     scan::Scan,
 };
 use std::sync::Arc;
+use {
+    super::evaluation,
+    crate::gpu::{flat::GpuFlatField, submission::SubmissionGate},
+};
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;
@@ -30,13 +33,13 @@ impl<'a> Source<'a> {
         scan: &Scan,
         input: InputSettings,
     ) -> Result<Self, Error> {
-        let program = crate::gpu::GpuInputProgram::for_scan(scan, input)?;
+        let program = crate::gpu::interpretation::InputTransform::for_scan(scan, input)?;
         let field = scan
             .flat_field()
             .cloned()
             .map(|field| GpuFlatField::new(device, field).map(Arc::new))
             .transpose()?;
-        let readout = evaluation::Photograph::neutral_readout(
+        let readout = crate::gpu::photograph::PhotographGraph::neutral_readout(
             evaluation::camera_source(scan)?,
             field,
             program,

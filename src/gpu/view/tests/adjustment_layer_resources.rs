@@ -1,6 +1,10 @@
 //! Bounded local-stack ownership observation; not pressure or native-presentation acceptance.
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
+use crate::gpu::flat::GpuFlatField;
+use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
+use crate::gpu::view::request::SourceRequest;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
     cache_observation as observation,
@@ -68,7 +72,7 @@ fn snapshot(scan: &Scan, local: bool, edit: u32) -> Result<AdjustmentLayerSnapsh
 fn checkpoint(device: &wgpu::Device, name: &str) {
     println!(
         "local_resources checkpoint={name} native_bytes={:?}",
-        crate::gpu::allocated_resource_bytes(device)
+        crate::sys::allocated_resource_bytes(device)
     );
 }
 
@@ -170,8 +174,8 @@ fn exercise(
             let previous = accepted.take();
             let next = monitor.phase(case, || {
                 let snapshot = snapshot(&scan, local, edit)?;
-                let input: ProcessingInput = if local {
-                    Arc::new(ProcessingInput::new(
+                let input: AuthoredPhotograph = if local {
+                    Arc::new(AuthoredPhotograph::new(
                         &device.limits(),
                         cal,
                         RollSettings::default(),
