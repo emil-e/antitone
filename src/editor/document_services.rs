@@ -252,17 +252,3 @@ impl PreparationServices {
         .map_err(|error: Error| error.to_string())
     }
 }
-
-#[derive(Clone)]
-pub(super) struct Services {
-    pub device: wgpu::Device,
-}
-
-impl Services {
-    pub async fn write(self, write: Write) -> Result<Document, String> {
-        crate::background::run(move |_| write.save(&self.device))
-            .await
-            .map_err(|_| "Document write worker panicked".to_owned())?
-            .map_err(|error| error.to_string())
-    }
-}

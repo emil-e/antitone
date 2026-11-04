@@ -4,7 +4,7 @@ mod tests;
 use super::{
     AdjustmentLayerEditor, DocumentRequest, Editor, FailureKind, OutputTarget, Preparation,
     Prepared, RollSelection, Task, TaskProgress, TaskRequest,
-    document_services::PreparationServices, dust, history, source_workflow,
+    document_services::PreparationServices, dust, history, source,
 };
 use crate::processing::InputSettings;
 use std::sync::{Arc, Mutex};
@@ -180,7 +180,7 @@ impl Editor {
                     } else {
                         AdjustmentLayerEditor::default()
                     };
-                self.document.visit.source = source_workflow::State::default();
+                self.document.visit.source = source::State::default();
                 if replacement {
                     self.document = self.document.replacement(prepared.document);
                 } else {

@@ -26,7 +26,7 @@ fn unregistered_source_requests_defer_file_identity_until_preparation() {
 
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, Prepared, document::Document, source_loading},
+    editor::{Preparation, Prepared, document::Document, source, source_loading},
 };
 use std::{
     path::PathBuf,

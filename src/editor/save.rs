@@ -2,9 +2,7 @@
 mod tests;
 
 use super::{
-    Editor, FailureKind, Task, TaskRequest, UiContext,
-    document::Document,
-    document_services::{Services, Write},
+    Editor, FailureKind, Task, TaskRequest, UiContext, document::Document, document_services::Write,
 };
 
 #[derive(Default)]
@@ -25,12 +23,16 @@ impl Editor {
         self.tasks.begin(Task::Save(id));
         self.document_failure = Some(FailureKind::Save);
         self.new_project_pending = false;
-        let services = self.source_services.as_ref().map(|source| Services {
-            device: source.device.clone(),
-        });
+        let device = self
+            .source_services
+            .as_ref()
+            .map(|source| source.device.clone());
         let Some(task) = cx.spawn(move |cx| async move {
-            let result = match services {
-                Some(services) => services.write(write).await.map(Box::new),
+            let result = match device {
+                Some(device) => crate::background::run(move |_| write.save(&device))
+                    .await
+                    .map_err(|_| "Document write worker panicked".to_owned())
+                    .and_then(|result| result.map(Box::new).map_err(|error| error.to_string())),
                 None => Err("Document services unavailable".into()),
             };
             cx.update(|editor| {
