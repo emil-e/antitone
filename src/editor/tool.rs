@@ -240,7 +240,6 @@ impl Editor {
         let activity = self.tool_activity();
         match self.document.tool.as_ref() {
             Some(legacy_tool::Tool::Mask(_)) => self.finish_mask(false),
-            Some(legacy_tool::Tool::Analyze(_)) => self.close_analysis(),
             None => {}
         }
         if let Some(activity) = activity

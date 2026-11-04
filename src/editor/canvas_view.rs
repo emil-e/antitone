@@ -1,4 +1,4 @@
-use super::{PickDrag, Ready, Viewport, grade_scope::GradeScope};
+use super::{Ready, Viewport, grade_scope::GradeScope};
 use std::sync::Arc;
 
 pub(super) type Preview = (
@@ -20,7 +20,6 @@ pub(super) struct CanvasView {
     pub ready: Option<Ready>,
     pub viewport: Viewport,
     pub last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
-    pub pick_drag: Option<PickDrag>,
     pub preview_rendered: Option<Preview>,
     pub selection_timing: Option<Arc<super::SelectionTiming>>,
     pub grade: GradeScope,
@@ -43,7 +42,6 @@ impl super::Editor {
                 .visit
                 .picker
                 .display()
-                .or_else(|| self.legacy_pick())
                 .map_or(self.document.source, |display| {
                     display.view != super::picking::View::Working
                 })

@@ -61,15 +61,6 @@ impl Correction {
     }
 }
 
-#[cfg(test)]
-pub(super) const DISPLAY: super::picking::Display = super::picking::Display {
-    label: "Flat-field",
-    view: super::picking::View::Native,
-    area: true,
-    lock_layer_selection: false,
-    help: None,
-};
-
 /// Prepared reference inputs owned by the Flat interaction.
 pub(super) struct FlatEdit {
     pub services: Option<source::Services>,
@@ -116,7 +107,7 @@ impl Editor {
                     if let Some(settings) = self.document.state.project.flat_field() {
                         let path = self.document.source_path(settings.reference).ok();
                         let mut enabled = settings.enabled;
-                        if ui.checkbox(&mut enabled, "Enabled").changed() {
+                        if ui.add_enabled(!self.tool_interacting(), egui::Checkbox::new(&mut enabled, "Enabled")).changed() {
                             self.control_command(editing::Command::Correction(Some(enabled)), cx);
                         }
                         let name = path

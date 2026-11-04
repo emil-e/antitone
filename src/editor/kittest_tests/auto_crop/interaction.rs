@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn batch_owns_its_global_drawer_keeps_grading_live_and_is_replaced_by_crop_at_both_layouts() {
+fn batch_owns_its_global_drawer_blocks_grading_and_is_replaced_by_crop_at_both_layouts() {
     for (size, width) in [
         (egui::vec2(1100., 800.), 315.),
         (egui::vec2(800., 600.), 270.),
@@ -33,7 +33,7 @@ fn batch_owns_its_global_drawer_keeps_grading_live_and_is_replaced_by_crop_at_bo
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
             assert!(
-                !h.get_by_role_and_label(egui::accesskit::Role::Slider, "Gamma")
+                h.get_by_role_and_label(egui::accesskit::Role::Slider, "Gamma")
                     .accesskit_node()
                     .is_disabled()
             );
@@ -54,7 +54,7 @@ fn batch_owns_its_global_drawer_keeps_grading_live_and_is_replaced_by_crop_at_bo
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
             assert!(
-                !h.get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
+                h.get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
                     .accesskit_node()
                     .is_disabled()
             );
@@ -69,7 +69,7 @@ fn batch_owns_its_global_drawer_keeps_grading_live_and_is_replaced_by_crop_at_bo
                 .scroll_to_me();
             h.try_run_realtime().unwrap();
             assert!(
-                !h.get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
+                h.get_by_role_and_label(egui::accesskit::Role::Slider, "Exposure")
                     .accesskit_node()
                     .is_disabled()
             );
@@ -202,9 +202,6 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
             setup(|mut h, _| {
                 set_layout(&mut h, size, width);
                 stage(&mut h, "Roll");
-                click_action(&mut h, "Auto-crop roll");
-                overlay::wait_context(&mut h);
-                let regions = h.read(|e| e.document.spatial.ready());
                 let original = h.read(|e| e.document.state.project.clone());
                 workflow::enter_numeric(&mut h, "Gamma", "0.73");
                 stage(&mut h, "Photo");
@@ -212,8 +209,12 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                 let graded = h.read(|e| e.document.state.project.clone());
                 assert_ne!(
                     graded, original,
-                    "the controls must accept real edits while the tool is active"
+                    "fixture must have independently accepted grading"
                 );
+                stage(&mut h, "Roll");
+                click_action(&mut h, "Auto-crop roll");
+                overlay::wait_context(&mut h);
+                let regions = h.read(|e| e.document.spatial.ready());
                 h.read(|e| {
                     assert!(Arc::ptr_eq(&regions, &e.document.spatial.ready()));
                     assert_eq!(e.document.visit.adjustment_layer_settings.exposure, 1.25);

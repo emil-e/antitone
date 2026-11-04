@@ -582,6 +582,46 @@ fn restored_filmstrip_height_survives_window_constraints_and_a_fresh_context() {
 }
 
 #[test]
+fn unavailable_source_parameters_cannot_fall_back_to_a_calibrated_positive() {
+    let mut editor = Editor::state();
+    *editor.document = fixture();
+    editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
+    editor.set_dmax(Some(DVec3::new(0.008, 0.005, 0.002)));
+    editor.sync_document();
+    let source = editor
+        .document
+        .project
+        .source(editor.document.project.order[0])
+        .unwrap()
+        .clone();
+    assert!(
+        editor.thumbnail_recipe(source.id).unwrap().is_some(),
+        "ordinary calibrated cards must have a positive recipe"
+    );
+    assert!(
+        editor
+            .thumbnail_parameters(&source)
+            .unwrap()
+            .grade()
+            .is_some()
+    );
+    let parameters = editor
+        .source_parameters_for(&source, f64::NAN)
+        .map_err(|error| error.to_string());
+    let failure = parameters.as_ref().unwrap_err().clone();
+    editor
+        .document
+        .thumbnails
+        .preview
+        .sources
+        .push((source.id, parameters));
+    assert!(editor.thumbnail_recipe(source.id).unwrap().is_none());
+    assert_eq!(editor.thumbnail_parameters(&source).unwrap_err(), failure);
+    editor.document.thumbnails.preview = Preview::default();
+    assert!(editor.thumbnail_recipe(source.id).unwrap().is_some());
+}
+
+#[test]
 fn thumbnail_grades_follow_roll_and_layers_without_inspection_gain_or_redecode() {
     let mut editor = Editor::state();
     *editor.document = fixture();
@@ -998,9 +1038,7 @@ fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
         editor.document.thumbnails.services = Some(Services::Controlled(commands));
         match suspension {
             "busy" => editor.busy = true,
-            "pick" => {
-                editor.document.visit.picking.display = Some(super::super::Pick::Dmin.display())
-            }
+            "pick" => picking::preview(&mut editor, super::super::Pick::Dmin.display()),
             "document" => editor.document_pending = Some(0),
             _ => unreachable!(),
         }
@@ -1093,7 +1131,14 @@ fn filmstrip_frame(
             )),
             ..Default::default()
         },
-        |ui| editor.filmstrip_with_budgets(ui, budgets, true, cx),
+        |ui| {
+            let interactive = editor.roll_navigation_available();
+            if let Some((index, modifiers)) =
+                editor.filmstrip_with_budgets(ui, budgets, interactive, cx)
+            {
+                editor.select_roll_photo(index, modifiers, cx);
+            }
+        },
     );
     output.textures_delta.clear();
 }

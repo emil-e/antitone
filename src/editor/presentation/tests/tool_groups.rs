@@ -71,13 +71,13 @@ fn tool_warning_has_reserved_space_reason_semantics_and_unchanged_actions() {
         let ((reserved, rect, cancel, apply), output) =
             frame(&context, width, true, vec![], |ui| {
                 let group = group("Auto-crop", false, false);
-                let reserved = group.width_named(ui, "Apply");
-                let response = group.show_warned(ui, "Apply", Some(reason));
+                let reserved = group.width_actions(ui, Some("Apply"), "Cancel");
+                let response = group.show_actions(ui, Some("Apply"), "Cancel", Some(reason));
                 (
                     reserved,
                     response.response.rect,
-                    response.inner.cancel,
-                    response.inner.apply,
+                    response.inner.dismiss,
+                    response.inner.primary.unwrap(),
                 )
             });
         assert!(rect.width() <= reserved + 1. && rect.right() <= width);
@@ -89,8 +89,10 @@ fn tool_warning_has_reserved_space_reason_semantics_and_unchanged_actions() {
         );
         assert!(!cancel.rect.intersects(apply.rect));
         let ((plain_cancel, plain_apply), _) = frame(&context, width, true, vec![], |ui| {
-            let actions = group("Auto-crop", false, false).show(ui).inner;
-            (actions.cancel, actions.apply)
+            let actions = group("Auto-crop", false, false)
+                .show_actions(ui, Some("Apply"), "Cancel", None)
+                .inner;
+            (actions.dismiss, actions.primary.unwrap())
         });
         assert_eq!(
             cancel.id, plain_cancel.id,
@@ -219,7 +221,14 @@ fn viewer_groups_keep_actions_ordered_contained_and_stable_across_frames() {
                                 let response = ui
                                     .with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| group(title, false, title != "Dmin").show(ui),
+                                        |ui| {
+                                            group(title, false, title != "Dmin").show_actions(
+                                                ui,
+                                                Some("Apply"),
+                                                "Cancel",
+                                                None,
+                                            )
+                                        },
                                     )
                                     .inner;
                                 (response, ui.button("Following"))
@@ -231,24 +240,47 @@ fn viewer_groups_keep_actions_ordered_contained_and_stable_across_frames() {
                     let ((after, following_after), output) = render();
                     assert_eq!(after.response.rect, before.response.rect);
                     assert_eq!(after.response.id, before.response.id);
-                    assert_eq!(after.inner.cancel.rect, before.inner.cancel.rect);
-                    assert_eq!(after.inner.apply.rect, before.inner.apply.rect);
-                    assert_eq!(after.inner.cancel.id, before.inner.cancel.id);
-                    assert_eq!(after.inner.apply.id, before.inner.apply.id);
+                    assert_eq!(after.inner.dismiss.rect, before.inner.dismiss.rect);
+                    assert_eq!(
+                        after.inner.primary.as_ref().unwrap().rect,
+                        before.inner.primary.as_ref().unwrap().rect
+                    );
+                    assert_eq!(after.inner.dismiss.id, before.inner.dismiss.id);
+                    assert_eq!(
+                        after.inner.primary.as_ref().unwrap().id,
+                        before.inner.primary.as_ref().unwrap().id
+                    );
                     assert_eq!(following_after.id, following_before.id);
-                    assert_ne!(after.inner.cancel.id, after.inner.apply.id);
-                    assert_ne!(after.inner.apply.id, following_after.id);
-                    assert_eq!(after.inner.apply.rect.height(), CONTROL_HEIGHT);
+                    assert_ne!(
+                        after.inner.dismiss.id,
+                        after.inner.primary.as_ref().unwrap().id
+                    );
+                    assert_ne!(after.inner.primary.as_ref().unwrap().id, following_after.id);
+                    assert_eq!(
+                        after.inner.primary.as_ref().unwrap().rect.height(),
+                        CONTROL_HEIGHT
+                    );
                     assert_eq!(after.response.rect.height(), CONTROL_HEIGHT);
-                    assert_eq!(after.inner.cancel.enabled(), enabled);
-                    assert_eq!(after.inner.apply.enabled(), enabled && title != "Dmin");
-                    assert!(after.response.rect.contains_rect(after.inner.cancel.rect));
-                    assert!(after.response.rect.contains_rect(after.inner.apply.rect));
-                    assert!(after.inner.cancel.rect.right() <= after.inner.apply.rect.left());
+                    assert_eq!(after.inner.dismiss.enabled(), enabled);
+                    assert_eq!(
+                        after.inner.primary.as_ref().unwrap().enabled(),
+                        enabled && title != "Dmin"
+                    );
+                    assert!(after.response.rect.contains_rect(after.inner.dismiss.rect));
+                    assert!(
+                        after
+                            .response
+                            .rect
+                            .contains_rect(after.inner.primary.as_ref().unwrap().rect)
+                    );
+                    assert!(
+                        after.inner.dismiss.rect.right()
+                            <= after.inner.primary.as_ref().unwrap().rect.left()
+                    );
                     let title_node = node(&output, &format!("Active tool: {title}"));
                     assert_icon_before_title(&output, title_node);
                     let title_bounds = title_node.bounds().unwrap();
-                    assert!(title_bounds.x1 < f64::from(after.inner.cancel.rect.left()));
+                    assert!(title_bounds.x1 < f64::from(after.inner.dismiss.rect.left()));
                     let fill = |response: &egui::Response| {
                         output
                             .shapes
@@ -261,10 +293,13 @@ fn viewer_groups_keep_actions_ordered_contained_and_stable_across_frames() {
                             })
                             .unwrap()
                     };
-                    assert_ne!(fill(&after.inner.apply), fill(&after.inner.cancel));
+                    assert_ne!(
+                        fill(after.inner.primary.as_ref().unwrap()),
+                        fill(&after.inner.dismiss)
+                    );
                     for (name, response) in [
-                        ("Cancel", &after.inner.cancel),
-                        ("Apply", &after.inner.apply),
+                        ("Cancel", &after.inner.dismiss),
+                        ("Apply", after.inner.primary.as_ref().unwrap()),
                     ] {
                         let action = node(&output, name);
                         assert_eq!(action.role(), egui::accesskit::Role::Button);
@@ -296,10 +331,10 @@ fn complete_width_matches_allocation_without_changing_ids_or_layout() {
                             let group = group("Gamma neutral", busy, !busy);
                             let id = ui.next_auto_id();
                             let available = ui.available_rect_before_wrap();
-                            let measured = group.width(ui);
+                            let measured = group.width_actions(ui, Some("Apply"), "Cancel");
                             assert_eq!(ui.next_auto_id(), id);
                             assert_eq!(ui.available_rect_before_wrap(), available);
-                            let response = group.show(ui);
+                            let response = group.show_actions(ui, Some("Apply"), "Cancel", None);
                             assert!(
                                 (response.response.rect.width() - measured).abs() < 1e-5,
                                 "measured {measured}, allocated {:?}, scale {scale}, custom {custom}, framed {framed}, busy {busy}",
@@ -319,14 +354,17 @@ fn busy_identity_changes_semantics_without_moving_actions_or_frame() {
     let render = |busy| {
         frame(&context, 270., true, vec![], |ui| {
             ui.spacing_mut().item_spacing.x = 4.;
-            group("Dmin", busy, !busy).show(ui)
+            group("Dmin", busy, !busy).show_actions(ui, Some("Apply"), "Cancel", None)
         })
     };
     let (idle, idle_output) = render(false);
     let (busy, busy_output) = render(true);
     assert_eq!(idle.response.rect, busy.response.rect);
-    assert_eq!(idle.inner.cancel.rect, busy.inner.cancel.rect);
-    assert_eq!(idle.inner.apply.rect, busy.inner.apply.rect);
+    assert_eq!(idle.inner.dismiss.rect, busy.inner.dismiss.rect);
+    assert_eq!(
+        idle.inner.primary.as_ref().unwrap().rect,
+        busy.inner.primary.as_ref().unwrap().rect
+    );
     assert_eq!(
         node(&idle_output, "Active tool: Dmin").bounds(),
         node(&busy_output, "Active tool: Dmin · Working").bounds()
@@ -342,7 +380,13 @@ fn busy_identity_changes_semantics_without_moving_actions_or_frame() {
     // Busy affects identity only; availability is explicitly supplied by the controller.
     assert!(
         frame(&context, 270., true, vec![], |ui| {
-            group("Dmin", true, true).show(ui).inner.apply.enabled()
+            group("Dmin", true, true)
+                .show_actions(ui, Some("Apply"), "Cancel", None)
+                .inner
+                .primary
+                .as_ref()
+                .unwrap()
+                .enabled()
         })
         .0
     );
@@ -355,51 +399,60 @@ fn group_responses_keep_mouse_keyboard_focus_and_disabled_transition_behavior() 
             let context = Context::default();
             let render = |events| {
                 frame(&context, 270., inherited, events, |ui| {
-                    group("Crop", false, apply_enabled).show(ui).inner
+                    group("Crop", false, apply_enabled)
+                        .show_actions(ui, Some("Apply"), "Cancel", None)
+                        .inner
                 })
             };
             let (actions, _) = render(vec![]);
-            render(pointer(actions.apply.rect.center(), true));
+            let primary = actions.primary.as_ref().unwrap();
+            render(pointer(primary.rect.center(), true));
             assert_eq!(
-                render(pointer(actions.apply.rect.center(), false))
+                render(pointer(primary.rect.center(), false))
                     .0
-                    .apply
+                    .primary
+                    .unwrap()
                     .clicked(),
                 inherited && apply_enabled
             );
-            context.memory_mut(|memory| memory.request_focus(actions.apply.id));
+            context.memory_mut(|memory| memory.request_focus(primary.id));
             assert_eq!(
-                render(key(egui::Key::Space)).0.apply.clicked(),
+                render(key(egui::Key::Space)).0.primary.unwrap().clicked(),
                 inherited && apply_enabled
             );
             if inherited && apply_enabled {
-                context.memory_mut(|memory| memory.request_focus(actions.cancel.id));
+                context.memory_mut(|memory| memory.request_focus(actions.dismiss.id));
                 render(key(egui::Key::Tab));
-                assert_eq!(
-                    context.memory(|memory| memory.focused()),
-                    Some(actions.apply.id)
-                );
+                assert_eq!(context.memory(|memory| memory.focused()), Some(primary.id));
             }
         }
     }
     let context = Context::default();
     let render = |busy, events| {
         frame(&context, 270., true, events, |ui| {
-            group("Dmin", busy, !busy).show(ui).inner
+            group("Dmin", busy, !busy)
+                .show_actions(ui, Some("Apply"), "Cancel", None)
+                .inner
         })
     };
     let (actions, _) = render(false, vec![]);
-    render(false, pointer(actions.cancel.rect.center(), true));
+    render(false, pointer(actions.dismiss.rect.center(), true));
     assert!(
-        !render(true, pointer(actions.cancel.rect.center(), false))
+        !render(true, pointer(actions.dismiss.rect.center(), false))
             .0
-            .cancel
+            .dismiss
             .clicked()
     );
-    context.memory_mut(|memory| memory.request_focus(actions.apply.id));
-    assert!(!render(true, key(egui::Key::Space)).0.apply.clicked());
+    context.memory_mut(|memory| memory.request_focus(actions.primary.unwrap().id));
+    assert!(
+        !render(true, key(egui::Key::Space))
+            .0
+            .primary
+            .unwrap()
+            .clicked()
+    );
     let (restored, _) = render(false, vec![]);
-    assert!(!restored.cancel.clicked() && !restored.apply.clicked());
+    assert!(!restored.dismiss.clicked() && !restored.primary.unwrap().clicked());
 }
 
 fn reset_header(ui: &mut Ui, enabled: Option<bool>, help: &str) -> bool {

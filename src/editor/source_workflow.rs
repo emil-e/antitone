@@ -64,19 +64,14 @@ impl Editor {
         }
     }
 
-    pub(super) fn load_source(
-        &mut self,
-        path: PathBuf,
-        persistent: bool,
-        cx: &UiContext<'_, Self>,
-    ) {
+    pub(super) fn load(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
         self.sync_document();
         if let Err(error) = self.validate_document_candidate(&self.document.state) {
             self.status = format!("Source not changed: {error}");
             return;
         }
         let started = std::time::Instant::now();
-        let selecting_photo = persistent && !self.picking();
+        let selecting_photo = !self.picking();
         self.seed_thumbnail();
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.selection_timing = None;
@@ -160,7 +155,7 @@ impl Editor {
                 .source(source)
                 .ok()
                 .map(|source| source.development.active_area.into())
-                .map(|area| self.normal_canvas_composition(area, None));
+                .map(|area| self.normal_canvas_composition(area));
             if let Some(composition) = composition {
                 match self.document.thumbnails.selected_preview(
                     self.id,

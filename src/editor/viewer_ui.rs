@@ -59,59 +59,18 @@ impl Editor {
         )
     }
 
-    fn viewer_tool(&self) -> Option<(icons::Icon, &'static str)> {
-        if self.document.analysis_review().is_some() {
-            return Some((icons::Icon::Analyze, "Analyze"));
-        }
-        self.legacy_pick().map(|display| {
-            (
-                if display.area {
-                    icons::Icon::Crop
-                } else {
-                    icons::Icon::Pick
-                },
-                display.label,
-            )
-        })
-    }
-
     pub(super) fn source_tool_warning(&self, id: SourceId) -> Option<String> {
         if self.document.visit.current_source == Some(id) && self.cropping() {
             return self.current_tool()?.presentation().warning;
         }
-        self.review_warning(id).map(str::to_owned)
+        None
     }
 
     fn viewer_warning(&self) -> Option<String> {
-        let mut warning = self
-            .document
+        self.document
             .visit
             .current_source
-            .and_then(|id| self.source_tool_warning(id));
-        if let Some(review) = &self.document.analysis_review() {
-            let missing = review
-                .approved
-                .entries
-                .iter()
-                .filter(|e| !e.areas.ready())
-                .count();
-            if warning.is_none() && missing > 0 {
-                warning = Some(format!(
-                    "Sampling areas missing: {missing} photo{}",
-                    if missing == 1 { "" } else { "s" }
-                ));
-            }
-            if review.replaces_photos {
-                let consequence =
-                    "Analyze will replace Photo layers and remove any adjustment layers and masks.";
-                if let Some(warning) = &mut warning {
-                    warning.push_str(&format!("\n{consequence}"));
-                } else {
-                    warning = Some(consequence.into());
-                }
-            }
-        }
-        warning
+            .and_then(|id| self.source_tool_warning(id))
     }
 
     pub(super) fn viewer_bar(
@@ -133,8 +92,7 @@ impl Editor {
         let masking = !fullscreen && self.masking();
         let tool = hosted
             .as_ref()
-            .map(|tool| (tool.identity.icon, tool.identity.title))
-            .or_else(|| (!fullscreen).then(|| self.viewer_tool()).flatten());
+            .map(|tool| (tool.identity.icon, tool.identity.title));
         let has_repairs = self
             .document
             .visit
@@ -150,15 +108,6 @@ impl Editor {
         }
 
         let navigating = self.canvas_frame.layout.is_some() && !self.busy && !self.mask_dragging();
-        let reviewing = self.document.analysis_review().is_some();
-        let apply_label = if reviewing { "Analyze roll" } else { "Apply" };
-        let review_ready = self.document.analysis_review().is_none_or(|review| {
-            review
-                .approved
-                .entries
-                .iter()
-                .all(|entry| entry.areas.ready())
-        });
         let cancellable_tool_work = hosted.is_some()
             && self
                 .hosted_tool_activity()
@@ -169,11 +118,11 @@ impl Editor {
             busy: self.busy,
             cancel_enabled: !self.busy
                 || cancellable_tool_work
-                || reviewing && !self.analysis_fitting(),
-            apply_enabled: hosted.as_ref().map_or_else(
-                || navigating && review_ready && self.legacy_pick_region().is_some(),
-                |tool| !self.busy && tool.primary.is_some_and(|primary| primary.enabled),
-            ),
+                || self.document.hosted_tool.is::<AnalyzeTool>()
+                    && self.hosted_tool_activity().is_none(),
+            apply_enabled: hosted.as_ref().is_some_and(|tool| {
+                !self.busy && tool.primary.is_some_and(|primary| primary.enabled)
+            }),
         });
 
         let warning = hosted
@@ -208,16 +157,23 @@ impl Editor {
                 };
                 let quality = if self.document.visit.pending_preview.is_some() {
                     " · Cached preview"
-                } else if painted_source || self.canvas_inspection() || self.active_canvas().ready.is_none() {
+                } else if painted_source
+                    || self.canvas_inspection()
+                    || self.active_canvas().ready.is_none()
+                {
                     ""
                 } else if self.document.visit.working_view.enabled() {
                     if look_error.is_some() {
                         " · Look unavailable"
                     } else if self.document.visit.working_view.error.is_some() {
                         " · View unavailable"
-                    } else if self.document.visit.working_view.compare && self.active_canvas().grade.original.failed() {
+                    } else if self.document.visit.working_view.compare
+                        && self.active_canvas().grade.original.failed()
+                    {
                         " · Reference unavailable"
-                    } else if self.document.visit.working_view.compare && self.document.visit.working_view.reference_ready() {
+                    } else if self.document.visit.working_view.compare
+                        && self.document.visit.working_view.reference_ready()
+                    {
                         " · Original reference"
                     } else if self.document.visit.working_view.compare {
                         " · Preparing reference"
@@ -240,13 +196,12 @@ impl Editor {
                 };
                 let trailing_width = presentation::CONTROL_HEIGHT
                     + VIEWER_ITEM_GAP
-                    + if let Some(group) = tool_group {
-                        if let Some(tool) = &hosted { group.width_actions(ui, tool.primary.map(|primary| primary.label), tool.dismiss) }
-                        else if reviewing {
-                            group.width_named(ui, apply_label)
-                        } else {
-                            group.width(ui)
-                        }
+                    + if let Some((group, tool)) = tool_group.zip(hosted.as_ref()) {
+                        group.width_actions(
+                            ui,
+                            tool.primary.map(|primary| primary.label),
+                            tool.dismiss,
+                        )
                     } else {
                         ui.painter()
                             .layout_no_wrap(
@@ -321,12 +276,24 @@ impl Editor {
                     toggle_fullscreen = true;
                 }
                 ui.separator();
-                let controls_width = (ui.available_width() - trailing_width - presentation::CONTROL_HEIGHT - 2. * VIEWER_ITEM_GAP).max(0.);
-                ui.allocate_ui(egui::vec2(controls_width, presentation::CONTROL_HEIGHT), |ui| controls(self, ui, navigating));
+                let controls_width = (ui.available_width()
+                    - trailing_width
+                    - presentation::CONTROL_HEIGHT
+                    - 2. * VIEWER_ITEM_GAP)
+                    .max(0.);
+                ui.allocate_ui(
+                    egui::vec2(controls_width, presentation::CONTROL_HEIGHT),
+                    |ui| controls(self, ui, navigating),
+                );
                 if let Some(error) = &look_error {
                     ui.colored_label(egui::Color32::LIGHT_RED, "Look rendering failed");
-                    if TextAction::new("Details").toolbar(60.).name("Look rendering details").show(ui).clicked() {
-                        self.report_failure(FailureKind::LookRendering,error.to_string());
+                    if TextAction::new("Details")
+                        .toolbar(60.)
+                        .name("Look rendering details")
+                        .show(ui)
+                        .clicked()
+                    {
+                        self.report_failure(FailureKind::LookRendering, error.to_string());
                     }
                 } else if let Some(error) = &self.document.visit.working_view.error {
                     ui.colored_label(egui::Color32::LIGHT_RED, "View unavailable")
@@ -345,8 +312,12 @@ impl Editor {
                     .show(|ui| {
                         ui.set_width(290.);
                         ui.label(egui::RichText::new("Viewer navigation").strong());
-                        ui.small(hosted.as_ref().and_then(|tool| tool.navigation_help)
-                            .unwrap_or("Scroll pans · Cmd/Ctrl-scroll or pinch zooms"));
+                        ui.small(
+                            hosted
+                                .as_ref()
+                                .and_then(|tool| tool.navigation_help)
+                                .unwrap_or("Scroll pans · Cmd/Ctrl-scroll or pinch zooms"),
+                        );
                         ui.small("Click: Fit / 100% outside canvas tools · Z: Fit · F: Fullscreen");
                         ui.small("Zoomed drag pans · Space-drag / middle-drag always pans");
                         if !fullscreen && tool.is_none() {
@@ -358,12 +329,10 @@ impl Editor {
                         if fullscreen {
                             ui.small("F or Escape: return to the workspace");
                         }
-                        if let Some(help) = self.mask_help().filter(|_| {
-                            !fullscreen
-                                && self.tab == 1
-                                && hosted.is_none()
-                                && self.legacy_pick().is_none()
-                        }) {
+                        if let Some(help) = self
+                            .mask_help()
+                            .filter(|_| !fullscreen && self.tab == 1 && hosted.is_none())
+                        {
                             ui.separator();
                             ui.small(help);
                         } else if let Some(tool) = &hosted {
@@ -374,40 +343,20 @@ impl Editor {
                             } else {
                                 "Escape: dismiss"
                             });
-                        } else if !fullscreen &&self.document.analysis_review().is_some() {
-                            ui.separator();
-                            ui.small(
-                                "Drag either area's corners to resize, or its interior to move. Click a label when outlines coincide.",
-                            );
-                            ui.small("Enter analyzes · Escape cancels");
-                        } else if !fullscreen && let Some(kind) = self.legacy_pick() {
-                            ui.separator();
-                            ui.small(
-                                "Click a patch or drag an area; drag its edges/corners to resize.",
-                            );
-                            if let Some(help) = kind.help { ui.small(help); }
-                            ui.small("Enter applies · Escape cancels");
                         }
                     });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(group) = tool_group {
-                        if let Some(tool) = &hosted {
-                            let actions = group.show_actions(ui, tool.primary.map(|primary| primary.label), tool.dismiss, warning.as_deref()).inner;
-                            cancel = actions.dismiss.clicked();
-                            apply = actions.primary.is_some_and(|response| response.clicked());
-                            return;
-                        }
-                        let actions = if warning.is_some() {
-                            group.show_warned(ui, apply_label, warning.as_deref())
-                        } else if reviewing {
-                            group.show_named(ui, apply_label)
-                        } else {
-                            group.show(ui)
-                        }
-                        .inner;
-                        cancel = actions.cancel.clicked();
-                        apply = actions.apply.clicked();
-
+                    if let Some((group, tool)) = tool_group.zip(hosted.as_ref()) {
+                        let actions = group
+                            .show_actions(
+                                ui,
+                                tool.primary.map(|primary| primary.label),
+                                tool.dismiss,
+                                warning.as_deref(),
+                            )
+                            .inner;
+                        cancel = actions.dismiss.clicked();
+                        apply = actions.primary.is_some_and(|response| response.clicked());
                     } else {
                         ui.add(
                             egui::Label::new(egui::RichText::new(state).small().weak()).truncate(),
@@ -433,23 +382,20 @@ impl Editor {
     }
 
     pub(super) fn photograph_controls(&mut self, ui: &mut egui::Ui, navigating: bool) {
-        let normal = self.legacy_pick().is_none();
         let inspecting = navigating
             && self.document.input.ready()
             && (!self.has_hosted_tool() || self.fullscreen.is_some())
             && !self.masking();
-        if normal {
-            ui.add_enabled_ui(inspecting, |ui| {
-                icons::toggle(
-                    ui,
-                    icons::Icon::Source,
-                    &mut self.document.source,
-                    "View source",
-                    "Switch between the positive grade and developed source.",
-                );
-            });
-        }
-        if !self.canvas_inspection() && normal && self.document.visit.working_view.enabled() {
+        ui.add_enabled_ui(inspecting, |ui| {
+            icons::toggle(
+                ui,
+                icons::Icon::Source,
+                &mut self.document.source,
+                "View source",
+                "Switch between the positive grade and developed source.",
+            );
+        });
+        if !self.canvas_inspection() && self.document.visit.working_view.enabled() {
             ui.add_enabled_ui(inspecting, |ui| {
                 icons::toggle(
                     ui,

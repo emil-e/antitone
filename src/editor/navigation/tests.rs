@@ -11,17 +11,24 @@ struct Harness {
     context: egui::Context,
     time: f64,
     enabled: bool,
+    reserve_primary: bool,
 }
 
 impl Harness {
     fn new() -> Self {
         let editor = Editor::state();
-        Self {
+        let context = egui::Context::default();
+        context.set_pixels_per_point(2.);
+        let mut harness = Self {
             editor,
-            context: egui::Context::default(),
+            context,
             time: 0.,
             enabled: true,
-        }
+            reserve_primary: false,
+        };
+        harness.frame(vec![]);
+        harness.frame(vec![]);
+        harness
     }
 
     fn frame(&mut self, events: Vec<egui::Event>) -> (CanvasLayout, bool, egui::CursorIcon) {
@@ -55,7 +62,21 @@ impl Harness {
                             .canvas
                             .viewport
                             .layout(canvas, AREA, 2.);
-                        result = Some(self.editor.navigate(ui, &response, geometry, 2.));
+                        result = Some(if self.reserve_primary {
+                            let mut delegated = response.clone();
+                            consume_primary(&mut delegated);
+                            let relayout =
+                                |viewport: &mut Viewport| viewport.layout(canvas, AREA, 2.);
+                            navigate_view(
+                                &mut self.editor.document.visit.canvas.viewport,
+                                ui,
+                                &delegated,
+                                geometry,
+                                relayout,
+                            )
+                        } else {
+                            self.editor.navigate(ui, &response, geometry, 2.)
+                        });
                     });
             },
         );
@@ -186,7 +207,7 @@ fn multi_touch_preserves_previous_center_at_translated_center_and_ignores_synthe
 }
 
 #[test]
-fn click_toggles_native_and_fit_and_primary_drag_pans_only_without_a_picker() {
+fn ordinary_click_toggles_fit_and_native_but_a_reserved_primary_does_not_pan() {
     let mut h = Harness::new();
     let (fit, _, _) = h.frame(vec![]);
     let point = egui::pos2(430., 280.);
@@ -210,17 +231,16 @@ fn click_toggles_native_and_fit_and_primary_drag_pans_only_without_a_picker() {
     h.press(point, false, egui::PointerButton::Primary);
     assert!(h.editor.document.visit.canvas.viewport.zoom.is_none());
     h.native();
-    h.editor.document.visit.picking.display = Some(Pick::Dmin.display());
+    h.reserve_primary = true;
     h.press(point, true, egui::PointerButton::Primary);
     let (before, _, _) = h.frame(vec![]);
-    let (after, panning, cursor) = h.frame(vec![egui::Event::PointerMoved(point + delta)]);
+    let (after, panning, _) = h.frame(vec![egui::Event::PointerMoved(point + delta)]);
     assert!(!panning);
-    assert_eq!(cursor, egui::CursorIcon::Crosshair);
     assert_eq!(after.image, before.image);
 }
 
 #[test]
-fn pan_hover_preserves_fit_small_zoom_picker_and_disabled_cursors() {
+fn ordinary_pan_hover_preserves_fit_small_zoom_and_disabled_cursors() {
     let mut h = Harness::new();
     let (fit, _, _) = h.frame(vec![]);
     let point = fit.canvas.center();
@@ -242,18 +262,7 @@ fn pan_hover_preserves_fit_small_zoom_picker_and_disabled_cursors() {
         h.frame(vec![egui::Event::PointerMoved(point)]).2,
         egui::CursorIcon::Grab
     );
-    h.editor.document.visit.picking.display = Some(Pick::Gamma.display());
-    assert_eq!(
-        h.frame(vec![egui::Event::PointerMoved(point)]).2,
-        egui::CursorIcon::Crosshair
-    );
-    h.editor.busy = true;
-    assert_eq!(
-        h.frame(vec![egui::Event::PointerMoved(point)]).2,
-        egui::CursorIcon::Default
-    );
-    h.editor.document.visit.picking.display = None;
-    h.editor.busy = false;
+
     h.enabled = false;
     assert_eq!(
         h.frame(vec![egui::Event::PointerMoved(point)]).2,
@@ -262,7 +271,7 @@ fn pan_hover_preserves_fit_small_zoom_picker_and_disabled_cursors() {
 }
 
 #[test]
-fn picker_cursors_share_rectangle_hit_testing_and_no_image_click_changes_view() {
+fn picker_cursors_share_rectangle_hit_testing_and_consumed_click_does_not_change_view() {
     let mut h = Harness::new();
     let geometry = h.native();
     let region = Rect {
@@ -295,7 +304,7 @@ fn picker_cursors_share_rectangle_hit_testing_and_no_image_click_changes_view() 
         ),
         egui::CursorIcon::Grabbing
     );
-    h.editor.document.visit.picking.display = Some(Pick::Dmax.display());
+    h.reserve_primary = true;
     let zoom = h.editor.document.visit.canvas.viewport.zoom;
     h.press(geometry.canvas.center(), true, egui::PointerButton::Primary);
     h.press(
@@ -307,11 +316,11 @@ fn picker_cursors_share_rectangle_hit_testing_and_no_image_click_changes_view() 
 }
 
 #[test]
-fn middle_and_space_primary_drag_pan_during_picking() {
+fn middle_and_space_primary_drag_pan_with_a_reserved_primary() {
     for button in [egui::PointerButton::Middle, egui::PointerButton::Primary] {
         let mut h = Harness::new();
         let initial = h.native();
-        h.editor.document.visit.picking.display = Some(Pick::Gamma.display());
+        h.reserve_primary = true;
         let point = initial.canvas.center();
         h.press(point, true, button);
         let mut events = vec![egui::Event::PointerMoved(point + egui::vec2(20., 10.))];

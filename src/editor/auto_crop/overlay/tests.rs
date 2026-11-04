@@ -179,7 +179,7 @@ fn batch_view_and_margin_edits_preserve_accepted_composition_and_normal_navigati
     editor.begin_auto_crop_review(editor.document.project.order.clone(), "Whole roll");
     assert!(editor.auto_crop_context());
     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-    let composition = editor.canvas_composition(area, None);
+    let composition = editor.canvas_composition(area);
     assert_eq!(
         composition.crop(),
         Crop::from_region(area),
@@ -195,7 +195,7 @@ fn batch_view_and_margin_edits_preserve_accepted_composition_and_normal_navigati
     editor.adjust_auto_crop_margin(2.);
     assert_ne!(editor.auto_crop_outline(layout).unwrap(), outline);
     assert_eq!(
-        editor.canvas_composition(area, None),
+        editor.canvas_composition(area),
         composition,
         "moving the outline does not reframe the displayed source"
     );
@@ -214,11 +214,11 @@ fn batch_view_and_margin_edits_preserve_accepted_composition_and_normal_navigati
         editor.auto_crop_context(),
         "artwork visibility is not a second tool lifecycle"
     );
-    assert_eq!(editor.canvas_composition(area, None), composition);
+    assert_eq!(editor.canvas_composition(area), composition);
     editor.finish_auto_crop(false);
     assert!(!editor.auto_crop_context());
     assert_eq!(
-        editor.canvas_composition(area, None).crop(),
+        editor.canvas_composition(area).crop(),
         accepted,
         "normal viewing uses accepted framing after retirement"
     );

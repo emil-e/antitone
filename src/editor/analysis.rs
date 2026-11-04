@@ -1,12 +1,5 @@
 use super::*;
 
-pub(super) const AREA_DISPLAY: picking::Display = picking::Display {
-    label: "Picture area",
-    view: picking::View::Native,
-    area: true,
-    lock_layer_selection: false,
-    help: Some("Picture statistics only · source-aligned · not an output crop"),
-};
 use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
 
 #[cfg(all(test, feature = "ocio-reference"))]

@@ -18,7 +18,6 @@ pub(super) struct PhotoScope {
     pub adjustment_layer_settings: super::AdjustmentLayerSettings,
     pub photo_orientation: super::PhotoOrientation,
     pub crop: Option<super::Crop>,
-    pub picking: super::picking::Session,
     pub picker: super::picking::State,
     pub calibration_action: Option<async_executor::Task<()>>,
     pub white_balance_action: Option<async_executor::Task<()>>,

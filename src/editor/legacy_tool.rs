@@ -1,17 +1,8 @@
 use super::*;
 
-#[cfg(test)]
-mod tests;
-
-pub(super) struct Analyze {
-    operation: analysis_workflow::Operation,
-    review: Option<analysis_review::Review>,
-}
-
 /// Legacy interactions not yet migrated to the shared tool host.
 pub(super) enum Tool {
     Mask(Box<MaskEdit>),
-    Analyze(Box<Analyze>),
 }
 
 impl Editor {
@@ -19,20 +10,7 @@ impl Editor {
         if self.has_hosted_tool() {
             return self.hosted_tool_activity();
         }
-        match self.document.tool.as_ref() {
-            Some(Tool::Analyze(action)) => match action.operation.phase {
-                analysis_workflow::Phase::Preparing(id) | analysis_workflow::Phase::Fitting(id) => {
-                    Some(TaskRequest::Analyze(id))
-                }
-                analysis_workflow::Phase::Regions => self
-                    .document
-                    .spatial_preparing
-                    .as_ref()
-                    .map(|work| TaskRequest::Regions(work.id)),
-                analysis_workflow::Phase::Review => None,
-            },
-            _ => None,
-        }
+        None
     }
 
     pub(super) fn tool_interacting(&self) -> bool {
@@ -80,60 +58,5 @@ impl DocumentScope {
 
     pub fn is_photo_bound(&self) -> bool {
         matches!(self.tool.as_ref(), Some(Tool::Mask(_)))
-    }
-
-    pub fn analysis_operation(&self) -> Option<&analysis_workflow::Operation> {
-        match self.tool.as_ref() {
-            Some(Tool::Analyze(tool)) => Some(&tool.operation),
-            _ => None,
-        }
-    }
-
-    pub fn analysis_operation_mut(&mut self) -> Option<&mut analysis_workflow::Operation> {
-        match self.tool.as_mut() {
-            Some(Tool::Analyze(tool)) => Some(&mut tool.operation),
-            _ => None,
-        }
-    }
-
-    pub fn set_analysis_operation(&mut self, operation: Option<analysis_workflow::Operation>) {
-        match operation {
-            Some(operation) => {
-                self.set_legacy_tool(Tool::Analyze(Box::new(Analyze {
-                    operation,
-                    review: None,
-                })));
-            }
-            None if matches!(self.tool.as_ref(), Some(Tool::Analyze(_))) => self.tool.clear(),
-            None => {}
-        }
-    }
-
-    pub fn analysis_review(&self) -> Option<&analysis_review::Review> {
-        match self.tool.as_ref() {
-            Some(Tool::Analyze(tool)) => tool.review.as_ref(),
-            _ => None,
-        }
-    }
-
-    pub fn analysis_review_mut(&mut self) -> Option<&mut analysis_review::Review> {
-        match self.tool.as_mut() {
-            Some(Tool::Analyze(tool)) => tool.review.as_mut(),
-            _ => None,
-        }
-    }
-
-    pub fn set_analysis_review(&mut self, review: Option<analysis_review::Review>) {
-        let Some(Tool::Analyze(tool)) = self.tool.as_mut() else {
-            panic!("review belongs to the active Analyze action");
-        };
-        tool.review = review;
-    }
-
-    pub fn take_analysis_review(&mut self) -> Option<analysis_review::Review> {
-        match self.tool.as_mut() {
-            Some(Tool::Analyze(tool)) => tool.review.take(),
-            _ => None,
-        }
     }
 }

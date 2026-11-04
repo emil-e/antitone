@@ -269,8 +269,8 @@ fn activation_does_not_query_composition_or_require_a_projection_to_initialize_t
             "activation must not calculate a view"
         );
         let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-        let normal = editor.normal_canvas_composition(area, None);
-        assert_eq!(editor.canvas_composition(area, None), normal);
+        let normal = editor.normal_canvas_composition(area);
+        assert_eq!(editor.canvas_composition(area), normal);
         assert_eq!(
             projected.get(),
             Some(0),
@@ -297,15 +297,12 @@ fn document_and_photo_slots_follow_their_scopes_without_synthetic_actions() {
     assert_eq!(configured.get(), None);
     assert!(editor.activate_tool(Placement::Photo, Box::new(photo)));
     assert_eq!(dropped.get(), 1);
-    editor.canvas_composition(
-        Rect {
-            x: 0,
-            y: 0,
-            width: 100,
-            height: 100,
-        },
-        None,
-    );
+    editor.canvas_composition(Rect {
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+    });
     assert_eq!(configured.get(), Some(1));
     editor.replace_photo_scope(2);
     assert_eq!(dropped.get(), 2);
@@ -384,7 +381,7 @@ fn photo_departure_retires_only_its_hosted_activity_while_document_activity_surv
 }
 
 #[test]
-fn legacy_and_hosted_installation_are_exclusive_in_both_directions() {
+fn document_analysis_and_photo_tool_installation_are_exclusive_in_both_directions() {
     let mut editor = Editor::state();
     let dropped = Rc::new(Cell::new(0));
     let actions = Rc::new(Cell::new(0));
@@ -395,11 +392,8 @@ fn legacy_and_hosted_installation_are_exclusive_in_both_directions() {
             analysis_workflow::Phase::Review,
         )));
     assert_eq!(dropped.get(), 1);
-    assert!(editor.current_tool().is_none());
-    assert!(matches!(
-        editor.document.tool.as_ref(),
-        Some(legacy_tool::Tool::Analyze(_))
-    ));
+    assert!(editor.current_tool().unwrap().is::<AnalyzeTool>());
+    assert!(editor.document.tool.is_none());
     assert!(editor.activate_tool(
         Placement::Document,
         Box::new(Probe::new(&dropped, &actions))

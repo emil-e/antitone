@@ -326,13 +326,23 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
             height: 5760,
         };
         for (width, height, ppp) in [(1100., 800., 1.), (800., 600., 2.)] {
-            for display in [flat::DISPLAY, calibration::DMIN] {
+            for reference in [false, true] {
                 let mut editor = fixture();
                 editor.initialize_viewer(&device, &queue);
                 editor.set_dmin(None);
                 editor.set_dmax(None);
                 editor.document.source = true;
-                editor.document.visit.picking.display = Some(display);
+                if reference {
+                    editor.document.set_flat_edit(Some(flat::FlatEdit {
+                        services: None,
+                        view: Default::default(),
+                        region: None,
+                        task: None,
+                        activity: None,
+                    }));
+                } else {
+                    picking::preview(&mut editor, calibration::DMIN);
+                }
                 editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
                     x: 46,
                     y: 46,
@@ -374,17 +384,61 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                         crop: None,
                     },
                 });
+                if reference {
+                    let ready = editor.document.visit.canvas.ready.clone();
+                    editor.document.flat_edit_mut().unwrap().view.ready = ready;
+                }
                 let context = egui::Context::default();
                 context.enable_accesskit();
                 context.set_pixels_per_point(ppp);
                 let mut fit_point = None;
+                for _ in 0..3 {
+                    let mut output = context.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, height),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| editor.ui(ui),
+                    );
+                    output.textures_delta.clear();
+                    fit_point = ui_labels(output)
+                        .iter()
+                        .find(|(label, _)| label == "Fit")
+                        .map(|(_, rect)| rect.center());
+                }
+                for pressed in [true, false] {
+                    let pos = fit_point.expect("visible Fit control");
+                    let mut output = context.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, height),
+                            )),
+                            events: vec![
+                                egui::Event::PointerMoved(pos),
+                                egui::Event::PointerButton {
+                                    pos,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: egui::Modifiers::NONE,
+                                },
+                            ],
+                            ..Default::default()
+                        },
+                        |ui| editor.ui(ui),
+                    );
+                    output.textures_delta.clear();
+                }
                 for frame in 0..5 {
                     let events = if frame < 3 {
                         vec![]
                     } else {
                         let pos = fit_point.unwrap();
                         if frame == 4 {
-                            editor.document.visit.canvas.viewport.zoom = Some(2.);
+                            editor.with_tool_viewport(|viewport| viewport.zoom = Some(2.));
                         }
                         vec![
                             egui::Event::PointerMoved(pos),
@@ -431,7 +485,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                                         - area.width as f32 / area.height as f32)
                                         .abs()
                                         < 1e-4,
-                                    "Fit did not restore aspect: frame={frame} display={display:?} zoom={:?} image={:?}",
+                                    "Fit did not restore aspect: frame={frame} display=reference={reference} zoom={:?} image={:?}",
                                     editor.document.visit.canvas.viewport.zoom,
                                     callback.rect
                                 );
@@ -468,7 +522,7 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                     } else {
                         assert!(image && rectangle);
                     }
-                    assert!(editor.document.visit.canvas.viewport.zoom.is_none());
+                    assert!(editor.with_tool_viewport(|viewport| viewport.zoom.is_none()));
                 }
             }
         }
@@ -882,11 +936,7 @@ impl Editor {
     }
 
     pub(super) fn test_pick(&self) -> Option<picking::Display> {
-        self.document
-            .flat_edit()
-            .map(|_| flat::DISPLAY)
-            .or_else(|| self.document.visit.picker.display())
-            .or_else(|| self.legacy_pick())
+        self.document.visit.picker.display()
     }
 
     pub(super) fn test_picker_active(&self) -> bool {
@@ -900,7 +950,10 @@ impl Editor {
         if self.test_picker_active() {
             self.document.visit.picker.region()
         } else {
-            self.legacy_pick_region()
+            self.document
+                .visit
+                .current_source
+                .and_then(|id| self.document.analyze_tool()?.selected_region(id))
         }
     }
 
@@ -912,7 +965,13 @@ impl Editor {
         if self.test_picker_active() {
             self.document.visit.picker.set_region(region);
         } else {
-            self.set_legacy_pick_region(region);
+            if let (Some(id), Some(region), Some(tool)) = (
+                self.document.visit.current_source,
+                region,
+                self.document.analyze_tool_mut(),
+            ) {
+                tool.edit_region(id, region);
+            }
         }
     }
 

@@ -133,7 +133,6 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
             calibration::DMAX,
             calibration::GAMMA,
             white_balance::LAYER,
-            flat::DISPLAY,
         ] {
             picking::preview(&mut editor, display);
             warm(&mut editor, &context, size);
@@ -152,6 +151,26 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
             );
             editor.finish_pick(&crate::application::UiContext::render_only());
         }
+        let mut reference = canvas::SourceView::default();
+        reference.ready = editor.document.visit.canvas.ready.clone();
+        editor.document.set_flat_edit(Some(flat::FlatEdit {
+            services: None,
+            view: reference,
+            region: None,
+            task: None,
+            activity: None,
+        }));
+        warm(&mut editor, &context, size);
+        assert_eq!(editor.canvas_frame.layout.unwrap().0.canvas, canvas);
+        assert_eq!(
+            labels(&mut editor, &context, size, vec![])
+                .iter()
+                .find(|(label, _)| label == "Fit")
+                .unwrap()
+                .1,
+            fit
+        );
+        editor.end_tool();
         editor.begin_crop();
         warm(&mut editor, &context, size);
         assert_eq!(

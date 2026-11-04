@@ -24,8 +24,6 @@ impl Editor {
             self.end_analysis_review(cx);
         } else if self.document.visit.picker.display().is_some() {
             self.end_tool();
-        } else {
-            self.cancel_legacy_picker();
         }
     }
 
@@ -65,10 +63,6 @@ impl Editor {
     pub(super) fn apply_pick(&mut self, cx: &UiContext<'_, Self>) {
         if self.current_tool().is_some() {
             self.dispatch_tool(tool::Action::Primary, cx);
-            return;
-        }
-        if self.document.analysis_review().is_some() {
-            self.confirm_analysis_review(cx);
         }
     }
 }

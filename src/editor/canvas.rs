@@ -60,11 +60,7 @@ impl Viewer<'_> {
                 .max(egui::vec2(1., 1.));
             let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
             let selected = editor.selected_view().map(|(area, proxy, pending)| {
-                (
-                    editor.normal_canvas_composition(area, editor.legacy_pick()),
-                    proxy,
-                    pending,
-                )
+                (editor.normal_canvas_composition(area), proxy, pending)
             });
             let enabled = editor.canvas_input_allowed(ui, rect);
             let layout = ui
@@ -376,40 +372,19 @@ impl Editor {
         .expect("accepted source composition")
     }
 
-    pub(super) fn normal_canvas_composition(
-        &self,
-        area: Rect,
-        active_pick: Option<picking::Display>,
-    ) -> Composition {
-        let crop = if active_pick.is_some_and(|display| display.view != picking::View::Working) {
-            None
-        } else {
-            self.document.visit.crop
-        };
-        if active_pick.is_some_and(|display| display.view == picking::View::Native) {
-            Composition::new(
-                area,
-                RollOrientation::default(),
-                PhotoOrientation::default(),
-            )
-        } else {
-            Composition::with_crop(
-                area,
-                self.document.roll_orientation,
-                self.document.visit.photo_orientation,
-                crop,
-            )
-        }
+    pub(super) fn normal_canvas_composition(&self, area: Rect) -> Composition {
+        Composition::with_crop(
+            area,
+            self.document.roll_orientation,
+            self.document.visit.photo_orientation,
+            self.document.visit.crop,
+        )
         .expect("accepted crop belongs to the loaded source")
     }
 
     #[cfg(test)]
-    pub(super) fn canvas_composition(
-        &mut self,
-        area: Rect,
-        active_pick: Option<picking::Display>,
-    ) -> Composition {
-        let normal = self.normal_canvas_composition(area, active_pick);
+    pub(super) fn canvas_composition(&mut self, area: Rect) -> Composition {
+        let normal = self.normal_canvas_composition(area);
         if self.fullscreen.is_some() || self.current_tool().is_none() {
             normal
         } else {
@@ -452,9 +427,6 @@ impl Editor {
         fullscreen: bool,
     ) -> (CanvasLayout, bool) {
         let pixels_per_point = ui.ctx().pixels_per_point();
-        if response.drag_started_by(egui::PointerButton::Primary) {
-            self.active_canvas_mut().pick_drag = None;
-        }
         let (geometry, panning) = if !canvas_input {
             (geometry, false)
         } else {
@@ -478,7 +450,7 @@ impl Editor {
     )> {
         use crate::gpu::photograph::request::PhotographRequest;
         let inspection = image.inspection(self.canvas_inspection());
-        let bypass_look = image.is_sample() || self.document.analysis_review().is_some();
+        let bypass_look = image.is_sample();
         let capture = if inspection {
             match self
                 .source_parameters(self.source_exposure)
@@ -815,48 +787,8 @@ impl Editor {
         ))
     }
 
-    fn canvas_pick(&mut self, ui: &egui::Ui, response: &egui::Response, geometry: CanvasLayout) {
-        if response.clicked_by(egui::PointerButton::Primary)
-            && let Some(point) = response.interact_pointer_pos()
-            && (geometry.image.contains(point) || self.document.analysis_review().is_some())
-        {
-            if self.document.analysis_review().is_some() {
-                self.select_review_area(geometry, point);
-            } else {
-                self.set_legacy_pick_region(Some(geometry.pick_patch(point, 32)));
-            }
-        }
-        if response.drag_started_by(egui::PointerButton::Primary) {
-            if self.document.analysis_review().is_some()
-                && let Some(point) = ui.input(|i| i.pointer.press_origin())
-            {
-                self.select_review_area(geometry, point);
-            }
-            // Classify from the press, not the later point where egui recognizes the drag.
-            self.active_canvas_mut().pick_drag = ui
-                .input(|input| input.pointer.press_origin())
-                .filter(|point| {
-                    geometry.image.contains(*point) || self.document.analysis_review().is_some()
-                })
-                .map(|point| PickDrag::begin(geometry, point, self.legacy_pick_region()));
-        }
-        if response.dragged_by(egui::PointerButton::Primary)
-            && let (Some(drag), Some(end)) = (
-                self.active_canvas().pick_drag,
-                response.interact_pointer_pos(),
-            )
-        {
-            self.set_legacy_pick_region(Some(drag.update(geometry, end)));
-        }
-    }
-
-    fn paint_canvas_selection(&self, ui: &mut egui::Ui, geometry: CanvasLayout, fullscreen: bool) {
+    fn paint_canvas_selection(&self, ui: &mut egui::Ui, geometry: CanvasLayout, _fullscreen: bool) {
         self.paint_mask(ui, geometry);
-        if self.document.analysis_review().is_some() {
-            self.paint_review_areas(ui, geometry, geometry.canvas);
-        } else if !fullscreen && let Some(region) = self.legacy_pick_region() {
-            picking::paint_selection(ui, geometry, region);
-        }
     }
 
     pub(super) fn viewer_canvas(
@@ -888,7 +820,6 @@ impl Editor {
         let selected = self.selected_view();
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas_input = self.canvas_input_allowed(ui, canvas);
-        let active_pick = self.legacy_pick();
         let composition = selected.as_ref().map(|(area, _, pending)| {
             if *pending {
                 self.document
@@ -896,9 +827,9 @@ impl Editor {
                     .pending_preview
                     .as_ref()
                     .map(|preview| preview.composition)
-                    .unwrap_or_else(|| self.normal_canvas_composition(*area, active_pick))
+                    .unwrap_or_else(|| self.normal_canvas_composition(*area))
             } else {
-                self.normal_canvas_composition(*area, active_pick)
+                self.normal_canvas_composition(*area)
             }
         });
         let Some((_, proxy, pending)) = selected else {
@@ -921,12 +852,10 @@ impl Editor {
         };
         let composition = composition.expect("selected image composition");
         let geometry = self.canvas_layout(canvas, composition, pixels_per_point, zoom_action);
-        let (geometry, panning) =
+        let (geometry, _) =
             self.canvas_navigation(ui, &response, geometry, canvas_input, fullscreen);
         self.canvas_frame.layout = Some((geometry, pixels_per_point));
-        let image_mode = if active_pick.is_some()
-            || fullscreen && self.document.visit.picker.display().is_some()
-        {
+        let image_mode = if fullscreen && self.document.visit.picker.display().is_some() {
             if self.canvas_inspection() {
                 ImageMode::SourceSample
             } else {
@@ -950,18 +879,6 @@ impl Editor {
         } else if self.current_tool().is_none() {
             return;
         }
-        if !fullscreen
-            && active_pick.is_some()
-            && !self.busy
-            && canvas_input
-            && !panning
-            && !ui.input(|input| input.key_down(egui::Key::Space))
-        {
-            self.canvas_pick(ui, &response, geometry);
-        }
         self.paint_canvas_selection(ui, geometry, fullscreen);
-        if response.drag_stopped_by(egui::PointerButton::Primary) {
-            self.active_canvas_mut().pick_drag = None;
-        }
     }
 }

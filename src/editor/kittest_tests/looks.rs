@@ -15,6 +15,7 @@ fn constant_asset(value: f32) -> Arc<crate::looks::LookAsset> {
     )
 }
 
+mod errors;
 mod photochemical;
 fn tiff_codes(path: &std::path::Path) -> Vec<u16> {
     let mut decoder = tiff::decoder::Decoder::new(std::fs::File::open(path).unwrap()).unwrap();

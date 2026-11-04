@@ -98,12 +98,6 @@ impl tool::Tool for PickTool {
             View::Working => normal,
             View::Source => Composition::new(normal.area(), self.orientation.0, self.orientation.1)
                 .expect("selected source composition"),
-            View::Native => Composition::new(
-                normal.area(),
-                RollOrientation::default(),
-                PhotoOrientation::default(),
-            )
-            .expect("selected native composition"),
         }
     }
 

@@ -78,7 +78,7 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
                 .areas;
             areas.opening = Some(opening.corners().map(|p| p.0));
             areas.picture = Some(picture.corners().map(|p| p.0));
-            editor.refresh_review_region();
+
             let before = editor.document.state.project.clone();
             let mut viewport = Viewport::default();
             viewport.zoom = Some(0.5);
@@ -100,7 +100,6 @@ fn both_sampling_frames_select_directly_and_resize_without_changing_accepted_are
             editor.set_test_pick_region(Some(
                 drag.update(geometry, point(picture, 0) + egui::vec2(5., 5.)),
             ));
-            editor.stash_review_region();
             let edited = editor
                 .review_areas(editor.document.visit.current_source.unwrap())
                 .unwrap();
@@ -197,14 +196,12 @@ fn opening_exception_updates_automatic_picture_coverage_but_not_authored_picture
             let peer = review.approved.entries[1].clone();
             let before = editor.document.state.project.clone();
             editor.set_test_pick_region(Some(Coverage::rectangle(rect([90, 70, 600, 400]))));
-            editor.stash_review_region();
             let review = editor.document.analysis_review_mut().unwrap();
             assert_ne!(review.approved.entries[0].areas.picture, original);
             assert_eq!(review.approved.entries[1], peer);
             let authored = Coverage::rectangle(rect([100, 100, 500, 300]));
             review.approved.entries[0].areas.edit_picture(authored);
             editor.set_test_pick_region(Some(Coverage::rectangle(rect([120, 90, 500, 300]))));
-            editor.stash_review_region();
             assert_eq!(
                 editor.document.analysis_review().unwrap().approved.entries[0]
                     .areas
@@ -312,7 +309,7 @@ fn unavailable_analysis_services_tear_down_review_and_restore_working_photo() {
                 .unwrap()
                 .proxy
                 .clone();
-            editor.browse_analysis_review(other, cx);
+            editor.select_roll_photo(1, egui::Modifiers::NONE, cx);
             let record = editor.document.state.project.source(other).unwrap().clone();
             editor.document.visit.canvas.ready = Some(Ready {
                 reference: None,
@@ -456,7 +453,6 @@ fn per_photo_edits_are_drafts_until_analysis_success_and_do_not_copy_to_peers() 
                 .areas
                 .clone();
             editor.set_test_pick_region(Some(Coverage::rectangle(rect([40, 30, 700, 500]))));
-            editor.stash_review_region();
             assert!(
                 editor
                     .review_areas(editor.document.visit.current_source.unwrap())
@@ -651,7 +647,7 @@ fn review_browsing_and_cancel_keep_the_displayed_photo_without_changing_multi_se
                     && editor.document.roll_selection.contains(other)
             );
             prepared(editor, cx);
-            editor.browse_analysis_review(other, cx);
+            editor.select_roll_photo(1, egui::Modifiers::NONE, cx);
             let pending = editor.id;
             assert_eq!(editor.document.visit.current_source, Some(other));
             assert!(

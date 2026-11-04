@@ -783,9 +783,6 @@ fn batch_entry_respects_document_operations_and_removal() {
         let before = e.document.state.project.clone();
         match case {
             0 => e.busy = true,
-            1 => e.document.visit.picking.display = Some(Pick::Dmin.display()),
-            2 => e.begin_crop(),
-            3 => e.begin_dust_cleanup(),
             4 => e.document_pending = Some(99),
             5 => e.document.removal_pending = Some(vec![e.document.visit.current_source.unwrap()]),
             _ => unreachable!(),

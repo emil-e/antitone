@@ -814,29 +814,3 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
         });
     });
 }
-
-#[test]
-fn a_non_working_source_load_does_not_admit_pending_working_preview() {
-    pollster::block_on(async {
-        let (device, queue) = gpu().await;
-        let directory = tempfile::tempdir().unwrap();
-        let editor = super::super::tests::fixture();
-        crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
-                editor.document.thumbnails =
-                    (Thumbnails::with_disk(device, queue, Arc::default(), None))
-                        .with_sources(editor.document.cache.clone());
-                let path = directory.path().join("reference.ARW");
-                add_source(editor, path.clone());
-                editor.load_source(path, false, cx);
-                assert!(
-                    editor.document.visit.pending_preview.is_none()
-                        && editor.document.visit.canvas.selection_timing.is_none()
-                );
-                assert!(editor.document.visit.canvas.ready.is_none());
-                assert!(editor.busy);
-                assert!(editor.document.visit.source.pending());
-            });
-        });
-    });
-}

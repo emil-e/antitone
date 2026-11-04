@@ -352,7 +352,6 @@ impl Editor {
             && self.document.input.ready()
             && !self.document.source
             && !self.picking()
-            && self.document.analysis_review().is_none()
             && !self.document.visit.adjustment_layers.confirming()
             && self.fullscreen.is_none()
     }
@@ -633,13 +632,9 @@ impl Editor {
     pub(super) fn paint_mask(&self, ui: &egui::Ui, layout: CanvasLayout) {
         if !self.adjustment_layer_overlays_visible()
             || self.fullscreen.is_some()
-            || self.document.analysis_review().is_some()
-            || self.picking()
-            || self.cropping()
+            || self.has_hosted_tool()
             || self.document.source
             || self.tab != 1
-            || self.dusting()
-            || self.creating_mask()
         {
             return;
         }

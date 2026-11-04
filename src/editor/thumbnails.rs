@@ -1,5 +1,6 @@
 use super::presentation::ContactSheetLayout;
 use super::*;
+use crate::gpu::parameters::ProcessingParameters;
 #[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::project::SourceDevelopment;
@@ -325,6 +326,8 @@ fn shared_look_bytes(entries: &std::collections::VecDeque<(ImageKey, CachedProdu
 pub(super) struct Preview {
     pub compositions: Vec<(SourceId, Composition)>,
     pub warnings: Vec<(SourceId, String)>,
+    pub sources: Vec<(SourceId, Result<ProcessingParameters, String>)>,
+    pub outlines: Vec<(SourceId, [[f64; 2]; 4])>,
 }
 
 pub(super) struct Thumbnails {
@@ -966,13 +969,7 @@ impl Editor {
         } else {
             source.crop
         };
-        if self.document.analysis_review().is_some() {
-            Composition::new(
-                source.development.active_area.into(),
-                RollOrientation::default(),
-                PhotoOrientation::default(),
-            )
-        } else if crop.is_some() {
+        if crop.is_some() {
             Composition::with_crop(
                 source.development.active_area.into(),
                 self.document.roll_orientation,
@@ -989,7 +986,15 @@ impl Editor {
         &self,
         id: SourceId,
     ) -> Result<Option<Arc<crate::image_recipe::ImageRecipe>>, String> {
-        if self.document.analysis_review().is_some() || !self.document.state.project.input.ready() {
+        if self
+            .document
+            .thumbnails
+            .preview
+            .sources
+            .iter()
+            .any(|(source, _)| *source == id)
+            || !self.document.state.project.input.ready()
+        {
             Ok(None)
         } else {
             self.document
@@ -1002,12 +1007,26 @@ impl Editor {
     fn thumbnail_request(
         &self,
         source: &Source,
-    ) -> Result<crate::gpu::photograph::request::PhotographRequest, Error> {
+    ) -> Result<crate::gpu::photograph::request::PhotographRequest, String> {
         use crate::gpu::photograph::request::PhotographRequest;
-        if self.document.analysis_review().is_some() || !self.input().ready() {
+        if let Some((_, parameters)) = self
+            .document
+            .thumbnails
+            .preview
+            .sources
+            .iter()
+            .find(|(id, _)| *id == source.id)
+        {
+            return parameters
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(|parameters| PhotographRequest::inspection(*parameters).map_err(|error| error.to_string()));
+        }
+        if !self.input().ready() {
             return self
                 .source_parameters_for(source, self.source_exposure)
-                .and_then(PhotographRequest::inspection);
+                .and_then(PhotographRequest::inspection)
+                .map_err(|error| error.to_string());
         }
         self.positive_recipe_for_source(
             self.input(),
@@ -1016,10 +1035,11 @@ impl Editor {
             self.document.visit.adjustment_layer_settings,
         )
         .map(|recipe| PhotographRequest::Recipe(Arc::new(recipe)))
+        .map_err(|error| error.to_string())
     }
 
     #[cfg(test)]
-    fn thumbnail_parameters(&self, source: &Source) -> Result<AuthoredPhotograph, Error> {
+    fn thumbnail_parameters(&self, source: &Source) -> Result<AuthoredPhotograph, String> {
         self.thumbnail_request(source)?.processing(
             &self
                 .document
@@ -1029,13 +1049,13 @@ impl Editor {
                 .map(|device| device.limits())
                 .unwrap_or_default(),
             &Default::default(),
-        )
+        ).map_err(|error| error.to_string())
     }
 
     fn thumbnail_work_allowed(&self) -> bool {
         !self.busy
             && self.document.thumbnails.budgets.pressure != memory::Pressure::Critical
-            && (!self.picking() || self.document.analysis_review().is_some())
+            && !self.picking()
             && !self.cropping()
             && !self.masking()
             && self.document_pending.is_none()
@@ -1060,7 +1080,7 @@ impl Editor {
     }
 
     pub(super) fn filmstrip_readonly(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        self.filmstrip_presentation(ui, Preview::default(), false, cx);
+        let _ = self.filmstrip_presentation(ui, Preview::default(), false, cx);
     }
 
     pub(super) fn filmstrip_preview(
@@ -1069,16 +1089,20 @@ impl Editor {
         preview: Preview,
         cx: &UiContext<'_, Self>,
     ) {
-        self.filmstrip_presentation(ui, preview, true, cx);
+        let interactive = self.roll_navigation_available();
+        if let Some((index, modifiers)) = self.filmstrip_presentation(ui, preview, interactive, cx)
+        {
+            self.select_roll_photo(index, modifiers, cx);
+        }
     }
 
-    fn filmstrip_presentation(
+    pub(super) fn filmstrip_presentation(
         &mut self,
         ui: &mut egui::Ui,
         preview: Preview,
         interactive: bool,
         cx: &UiContext<'_, Self>,
-    ) {
+    ) -> Option<(usize, egui::Modifiers)> {
         self.document.thumbnails.preview = preview;
         if self.document.thumbnails.memory_watch.is_none() {
             self.document
@@ -1089,7 +1113,7 @@ impl Editor {
                 Some(memory::PressureWatch::new(ui.ctx().clone()));
         }
         self.document.thumbnails.update_memory();
-        self.filmstrip_with_budgets(ui, self.document.thumbnails.budgets, interactive, cx);
+        self.filmstrip_with_budgets(ui, self.document.thumbnails.budgets, interactive, cx)
     }
 
     fn filmstrip_with_budgets(
@@ -1098,7 +1122,7 @@ impl Editor {
         budgets: memory::CacheBudgets,
         interactive: bool,
         cx: &UiContext<'_, Self>,
-    ) {
+    ) -> Option<(usize, egui::Modifiers)> {
         if self.document.visit.canvas.ready.is_none()
             && self.document.visit.pending_preview.is_none()
         {
@@ -1121,17 +1145,7 @@ impl Editor {
         let mut visible = Vec::new();
         let mut select = None;
         let mut remove = false;
-        let selected_loading = self.document.visit.canvas.ready.is_none()
-            && self.document.visit.canvas.selection_timing.is_some()
-            && self.document_pending.is_none()
-            && !self.picking();
-        let reviewing = self.document.analysis_review().is_some() && !self.analysis_fitting();
-        let selection_enabled = interactive
-            && (!self.busy || selected_loading || reviewing)
-            && !self.cropping()
-            && !self.masking()
-            && (!self.picking() || reviewing)
-            && !self.document.confirming();
+        let selection_enabled = interactive;
         let height = self
             .preferences
             .filmstrip_height
@@ -1298,31 +1312,30 @@ impl Editor {
                                     }
                                 }
                             }
-                            if let Some(areas) = self.review_areas(id) {
-                                let picture =
-                                    self.document.analysis_review().is_some_and(|r| r.picture);
-                                if let Some(q) = if picture {
-                                    areas.picture
-                                } else {
-                                    areas.opening
-                                } {
-                                    let a = source.development.active_area;
-                                    let points = q.map(|p| {
-                                        full.min
-                                            + egui::vec2(
-                                                ((p[0] - f64::from(a[0])) / f64::from(a[2])) as f32
-                                                    * full.width(),
-                                                ((p[1] - f64::from(a[1])) / f64::from(a[3])) as f32
-                                                    * full.height(),
-                                            )
-                                    });
-                                    ui.painter().with_clip_rect(draw).add(
-                                        egui::Shape::closed_line(
-                                            points.to_vec(),
-                                            ui.visuals().selection.stroke,
-                                        ),
-                                    );
-                                }
+                            if let Some((_, q)) = self
+                                .document
+                                .thumbnails
+                                .preview
+                                .outlines
+                                .iter()
+                                .find(|(source, _)| *source == id)
+                            {
+                                let a = source.development.active_area;
+                                let points = q.map(|p| {
+                                    full.min
+                                        + egui::vec2(
+                                            ((p[0] - f64::from(a[0])) / f64::from(a[2])) as f32
+                                                * full.width(),
+                                            ((p[1] - f64::from(a[1])) / f64::from(a[3])) as f32
+                                                * full.height(),
+                                        )
+                                });
+                                ui.painter()
+                                    .with_clip_rect(draw)
+                                    .add(egui::Shape::closed_line(
+                                        points.to_vec(),
+                                        ui.visuals().selection.stroke,
+                                    ));
                             }
                         }
                         (Some(Err(message)), _) => {
@@ -1492,19 +1505,14 @@ impl Editor {
             ui.ctx(),
             cx,
         );
-        if let Some((index, modifiers)) = select {
-            if self.document.analysis_review().is_some() {
-                self.browse_analysis_review(self.document.state.project.order[index], cx);
-            } else {
-                self.select_roll_photo(index, modifiers, cx);
-            }
-        } else if !remove {
+        if select.is_none() && !remove {
             self.advance_thumbnail_demand(cx);
         }
         if self.document.thumbnails.pending.is_some() || self.document.thumbnails.embedded.pending()
         {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
+        select
     }
 }
 

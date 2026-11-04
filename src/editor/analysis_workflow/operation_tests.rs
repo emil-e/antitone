@@ -20,7 +20,6 @@ fn confirmation_freezes_reviewed_areas_and_keeps_numerical_capture_out_of_the_re
     with_application(editor, |app| {
         open(app);
         let (reviewed, mut reply) = app.enter(|editor, cx| {
-            editor.stash_review_region();
             let reviewed = editor.document.analysis_review().unwrap().approved.clone();
             let reply = testing::fitting(editor);
             editor.confirm_analysis_review(cx);

@@ -281,7 +281,7 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
             app.run_until(Duration::from_secs(15), |e| !e.busy);
         }
         let removed_id = app.read(|e| e.document.state.project.order[1]);
-        app.enter(|e, cx| e.load_source(removed.path().to_owned(), true, cx));
+        app.enter(|e, cx| e.load(removed.path().to_owned(), cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
             assert!(
@@ -311,7 +311,7 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
                 "exercise actual numeric ID reuse"
             )
         });
-        app.enter(|e, cx| e.load_source(replacement.path().to_owned(), true, cx));
+        app.enter(|e, cx| e.load(replacement.path().to_owned(), cx));
         app.run_until(Duration::from_secs(15), |e| !e.busy);
         app.read(|e| {
             assert!(

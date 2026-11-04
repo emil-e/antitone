@@ -302,7 +302,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
             assert_eq!(e.document.roll_orientation, original.orientation);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert!(!e.document.source && e.document.flat_edit().is_none());
-            assert_eq!(e.normal_canvas_composition(area, None), composition);
+            assert_eq!(e.normal_canvas_composition(area), composition);
             assert!(
                 e.canvas_frame.layout.is_none(),
                 "retirement cannot leave reference navigation metadata"
@@ -402,7 +402,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             app.update(|e| {
                 e.sync_document();
                 assert_eq!(e.document.state.project, original);
-                assert_eq!(e.test_pick(), Some(flat::DISPLAY));
+                assert!(e.current_tool().unwrap().is::<FlatTool>());
                 assert!(e.test_pick_region().is_some());
                 e.end_tool();
                 assert_eq!(e.document.state.project, original);

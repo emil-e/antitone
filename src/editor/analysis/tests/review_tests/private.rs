@@ -84,7 +84,7 @@ fn complete_private_roll_prepares_reviews_analyzes_and_round_trips() {
             );
         }
         editor = wait_with_limit(editor, Duration::from_secs(240), |e, cx| {
-            e.browse_analysis_review(*before.order.last().unwrap(), cx)
+            e.select_roll_photo(before.order.len() - 1, egui::Modifiers::NONE, cx)
         });
         assert_eq!(editor.document.state.project, before);
         editor = wait_with_limit(editor, Duration::from_secs(240), |e, cx| {

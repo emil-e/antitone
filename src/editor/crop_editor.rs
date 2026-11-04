@@ -141,7 +141,7 @@ impl Editor {
         let Some(ready) = &self.document.visit.canvas.ready else {
             return;
         };
-        let base = self.normal_canvas_composition(ready.area, None);
+        let base = self.normal_canvas_composition(ready.area);
         if self.activate_tool(tool::Placement::Photo, Box::new(CropTool::new(base))) {
             self.status = "Crop draft; changes are not applied".into();
         }
