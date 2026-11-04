@@ -204,11 +204,10 @@ impl ImageKey {
         match &self.recipe {
             Ok(None) => true,
             Ok(Some(recipe)) => document
-                .thumbnail_recipe(self.source.id)
-                .is_ok_and(|current| current == **recipe),
+                .image_recipe(self.source.id)
+                .is_ok_and(|current| &current == recipe.as_ref()),
             Err(reason) => document
-                .project
-                .thumbnail_recipe(self.source.id)
+                .image_recipe(self.source.id)
                 .is_err_and(|error| error.to_string() == *reason),
         }
     }
@@ -998,7 +997,7 @@ impl Editor {
             Ok(None)
         } else {
             self.document
-                .thumbnail_recipe(id)
+                .image_recipe(id)
                 .map(|recipe| Some(Arc::new(recipe)))
                 .map_err(|error| error.to_string())
         }

@@ -481,11 +481,7 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.step();
         // The reference must match the complete processing intent, including admitted repairs.
         wait_for(&mut h, |e| {
-            assert!(
-                !e.document.visit.canvas.grade.original.failed(),
-                "{}",
-                e.status
-            );
+            assert!(!e.document.visit.canvas.original.failed(), "{}", e.status);
             !e.document.visit.working_view.updating
                 && e.document.visit.working_view.reference_ready()
                 && e.document
@@ -515,7 +511,6 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
                     .document
                     .visit
                     .canvas
-                    .grade
                     .original
                     .settled()
                     .as_ref()

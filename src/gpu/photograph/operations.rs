@@ -62,6 +62,7 @@ impl Mapping {
     }
 }
 
+#[derive(Clone)]
 pub struct CameraInput {
     pub matrix: glam::DMat3,
     pub field: Option<Arc<GpuFlatField>>,
@@ -421,13 +422,29 @@ impl Operation for Working {
     }
 }
 
+#[derive(Debug)]
+struct ResidentIdentity(std::sync::Weak<()>, bool);
+impl PartialEq for ResidentIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0) && self.1 == other.1
+    }
+}
+
 pub struct ResidentCamera {
     pub domain: Domain,
+    pub identity: std::sync::Weak<()>,
     pub pixels: wgpu::Buffer,
     pub continuous: bool,
 }
 
 impl Operation for ResidentCamera {
+    fn identity(&self) -> Option<RetainedKey> {
+        Some(RetainedKey::new(ResidentIdentity(
+            self.identity.clone(),
+            self.continuous,
+        )))
+    }
+
     fn input(&self, _: CellRegion) -> Result<Option<CellRegion>, Error> {
         Ok(None)
     }

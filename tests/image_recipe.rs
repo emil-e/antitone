@@ -73,7 +73,7 @@ fn uncalibrated_intent_can_be_captured_without_claiming_a_positive_is_ready() {
 }
 
 #[test]
-fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair_metadata() {
+fn accepted_recipes_capture_grades_composition_and_repair_metadata() {
     let (mut project, id) = project();
     let empty = project.image_recipe(id).unwrap();
     let repair = project
@@ -104,7 +104,7 @@ fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair
     let graded = project.image_recipe(id).unwrap();
     assert_ne!(repaired, graded);
     assert_eq!(repaired.neutral, graded.neutral);
-    assert_eq!(repaired.repairs(), graded.repairs());
+    assert_eq!(repaired.repairs, graded.repairs);
     assert_eq!(
         repaired.grade.layers()[0].photo.exposure,
         0.,
@@ -121,16 +121,19 @@ fn accepted_recipes_separate_neutral_identity_from_grades_composition_and_repair
     metadata["sources"][0]["repairs"]["repairs"][0]["origin"] = "detected".into();
     metadata["sources"][0]["repairs"]["last_id"] = 8.into();
     let metadata: Project = serde_json::from_value(metadata).unwrap();
-    assert_eq!(graded, metadata.image_recipe(id).unwrap());
+    let captured_metadata = metadata.image_recipe(id).unwrap();
+    assert_ne!(graded, captured_metadata);
+    assert_eq!(captured_metadata.repairs[0].id.0, 4);
+    assert_eq!(captured_metadata.repairs[0].origin, RepairOrigin::Detected);
     project
         .source_mut(id)
         .unwrap()
         .repairs
         .set_enabled(repair, false)
         .unwrap();
-    assert!(project.image_recipe(id).unwrap().repairs().is_empty());
+    assert!(project.image_recipe(id).unwrap().repairs.is_empty());
     project.source_mut(id).unwrap().repairs.clear();
-    assert!(project.image_recipe(id).unwrap().repairs().is_empty());
+    assert!(project.image_recipe(id).unwrap().repairs.is_empty());
 }
 
 #[test]
@@ -170,7 +173,13 @@ fn halation_is_captured_without_repair_invalidation_or_grain_enablement() {
     assert_ne!(clean, captured);
     assert_eq!(clean.neutral, captured.neutral);
     assert!(!captured.grain.enabled);
-    assert_eq!(captured.pixel_pipeline().unwrap().stages.len(), 1);
+    assert!(
+        captured
+            .halation
+            .parameters(captured.composition.crop().size)
+            .unwrap()
+            .is_some()
+    );
     project.output.halation.strength = 0.4;
     assert_eq!(
         captured.halation.strength, 0.3,
@@ -178,11 +187,8 @@ fn halation_is_captured_without_repair_invalidation_or_grain_enablement() {
     );
     assert_ne!(captured, project.image_recipe(id).unwrap());
     project.output.halation.enabled = false;
-    assert_eq!(
-        clean,
-        project.image_recipe(id).unwrap(),
-        "disabled custom values are not photographic identity"
-    );
+    assert_ne!(clean, project.image_recipe(id).unwrap());
+    assert!(!project.image_recipe(id).unwrap().halation.enabled);
 }
 
 #[test]
@@ -233,19 +239,13 @@ fn emulation_resolves_from_the_captured_crop_not_its_source_bounds_or_orientatio
         "crop scale does not alter captured input interpretation"
     );
     let check = |recipe: &antitone::image_recipe::ImageRecipe, expected: f64| {
-        let pipeline = recipe.pixel_pipeline().unwrap();
-        let mtf = pipeline
-            .stages
-            .iter()
-            .find_map(|stage| stage.get::<antitone::image_mtf::ImageMtfParameters>())
+        let parameters = recipe
+            .grain
+            .parameters(recipe.composition.crop().size)
+            .unwrap()
             .unwrap();
-        let grain = pipeline
-            .stages
-            .iter()
-            .find_map(|stage| stage.get::<antitone::pixel_pipeline::Grain>())
-            .unwrap();
-        assert!((mtf.sigma - expected).abs() < 1e-12);
-        assert!((grain.parameters.grain_size - expected * 1.375).abs() < 1e-12);
+        assert!((parameters.image_mtf_sigma - expected).abs() < 1e-12);
+        assert!((parameters.grain_size - expected * 1.375).abs() < 1e-12);
     };
     check(&full, 0.2304);
     check(&cropped, 0.1152);
@@ -280,7 +280,7 @@ fn accepted_look_identity_is_numeric_immutable_and_downstream_of_neutral_repairs
     let looked = project.image_recipe(id).unwrap();
     assert_ne!(none, looked);
     assert_eq!(none.neutral, looked.neutral);
-    assert_eq!(none.repairs(), looked.repairs());
+    assert_eq!(none.repairs, looked.repairs);
     assert!(looked.retained_bytes() >= none.retained_bytes() + lut.byte_len());
     project.output.lut = Some(Arc::new(
         LookAsset::new("Renamed".into(), LookOrigin::Imported, lut.clone()).unwrap(),

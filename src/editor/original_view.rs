@@ -1,7 +1,6 @@
 //! Purpose-bound original-sample reconstruction, independent of normal working-view acceptance.
 use super::*;
 #[cfg(test)]
-#[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use std::sync::{Mutex, Weak};
 #[cfg(test)]
@@ -317,7 +316,8 @@ impl OriginalView {
         let identity =
             crate::gpu::source::identity::Identity::camera(wanted.source.source.identity());
         let spec = match &wanted.capture {
-            crate::gpu::photograph::request::PhotographRequest::Recipe(recipe) => {
+            crate::gpu::photograph::request::PhotographRequest::Recipe(recipe)
+            | crate::gpu::photograph::request::PhotographRequest::BeforeLooks(recipe) => {
                 SourceRequest::for_recipe(frame, recipe)?
             }
             crate::gpu::photograph::request::PhotographRequest::Inspection(_) => {
@@ -355,20 +355,20 @@ impl Editor {
         &mut self,
         purpose: OriginalPurpose,
     ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
-        self.active_canvas_mut().grade.original.rendered(purpose)
+        self.active_canvas_mut().original.rendered(purpose)
     }
 
     pub(super) fn invalidate_original(&mut self) {
-        self.document.visit.canvas.grade.original.invalidate();
+        self.document.visit.canvas.original.invalidate();
     }
     pub(super) fn discard_original(&mut self) {
-        self.document.visit.canvas.grade.original.discard();
+        self.document.visit.canvas.original.discard();
     }
     pub(super) fn cancel_original_pending(&mut self) {
-        self.document.visit.canvas.grade.original.cancel_pending();
+        self.document.visit.canvas.original.cancel_pending();
     }
     pub(super) fn leave_original(&mut self) {
-        self.active_canvas_mut().grade.original.leave();
+        self.active_canvas_mut().original.leave();
     }
 
     pub(super) fn observe_original(
@@ -379,7 +379,7 @@ impl Editor {
         match (purpose, demand) {
             (Some(purpose), Some(demand)) => self
                 .active_canvas_mut()
-                .grade
+                
                 .original
                 .observe(purpose, demand),
             _ => self.leave_original(),
@@ -387,7 +387,7 @@ impl Editor {
     }
 
     pub(super) fn request_original(&mut self, context: &egui::Context, cx: &UiContext<'_, Self>) {
-        if let Some(request) = self.active_canvas().grade.original.request() {
+        if let Some(request) = self.active_canvas().original.request() {
             let Some(completion) = request.begin() else {
                 return;
             };
@@ -404,7 +404,7 @@ impl Editor {
             let Some(task) = cx.spawn(move |cx| async move {
                 let result = request.prepare(services, submissions).await;
                 cx.update(|editor| {
-                    let visible = completion.belongs_to(&editor.active_canvas().grade.original);
+                    let visible = completion.belongs_to(&editor.active_canvas().original);
                     if let Some(error) = completion.receive(result)
                         && visible
                     {
@@ -419,9 +419,9 @@ impl Editor {
                 }
                 return;
             };
-            self.active_canvas_mut().grade.original.task = Some(task);
+            self.active_canvas_mut().original.task = Some(task);
         }
-        let original = &self.active_canvas().grade.original;
+        let original = &self.active_canvas().original;
         if original.refining() || original.settled().is_none() && !original.failed() {
             context.request_repaint_after(std::time::Duration::from_millis(50));
         }

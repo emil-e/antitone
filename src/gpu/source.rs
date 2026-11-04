@@ -111,6 +111,8 @@ impl SourceGeometry {
 
 pub struct ProcessingSource {
     pub(crate) input: wgpu::Buffer,
+    // Weak calculation keys identify this immutable upload without owning its storage.
+    pub(crate) identity: std::sync::Arc<()>,
     pub(crate) pixels: u32,
     camera_to_ap1: DMat3,
     geometry: Option<SourceGeometry>,
@@ -200,6 +202,7 @@ impl ProcessingSource {
                 contents: bytes,
                 usage: wgpu::BufferUsages::STORAGE,
             }),
+            identity: std::sync::Arc::new(()),
             pixels: count,
             camera_to_ap1,
             geometry,

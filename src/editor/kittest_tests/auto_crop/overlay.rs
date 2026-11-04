@@ -106,8 +106,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                     .clone()
                     .unwrap()
             });
-            let revision =
-                h.read(|editor| editor.document.visit.canvas.grade.original.continuation());
+            let revision = h.read(|editor| editor.document.visit.canvas.original.continuation());
             workflow::enter_numeric(&mut h, "Margin", "1.25");
             wait_context(&mut h);
             h.read(|editor| assert_ne!(editor.auto_crop_outline(layout).unwrap(), outline));
@@ -133,7 +132,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             });
             h.read(|editor| {
                 assert_eq!(
-                    editor.document.visit.canvas.grade.original.continuation(),
+                    editor.document.visit.canvas.original.continuation(),
                     revision
                 )
             });

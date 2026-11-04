@@ -201,18 +201,10 @@ impl Document {
     }
 
     pub(super) fn image_recipe(&self, id: SourceId) -> Result<crate::image_recipe::ImageRecipe> {
-        let mut recipe = self.project.image_recipe(id)?;
-        recipe.neutral.reference = self.reference_exposure(self.project.source(id)?).cloned();
-        Ok(recipe)
-    }
-
-    pub(super) fn thumbnail_recipe(
-        &self,
-        id: SourceId,
-    ) -> Result<crate::image_recipe::ImageRecipe> {
-        let mut recipe = self.project.thumbnail_recipe(id)?;
-        recipe.neutral.reference = self.reference_exposure(self.project.source(id)?).cloned();
-        Ok(recipe)
+        let source = self.project.source(id)?;
+        self.project.capture_image(source, |recipe| {
+            recipe.neutral.reference = self.reference_exposure(source).cloned();
+        })
     }
 
     pub(super) fn exposure_origin(&self, id: SourceId) -> Option<PathBuf> {

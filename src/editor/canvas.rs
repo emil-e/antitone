@@ -471,11 +471,13 @@ impl Editor {
                     self.document.roll,
                     self.document.visit.adjustment_layer_settings,
                 )
-                .map(|mut recipe| {
+                .map(|recipe| {
+                    let recipe = Arc::new(recipe);
                     if bypass_look {
-                        recipe.luts = Default::default();
+                        PhotographRequest::BeforeLooks(recipe)
+                    } else {
+                        PhotographRequest::Recipe(recipe)
                     }
-                    PhotographRequest::Recipe(Arc::new(recipe))
                 });
             let captured = captured.and_then(|capture| {
                 let limits = self
@@ -497,7 +499,7 @@ impl Editor {
             }
         };
         let mut repairs = Default::default();
-        let recipe = if let PhotographRequest::Recipe(recipe) = &capture {
+        if let Some(recipe) = capture.recipe() {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust(signature, cx);
             }
@@ -505,11 +507,7 @@ impl Editor {
                 Ok(snapshot) => repairs = snapshot,
                 Err(error) => self.status = format!("Dust view unavailable: {error}"),
             }
-            Some(recipe.clone())
-        } else {
-            None
-        };
-        self.observe_grade(recipe);
+        }
         Some((capture, repairs))
     }
 

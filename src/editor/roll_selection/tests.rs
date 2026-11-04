@@ -286,16 +286,9 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
                     && editor.document.visit.pending_preview.is_none()
             );
             assert!(
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .settled()
-                    .is_none()
-                    && !editor.document.visit.canvas.grade.original.refining()
-                    && editor.document.visit.canvas.grade.original.wanted.is_none()
+                editor.document.visit.canvas.original.settled().is_none()
+                    && !editor.document.visit.canvas.original.refining()
+                    && editor.document.visit.canvas.original.wanted.is_none()
             );
             assert!(editor.document.roll_selection.ids.is_empty());
             assert_eq!(

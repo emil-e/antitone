@@ -192,7 +192,7 @@ fn close(actual: DVec3, expected: DVec3) {
 }
 
 #[test]
-fn inserting_one_upstream_operation_changes_independent_prefixes_and_complete_compositions() {
+fn original_endpoints_preserve_interpretation_and_order_post_grade_operations() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let context = renderer.evaluation();
     let area = crate::geometry::SourceRegion::from([21, 17, 4, 1]);
@@ -272,87 +272,38 @@ fn inserting_one_upstream_operation_changes_independent_prefixes_and_complete_co
     };
     let grade_gain = 0.5;
     let scale = Scale(DVec3::new(0.75, 1.25, 0.9));
-    let effect = PixelPipeline {
-        stages: vec![PixelStage::new(scale)],
+    let effects = PixelPipeline {
+        stages: vec![PixelStage::new(Square), PixelStage::new(scale)],
     };
-
-    for before in [Boundary::Native, Boundary::Roll] {
-        let mut steps = definition(&PixelPipeline::default());
-        let index = steps
-            .iter()
-            .position(|step| step.boundary == Some(before))
-            .unwrap();
-        steps.insert(
-            index,
-            Step {
-                boundary: None,
-                component: Component::Effects(effect.clone()),
-            },
+    let graph = assembly
+        .clone()
+        .photograph(codes.clone(), &effects)
+        .unwrap();
+    let prefix = assembly.neutral(codes).unwrap();
+    let native = Assembly::native(program, RollSettings::default())
+        .interpret(normalized)
+        .unwrap();
+    let actual = read(context, &queue, graph.processed);
+    let neutral = read(context, &queue, prefix);
+    let native = read(context, &queue, native);
+    let mut sensitivity: f64 = 0.;
+    for (index, input) in camera.into_iter().enumerate() {
+        let working = matrix * native_response(input);
+        let graded = working * grade_gain;
+        let expected = graded * graded * scale.0;
+        close(actual[index], expected);
+        close(neutral[index], working);
+        close(native[index], native_response(input));
+        sensitivity = sensitivity.max(
+            (expected - working * working * grade_gain * scale.0)
+                .abs()
+                .max_element(),
         );
-
-        let full = assembly
-            .clone()
-            .build(codes.clone(), Boundary::Codes, Boundary::Processed, &steps)
-            .unwrap();
-        let prefix = assembly
-            .clone()
-            .build(codes.clone(), Boundary::Codes, Boundary::Neutral, &steps)
-            .unwrap();
-        let native = Assembly::native(program, RollSettings::default())
-            .build(
-                normalized.clone(),
-                Boundary::Camera,
-                Boundary::Native,
-                &steps,
-            )
-            .unwrap();
-        let actual = read(context, &queue, full.at(Boundary::Processed));
-        let neutral = read(context, &queue, prefix.at(Boundary::Neutral));
-        let native = read(context, &queue, native.at(Boundary::Native));
-        let mut sensitivity: f64 = 0.;
-
-        for (index, input) in camera.into_iter().enumerate() {
-            let interpreted_input = if before == Boundary::Native {
-                input * scale.0
-            } else {
-                input
-            };
-            let working = matrix * native_response(interpreted_input);
-            let grade_input = if before == Boundary::Roll {
-                working * scale.0
-            } else {
-                working
-            };
-            let expected = grade_input * grade_gain;
-            close(actual[index], expected);
-            close(neutral[index], working);
-            close(native[index], native_response(interpreted_input));
-            sensitivity = sensitivity.max(
-                (expected - matrix * native_response(input) * grade_gain)
-                    .abs()
-                    .max_element(),
-            );
-        }
-        assert!(
-            sensitivity > 0.05,
-            "the fixture must detect an omitted operation"
-        );
-
-        if before == Boundary::Roll {
-            let filtered = Assembly::filtered(assembly.grading.as_ref().unwrap().clone())
-                .build(
-                    prefix.at(Boundary::Neutral),
-                    Boundary::Neutral,
-                    Boundary::Processed,
-                    &steps,
-                )
-                .unwrap();
-            let filtered = read(context, &queue, filtered.at(Boundary::Processed));
-            for (filtered, actual) in filtered.into_iter().zip(actual) {
-                close(filtered, actual);
-            }
-        }
     }
+    assert!(
+        sensitivity > 0.05,
+        "the fixture must detect squaring before the grade"
+    );
 }
 
 #[test]
@@ -386,47 +337,25 @@ fn filtered_output_keeps_upstream_components_and_delays_footprint_effects_until_
         stages: vec![PixelStage::new(FootprintScale)],
     };
     let upstream = DVec3::new(0.75, 1.25, 0.9);
-    let mut steps = definition(&effects);
-    let before_roll = steps
-        .iter()
-        .position(|step| step.boundary == Some(Boundary::Roll))
-        .unwrap();
-    steps.insert(
-        before_roll,
-        Step {
-            boundary: None,
-            component: Component::Effects(PixelPipeline {
-                stages: vec![PixelStage::new(Square), PixelStage::new(Scale(upstream))],
-            }),
-        },
-    );
-    let mut assembly = Assembly::filtered(grading);
+    let input = Square.compose(input).unwrap();
+    let input = Scale(upstream).compose(input).unwrap();
+    let assembly = Assembly::filtered(grading);
     let mut output = domain;
     output.meaning = Meaning::Graded;
     output.bounds = Some([0, 0, 2, 1].into());
     output.grid = Grid::axis_aligned([0.; 2], [2., 1.]);
-    assembly.effect_output = Some(EffectOutput {
-        domain: output,
-        offset: [0; 2],
-        scale: [2., 1.],
-    });
-    let graded = assembly
-        .clone()
-        .build(input.clone(), Boundary::Neutral, Boundary::Graded, &steps)
-        .unwrap()
-        .at(Boundary::Graded);
+    let (_, graded) = assembly.grade(input.clone()).unwrap();
     assert!(
         graded.domain().same_grid(domain),
-        "a prefix query must retain its declared native grid"
+        "grading retains its supplied native grid"
     );
     let prefix = read(renderer.evaluation(), &queue, graded);
     for (value, original) in prefix.into_iter().zip(values) {
         close(value, upstream * f64::from(original).powi(2) * 0.5);
     }
     let image = assembly
-        .build(input, Boundary::Neutral, Boundary::Processed, &steps)
-        .unwrap()
-        .at(Boundary::Processed);
+        .filtered_image(input, &effects, output, [0; 2], [2., 1.])
+        .unwrap();
     assert!(image.domain().same_grid(output));
     let actual = read(renderer.evaluation(), &queue, image);
     for (pair, actual) in values.as_chunks::<2>().0.iter().zip(actual) {
@@ -461,29 +390,13 @@ fn encoded_readouts_stop_at_the_requested_boundary_and_reject_unproven_scaling_c
         },
         values: vec![[0.25, 0.25, 0.25, 0.]],
     }));
-    let mut steps = definition(&PixelPipeline::default());
-    let index = steps
-        .iter()
-        .position(|step| step.boundary == Some(Boundary::Unrepaired))
-        .unwrap();
-    steps.insert(
-        index,
-        Step {
-            boundary: None,
-            component: Component::Effects(PixelPipeline {
-                stages: vec![PixelStage::new(Scale(DVec3::splat(0.5)))],
-            }),
-        },
-    );
-
-    assert!(
-        assembly
-            .clone()
-            .build(image.clone(), Boundary::Camera, Boundary::Native, &steps)
-            .is_ok()
-    );
+    let native = assembly.interpret(image).unwrap();
+    assert_eq!(native.domain().meaning, Meaning::NativePositive);
+    let effects = PixelPipeline {
+        stages: vec![PixelStage::new(Scale(DVec3::splat(0.5)))],
+    };
     assert!(matches!(
-        assembly.build(image, Boundary::Camera, Boundary::Unrepaired, &steps),
+        assembly.effects(native, &effects),
         Err(Error::InvalidParameter(
             "readout encoding cannot cross an added image operation"
         ))

@@ -53,7 +53,7 @@ impl AcquiredViewRaster {
         spec: SourceRequest,
         request: &crate::gpu::photograph::request::PhotographRequest,
     ) -> Result<(Arc<Self>, Arc<ProcessedView>), Error> {
-        let program = request.input_transform()?;
+        request.require_proxy(proxy)?;
         let spec = spec.capture(crate::gpu::source::identity::Identity::proxy(proxy))?;
         let mut frame = FrameRaster::full(Composition::new(
             spec.area,
@@ -61,10 +61,8 @@ impl AcquiredViewRaster {
             Default::default(),
         )?)?;
         frame.output = proxy.dimensions();
-        if !spec.repairs.0.is_empty()
-            || proxy.width.max(proxy.height) > crate::scan::CameraProxy::MAX_EDGE
+        if proxy.width.max(proxy.height) > crate::scan::CameraProxy::MAX_EDGE
             || proxy.pixels.len() as u64 != u64::from(proxy.width) * u64::from(proxy.height)
-            || !program.matches_proxy(proxy)?
             || spec.frame() != frame
         {
             return Err(Error::Gpu(
@@ -79,16 +77,15 @@ impl AcquiredViewRaster {
         let camera = ProcessingSource::new_continuous(
             device,
             &proxy.pixels,
-            program.matrix,
+            proxy.matrix,
             Some(SourceGeometry::new(
                 [spec.area.x, spec.area.y, spec.area.width, spec.area.height],
                 proxy.dimensions(),
             )?),
         )?;
-        let definition = request
-            .neutral_input(field, spec.repairs.clone(), proxy.matrix)?
-            .resident_view(&camera)?;
-        let (root, plan) = request.filtered(&device.limits(), &spec, definition.clone())?;
+        let graph = request.sampled_graph(&device.limits(), &camera, field, spec)?;
+        let spec = graph.request;
+        let definition = graph.baseline;
         let geometry = camera.geometry().unwrap();
         let native = crate::gpu::pixel_pipeline::Prepared::from_composition(
             device,
@@ -108,7 +105,7 @@ impl AcquiredViewRaster {
             definition,
             renderer,
         });
-        let processed = ProcessedView::record(device, source.clone(), root, plan)?;
+        let processed = ProcessedView::record(device, source.clone(), graph.processed, graph.plan)?;
         Self::submit_preview(device, queue, submissions, source, native, processed)
     }
 
@@ -123,10 +120,12 @@ impl AcquiredViewRaster {
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
     ) -> Result<(Arc<Self>, Arc<ProcessedView>), Error> {
-        let (spec, definition) = Self::proxy_definition(&source, request, field, spec)?;
-        let (root, plan) = request.filtered(&device.limits(), &spec, definition.clone())?;
-        let (acquired, native) = Self::record_processing(device, renderer, spec, definition)?;
-        let processed = ProcessedView::record(device, acquired.clone(), root, plan)?;
+        let spec = Self::proxy_request(&source, spec)?;
+        let graph = request.sampled_graph(&device.limits(), &source, field, spec)?;
+        let (acquired, native) =
+            Self::record_processing(device, renderer, graph.request, graph.baseline)?;
+        let processed =
+            ProcessedView::record(device, acquired.clone(), graph.processed, graph.plan)?;
         Self::submit_preview(device, queue, submissions, acquired, native, processed)
     }
 
@@ -141,12 +140,10 @@ impl AcquiredViewRaster {
         input: &crate::gpu::test_inputs::AuthoredPhotograph,
         spec: SourceRequest,
     ) -> Result<Arc<Self>, Error> {
-        let (spec, definition) = Self::proxy_definition(
-            &source,
-            &crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone()),
-            input.field.clone(),
-            spec,
-        )?;
+        let spec = Self::proxy_request(&source, spec)?;
+        let (spec, definition) =
+            crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone())
+                .sampled_prefix(&source, input.field.clone(), spec)?;
         let (acquired, native) = Self::record_processing(device, renderer, spec, definition)?;
         let mut encoder = device.create_command_encoder(&Default::default());
         native.encode_from(device, &mut encoder, &source.input, &acquired.pixels)?;
@@ -158,17 +155,10 @@ impl AcquiredViewRaster {
         Ok(acquired)
     }
 
-    fn proxy_definition(
+    fn proxy_request(
         source: &Arc<ProcessingSource>,
-        request: &crate::gpu::photograph::request::PhotographRequest,
-        field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
-    ) -> Result<(SourceRequest, Arc<crate::gpu::evaluation::ImageNode>), Error> {
-        if !spec.repairs.0.is_empty() {
-            return Err(Error::Gpu(
-                "repaired previews require original-coordinate acquisition".into(),
-            ));
-        }
+    ) -> Result<SourceRequest, Error> {
         let spec = if spec.identity.captured() {
             spec
         } else {
@@ -176,7 +166,6 @@ impl AcquiredViewRaster {
                 Arc::downgrade(source),
             ))?
         };
-        let neutral = request.neutral_input(field, spec.repairs.clone(), source.camera_matrix())?;
         let geometry = source
             .geometry()
             .ok_or_else(|| Error::Gpu("preview source has no geometry".into()))?;
@@ -187,22 +176,10 @@ impl AcquiredViewRaster {
             ));
         }
         let area = spec.area;
-        let spec = spec.with_sampling(crate::acquisition::Sampling::CameraProxy {
+        spec.with_sampling(crate::acquisition::Sampling::CameraProxy {
             region: area,
             size: geometry.size(),
-        })?;
-        let input = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
-        let root = neutral.resident(source, input)?;
-        let output = crate::gpu::evaluation::Domain {
-            bounds: None,
-            grid: crate::gpu::evaluation::Grid {
-                coverage: 8,
-                ..crate::gpu::evaluation::Grid::from_frame(spec.plan.output())
-            },
-            meaning: root.domain().meaning,
-        };
-        let root = crate::gpu::evaluation::reconstruct(root, output)?;
-        Ok((spec, root))
+        })
     }
 
     #[allow(clippy::too_many_arguments)]

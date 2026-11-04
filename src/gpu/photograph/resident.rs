@@ -62,6 +62,7 @@ impl PhotographGraph {
             None,
             ResidentCamera {
                 domain,
+                identity: Arc::downgrade(&source.identity),
                 pixels: source.input.clone(),
                 continuous: source.continuous,
             },
@@ -117,15 +118,15 @@ impl PhotographGraph {
         field: Option<Arc<GpuFlatField>>,
         view: InspectionView,
     ) -> Result<Arc<ImageNode>, Error> {
-        Assembly::captured(Captured::new(
+        CameraGraph::new(
+            camera,
             CameraInput {
                 matrix: source.camera_matrix(),
                 field,
                 continuous: source.continuous,
                 mapping: Mapping::Resident(source.geometry()),
             },
-            Interpretation::Packed(view.parameters()?),
-        )?)
-        .prefix(camera, Boundary::Codes, Boundary::Unrepaired)
+        )?
+        .inspection(view)
     }
 }

@@ -107,6 +107,7 @@ impl CameraFixture {
             None,
             ResidentCamera {
                 domain,
+                identity: Arc::downgrade(&source.identity),
                 pixels: source.input.clone(),
                 continuous: source.continuous,
             },
@@ -121,9 +122,7 @@ impl CameraFixture {
             Interpretation::Packed(parameters),
         )
         .unwrap();
-        let image = Assembly::captured(captured)
-            .prefix(camera, Boundary::Codes, Boundary::Neutral)
-            .unwrap();
+        let image = Assembly::captured(captured).neutral(camera).unwrap();
         self.record(device, encoder, source, output, image).unwrap();
     }
 

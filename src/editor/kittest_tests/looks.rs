@@ -412,7 +412,7 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos_wit
             harness.step();
             paint_until(&mut harness, |editor| {
                 assert!(
-                    !editor.document.visit.canvas.grade.original.failed(),
+                    !editor.document.visit.canvas.original.failed(),
                     "{}",
                     editor.status
                 );
@@ -425,7 +425,6 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos_wit
                         .document
                         .visit
                         .canvas
-                        .grade
                         .original
                         .settled()
                         .as_ref()
@@ -1082,7 +1081,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         harness.step();
         paint_until(&mut harness, |editor| {
             assert!(
-                !editor.document.visit.canvas.grade.original.failed(),
+                !editor.document.visit.canvas.original.failed(),
                 "{}",
                 editor.status
             );
@@ -1090,19 +1089,11 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
                 .document
                 .visit
                 .canvas
-                .grade
                 .original
                 .wanted
                 .as_ref()
                 .is_some_and(|demand| demand.capture.look_id().is_none())
-                && editor
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .settled()
-                    .is_some()
+                && editor.document.visit.canvas.original.settled().is_some()
         });
         harness.read(|editor| assert!(editor.look_rendering_error().is_none()));
         harness.read(|editor| {

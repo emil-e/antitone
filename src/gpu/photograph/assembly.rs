@@ -11,54 +11,6 @@ use crate::{gpu::interpretation::InputTransform, pixel_pipeline::PixelPipeline};
 #[cfg(all(test, feature = "editor"))]
 mod tests;
 
-pub enum Component {
-    Camera,
-    Interpretation,
-    Working,
-    Repairs,
-    Roll,
-    Layers,
-    Effects(PixelPipeline),
-}
-
-pub struct Step {
-    pub boundary: Option<Boundary>,
-    pub component: Component,
-}
-
-pub fn definition(stages: &PixelPipeline) -> Vec<Step> {
-    vec![
-        Step {
-            boundary: Some(Boundary::Camera),
-            component: Component::Camera,
-        },
-        Step {
-            boundary: Some(Boundary::Native),
-            component: Component::Interpretation,
-        },
-        Step {
-            boundary: Some(Boundary::Unrepaired),
-            component: Component::Working,
-        },
-        Step {
-            boundary: Some(Boundary::Neutral),
-            component: Component::Repairs,
-        },
-        Step {
-            boundary: Some(Boundary::Roll),
-            component: Component::Roll,
-        },
-        Step {
-            boundary: Some(Boundary::Graded),
-            component: Component::Layers,
-        },
-        Step {
-            boundary: Some(Boundary::Processed),
-            component: Component::Effects(stages.clone()),
-        },
-    ]
-}
-
 #[derive(Clone)]
 pub struct Assembly {
     pub capture: Option<Arc<Captured>>,
@@ -66,12 +18,12 @@ pub struct Assembly {
     pub interpretation: Interpretation,
     pub encoded: bool,
     pub repairs: crate::gpu::repairs::Snapshot,
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     effect_output: Option<EffectOutput>,
 }
 
 /// Explicit view-grid transition inside the canonical post-grade effect component.
-#[cfg(feature = "editor")]
+#[cfg(all(test, feature = "editor"))]
 #[derive(Clone, Copy)]
 struct EffectOutput {
     domain: Domain,
@@ -79,7 +31,7 @@ struct EffectOutput {
     scale: [f64; 2],
 }
 
-#[cfg(feature = "editor")]
+#[cfg(all(test, feature = "editor"))]
 impl EffectOutput {
     fn compose(
         self,
@@ -112,17 +64,11 @@ impl EffectOutput {
     }
 }
 
-struct Images(Vec<(Boundary, Arc<ImageNode>)>);
-
-impl Images {
-    fn at(&self, boundary: Boundary) -> Arc<ImageNode> {
-        self.0
-            .iter()
-            .find(|(at, _)| *at == boundary)
-            .unwrap()
-            .1
-            .clone()
-    }
+pub(crate) struct SourceImages {
+    pub codes: Arc<ImageNode>,
+    pub camera: Arc<ImageNode>,
+    pub camera_positive: Arc<ImageNode>,
+    pub unrepaired: Arc<ImageNode>,
 }
 
 impl Assembly {
@@ -162,7 +108,7 @@ impl Assembly {
             interpretation,
             encoded: false,
             repairs: Default::default(),
-            #[cfg(feature = "editor")]
+            #[cfg(all(test, feature = "editor"))]
             effect_output: None,
         }
     }
@@ -175,6 +121,7 @@ impl Assembly {
             interpretation: Interpretation::Program(program, encoding),
             encoded: encoding.exposure != 0.,
             repairs: Default::default(),
+            #[cfg(test)]
             effect_output: None,
         }
     }
@@ -187,6 +134,7 @@ impl Assembly {
             interpretation: Interpretation::Unavailable,
             encoded: false,
             repairs: Default::default(),
+            #[cfg(test)]
             effect_output: None,
         }
     }
@@ -208,40 +156,28 @@ impl Assembly {
         None
     }
 
-    pub fn prefix(
-        self,
-        source: Arc<ImageNode>,
-        from: Boundary,
-        to: Boundary,
-    ) -> Result<Arc<ImageNode>, Error> {
-        Ok(self
-            .build(source, from, to, &definition(&PixelPipeline::default()))?
-            .at(to))
-    }
-
     pub fn photograph(
         self,
         source: Arc<ImageNode>,
         stages: &PixelPipeline,
     ) -> Result<PhotographGraph, Error> {
-        let images = self.build(
-            source.clone(),
-            Boundary::Codes,
-            Boundary::Processed,
-            &definition(stages),
-        )?;
-
+        let images = self.source_images(source)?;
+        let neutral = self.repair(images.unrepaired.clone())?;
+        let (roll, graded) = self.grade(neutral.clone())?;
+        let processed = self.effects(graded.clone(), stages)?;
         Ok(PhotographGraph {
-            codes: source,
-            unrepaired: images.at(Boundary::Unrepaired),
-            neutral: images.at(Boundary::Neutral),
-            roll: images.at(Boundary::Roll),
-            graded: images.at(Boundary::Graded),
-            processed: images.at(Boundary::Processed),
+            codes: images.codes,
+            camera: images.camera,
+            camera_positive: images.camera_positive,
+            unrepaired: images.unrepaired,
+            neutral,
+            roll,
+            graded,
+            processed,
         })
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub fn preview(
         mut self,
         source: Arc<ImageNode>,
@@ -276,14 +212,10 @@ impl Assembly {
         } else {
             layout.plan
         };
-        let native = self.clone().build(
-            source.clone(),
-            Boundary::Codes,
-            Boundary::Neutral,
-            &definition(&PixelPipeline::default()),
-        )?;
+        let native = self.source_images(source.clone())?;
+        let repaired = self.repair(native.unrepaired.clone())?;
         let neutral = reconstruct(
-            native.at(Boundary::Neutral),
+            repaired,
             Domain {
                 bounds: None,
                 grid: Grid {
@@ -309,26 +241,24 @@ impl Assembly {
                 f64::from(plan.output().output[i]) / f64::from(presentation.output[i])
             }),
         });
-        let images = self.build(
-            neutral.clone(),
-            Boundary::Neutral,
-            Boundary::Processed,
-            &definition(stages),
-        )?;
+        let (roll, graded) = self.grade(neutral.clone())?;
+        let processed = self.effects(graded.clone(), stages)?;
         Ok((
             PhotographGraph {
                 codes: source,
-                unrepaired: native.at(Boundary::Unrepaired),
+                camera: native.camera,
+                camera_positive: native.camera_positive,
+                unrepaired: native.unrepaired,
                 neutral,
-                roll: images.at(Boundary::Roll),
-                graded: images.at(Boundary::Graded),
-                processed: images.at(Boundary::Processed),
+                roll,
+                graded,
+                processed,
             },
             plan,
         ))
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub fn filtered_image(
         mut self,
         source: Arc<ImageNode>,
@@ -342,17 +272,11 @@ impl Assembly {
             offset,
             scale,
         });
-        Ok(self
-            .build(
-                source,
-                Boundary::Neutral,
-                Boundary::Processed,
-                &definition(stages),
-            )?
-            .at(Boundary::Processed))
+        let (_, graded) = self.grade(source)?;
+        self.effects(graded, stages)
     }
 
-    fn camera_image(&self, source: Arc<ImageNode>) -> Arc<ImageNode> {
+    pub fn camera(&self, source: Arc<ImageNode>) -> Arc<ImageNode> {
         ImageNode::new(
             Domain {
                 meaning: Meaning::Camera,
@@ -360,121 +284,110 @@ impl Assembly {
             },
             Some(source),
             Camera {
-                captured: self.capture.as_ref().unwrap().clone(),
+                captured: self.capture.as_ref().expect("camera metadata").clone(),
             },
         )
     }
 
-    fn build(
-        self,
-        source: Arc<ImageNode>,
-        from: Boundary,
-        to: Boundary,
-        steps: &[Step],
-    ) -> Result<Images, Error> {
-        let mut images = Images(vec![(from, source.clone())]);
-
-        if from == to {
-            return Ok(images);
-        }
-
-        let mut image = source.clone();
-        let mut started = from == Boundary::Codes;
-        let mut interpreted = from == Boundary::Native;
-
-        for step in steps {
-            if !started {
-                started = step.boundary == Some(from);
-                continue;
-            }
-
-            // Encoded readouts cannot cross an arbitrary nonlinear image operation.
-            if self.encoded
-                && interpreted
-                && matches!(&step.component, Component::Effects(effects) if !effects.is_empty())
-            {
-                return Err(Error::InvalidParameter(
-                    "readout encoding cannot cross an added image operation",
-                ));
-            }
-
-            image = match &step.component {
-                Component::Camera => self.camera_image(image),
-                Component::Interpretation => ImageNode::new(
-                    Domain {
-                        meaning: Meaning::NativePositive,
-                        ..image.domain()
-                    },
-                    Some(image),
-                    Native::new(self.interpretation)?,
-                ),
-                Component::Working => {
-                    let capture = self.capture.as_ref().ok_or(Error::InvalidParameter(
-                        "working conversion lacks captured camera metadata",
-                    ))?;
-                    ImageNode::new(
-                        Domain {
-                            meaning: match self.interpretation {
-                                Interpretation::Packed(parameters) if !parameters.graded() => {
-                                    Meaning::Inspection
-                                }
-                                _ => Meaning::Neutral,
-                            },
-                            ..image.domain()
-                        },
-                        Some(image),
-                        Working::new(capture.interpretation, capture.matrix)?,
-                    )
-                }
-                Component::Repairs => {
-                    if !self.repairs.0.is_empty() {
-                        let capture = self.capture.as_ref().unwrap();
-                        image = Repairs::image(
-                            image,
-                            self.repairs.clone(),
-                            capture.code.clone(),
-                            capture.mapping,
-                        );
-                    }
-                    image
-                }
-                Component::Roll => match &self.grading {
-                    Some(grading) => grading.roll(image)?,
-                    None => image,
-                },
-                Component::Layers => match &self.grading {
-                    Some(grading) => grading.layers(image)?,
-                    None => image,
-                },
-                Component::Effects(effects) => {
-                    #[cfg(feature = "editor")]
-                    if let Some(output) = self
-                        .effect_output
-                        .filter(|_| step.boundary == Some(Boundary::Processed))
-                    {
-                        image = output.compose(effects, image)?;
-                    } else {
-                        image = effects.compose(image)?;
-                    }
-                    #[cfg(not(feature = "editor"))]
-                    {
-                        image = effects.compose(image)?;
-                    }
-                    image
-                }
-            };
-
-            if let Some(boundary) = step.boundary {
-                interpreted |= boundary == Boundary::Native;
-                images.0.push((boundary, image.clone()));
-                if boundary == to {
-                    return Ok(images);
-                }
-            }
-        }
-
-        Err(Error::InvalidParameter(
-            "photographic endpoint is outside the supplied composition",
+    pub fn interpret(&self, camera: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+        Ok(ImageNode::new(
+            Domain {
+                meaning: Meaning::NativePositive,
+                ..camera.domain()
+            },
+            Some(camera),
+            Native::new(self.interpretation)?,
         ))
+    }
+
+    fn working(&self, native: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+        let capture = self.capture.as_ref().ok_or(Error::InvalidParameter(
+            "working conversion lacks captured camera metadata",
+        ))?;
+        Ok(ImageNode::new(
+            Domain {
+                meaning: match self.interpretation {
+                    Interpretation::Packed(parameters) if !parameters.graded() => {
+                        Meaning::Inspection
+                    }
+                    _ => Meaning::Neutral,
+                },
+                ..native.domain()
+            },
+            Some(native),
+            Working::new(capture.interpretation, capture.matrix)?,
+        ))
+    }
+
+    pub fn source_images(&self, codes: Arc<ImageNode>) -> Result<SourceImages, Error> {
+        let camera = self.camera(codes.clone());
+        self.interpret_camera(codes, camera)
+    }
+
+    pub fn interpret_camera(
+        &self,
+        codes: Arc<ImageNode>,
+        camera: Arc<ImageNode>,
+    ) -> Result<SourceImages, Error> {
+        let camera_positive = self.interpret(camera.clone())?;
+        let unrepaired = self.working(camera_positive.clone())?;
+        Ok(SourceImages {
+            codes,
+            camera,
+            camera_positive,
+            unrepaired,
+        })
+    }
+
+    pub fn unrepaired(&self, codes: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+        Ok(self.source_images(codes)?.unrepaired)
+    }
+
+    pub fn repair(&self, image: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+        if self.repairs.0.is_empty() {
+            return Ok(image);
+        }
+        let capture = self.capture.as_ref().ok_or(Error::InvalidParameter(
+            "repair conversion lacks captured camera metadata",
+        ))?;
+        Ok(Repairs::image(
+            image,
+            self.repairs.clone(),
+            capture.code.clone(),
+            capture.mapping,
+        ))
+    }
+
+    pub fn neutral(&self, codes: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
+        self.repair(self.unrepaired(codes)?)
+    }
+
+    pub fn grade(
+        &self,
+        neutral: Arc<ImageNode>,
+    ) -> Result<(Arc<ImageNode>, Arc<ImageNode>), Error> {
+        let Some(grading) = &self.grading else {
+            return Ok((neutral.clone(), neutral));
+        };
+        let roll = grading.roll(neutral)?;
+        let graded = grading.layers(roll.clone())?;
+        Ok((roll, graded))
+    }
+
+    fn effects(
+        &self,
+        image: Arc<ImageNode>,
+        effects: &PixelPipeline,
+    ) -> Result<Arc<ImageNode>, Error> {
+        if self.encoded && !effects.is_empty() {
+            return Err(Error::InvalidParameter(
+                "readout encoding cannot cross an added image operation",
+            ));
+        }
+        #[cfg(all(test, feature = "editor"))]
+        if let Some(output) = self.effect_output {
+            return output.compose(effects, image);
+        }
+        effects.compose(image)
     }
 }

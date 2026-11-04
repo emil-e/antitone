@@ -505,6 +505,17 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
     );
     let pixels = e.source_context().unwrap();
     let device = e.document.visit.working_view.device().unwrap().clone();
+    let edited = Arc::new(
+        e.view_recipe(
+            e.input(),
+            RollSettings {
+                exposure: 2.,
+                ..e.document.roll
+            },
+            e.document.visit.adjustment_layer_settings,
+        )
+        .unwrap(),
+    );
     let input = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
     let mut frame = FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
@@ -528,9 +539,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
             };
             assert!(Arc::ptr_eq(captured, &recipe));
             assert_eq!(ready.processed.len(), 2);
-            let mut different = (*recipe).clone();
-            different.roll.exposure = 2.;
-            let changed = AuthoredPhotograph::from_recipe(&device.limits(), &different).unwrap();
+            let changed = AuthoredPhotograph::from_recipe(&device.limits(), &edited).unwrap();
             for value in &ready.processed {
                 assert!(matches!(
                     value.pixels,
@@ -573,9 +582,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         });
         let scope = context.materializations();
         scope.set_retention_enabled(false);
-        let mut edited = (*recipe).clone();
-        edited.roll.exposure = 2.;
-        wanted.capture = PhotographRequest::Recipe(Arc::new(edited));
+        wanted.capture = PhotographRequest::Recipe(edited.clone());
         let input = wanted.processing(&device.limits()).unwrap();
         app.enter(|e, cx| e.request_working(wanted, cx));
         let definition = app.read(|e| {
@@ -705,13 +712,12 @@ fn resolved_repair_arguments_require_new_values_even_when_the_recipe_is_unchange
         )
         .unwrap(),
     );
-    assert_eq!(recipe.repairs().len(), 1);
+    assert_eq!(recipe.repairs.len(), 1);
     let pixels = e.source_context().unwrap();
     let scan = pixels.scan().unwrap();
     let source =
         crate::scan::ImageSource::new(&scan, recipe.neutral.processing_input().unwrap()).unwrap();
-    let evaluated =
-        Arc::new(crate::repair_source::evaluate(&source, &recipe.repairs()[0]).unwrap());
+    let evaluated = Arc::new(crate::repair_source::evaluate(&source, &recipe.repairs[0]).unwrap());
     let device = e.document.visit.working_view.device().unwrap();
     let resolved = crate::gpu::repairs::Snapshot(vec![
         crate::gpu::repairs::Patch::new(device, evaluated).unwrap(),

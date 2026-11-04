@@ -475,24 +475,18 @@ impl RenderedView {
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
     ) -> Result<(Arc<ViewSource>, Arc<Self>), Error> {
-        let program = capture.input_transform()?;
-        let native = crate::gpu::photograph::NeutralInput {
-            interpretation: crate::gpu::interpretation::SourceInterpretation::Photograph(program),
-            field,
-            repairs: source.spec.repairs.clone(),
-        }
-        .recompose_resident(&source.definition)?;
+        let graph =
+            capture.retained_graph(&device.limits(), &source.definition, field, &source.spec)?;
         let prior = previous
             .and_then(|view| view.graded.as_ref())
             .map(|graded| &graded.data);
-        let (root, plan) = capture.filtered(&device.limits(), &source.spec, native.clone())?;
         let (data, processed) = source.acquired().process_from_retained(
             device,
             queue,
             submissions,
-            native,
-            root,
-            plan,
+            graph.baseline,
+            graph.processed,
+            graph.plan,
             prior,
         )?;
         let source = if Arc::ptr_eq(&data, &source.data) {

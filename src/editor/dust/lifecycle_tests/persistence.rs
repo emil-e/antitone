@@ -117,7 +117,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
             let evaluation = e.document.dust.cached[&(source, RepairId(1))]
                 .evaluated
                 .clone();
-            let reference_revision = e.document.visit.canvas.grade.original.continuation();
+            let reference_revision = e.document.visit.canvas.original.continuation();
             e.begin_dust_mask(Some(RepairId(1)));
             assert_eq!(
                 e.effective_dust_repair(source, RepairId(1)).unwrap(),
@@ -127,7 +127,7 @@ fn unchanged_edits_preserve_reopened_mask_margins_and_compatible_evaluations() {
 
             assert!(!e.document.dirty());
             assert_eq!(
-                e.document.visit.canvas.grade.original.continuation(),
+                e.document.visit.canvas.original.continuation(),
                 reference_revision
             );
             assert_eq!(

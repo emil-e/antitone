@@ -696,7 +696,7 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
         });
         app.enter(|editor, cx| {
             editor.document.visit.working_view.clear();
-            editor.document.visit.canvas.grade.original.last_edit =
+            editor.document.visit.canvas.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             editor.advance_thumbnail_demand(cx);
         });
@@ -836,7 +836,7 @@ fn repair_instructions_do_not_block_graded_navigation_cards() {
         .development
         .active_area
         .into();
-    // Navigation omits repairs; the instruction remains authoritative.
+    let clean_key = tests::key(&document, id);
     let support = SupportMask::new([area.x + 20, area.y + 20], [8, 8], vec![true; 64]).unwrap();
     let offset = nearest_offset(&support, area).unwrap();
     document
@@ -847,11 +847,18 @@ fn repair_instructions_do_not_block_graded_navigation_cards() {
         .insert(support, RepairOrigin::Manual, offset)
         .unwrap();
     let key = tests::key(&document, id);
+    assert_eq!(
+        key.recipe.as_ref().unwrap().as_ref().unwrap().repairs.len(),
+        1,
+        "navigation captures complete intent even though proxy quality omits repair execution"
+    );
+    assert_ne!(key, clean_key, "a different intent requests a fresh card");
+    assert!(!clean_key.current_recipe(&document));
     let card = complete(&mut thumbnails, &document, key.clone()).unwrap();
     assert!(card.positive.is_some());
     assert!(key.current_recipe(&document));
     assert_eq!(
-        document.project.image_recipe(id).unwrap().repairs().len(),
+        document.project.image_recipe(id).unwrap().repairs.len(),
         1,
         "navigation omission must not remove authoritative repair intent"
     );

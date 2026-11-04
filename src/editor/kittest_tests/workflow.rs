@@ -183,11 +183,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                 .is_some_and(|demand| demand.target == e.document.target)
                 && original.settled().is_some();
         }
-        assert!(
-            !e.document.visit.canvas.grade.original.failed(),
-            "{}",
-            e.status
-        );
+        assert!(!e.document.visit.canvas.original.failed(), "{}", e.status);
         if e.document.visit.working_view.revision().is_some() {
             let expected = if e.document.source {
                 e.source_parameters(e.source_exposure)
@@ -215,12 +211,11 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
                     })
         } else {
             e.active_canvas()
-                .grade
                 .original
                 .wanted
                 .as_ref()
                 .is_some_and(|demand| demand.target == e.document.target)
-                && e.active_canvas().grade.original.settled().is_some()
+                && e.active_canvas().original.settled().is_some()
         }
     });
 }
@@ -323,23 +318,11 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
                         }
                     }
                 }
+                harness
+                    .read(|editor| assert!(editor.document.visit.canvas.original.wanted.is_none()));
+                harness.read(|editor| assert!(!editor.document.visit.canvas.original.refining()));
                 harness.read(|editor| {
-                    assert!(editor.document.visit.canvas.grade.original.wanted.is_none())
-                });
-                harness.read(|editor| {
-                    assert!(!editor.document.visit.canvas.grade.original.refining())
-                });
-                harness.read(|editor| {
-                    assert!(
-                        editor
-                            .document
-                            .visit
-                            .canvas
-                            .grade
-                            .original
-                            .settled()
-                            .is_none()
-                    )
+                    assert!(editor.document.visit.canvas.original.settled().is_none())
                 });
                 let mut expected = project.clone();
                 expected.output.tiff = if target == OutputTarget::Srgb {
@@ -929,7 +912,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
         wait_settled(&mut harness);
         harness.read(|editor| {
             assert!(
-                editor.document.visit.canvas.grade.original.wanted.is_none(),
+                editor.document.visit.canvas.original.wanted.is_none(),
                 "normal grading does not prepare hidden original work"
             )
         });
@@ -956,7 +939,6 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
                     .document
                     .visit
                     .canvas
-                    .grade
                     .original
                     .settled()
                     .as_ref()
@@ -1027,18 +1009,7 @@ fn physical_view_global_widgets_keep_detail_through_edits_idle_targets_and_refer
         });
         harness.step();
         harness.render().unwrap();
-        harness.read(|editor| {
-            assert!(
-                editor
-                    .document
-                    .visit
-                    .canvas
-                    .grade
-                    .original
-                    .settled()
-                    .is_none()
-            )
-        });
+        harness.read(|editor| assert!(editor.document.visit.canvas.original.settled().is_none()));
         harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
         harness.read(|editor| {
             assert!(

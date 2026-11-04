@@ -92,10 +92,10 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
                 editor.document.visit.adjustment_layer_settings,
             )
             .unwrap();
-        let revision = editor.document.visit.canvas.grade.original.continuation();
+        let revision = editor.document.visit.canvas.original.continuation();
         editor.apply_adjustment_layer_action(Action::Rename(order[0], "Sky".into()));
         assert_eq!(
-            editor.document.visit.canvas.grade.original.continuation(),
+            editor.document.visit.canvas.original.continuation(),
             revision,
             "metadata must not invalidate processing"
         );
@@ -132,7 +132,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
                 .enabled
         );
         let before = editor.document.state.project.clone();
-        let revision = editor.document.visit.canvas.grade.original.continuation();
+        let revision = editor.document.visit.canvas.original.continuation();
         assert!(
             editor
                 .edit_adjustment_layers(|layers| {
@@ -143,7 +143,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
         );
         assert_eq!(editor.document.state.project, before);
         assert_eq!(
-            editor.document.visit.canvas.grade.original.continuation(),
+            editor.document.visit.canvas.original.continuation(),
             revision
         );
         editor.apply_adjustment_layer_action(Action::Rename(order[0], "  ".into()));
@@ -284,7 +284,7 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
                 editor.id += 1;
             }
             let before = editor.document.state.project.clone();
-            let revision = editor.document.visit.canvas.grade.original.continuation();
+            let revision = editor.document.visit.canvas.original.continuation();
             let input = editor
                 .positive_processing(
                     editor.document.input,
@@ -295,7 +295,7 @@ fn stale_drops_reject_changed_records_and_source_generations_atomically() {
             assert!(editor.reorder_adjustment(drag, 2).is_err());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(
-                editor.document.visit.canvas.grade.original.continuation(),
+                editor.document.visit.canvas.original.continuation(),
                 revision
             );
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(id));
@@ -457,7 +457,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
             )
             .unwrap();
         let before = editor.document.state.project.clone();
-        let revision = editor.document.visit.canvas.grade.original.continuation();
+        let revision = editor.document.visit.canvas.original.continuation();
         let viewport = editor.document.visit.canvas.viewport;
         let result = editor.edit_adjustment_layers(|layers| {
             let mut adjustment = layers.layers[0].adjustment;
@@ -472,7 +472,7 @@ fn unsupported_local_edit_preserves_grade_view_revision_and_allocator() {
         assert!(result.is_err());
         assert_eq!(editor.document.state.project, before);
         assert_eq!(
-            editor.document.visit.canvas.grade.original.continuation(),
+            editor.document.visit.canvas.original.continuation(),
             revision
         );
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
@@ -555,7 +555,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
                 )
                 .unwrap_or_else(|error| panic!("accepted fixture reorder={reorder}: {error}"));
             let before = editor.document.state.project.clone();
-            let revision = editor.document.visit.canvas.grade.original.continuation();
+            let revision = editor.document.visit.canvas.original.continuation();
             let viewport = editor.document.visit.canvas.viewport;
             editor.apply_adjustment_layer_action(if reorder {
                 Action::Reorder(editor.order_drag(subject).unwrap(), 0)
@@ -570,7 +570,7 @@ fn unsupported_reorder_and_reenable_preserve_selection_allocator_grade_and_view(
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(subject));
             assert_eq!(
-                editor.document.visit.canvas.grade.original.continuation(),
+                editor.document.visit.canvas.original.continuation(),
                 revision
             );
             assert_eq!(editor.document.visit.canvas.viewport, viewport);

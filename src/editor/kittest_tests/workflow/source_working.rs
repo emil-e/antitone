@@ -652,7 +652,7 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
                 ));
             });
             harness.read(|editor| assert!(!editor.document.visit.working_view.reference_ready()));
-            harness.read(|editor| assert!(!editor.document.visit.canvas.grade.original.refining()));
+            harness.read(|editor| assert!(!editor.document.visit.canvas.original.refining()));
             harness.read(|editor| {
                 assert_eq!(
                     editor.document.state.project, project,

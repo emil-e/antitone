@@ -319,7 +319,9 @@ impl Worker {
             "thumbnail"
         );
         let mut key = job.key.clone();
-        if let Ok(Some(recipe)) = &mut key.recipe {
+        if let Ok(Some(recipe)) = &mut key.recipe
+            && recipe.neutral.reference.as_ref() != job.reference.get()
+        {
             Arc::make_mut(recipe).neutral.reference = job.reference.get().cloned();
         }
         Completion {

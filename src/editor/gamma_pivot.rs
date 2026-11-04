@@ -78,7 +78,8 @@ impl Editor {
                 self.document.project.source(source)?,
                 self.document.visit.adjustment_layer_settings,
             )?
-            .neutral)
+            .neutral
+            .clone())
     }
 
     fn pivot_compatible(&self, anchor: &Anchor) -> bool {

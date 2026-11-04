@@ -195,19 +195,24 @@ impl Editor {
         let input = input.into();
         let mut candidate = source.clone();
         self.overlay_adjustment_layer_settings(&mut candidate, photo);
-        let mut recipe = self
-            .document
-            .project
-            .image_recipe_for_source(&candidate, &input, roll)?;
-        recipe.neutral.reference = self.document.exposure_value(source);
-        recipe.grain = self.document.grain;
-        recipe.halation = self.document.halation;
-        recipe.neutral.correction = self
-            .document
-            .correction
-            .as_ref()
-            .map(|correction| correction.settings.map.clone());
-        Ok(recipe)
+        self.document.project.capture_image(&candidate, |recipe| {
+            recipe.neutral.input = input;
+            recipe.roll = roll;
+            recipe.neutral.reference = self.document.exposure_value(source);
+            recipe.grain = self.document.grain;
+            recipe.halation = self.document.halation;
+            if let Some(repairs) = self.dust_recipe_repairs(&candidate) {
+                recipe.repairs = repairs
+                    .into_iter()
+                    .filter(|repair| repair.enabled)
+                    .collect();
+            }
+            recipe.neutral.correction = self
+                .document
+                .correction
+                .as_ref()
+                .map(|correction| correction.settings.map.clone());
+        })
     }
 
     #[cfg(test)]
@@ -308,9 +313,12 @@ pub(super) fn image_paint(
 ) -> Result<ImagePaint, Error> {
     use crate::gpu::photograph::request::PhotographRequest;
     let (root, luts) = match capture {
-        Some(PhotographRequest::Recipe(recipe)) => (
-            Some(image.recipe_calculation(&recipe, field.clone())?),
-            recipe.luts.clone(),
+        Some(capture @ (PhotographRequest::Recipe(_) | PhotographRequest::BeforeLooks(_))) => (
+            Some(image.recipe_calculation(
+                capture.recipe().expect("photographic request"),
+                field.clone(),
+            )?),
+            capture.luts().clone(),
         ),
         Some(PhotographRequest::Inspection(view)) => (
             Some(image.inspection(view.parameters()?, field)?),

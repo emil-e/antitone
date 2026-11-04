@@ -417,22 +417,16 @@ fn reference_admission_respects_budget_inspection_and_explicit_comparison() {
         frame: Some(frame),
         output: frame.output,
     };
-    let retired = editor
-        .document
-        .visit
-        .canvas
-        .grade
-        .original
-        .start_fixture(view);
+    let retired = editor.document.visit.canvas.original.start_fixture(view);
     assert!(!editor.admit_view_reference(frame));
     assert_ne!(
-        editor.document.visit.canvas.grade.original.continuation(),
+        editor.document.visit.canvas.original.continuation(),
         retired
     );
-    let idle = editor.document.visit.canvas.grade.original.continuation();
+    let idle = editor.document.visit.canvas.original.continuation();
     assert!(!editor.admit_view_reference(frame));
     assert_eq!(
-        editor.document.visit.canvas.grade.original.continuation(),
+        editor.document.visit.canvas.original.continuation(),
         idle,
         "cancel an admitted reference once"
     );
