@@ -2,11 +2,14 @@
 
 use super::storage::float_buffer;
 use crate::Error;
-use crate::gpu::grading::Grading;
-use crate::gpu::input::ProcessingInput;
+#[cfg(test)]
 use crate::gpu::parameters::ProcessingParameters;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::acquisition::AcquiredViewRaster;
+#[cfg(test)]
 use crate::gpu::view::request::SourceRequest;
+#[cfg(test)]
 use glam::DMat3;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -20,7 +23,6 @@ const VIEW_SCRATCH_BYTES: u64 = 1280 << 20;
 
 pub struct ProcessedView {
     pub source: Arc<AcquiredViewRaster>,
-    pub grade: Option<Arc<Grading>>,
     pub plan: crate::acquisition::Plan,
     pub definition: Arc<crate::gpu::evaluation::ImageNode>,
     pub stages: Option<crate::gpu::pixel_pipeline::Prepared>,
@@ -50,7 +52,8 @@ impl ProcessedView {
         }
     }
 
-    pub fn matches(&self, limits: &wgpu::Limits, input: &ProcessingInput) -> bool {
+    #[cfg(test)]
+    pub fn matches(&self, limits: &wgpu::Limits, input: &AuthoredPhotograph) -> bool {
         Self::definition(
             limits,
             &self.source.spec,
@@ -60,11 +63,12 @@ impl ProcessedView {
         .is_ok_and(|(root, _)| self.supplies(&root, &self.source))
     }
 
+    #[cfg(test)]
     pub fn definition(
         limits: &wgpu::Limits,
         spec: &SourceRequest,
         neutral: Arc<crate::gpu::evaluation::ImageNode>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
     ) -> Result<
         (
             Arc<crate::gpu::evaluation::ImageNode>,
@@ -151,7 +155,6 @@ impl ProcessedView {
         source: Arc<AcquiredViewRaster>,
         definition: Arc<crate::gpu::evaluation::ImageNode>,
         plan: crate::acquisition::Plan,
-        input: &ProcessingInput,
         value: crate::gpu::evaluation::Image<crate::gpu::evaluation::ImageLayout>,
     ) -> Result<Arc<Self>, Error> {
         let pixels: crate::gpu::evaluation::BufferImage = value.try_into()?;
@@ -165,7 +168,6 @@ impl ProcessedView {
             definition,
             plan,
             pixels,
-            grade: input.grade_shared().cloned(),
             stages: None,
             submitted: Mutex::new(true),
         }))
@@ -175,7 +177,7 @@ impl ProcessedView {
     pub fn prepare(
         device: &wgpu::Device,
         source: Arc<AcquiredViewRaster>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
         let (root, plan) = Self::definition(
@@ -184,13 +186,12 @@ impl ProcessedView {
             source.definition.clone(),
             input,
         )?;
-        Self::prepare_calculation(device, source, input, root, plan, previous)
+        Self::prepare_calculation(device, source, root, plan, previous)
     }
 
     pub fn prepare_calculation(
         device: &wgpu::Device,
         source: Arc<AcquiredViewRaster>,
-        input: &ProcessingInput,
         root: Arc<crate::gpu::evaluation::ImageNode>,
         plan: crate::acquisition::Plan,
         previous: Option<&Arc<Self>>,
@@ -211,24 +212,24 @@ impl ProcessedView {
                             && layout.backing == crate::gpu::evaluation::ImageBacking::Buffer
                     })
         {
-            return Self::produced(source, root, plan, input, value);
+            return Self::produced(source, root, plan, value);
         }
-        Ok(Arc::new(Self::record(device, source, input, root, plan)?))
+        Ok(Arc::new(Self::record(device, source, root, plan)?))
     }
 
     pub(super) fn record(
         device: &wgpu::Device,
         source: Arc<AcquiredViewRaster>,
-        input: &ProcessingInput,
         root: Arc<crate::gpu::evaluation::ImageNode>,
         plan: crate::acquisition::Plan,
     ) -> Result<Self, Error> {
-        let mut raster = if source.spec.is_inspection() {
-            crate::gpu::raster::Raster::frame(source.spec.frame())
-        } else {
-            crate::gpu::raster::Raster::planned(&plan)
-        };
-        if !source.spec.is_inspection() {
+        let mut raster =
+            if source.definition.domain().meaning == crate::gpu::evaluation::Meaning::Inspection {
+                crate::gpu::raster::Raster::frame(source.spec.frame())
+            } else {
+                crate::gpu::raster::Raster::planned(&plan)
+            };
+        if source.definition.domain().meaning != crate::gpu::evaluation::Meaning::Inspection {
             raster.dimensions[2] = source.definition.domain().grid.coverage;
         }
         let supplied = source.supplied()?;
@@ -249,7 +250,6 @@ impl ProcessedView {
         Ok(Self {
             pixels,
             definition: root,
-            grade: input.grade_shared().cloned(),
             plan,
             stages: Some(stages),
             source,

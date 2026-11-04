@@ -501,7 +501,6 @@ fn scopes_reduce_the_painted_image_in_source_crop_and_navigation_views() {
                 [7, 3],
                 &[[4000, 3000, 2000, 0]; 21],
                 matrix,
-                None,
                 crate::gpu::source::SourceGeometry::new([12, 34, 7000, 3000], [7, 3]).unwrap(),
             )
             .unwrap(),

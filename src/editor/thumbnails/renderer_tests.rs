@@ -158,7 +158,7 @@ fn corrected_affine_refinement_matches_scalar_coverage() {
             )
         })
         .unwrap();
-        let parameters = crate::gpu::input::ProcessingInput::new(
+        let parameters = crate::gpu::test_inputs::AuthoredPhotograph::new(
             &device.limits(),
             calibration,
             roll,
@@ -342,7 +342,7 @@ fn authored_prewarm_reuses_selected_processing_scopes_and_disk_thumbnail() {
         let _ = file;
         use egui_wgpu::CallbackTrait;
         let image = ready.proxy.image(OutputTarget::DisplayP3).unwrap();
-        let parameters = crate::gpu::input::ProcessingInput::new(
+        let parameters = crate::gpu::test_inputs::AuthoredPhotograph::new(
             &device.limits(),
             Calibration {
                 dmin: DVec3::new(0.28, 0.23, 0.25),

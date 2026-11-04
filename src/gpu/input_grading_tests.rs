@@ -1,12 +1,12 @@
 use super::*;
 use crate::Error;
 use crate::gpu::grading::Grading;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::interpretation::InputTransform;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::{InputSettings, RollSettings};
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot},
@@ -27,7 +27,8 @@ fn packed_camera_constants_do_not_stand_in_for_a_captured_photograph() {
         let (device, _queue) = adapter.request_device(&Default::default()).await.unwrap();
         let fixture = CameraFixture::new(&device).await.unwrap();
         let source =
-            ProcessingSource::new(&device, &[[20000, 30000, 40000, 0]], DMat3::IDENTITY).unwrap();
+            ProcessingSource::new(&device, &[[20000, 30000, 40000, 0]], DMat3::IDENTITY, None)
+                .unwrap();
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: 16,
@@ -47,7 +48,7 @@ fn packed_camera_constants_do_not_stand_in_for_a_captured_photograph() {
                 &mut encoder,
                 &source,
                 &output,
-                &ProcessingInput::from(parameters)
+                &AuthoredPhotograph::from(parameters)
             ),
             Err(Error::InvalidParameter(
                 "photographic input requires captured interpretation and grading"
@@ -128,9 +129,10 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
                 ];
                 for (geometry, source_area) in cases {
                     let program = InputTransform::new(input, matrix).unwrap();
-                    let mut source = program.source_continuous(&device, &pixels).unwrap();
-                    source.set_geometry(geometry).unwrap();
-                    let pipeline = ProcessingInput::compose(
+                    let source = program
+                        .source_continuous(&device, &pixels, Some(geometry))
+                        .unwrap();
+                    let pipeline = AuthoredPhotograph::compose(
                         &device.limits(),
                         program,
                         grade.clone(),
@@ -185,13 +187,17 @@ fn one_photographic_grade_runs_on_independently_resolved_digital_and_negative_in
                     readback.unmap();
                     #[cfg(all(feature = "raw", feature = "export"))]
                     if geometry.is_pair() {
-                        source
-                            .set_geometry(
-                                SourceGeometry::original_pair(
-                                    [[0, 0], [source_area.width, 0]],
-                                    [1, 1],
-                                )
-                                .unwrap(),
+                        let source = program
+                            .source_continuous(
+                                &device,
+                                &pixels,
+                                Some(
+                                    SourceGeometry::original_pair(
+                                        [[0, 0], [source_area.width, 0]],
+                                        [1, 1],
+                                    )
+                                    .unwrap(),
+                                ),
                             )
                             .unwrap();
                         assert!(

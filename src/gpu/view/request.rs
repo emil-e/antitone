@@ -16,7 +16,6 @@ pub struct SourceRequest {
     pub identity: crate::gpu::source::identity::Identity,
     pub repairs: crate::gpu::repairs::Snapshot,
     pub area: crate::raw::Rect,
-    inspection: bool,
     #[cfg(test)]
     fixture: Option<SourceInterpretation>,
     #[cfg(test)]
@@ -32,15 +31,31 @@ impl PartialEq for SourceRequest {
 }
 
 impl SourceRequest {
+    pub fn for_recipe(
+        frame: FrameRaster,
+        recipe: &crate::image_recipe::ImageRecipe,
+    ) -> Result<Self, Error> {
+        let program = crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)?;
+        program.neutral_parameters()?;
+        let request = Self::for_frame(frame)?;
+        #[cfg(test)]
+        let request = Self {
+            fixture: Some(SourceInterpretation::Photograph(program)),
+            ..request
+        };
+        request.with_pipeline(recipe.pixel_pipeline()?)
+    }
+
+    #[cfg(test)]
     pub fn for_processing(
         frame: FrameRaster,
-        input: &crate::gpu::input::ProcessingInput,
+        input: &crate::gpu::test_inputs::AuthoredPhotograph,
     ) -> Result<Self, Error> {
         let program = input.source_transform().ok_or(Error::InvalidParameter(
             "working photograph has no captured source interpretation",
         ))?;
         program.neutral_parameters()?;
-        let request = Self::for_frame(frame, false)?;
+        let request = Self::for_frame(frame)?;
         #[cfg(test)]
         let request = Self {
             fixture: Some(SourceInterpretation::Photograph(*program)),
@@ -52,9 +67,9 @@ impl SourceRequest {
     }
 
     #[cfg(test)]
-    pub fn processing_fixture(&self) -> crate::gpu::input::ProcessingInput {
+    pub fn processing_fixture(&self) -> crate::gpu::test_inputs::AuthoredPhotograph {
         if let Some(program) = self.program() {
-            crate::gpu::input::ProcessingInput::new(
+            crate::gpu::test_inputs::AuthoredPhotograph::new(
                 &wgpu::Limits::default(),
                 program.input,
                 Default::default(),
@@ -65,7 +80,7 @@ impl SourceRequest {
             .unwrap()
             .with_pixel_pipeline(self.plan.pipeline().clone())
         } else {
-            crate::gpu::input::ProcessingInput::from(
+            crate::gpu::test_inputs::AuthoredPhotograph::from(
                 crate::gpu::parameters::ProcessingParameters::source(),
             )
         }
@@ -93,9 +108,7 @@ impl SourceRequest {
     }
 
     pub fn same_source(&self, other: &Self) -> bool {
-        self.identity == other.identity
-            && self.area == other.area
-            && self.inspection == other.inspection
+        self.identity == other.identity && self.area == other.area
     }
 
     pub fn same_acquisition(&self, other: &Self) -> bool {
@@ -118,11 +131,6 @@ impl SourceRequest {
     }
 
     pub fn with_pipeline(self, pipeline: PixelPipeline) -> Result<Self, Error> {
-        if self.is_inspection() && !pipeline.is_empty() {
-            return Err(Error::Gpu(
-                "source inspection bypasses post-grade stages".into(),
-            ));
-        }
         let sampling = self.plan.sampling();
         self.replan(pipeline, sampling)
     }
@@ -212,12 +220,13 @@ impl SourceRequest {
         Ok(Self {
             fixture: Some(SourceInterpretation::Photograph(program)),
             field,
-            ..Self::for_frame(frame, false)?
+            ..Self::for_frame(frame)?
         })
     }
 
+    #[cfg(test)]
     pub fn inspection(frame: FrameRaster) -> Result<Self, Error> {
-        Self::for_frame(frame, true)
+        Self::for_frame(frame)
     }
 
     #[cfg(test)]
@@ -235,8 +244,9 @@ impl SourceRequest {
         })
     }
 
+    #[cfg(test)]
     pub fn is_inspection(&self) -> bool {
-        self.inspection
+        !matches!(self.fixture, Some(SourceInterpretation::Photograph(_)))
     }
 
     #[cfg(test)]
@@ -266,7 +276,7 @@ impl SourceRequest {
         Ok(())
     }
 
-    fn for_frame(frame: FrameRaster, inspection: bool) -> Result<Self, Error> {
+    pub fn for_frame(frame: FrameRaster) -> Result<Self, Error> {
         let area = frame.composition.area();
         Self::require_frame(frame)?;
         SourceGeometry::new(
@@ -277,7 +287,6 @@ impl SourceRequest {
             identity: crate::gpu::source::identity::Identity::unbound(),
             repairs: Default::default(),
             area,
-            inspection,
             #[cfg(test)]
             fixture: None,
             #[cfg(test)]

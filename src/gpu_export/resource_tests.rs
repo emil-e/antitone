@@ -8,8 +8,8 @@ use crate::geometry::PhotoOrientation;
 use crate::geometry::QuarterTurns;
 use crate::geometry::RollOrientation;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewKernels;
 use crate::gpu::view::ViewSource;
@@ -152,8 +152,8 @@ fn exercise(
                 .collect(),
         )
         .map_err(|e| e.to_string())?;
-        let input: ProcessingInput = Arc::new(
-            ProcessingInput::new(
+        let input: AuthoredPhotograph = Arc::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 adjusted,
                 roll,
@@ -399,7 +399,7 @@ fn exercise(
                             .chain(snapshot.layers().to_vec())
                             .collect(),
                         )?;
-                        let edited_input: ProcessingInput = Arc::new(ProcessingInput::new(
+                        let edited_input: AuthoredPhotograph = Arc::new(AuthoredPhotograph::new(
                             &device.limits(),
                             adjusted,
                             roll,

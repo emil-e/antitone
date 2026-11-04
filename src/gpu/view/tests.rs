@@ -1,8 +1,8 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::processing::Calibration;
 use crate::processing::{InputSettings, RollSettings};
@@ -114,8 +114,8 @@ fn processing_input(
     roll: RollSettings,
     photo: AdjustmentLayerSettings,
     scan: &Scan,
-) -> ProcessingInput {
-    crate::gpu::input::ProcessingInput::new(
+) -> AuthoredPhotograph {
+    crate::gpu::test_inputs::AuthoredPhotograph::new(
         &device.limits(),
         input,
         roll,
@@ -165,7 +165,7 @@ fn native_graph_identity_captures_source_response_correction_and_grid() {
         let frame = frame(&scan);
         let settings = negative(0.6);
         let native = |scan: &Scan, frame, settings, field| {
-            let input = ProcessingInput::new(
+            let input = AuthoredPhotograph::new(
                 &device.limits(),
                 settings,
                 RollSettings::default(),

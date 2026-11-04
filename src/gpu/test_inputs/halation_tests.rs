@@ -1,9 +1,9 @@
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::{halation::HalationSettings, pixel_pipeline::PixelPipeline};
 
-fn base() -> ProcessingInput {
-    ProcessingInput::from(
+fn base() -> AuthoredPhotograph {
+    AuthoredPhotograph::from(
         ProcessingParameters::interpret(
             crate::processing::InputSettings::Digital,
             Default::default(),
@@ -13,7 +13,7 @@ fn base() -> ProcessingInput {
     )
 }
 
-fn capture(halo: HalationSettings, frame: [u32; 2]) -> ProcessingInput {
+fn capture(halo: HalationSettings, frame: [u32; 2]) -> AuthoredPhotograph {
     base()
         .with_pixel_pipeline(PixelPipeline::emulation(Default::default(), halo, frame, 0).unwrap())
 }
@@ -76,7 +76,7 @@ fn disabled_custom_halation_and_zero_strength_do_not_change_content_identity() {
 
 #[test]
 fn source_inspection_never_adopts_halation() {
-    let source = ProcessingInput::from(ProcessingParameters::source());
+    let source = AuthoredPhotograph::from(ProcessingParameters::source());
     let pipeline = PixelPipeline::emulation(
         Default::default(),
         HalationSettings {

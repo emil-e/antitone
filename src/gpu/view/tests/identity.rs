@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage, AdjustmentLayerSettings},
@@ -153,8 +153,8 @@ fn complete_grades_reuse_the_input_image_and_replace_all_layer_values() {
                 },
             ])
             .unwrap();
-            let input = ProcessingInput::from(Arc::new(
-                ProcessingInput::new(
+            let input = AuthoredPhotograph::from(Arc::new(
+                AuthoredPhotograph::new(
                     &device.limits(),
                     cal,
                     RollSettings::default(),
@@ -235,7 +235,7 @@ fn spatial_grades_require_the_input_coordinate_extent_but_global_grades_do_not()
         };
         let admit = |area, layer| {
             let pipeline = Arc::new(
-                ProcessingInput::new(
+                AuthoredPhotograph::new(
                     &device.limits(),
                     cal,
                     RollSettings::default(),

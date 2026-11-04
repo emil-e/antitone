@@ -323,6 +323,15 @@ pub(crate) struct CameraMatrix {
 }
 
 impl CameraMatrix {
+    pub(crate) fn require_source(matrix: DMat3, continuous: bool) -> Result<(), Error> {
+        crate::processing::validate_camera_matrix(matrix)?;
+        Self::new(matrix)?;
+        if continuous {
+            Self::new(matrix * crate::processing::MAX_SOURCE_GAIN)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn new(matrix: DMat3) -> Result<Self, Error> {
         let columns = matrix_columns(matrix);
         let bound = matrix.x_axis.abs() + matrix.y_axis.abs() + matrix.z_axis.abs();

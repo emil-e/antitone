@@ -23,10 +23,10 @@ fn max_error(expected: &[DVec3], actual: &[[f32; 4]]) -> f64 {
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::geometry::Composition;
 use crate::geometry::FramePoint;
-use crate::gpu::input::ProcessingInput;
 #[cfg(feature = "ocio-reference")]
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::pixel_pipeline::PixelPipeline;
 use crate::pixel_pipeline::PixelStage;
 use crate::pixel_pipeline::test_effects::NeighbourEffect;
@@ -49,9 +49,9 @@ fn input(
     device: &wgpu::Device,
     area: crate::geometry::SourceRegion,
     matrix: DMat3,
-) -> ProcessingInput {
-    ProcessingInput::from(Arc::new(
-        ProcessingInput::new(
+) -> AuthoredPhotograph {
+    AuthoredPhotograph::from(Arc::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             Default::default(),
@@ -83,7 +83,7 @@ fn native(
         renderer,
         device,
         (queue, &SubmissionGate::default()),
-        crate::gpu::execution::Request {
+        crate::gpu::execution::test_support::OriginalControls {
             scan,
             field: None,
             input: InputSettings::Digital,
@@ -95,7 +95,9 @@ fn native(
             output: OutputReference::SceneReferred,
             luts: (None).into(),
             encoding: crate::gpu::execution::SampleEncoding::LinearFloat,
-        },
+        }
+        .lower(device, renderer)
+        .unwrap(),
         |render, complete| {
             for y in (0..size[1]).step_by(128) {
                 for x in (0..size[0]).step_by(128) {
@@ -217,25 +219,23 @@ fn a_supplied_effect_runs_through_native_regional_and_resident_purposes() {
         let pixels = scan
             .tile_region(area, 0, 0, area.width, area.height)
             .unwrap();
-        let mut resident = pollster::block_on(crate::viewer::GpuImage::new_continuous_shared(
+        let resident = pollster::block_on(crate::viewer::GpuImage::new_continuous_shared(
             &renderer,
             &device,
-            area.width,
-            area.height,
+            [area.width, area.height],
             &pixels,
             scan.positive_matrix(&InputSettings::Digital).unwrap(),
-            target,
-        ))
-        .unwrap();
-        resident
-            .set_geometry(
+            Some(
                 SourceGeometry::original_tile(
                     [area.x, area.y, area.width, area.height],
                     [area.width, area.height],
                 )
                 .unwrap(),
-            )
-            .unwrap();
+            ),
+            target,
+        ))
+        .unwrap();
+
         let mut encoder = device.create_command_encoder(&Default::default());
         resident
             .prepare_processing(&device, &mut encoder, &processing)

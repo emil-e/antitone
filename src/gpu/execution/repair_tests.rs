@@ -1,9 +1,9 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::Calibration;
 use crate::processing::RollSettings;
 use crate::{
@@ -12,6 +12,7 @@ use crate::{
 };
 use glam::DMat3;
 use glam::DVec3;
+use std::sync::Arc;
 
 #[test]
 fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_untouched_samples() {
@@ -37,7 +38,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
     let logical = crate::gpu::repairs::Snapshot::logical(vec![evaluated.clone()]).unwrap();
     let photo = AdjustmentLayerSettings::default();
     let grade = Arc::new(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             Calibration {
                 dmin: DVec3::splat(0.8),
@@ -78,14 +79,14 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         unit.mapping.space[0] = 1;
         let b = unit.bounds;
         let size = [b.width, b.height];
-        let mut source = ProcessingSource::new_continuous(
+        let source = ProcessingSource::new_continuous(
             &device,
             &vec![[20000., 25000., 30000., 0.]; (size[0] * size[1]) as usize],
             DMat3::IDENTITY,
+            Some(SourceGeometry::original_tile([b.x, b.y, b.width, b.height], size).unwrap()),
         )
         .unwrap();
-        let geometry = SourceGeometry::original_tile([b.x, b.y, b.width, b.height], size).unwrap();
-        source.set_flat_field(None, geometry).unwrap();
+
         let working = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: u64::from(size[0]) * u64::from(size[1]) * 16,
@@ -94,7 +95,7 @@ fn common_original_repairs_cross_units_at_large_integer_origins_and_preserve_unt
         });
         let render = |repaired| {
             let mut encoder = device.create_command_encoder(&Default::default());
-            let mut input = crate::gpu::input::ProcessingInput::from(grade.clone());
+            let mut input = crate::gpu::test_inputs::AuthoredPhotograph::from(grade.clone());
             if repaired {
                 input.repairs = logical.clone();
             }

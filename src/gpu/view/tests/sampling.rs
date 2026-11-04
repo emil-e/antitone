@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
 use crate::{
@@ -27,8 +27,8 @@ impl EffectDefinition for Unrefined {
     }
 }
 
-fn input(device: &wgpu::Device, frame: FrameRaster, pipeline: PixelPipeline) -> ProcessingInput {
-    ProcessingInput::new(
+fn input(device: &wgpu::Device, frame: FrameRaster, pipeline: PixelPipeline) -> AuthoredPhotograph {
+    AuthoredPhotograph::new(
         &device.limits(),
         InputSettings::Digital,
         RollSettings::default(),
@@ -431,7 +431,7 @@ fn refined_original_acquisition_preserves_region_seams_real_neighbours_and_nativ
         )
         .unwrap();
         let make_input = |pipeline| {
-            ProcessingInput::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 Default::default(),

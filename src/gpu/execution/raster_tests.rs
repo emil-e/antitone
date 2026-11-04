@@ -1,21 +1,20 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::source::ProcessingSource;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::{gpu::source::SourceGeometry, grain::GrainPreset};
 
 #[test]
 fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_source_grid() {
     let (device, _queue, renderer) = crate::gpu::test_support::render_context();
-    let mut source = ProcessingSource::new_continuous(
+    let source = ProcessingSource::new_continuous(
         &device,
         &[[12000., 16000., 18000., 0.]; 4],
         glam::DMat3::IDENTITY,
+        Some(SourceGeometry::new([10, 20, 2, 2], [2, 2]).unwrap()),
     )
     .unwrap();
-    source
-        .set_geometry(SourceGeometry::new([10, 20, 2, 2], [2, 2]).unwrap())
-        .unwrap();
-    let input = ProcessingInput::new(
+
+    let input = AuthoredPhotograph::new(
         &device.limits(),
         crate::processing::InputSettings::Digital,
         Default::default(),
@@ -41,16 +40,13 @@ fn resident_cells_keep_native_flags_and_reject_a_same_sized_but_relabelled_sourc
     );
     let unrelated = resident_plan(
         &{
-            let mut other = ProcessingSource::new_continuous(
+            ProcessingSource::new_continuous(
                 &device,
                 &[[12000., 16000., 18000., 0.]; 4],
                 glam::DMat3::IDENTITY,
+                Some(SourceGeometry::new([11, 20, 2, 2], [2, 2]).unwrap()),
             )
-            .unwrap();
-            other
-                .set_geometry(SourceGeometry::new([11, 20, 2, 2], [2, 2]).unwrap())
-                .unwrap();
-            other
+            .unwrap()
         },
         &input,
     )

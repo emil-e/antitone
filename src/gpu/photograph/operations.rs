@@ -50,10 +50,6 @@ pub enum Mapping {
 }
 
 impl Mapping {
-    pub fn originals() -> Self {
-        Self::Originals
-    }
-
     pub fn geometry(self, region: CellRegion) -> Result<Option<SourceGeometry>, Error> {
         match self {
             Self::Originals => {
@@ -71,6 +67,21 @@ pub struct CameraInput {
     pub field: Option<Arc<GpuFlatField>>,
     pub continuous: bool,
     pub mapping: Mapping,
+}
+
+impl CameraInput {
+    pub(crate) fn resident(
+        source: &crate::gpu::source::ProcessingSource,
+        program: InputTransform,
+        field: Option<Arc<GpuFlatField>>,
+    ) -> Self {
+        Self {
+            matrix: program.matrix,
+            field,
+            continuous: source.continuous,
+            mapping: Mapping::Resident(source.geometry()),
+        }
+    }
 }
 
 pub struct Captured {
@@ -111,7 +122,11 @@ impl Captured {
         }))
     }
 
-    pub fn bind_field(&self, function: Function, geometry: &FieldGeometry) -> Function {
+    pub(in crate::gpu) fn bind_field(
+        &self,
+        function: Function,
+        geometry: &FieldGeometry,
+    ) -> Function {
         let function = function.with_uniform(5, geometry);
         match &self.field {
             Some(field) => function.with_shared(4, Shared::Buffer(field.nodes.clone())),

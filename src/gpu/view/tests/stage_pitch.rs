@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
 fn rotated_frame(pitch: [f64; 2]) -> FrameRaster {
@@ -56,8 +56,8 @@ fn rotated_unit_pitch_gaussian_obeys_declared_radius_at_the_acquisition_boundary
     pollster::block_on(async {
         let (device, queue, renderer, kernels) = context().await;
         let frame = rotated_frame([1., 1.]);
-        let input = ProcessingInput::from(Arc::new(
-            ProcessingInput::new(
+        let input = AuthoredPhotograph::from(Arc::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 Default::default(),

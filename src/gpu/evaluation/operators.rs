@@ -411,7 +411,10 @@ impl Display {
         renderer: &crate::renderer::GpuRenderer,
         target: OutputTarget,
     ) -> Result<Self, Error> {
-        if !matches!(domain.meaning, Meaning::Graded | Meaning::Neutral) {
+        if !matches!(
+            domain.meaning,
+            Meaning::Graded | Meaning::Neutral | Meaning::Inspection
+        ) {
             return Err(Error::InvalidParameter(
                 "display rendering requires working AP1",
             ));

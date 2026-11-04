@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
 #[test]
@@ -36,7 +36,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
         .unwrap();
         let snapshot = AdjustmentLayerSnapshot::new(vec![]).unwrap();
         let grade = Arc::new(
-            ProcessingInput::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 Default::default(),
@@ -47,7 +47,7 @@ fn viewport_and_accepted_crop_edges_do_not_become_filter_boundaries() {
             .unwrap(),
         );
         // Resolve sigma directly to isolate boundary handling from crop-relative recipe assembly.
-        let input = ProcessingInput::from(grade).with_pixel_pipeline(
+        let input = AuthoredPhotograph::from(grade).with_pixel_pipeline(
             crate::pixel_pipeline::PixelPipeline {
                 stages: vec![crate::pixel_pipeline::PixelStage::new(
                     crate::image_mtf::ImageMtfParameters { sigma: 2. },

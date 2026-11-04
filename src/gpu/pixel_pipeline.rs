@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 pub(crate) struct Prepared {
     pub raster: Raster,
-    pub definition: Arc<evaluation::ImageNode>,
     execution: Option<evaluation::Recorded>,
 }
 
@@ -46,7 +45,6 @@ impl Prepared {
         if pipeline.is_empty() {
             return Ok(Self {
                 raster,
-                definition: root,
                 execution: None,
             });
         }
@@ -111,7 +109,6 @@ impl Prepared {
         let execution = context.record(evaluation, context.materializations(), supplied)?;
         Ok(Self {
             raster,
-            definition: root,
             execution: Some(execution),
         })
     }

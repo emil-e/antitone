@@ -11,6 +11,8 @@ pub enum Meaning {
     /// Signed native-camera positive, before camera-to-working conversion.
     NativePositive,
     Neutral,
+    /// Working AP1 on the pre-inversion source-view branch.
+    Inspection,
     Graded,
     /// A scalar mixing weight repeated in RGB, with input metadata retained in w.
     Weight,
@@ -274,7 +276,7 @@ impl ImageNode {
 
     /// Compare definitions without assigning identities to unnamed inputs.
     /// Callers comparing recorded work must also match its supplied values.
-    pub(crate) fn same_definition(&self, other: &Self) -> bool {
+    pub fn same_definition(&self, other: &Self) -> bool {
         if std::ptr::eq(self, other) {
             return true;
         }

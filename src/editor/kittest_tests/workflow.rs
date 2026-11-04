@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 mod source_working;
 mod underlay;
 
@@ -191,7 +191,7 @@ pub(super) fn wait_settled(harness: &mut Harness<'_, Editor>) {
         if e.document.visit.working_view.revision().is_some() {
             let expected = if e.document.source {
                 e.source_parameters(e.source_exposure)
-                    .map(ProcessingInput::from)
+                    .map(AuthoredPhotograph::from)
             } else {
                 e.positive_processing(
                     e.document.input,
@@ -714,12 +714,15 @@ fn physical_view_local_edits_use_current_input_and_clear_recovered_render_errors
                 )
                 .unwrap();
             // Mismatched Global controls are rejected before publishing output.
-            let bad = ProcessingInput::from(bad.parameters());
+            let bad = AuthoredPhotograph::from(bad.parameters());
             let frame = editor.document.visit.working_view.current_frame().unwrap();
             let error = editor
                 .working_view(
                     frame,
-                    &bad,
+                    (
+                        &crate::gpu::photograph::request::PhotographRequest::Fixture(bad),
+                        &Default::default(),
+                    ),
                     super::super::canvas::ImageMode::Photograph,
                     &egui::Context::default(),
                     cx,

@@ -11,6 +11,35 @@ struct Functions {
 }
 
 impl Grading {
+    /// Conservative charge for grading arguments retained by a calculation, including shared parents.
+    #[cfg(feature = "editor")]
+    pub(crate) fn captured_bytes(image: &Arc<ImageNode>) -> u64 {
+        let mut bytes = 0;
+        let mut image = Some(image);
+        while let Some(node) = image {
+            if let Some(grade) =
+                (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<Grade>()
+            {
+                bytes += grade
+                    .function
+                    .bindings
+                    .iter()
+                    .map(|(_, binding)| match binding {
+                        FunctionBinding::Uniform(data) | FunctionBinding::Storage(data) => {
+                            data.len() as u64
+                        }
+                        FunctionBinding::Shared(_) => 0,
+                    })
+                    .sum::<u64>();
+                if let GradeDefinition::Layers { layers, .. } = &grade.definition {
+                    bytes += layers.retained_bytes() as u64;
+                }
+            }
+            image = node.input();
+        }
+        bytes
+    }
+
     fn functions(&self) -> Functions {
         // Match the filtered-view gain packing rather than changing CPU/GPU rounding.
         let context = [

@@ -10,9 +10,9 @@ use crate::adjustment_layers::AdjustmentLayerStack;
 use crate::geometry::SourcePoint;
 use crate::geometry::SourceRegion;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::Calibration;
 use crate::processing::InputPipeline;
 use crate::processing::InputSettings;
@@ -178,14 +178,11 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                     ]
                 })
                 .collect();
-            let mut source = if continuous {
-                ProcessingSource::new_continuous(&device, &values, matrix).unwrap()
+            let source = if continuous {
+                ProcessingSource::new_continuous(&device, &values, matrix, Some(geometry)).unwrap()
             } else {
-                ProcessingSource::new(&device, &integer, matrix).unwrap()
+                ProcessingSource::new(&device, &integer, matrix, Some(geometry)).unwrap()
             };
-            source
-                .set_flat_field(Some(gpu_field.clone()), geometry)
-                .unwrap();
             for settings in [
                 InputSettings::Digital,
                 InputSettings::negative(Calibration {
@@ -195,7 +192,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                 }),
             ] {
                 let pipeline = Arc::new(
-                    ProcessingInput::new(
+                    AuthoredPhotograph::new(
                         &device.limits(),
                         settings,
                         roll,
@@ -206,7 +203,8 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
                     .unwrap(),
                 );
                 let scalar_input = InputPipeline::new(settings, matrix).unwrap();
-                let mut input = ProcessingInput::from(pipeline.clone());
+                let mut input = AuthoredPhotograph::from(pipeline.clone())
+                    .with_flat_field(Some(gpu_field.clone()));
                 if let Some(repaired) = &repaired {
                     input.repairs =
                         crate::gpu::repairs::Snapshot::logical(vec![repaired.clone()]).unwrap();
@@ -334,7 +332,7 @@ fn packed_and_continuous_camera_cells_share_conversion_grade_and_repair_boundari
 
 #[test]
 #[cfg(target_os = "macos")]
-#[ignore = "isolated authored resident-camera execution and allocator comparison"]
+#[ignore = "isolated evaluator-fixture allocator comparison; excludes GpuImage preparation"]
 fn resident_camera_execution_resources() {
     use std::sync::atomic::{AtomicU64, Ordering};
     crate::cache_observation::with_monitor(|monitor, device, queue| {
@@ -355,13 +353,11 @@ fn resident_camera_execution_resources() {
                 ]
             })
             .collect();
-        let mut source = ProcessingSource::new_continuous(device, &values, matrix).unwrap();
+        let source = ProcessingSource::new_continuous(device, &values, matrix, Some(SourceGeometry::new([region.x, region.y, side, side], [side; 2]).unwrap())).unwrap();
         drop(values);
-        source
-            .set_geometry(SourceGeometry::new([region.x, region.y, side, side], [side; 2]).unwrap())
-            .unwrap();
+
         let pipeline = Arc::new(
-            ProcessingInput::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 RollSettings {
@@ -381,7 +377,7 @@ fn resident_camera_execution_resources() {
             )
             .unwrap(),
         );
-        let input = ProcessingInput::from(pipeline.clone())
+        let input = AuthoredPhotograph::from(pipeline.clone())
             .with_pixel_pipeline(crate::pixel_pipeline::PixelPipeline::emulation(crate::grain::GrainPreset::ThirtyFiveMm.settings(),Default::default(),[side; 2],17).unwrap());
         let plan = crate::gpu::execution::raster::resident_plan(&source, &input)
             .unwrap()
@@ -443,7 +439,7 @@ fn resident_camera_execution_resources() {
                 drop(prepared);
                 let [creations, bytes] = crate::gpu::test_support::take_evaluation_buffer_creations();
                 println!(
-                    "resident_resource common={common} iteration={iteration} seconds={:.9} retained_device={} encoded_device_peak={} evaluation_buffer_creations={creations} evaluation_buffer_bytes={bytes}",
+                    "resident_resource common={common} iteration={iteration} adapter=authored_fixture seconds={:.9} retained_device={} encoded_device_peak={} evaluation_buffer_creations={creations} evaluation_buffer_bytes={bytes}",
                     started.elapsed().as_secs_f64(),
                     crate::sys::allocated_resource_bytes(device).unwrap(),
                     peak.load(Ordering::Relaxed)

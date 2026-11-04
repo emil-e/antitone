@@ -1,6 +1,6 @@
 #![cfg(feature = "gpu")]
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::photograph::test_support::CameraFixture;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
@@ -27,7 +27,7 @@ fn read(
     queue: &wgpu::Queue,
     kernel: &CameraFixture,
     source: &ProcessingSource,
-    params: &ProcessingInput,
+    params: &AuthoredPhotograph,
     n: usize,
 ) -> Vec<[f32; 4]> {
     let size = n as u64 * 16;
@@ -162,7 +162,7 @@ fn shaped_responses_recover_declared_positives_before_matrix_wb_and_exposure() {
                     exposure: exposure / 2.,
                     ..Default::default()
                 };
-                let input = match ProcessingInput::new(
+                let input = match AuthoredPhotograph::new(
                     &device.limits(),
                     interpretation,
                     roll,
@@ -185,7 +185,8 @@ fn shaped_responses_recover_declared_positives_before_matrix_wb_and_exposure() {
                     .iter()
                     .map(|p| (*p * 65535.).as_vec3().extend(0.).to_array())
                     .collect();
-                let source = ProcessingSource::new_continuous(&device, &values, matrix).unwrap();
+                let source =
+                    ProcessingSource::new_continuous(&device, &values, matrix, None).unwrap();
                 let actual = read(&device, &queue, &fixture, &source, &input, values.len());
                 let transform = antitone::color::wb_matrix(photo.wb).unwrap()
                     * antitone::color::wb_matrix(roll.wb).unwrap()
@@ -264,8 +265,8 @@ fn valid_floor_anchor_is_rejected_or_stays_finite_with_packed_parameters() {
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let kernel = CameraFixture::new(&device).await.unwrap();
         let source =
-            ProcessingSource::new_continuous(&device, &[[0.; 4]], DMat3::IDENTITY).unwrap();
-        let grade = ProcessingInput::new(
+            ProcessingSource::new_continuous(&device, &[[0.; 4]], DMat3::IDENTITY, None).unwrap();
+        let grade = AuthoredPhotograph::new(
             &device.limits(),
             interpretation,
             RollSettings::default(),

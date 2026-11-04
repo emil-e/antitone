@@ -1,8 +1,8 @@
 #![cfg(all(feature = "ui", feature = "render"))]
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use antitone::adjustment_layers::AdjustmentLayer;
 use antitone::adjustment_layers::AdjustmentLayerCoverage;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
@@ -149,26 +149,27 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
             };
             let geometry = SourceGeometry::new(region, size).unwrap();
             println!("local_performance size={size:?} source_region={region:?}");
-            let mut source = ProcessingSource::new(&device, &pixels, DMat3::IDENTITY).unwrap();
-            source.set_geometry(geometry).unwrap();
+            let source =
+                ProcessingSource::new(&device, &pixels, DMat3::IDENTITY, Some(geometry)).unwrap();
+
             let output = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("performance working output"),
                 size: u64::from(n) * 16,
                 usage: wgpu::BufferUsages::STORAGE,
                 mapped_at_creation: false,
             });
-            let mut image = GpuImage::new_shared(
+            let image = GpuImage::new_shared(
                 &renderer,
                 &device,
-                size[0],
-                size[1],
+                [size[0], size[1]],
                 &pixels,
                 DMat3::IDENTITY,
+                Some(geometry),
                 OutputTarget::Srgb,
             )
             .await
             .unwrap();
-            image.set_geometry(geometry).unwrap();
+
             assert_eq!(source.byte_len(), u64::from(n) * 8);
             assert_eq!(
                 image.processing_byte_len(),
@@ -184,7 +185,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
                     let mut unsupported = None;
                     for _ in 0..3 {
                         let start = Instant::now();
-                        let result = ProcessingInput::new(
+                        let result = AuthoredPhotograph::new(
                             &device.limits(),
                             calibration,
                             roll,
@@ -218,7 +219,7 @@ fn local_stage_cost_at_live_preview_and_refinement_tile_sizes() {
                         continue;
                     }
                     let prepared = prepared.unwrap();
-                    let input = ProcessingInput::from(prepared.clone());
+                    let input = AuthoredPhotograph::from(prepared.clone());
                     let encode = |encoder: &mut wgpu::CommandEncoder| {
                         kernel
                             .encode_grade(&device, encoder, &source, &output, &prepared)

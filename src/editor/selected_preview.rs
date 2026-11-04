@@ -98,11 +98,7 @@ impl Editor {
                     || self.document_pending.is_some()
                     || self.picking()
                     || self.cropping()
-                    || !preview.current_source(
-                        &self.document,
-                        self.document.visit.current_source,
-                        self.document.correction.as_ref(),
-                    )
+                    || !preview.current_source(&self.document, self.document.visit.current_source)
             })
         {
             self.document.visit.pending_preview = None;

@@ -44,8 +44,8 @@ pub fn settings(area: CellRegion) -> (RollSettings, AdjustmentLayerSnapshot) {
     .unwrap();
     (roll, snapshot)
 }
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::photograph::PhotographGraph;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 
 pub(crate) struct CameraFixture {
     context: Context,
@@ -64,7 +64,7 @@ impl CameraFixture {
     }
 
     fn raster(source: &ProcessingSource) -> crate::gpu::raster::Raster {
-        if let Some(geometry) = source.geometry {
+        if let Some(geometry) = source.geometry() {
             crate::gpu::raster::Raster::region(geometry.region(), geometry.size())
         } else {
             crate::gpu::raster::Raster::native([0, 0, source.pixel_count(), 1].into())
@@ -80,6 +80,18 @@ impl CameraFixture {
         source: &ProcessingSource,
         output: &wgpu::Buffer,
         parameters: ProcessingParameters,
+    ) {
+        self.encode_with_field(device, encoder, source, output, parameters, None);
+    }
+
+    pub fn encode_with_field(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &ProcessingSource,
+        output: &wgpu::Buffer,
+        parameters: ProcessingParameters,
+        field: Option<Arc<GpuFlatField>>,
     ) {
         let raster = Self::raster(source);
         let domain = Domain {
@@ -101,10 +113,10 @@ impl CameraFixture {
         );
         let captured = Captured::new(
             CameraInput {
-                matrix: source.camera_to_ap1,
-                field: source.flat_field.clone(),
+                matrix: source.camera_matrix(),
+                field,
                 continuous: source.continuous,
-                mapping: Mapping::Resident(source.geometry),
+                mapping: Mapping::Resident(source.geometry()),
             },
             Interpretation::Packed(parameters),
         )
@@ -122,7 +134,7 @@ impl CameraFixture {
         encoder: &mut wgpu::CommandEncoder,
         source: &ProcessingSource,
         output: &wgpu::Buffer,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
     ) -> Result<(), Error> {
         let stages = input.pixel_pipeline();
         let image = PhotographGraph::from_resident_with_stages(

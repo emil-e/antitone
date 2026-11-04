@@ -1475,10 +1475,10 @@ fn camera_product_forecast_bounds_a_square_continuous_source() {
         let image = GpuImage::new_continuous_shared(
             &renderer,
             &device,
-            256,
-            256,
+            [256, 256],
             &vec![[1000.25, 2000.5, 3000.75, 0.]; 256 * 256],
             glam::DMat3::IDENTITY,
+            None,
             OutputTarget::DisplayP3,
         )
         .await
@@ -1512,10 +1512,10 @@ fn warm_normal_roll_survives_rapid_forward_and_reverse_scrolling() {
                 GpuImage::new_shared(
                     &renderer,
                     &device,
-                    256,
-                    256,
+                    [256, 256],
                     &vec![[0; 4]; 256 * 256],
                     glam::DMat3::IDENTITY,
+                    None,
                     OutputTarget::DisplayP3,
                 )
                 .await

@@ -1,4 +1,6 @@
 #![cfg(all(feature = "ui", feature = "render"))]
+#[path = "support/calculation.rs"]
+mod calculation;
 use antitone::{
     frame_raster::FrameRaster,
     geometry::{Composition, SourceRegion},
@@ -8,6 +10,7 @@ use antitone::{
     scopes::{self, PLANE_LEN, Plot, Settings},
     viewer::GpuImage,
 };
+use calculation::{ImageCalculations, ScopeCalculations};
 use egui_wgpu::CallbackTrait;
 use glam::DMat3;
 use std::sync::Arc;
@@ -183,7 +186,6 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
         Plot,
         Amplification,
         Source,
-        SourceRevision,
         Composition,
         Suspend,
     }
@@ -203,7 +205,6 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
             Change::Plot,
             Change::Amplification,
             Change::Source,
-            Change::SourceRevision,
             Change::Composition,
             Change::Suspend,
         ] {
@@ -212,10 +213,10 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                 GpuImage::new(
                     &device,
                     &queue,
-                    7,
-                    3,
+                    [7, 3],
                     &[[2000, 3000, 4000, 0]; 21],
                     DMat3::IDENTITY,
+                    None,
                     OutputTarget::DisplayP3,
                 )
                 .await
@@ -259,19 +260,16 @@ fn grading_and_viewport_edits_keep_a_trace_but_other_sources_and_graticules_do_n
                         GpuImage::new(
                             &device,
                             &queue,
-                            7,
-                            3,
+                            [7, 3],
                             &[[2000, 3000, 4000, 0]; 21],
                             DMat3::IDENTITY,
+                            None,
                             OutputTarget::DisplayP3,
                         )
                         .await
                         .unwrap(),
                     )
                 }
-                Change::SourceRevision => image
-                    .write_source(&queue, &[[4000, 5000, 6000, 0]; 21])
-                    .unwrap(),
                 Change::Composition => {
                     let mut frame = requested_frame;
                     frame.composition = Composition::new(
@@ -490,10 +488,10 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
             GpuImage::new_shared(
                 &renderer,
                 &device,
-                7,
-                3,
+                [7, 3],
                 &[[2000, 3000, 4000, 0]; 21],
                 DMat3::IDENTITY,
+                None,
                 OutputTarget::DisplayP3,
             )
             .await
@@ -559,9 +557,35 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
                 .is_none(),
             "late diagnostics must not reinstall after suspension"
         );
-        image
-            .write_source(&queue, &[[4000, 5000, 6000, 0]; 21])
-            .unwrap();
+        let previous_image = image.clone();
+        let image = Arc::new(
+            GpuImage::new_shared(
+                &renderer,
+                &device,
+                [7, 3],
+                &[[4000, 5000, 6000, 0]; 21],
+                DMat3::IDENTITY,
+                None,
+                OutputTarget::DisplayP3,
+            )
+            .await
+            .unwrap(),
+        );
+        let paint = |settings| {
+            ScopePaint::new(
+                gpu.clone(),
+                image.clone(),
+                parameters,
+                full_frame([7, 3]),
+                settings,
+                context.clone(),
+            )
+        };
+        assert!(
+            gpu.status(&image, parameters, full_frame([7, 3]), settings)
+                .is_none()
+        );
+        assert!(!Arc::ptr_eq(&previous_image, &image));
         let mut encoder = device.create_command_encoder(&Default::default());
         assert!(image.prepare(&device, &mut encoder, parameters));
         paint(settings).prepare(&device, &queue, &screen, &mut encoder, &mut resources);
@@ -572,10 +596,10 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
             GpuImage::new_shared(
                 &renderer,
                 &device,
-                7,
-                3,
+                [7, 3],
                 &[[2000, 3000, 4000, 0]; 21],
                 DMat3::IDENTITY,
+                None,
                 OutputTarget::DisplayP3,
             )
             .await
@@ -584,14 +608,6 @@ fn shared_preparation_and_scope_cache_reuse_rendering_and_reject_old_diagnostics
         assert!(
             gpu.status(&other, parameters, full_frame([7, 3]), settings)
                 .is_none()
-        );
-        image
-            .write_source(&queue, &[[5000, 6000, 7000, 0]; 21])
-            .unwrap();
-        assert!(
-            gpu.status(&image, parameters, full_frame([7, 3]), settings)
-                .is_none(),
-            "source writes must invalidate same-image scope identity"
         );
         let bad = Settings {
             amplification: 3,
@@ -772,10 +788,10 @@ fn rapid_requests_and_hide_show_coalesce_until_completion_and_luma_reuses_bins()
             GpuImage::new(
                 &device,
                 &queue,
-                7,
-                3,
+                [7, 3],
                 &[[2000, 3000, 4000, 0]; 21],
                 DMat3::IDENTITY,
+                None,
                 OutputTarget::DisplayP3,
             )
             .await

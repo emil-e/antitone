@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::photograph::request::PhotographRequest;
 
 /// An independently prepared source image and its presentation resources.
 #[derive(Default)]
@@ -43,8 +44,11 @@ impl SourceView {
             .developed
             .metadata()
             .source_preview(ready.developed.fixed_wb());
-        let input = match editor.source_preview_parameters(preview, editor.source_exposure) {
-            Ok(input) => ProcessingInput::from(input),
+        let capture = match editor
+            .source_preview_parameters(preview, editor.source_exposure)
+            .and_then(PhotographRequest::inspection)
+        {
+            Ok(capture) => capture,
             Err(error) => {
                 canvas
                     .ui
@@ -74,7 +78,7 @@ impl SourceView {
         self.original.observe(
             OriginalPurpose::Tool,
             original_view::Demand {
-                capture: working_view::Capture::Primitive(input.clone()),
+                capture: capture.clone(),
                 repairs: Default::default(),
                 target: editor.document.target,
                 view: Some(view),
@@ -92,10 +96,7 @@ impl SourceView {
                 cx,
             );
         }
-        let original = match self
-            .original
-            .rendered(OriginalPurpose::Tool, &device.limits())
-        {
+        let original = match self.original.rendered(OriginalPurpose::Tool) {
             Ok(image) => image,
             Err(error) => {
                 editor.status = error.to_string();
@@ -121,7 +122,6 @@ impl SourceView {
                     return false;
                 }
             };
-            let capture = working_view::Capture::Primitive(input.clone());
             let reused = self
                 .preview
                 .as_ref()
@@ -129,15 +129,16 @@ impl SourceView {
                     proxy.same_source(&ready.proxy)
                         && *previous == frame
                         && rendered.capture == capture
+                        && rendered.has_correction(None)
                         && rendered.target == editor.document.target
                 })
                 .map(|entry| entry.2.clone());
             let rendered = reused.or_else(|| {
                 let kernels = editor.document.visit.working_view.kernels.get()?.clone();
-                let spec = crate::gpu::view::SourceRequest::inspection(frame).ok()?;
+                let spec = crate::gpu::view::request::SourceRequest::for_frame(frame).ok()?;
                 let (source, processed) = ready
                     .proxy
-                    .preview(&queue, &editor.submissions, kernels, &input, spec)
+                    .preview(&queue, &editor.submissions, kernels, &capture, None, spec)
                     .ok()?;
                 let rendered = crate::gpu::view::RenderedView::from_processed(
                     &device,

@@ -10,6 +10,21 @@ pub(crate) struct Reference {
 }
 
 impl Reference {
+    #[cfg(all(test, target_os = "macos", feature = "raw"))]
+    pub(crate) fn image_lut_bytes(image: &Arc<ImageNode>) -> u64 {
+        let mut bytes = 0;
+        let mut image = Some(image);
+        while let Some(node) = image {
+            if let Some(lut) =
+                (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<LutOperation>()
+            {
+                bytes += lut.look.byte_len();
+            }
+            image = node.input();
+        }
+        bytes
+    }
+
     pub fn prewarm(context: &Context) -> Result<(), Error> {
         context.prewarm(&[LutOperation::work(
             Resource(0),

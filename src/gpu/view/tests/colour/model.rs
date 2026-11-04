@@ -17,13 +17,14 @@ fn resident_acquisition_inverts_before_fractional_coverage_with_rounded_proxy_di
                 [code, code, code, 0]
             })
             .collect();
-        let mut source = ProcessingSource::new(&device, &codes, DMat3::IDENTITY).unwrap();
-        source
-            .set_flat_field(
-                None,
-                SourceGeometry::new([8, 12, 6000, 4000], size).unwrap(),
-            )
-            .unwrap();
+        let source = ProcessingSource::new(
+            &device,
+            &codes,
+            DMat3::IDENTITY,
+            Some(SourceGeometry::new([8, 12, 6000, 4000], size).unwrap()),
+        )
+        .unwrap();
+
         let source = Arc::new(source);
         let input = InputSettings::negative(Calibration {
             dmin: DVec3::splat(0.8),
@@ -86,10 +87,14 @@ fn digital_source_marks_neutral_coverage() {
         let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
         let frame = FrameRaster::full(composition).unwrap();
         let pixels = vec![[4000., 5000., 6000., 0.]; 32];
-        let mut source = ProcessingSource::new_continuous(&device, &pixels, matrix).unwrap();
-        source
-            .set_flat_field(None, SourceGeometry::new([0, 0, 8, 4], [8, 4]).unwrap())
-            .unwrap();
+        let source = ProcessingSource::new_continuous(
+            &device,
+            &pixels,
+            matrix,
+            Some(SourceGeometry::new([0, 0, 8, 4], [8, 4]).unwrap()),
+        )
+        .unwrap();
+
         let spec = SourceRequest::new(frame, InputSettings::Digital, matrix, None).unwrap();
         let source = ViewSource::from_processing(
             &device,
@@ -233,14 +238,14 @@ fn straightening_preserves_coverage_with_rounded_proxy_dimensions() {
         };
         let size = [31, 21];
         let pixels = vec![[12000., 12000., 12000., 0.]; (size[0] * size[1]) as usize];
-        let mut source =
-            ProcessingSource::new_continuous(&device, &pixels, DMat3::IDENTITY).unwrap();
-        source
-            .set_flat_field(
-                None,
-                SourceGeometry::new([8, 12, 6000, 4000], size).unwrap(),
-            )
-            .unwrap();
+        let source = ProcessingSource::new_continuous(
+            &device,
+            &pixels,
+            DMat3::IDENTITY,
+            Some(SourceGeometry::new([8, 12, 6000, 4000], size).unwrap()),
+        )
+        .unwrap();
+
         let source = Arc::new(source);
         for degrees in [0.4_f64, 23., 45., 89.] {
             let crop = crate::crop::Crop::from_region(area)
@@ -298,14 +303,14 @@ fn crops_sample_both_source_halves_with_a_nonzero_active_origin() {
             width,
             height,
         };
-        let mut source =
-            ProcessingSource::new_continuous(&device, &pixels, DMat3::IDENTITY).unwrap();
-        source
-            .set_flat_field(
-                None,
-                SourceGeometry::new([12, 7, width, height], [width, height]).unwrap(),
-            )
-            .unwrap();
+        let source = ProcessingSource::new_continuous(
+            &device,
+            &pixels,
+            DMat3::IDENTITY,
+            Some(SourceGeometry::new([12, 7, width, height], [width, height]).unwrap()),
+        )
+        .unwrap();
+
         let source = Arc::new(source);
         for (offset, code) in [(0, 40000.), (4, 400.)] {
             let composition = Composition::with_crop(

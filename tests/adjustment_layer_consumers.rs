@@ -10,11 +10,11 @@ use antitone::geometry::Composition;
 use antitone::geometry::SourcePoint;
 use antitone::geometry::SourceRegion;
 use antitone::gpu::flat::GpuFlatField;
-use antitone::gpu::input::ProcessingInput;
+#[path = "support/calculation.rs"]
+mod calculation;
 use antitone::gpu::parameters::ProcessingParameters;
 use antitone::gpu::source::SourceGeometry;
 use antitone::gpu_scopes::GpuScopes;
-use antitone::gpu_scopes::ScopePaint;
 use antitone::processing::Calibration;
 use antitone::processing::Pipeline;
 use antitone::processing::RollSettings;
@@ -24,7 +24,7 @@ use antitone::scopes;
 use antitone::scopes::Plot;
 use antitone::scopes::Settings;
 use antitone::viewer::GpuImage;
-use antitone::viewer::ImagePaint;
+use calculation::{Calculation, ImageCalculations, ScopeCalculations};
 use egui_wgpu::CallbackTrait;
 use glam::{DMat3, DVec3};
 use std::sync::Arc;
@@ -88,26 +88,29 @@ fn layers() -> Vec<AdjustmentLayer> {
     ]
 }
 
-fn input(device: &wgpu::Device, cal: Calibration, layers: Vec<AdjustmentLayer>) -> ProcessingInput {
-    Arc::new(
-        ProcessingInput::new(
-            &device.limits(),
-            cal,
-            RollSettings::default(),
-            AdjustmentLayerSnapshot::new(
-                std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
-                    AdjustmentLayerSettings::default(),
-                ))
-                .chain(layers)
-                .collect(),
-            )
-            .unwrap(),
-            DMat3::IDENTITY,
-            AREA,
+fn input(
+    device: &wgpu::Device,
+    cal: Calibration,
+    layers: Vec<AdjustmentLayer>,
+    field: Option<Arc<GpuFlatField>>,
+) -> Calculation {
+    calculation::photograph_with_field(
+        &device.limits(),
+        cal,
+        RollSettings::default(),
+        AdjustmentLayerSnapshot::new(
+            std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
+                AdjustmentLayerSettings::default(),
+            ))
+            .chain(layers)
+            .collect(),
         )
         .unwrap(),
+        DMat3::IDENTITY,
+        AREA,
+        field,
     )
-    .into()
+    .unwrap()
 }
 
 async fn device() -> (wgpu::Device, wgpu::Queue) {
@@ -167,24 +170,21 @@ async fn image(
     geometry: SourceGeometry,
     size: [u32; 2],
     target: OutputTarget,
-    field: Option<Arc<GpuFlatField>>,
 ) -> GpuImage {
     let pixels: Vec<_> = (0..size[0] * size[1])
         .map(|i| codes(geometry.pixel(i).unwrap()))
         .collect();
-    let mut image = GpuImage::new_shared(
+    GpuImage::new_shared(
         renderer,
         device,
-        size[0],
-        size[1],
+        size,
         &pixels,
         DMat3::IDENTITY,
+        Some(geometry),
         target,
     )
     .await
-    .unwrap();
-    image.set_flat_field(field, geometry).unwrap();
-    image
+    .unwrap()
 }
 
 async fn read_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &GpuImage) -> Vec<[f32; 4]> {
@@ -263,33 +263,23 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
             .unwrap();
         let geometry =
             SourceGeometry::new([AREA.x, AREA.y, AREA.width, AREA.height], [7, 5]).unwrap();
-        let image = Arc::new(
-            image(
-                &renderer,
-                &device,
-                geometry,
-                [7, 5],
-                OutputTarget::Srgb,
-                None,
-            )
-            .await,
-        );
-        let accepted = input(&device, calibration(), layers());
-        let duplicate = input(&device, calibration(), layers());
-        assert_eq!(
-            accepted.clone(),
-            duplicate.clone(),
-            "allocation identity is not processing identity"
+        let image = Arc::new(image(&renderer, &device, geometry, [7, 5], OutputTarget::Srgb).await);
+        let accepted = input(&device, calibration(), layers(), None);
+        let duplicate = input(&device, calibration(), layers(), None);
+        let accepted_definition = accepted(&image).unwrap();
+        assert!(
+            accepted_definition.same_definition(&duplicate(&image).unwrap()),
+            "allocation identity is not calculation identity"
         );
         let mut encoder = device.create_command_encoder(&Default::default());
         assert!(
             image
-                .prepare_processing(&device, &mut encoder, &accepted)
+                .prepare_authored(&device, &mut encoder, &accepted)
                 .unwrap()
         );
         assert!(
             !image
-                .prepare_processing(&device, &mut encoder, &duplicate)
+                .prepare_authored(&device, &mut encoder, &duplicate)
                 .unwrap()
         );
         for changed in [
@@ -322,25 +312,24 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
                 a
             },
         ] {
-            let proposed = input(&device, calibration(), changed);
-            assert_ne!(accepted.clone(), proposed.clone());
+            let proposed = input(&device, calibration(), changed, None);
+            assert!(!accepted_definition.same_definition(&proposed(&image).unwrap()));
             assert!(
                 image
-                    .prepare_processing(&device, &mut encoder, &proposed)
+                    .prepare_authored(&device, &mut encoder, &proposed)
                     .unwrap()
             );
             assert!(
                 image
-                    .prepare_processing(&device, &mut encoder, &accepted)
+                    .prepare_authored(&device, &mut encoder, &accepted)
                     .unwrap()
             );
         }
         let mut changed_calibration = calibration();
         changed_calibration.dmin.x *= 0.9;
-        assert_ne!(
-            accepted.clone(),
-            input(&device, changed_calibration, layers()).clone()
-        );
+        assert!(!accepted_definition.same_definition(
+            &input(&device, changed_calibration, layers(), None)(&image).unwrap(),
+        ));
         for (roll, photo, area) in [
             (
                 RollSettings {
@@ -368,96 +357,97 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
                 },
             ),
         ] {
-            let changed: ProcessingInput = Arc::new(
-                ProcessingInput::new(
-                    &device.limits(),
-                    calibration(),
-                    roll,
-                    AdjustmentLayerSnapshot::new(
-                        std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
-                            photo,
-                        ))
+            let changed: Calculation = calculation::photograph(
+                &device.limits(),
+                calibration(),
+                roll,
+                AdjustmentLayerSnapshot::new(
+                    std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(photo))
                         .chain(layers())
                         .collect(),
-                    )
-                    .unwrap(),
-                    DMat3::IDENTITY,
-                    area,
                 )
                 .unwrap(),
+                DMat3::IDENTITY,
+                area,
             )
-            .into();
-            assert_ne!(accepted.clone(), changed.clone());
+            .unwrap();
+            assert!(!accepted_definition.same_definition(&changed(&image).unwrap()));
         }
-        let second = self::image(
-            &renderer,
-            &device,
-            geometry,
-            [7, 5],
-            OutputTarget::Srgb,
-            None,
-        )
-        .await;
+        let second = self::image(&renderer, &device, geometry, [7, 5], OutputTarget::Srgb).await;
         assert!(
             second
-                .prepare_processing(&device, &mut encoder, &accepted)
+                .prepare_calculation(
+                    &device,
+                    &mut encoder,
+                    &accepted_definition,
+                    &Default::default()
+                )
+                .unwrap(),
+            "an immutable captured source can render into another compatible target"
+        );
+        assert!(
+            second
+                .prepare_authored(&device, &mut encoder, &accepted)
                 .unwrap(),
             "images share resources, not preparation state"
         );
         let unlocated = GpuImage::new_shared(
             &renderer,
             &device,
-            7,
-            5,
+            [7, 5],
             &[[0; 4]; 35],
             DMat3::IDENTITY,
+            None,
             OutputTarget::Srgb,
         )
         .await
         .unwrap();
         assert!(
             unlocated
-                .prepare_processing(&device, &mut encoder, &accepted)
+                .prepare_authored(&device, &mut encoder, &accepted)
                 .is_err()
         );
-        let wrong_basis: ProcessingInput = Arc::new(
-            ProcessingInput::new(
-                &device.limits(),
-                calibration(),
-                RollSettings::default(),
-                AdjustmentLayerSnapshot::new(
-                    std::iter::once(antitone::adjustment_layers::AdjustmentLayer::global(
-                        AdjustmentLayerSettings::default(),
-                    ))
-                    .chain(layers())
-                    .collect(),
-                )
-                .unwrap(),
-                DMat3::from_diagonal(DVec3::splat(2.)),
-                AREA,
-            )
-            .unwrap(),
+        let different_basis: Calculation = calculation::photograph(
+            &device.limits(),
+            antitone::processing::InputSettings::Digital,
+            RollSettings::default(),
+            AdjustmentLayerSnapshot::new(vec![]).unwrap(),
+            DMat3::from_diagonal(DVec3::splat(2.)),
+            AREA,
         )
-        .into();
+        .unwrap();
         assert!(
             image
-                .prepare_processing(&device, &mut encoder, &wrong_basis)
-                .is_err()
-        );
-        assert!(
-            ImagePaint::with_processing(
-                image.clone(),
-                Some(wrong_basis),
-                antitone::geometry::TextureMapping::IDENTITY
-            )
-            .is_err()
-        );
-        assert!(
-            !image
-                .prepare_processing(&device, &mut encoder, &accepted)
+                .prepare_authored(&device, &mut encoder, &different_basis)
                 .unwrap()
         );
-        let revision = image.source_revision();
+        queue.submit([encoder.finish()]);
+        let working: Vec<_> = (0..35)
+            .map(|index| {
+                let p = codes(geometry.pixel(index).unwrap());
+                DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535. * 2.
+            })
+            .collect();
+        let expected = CpuRenderer::new(OutputTarget::Srgb)
+            .unwrap()
+            .render(&working)
+            .unwrap();
+        let actual = read_image(&device, &queue, &image).await;
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            for channel in 0..3 {
+                assert!(
+                    (actual[channel] - expected[channel]).abs() < 2e-5,
+                    "operation-owned matrix must affect unchanged camera samples: {actual:?} vs {expected:?}"
+                );
+            }
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        assert!(
+            image
+                .prepare_authored(&device, &mut encoder, &accepted)
+                .unwrap()
+        );
         image.encode(
             &device,
             &mut encoder,
@@ -465,22 +455,9 @@ fn preparation_uses_grade_content_and_rejects_candidates_without_changing_the_ca
         );
         assert!(
             image
-                .prepare_processing(&device, &mut encoder, &accepted)
+                .prepare_authored(&device, &mut encoder, &accepted)
                 .unwrap(),
             "explicit source bypass invalidates previous output identity"
-        );
-        assert_eq!(
-            image.source_revision(),
-            revision,
-            "grade edits do not redevelop the source"
-        );
-        image
-            .write_source(&queue, &[[6000, 8000, 9000, 0]; 35])
-            .unwrap();
-        assert!(
-            image
-                .prepare_processing(&device, &mut encoder, &accepted)
-                .unwrap()
         );
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -516,7 +493,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
             } else {
                 calibration()
             };
-            let processing = input(&device, cal, layers());
+            let processing = input(&device, cal, layers(), corrected.then(|| gpu_field.clone()));
             let global = Pipeline::new(cal, RollSettings::default(), DMat3::IDENTITY).unwrap();
             let working: Vec<_> = (0..35)
                 .map(|i| {
@@ -539,18 +516,8 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
                 })
                 .collect();
             for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                let image = Arc::new(
-                    image(
-                        &renderer,
-                        &device,
-                        geometry,
-                        [7, 5],
-                        target,
-                        corrected.then(|| gpu_field.clone()),
-                    )
-                    .await,
-                );
-                let paint = ImagePaint::with_processing(
+                let image = Arc::new(image(&renderer, &device, geometry, [7, 5], target).await);
+                let paint = calculation::image_paint(
                     image.clone(),
                     Some(processing.clone()),
                     antitone::geometry::TextureMapping::IDENTITY,
@@ -566,7 +533,7 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
                 );
                 assert!(
                     !image
-                        .prepare_processing(&device, &mut encoder, &processing)
+                        .prepare_authored(&device, &mut encoder, &processing)
                         .unwrap()
                 );
                 queue.submit([encoder.finish()]);
@@ -606,10 +573,13 @@ fn viewer_callbacks_apply_locals_at_proxy_source_centres_with_and_without_correc
                         );
                     }
                 }
-                let bypass = ProcessingParameters::source_inspection(1.).unwrap().into();
+                let bypass = calculation::inspection_with_field(
+                    ProcessingParameters::source_inspection(1.).unwrap(),
+                    corrected.then(|| gpu_field.clone()),
+                );
                 let mut encoder = device.create_command_encoder(&Default::default());
                 image
-                    .encode_processing(&device, &mut encoder, &bypass)
+                    .encode_authored(&device, &mut encoder, &bypass)
                     .unwrap();
                 queue.submit([encoder.finish()]);
                 let source: Vec<_> = (0..35)
@@ -649,26 +619,16 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
         let gpu = Arc::new(GpuScopes::new(&device).await.unwrap());
         let geometry =
             SourceGeometry::new([AREA.x, AREA.y, AREA.width, AREA.height], [7, 5]).unwrap();
-        let image = Arc::new(
-            image(
-                &renderer,
-                &device,
-                geometry,
-                [7, 5],
-                OutputTarget::Srgb,
-                None,
-            )
-            .await,
-        );
+        let image = Arc::new(image(&renderer, &device, geometry, [7, 5], OutputTarget::Srgb).await);
         let mut layers = layers();
         layers[0].photo.contrast = 1.6;
         layers[0].photo.exposure = 2.;
         layers[1].photo.exposure = -2.;
         layers[1].photo.wb.warmth = 0.5;
-        let first = input(&device, calibration(), layers.clone());
+        let first = input(&device, calibration(), layers.clone(), None);
         let mut reversed = layers.clone();
         reversed.reverse();
-        let latest = input(&device, calibration(), reversed);
+        let latest = input(&device, calibration(), reversed, None);
         let frame = FrameRaster::new(
             Composition::new(AREA, Default::default(), Default::default()).unwrap(),
             antitone::geometry::FramePoint([0., 0.]),
@@ -682,8 +642,8 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
             amplification: 1,
         };
         let context = egui::Context::default();
-        let paint = |input: ProcessingInput| {
-            ScopePaint::with_processing(
+        let paint = |input: Calculation| {
+            calculation::scope_paint(
                 gpu.clone(),
                 image.clone(),
                 input,
@@ -698,19 +658,19 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
         paint(first.clone()).prepare(&device, &queue, &screen(), &mut encoder, &mut resources);
         assert!(
             !image
-                .prepare_processing(&device, &mut encoder, &first)
+                .prepare_authored(&device, &mut encoder, &first)
                 .unwrap()
         );
         paint(latest.clone()).prepare(&device, &queue, &screen(), &mut encoder, &mut resources);
         assert_eq!(gpu.reduction_count(), 1, "one readback remains outstanding");
         assert!(
-            gpu.status_processing(&image, &latest, frame, settings)
+            gpu.status_authored(&image, &latest, frame, settings)
                 .is_none()
         );
         queue.submit([encoder.finish()]);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         assert!(
-            gpu.status_processing(&image, &latest, frame, settings)
+            gpu.status_authored(&image, &latest, frame, settings)
                 .is_none(),
             "old completion is not current"
         );
@@ -734,7 +694,7 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
             assert_eq!(actual, expected, "scope bin {i}");
         }
         assert_eq!(
-            gpu.status_processing(&image, &latest, frame, settings)
+            gpu.status_authored(&image, &latest, frame, settings)
                 .unwrap()
                 .unwrap()
                 .valid,
@@ -744,7 +704,7 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
             scopes::reference([7, 5], &read_image(&device, &queue, &image).await, settings)
                 .unwrap();
         assert_eq!(
-            gpu.status_processing(&image, &latest, frame, settings)
+            gpu.status_authored(&image, &latest, frame, settings)
                 .unwrap()
                 .unwrap(),
             counts
@@ -752,7 +712,7 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
         let duplicate = {
             let mut a = layers.clone();
             a.reverse();
-            input(&device, calibration(), a)
+            input(&device, calibration(), a, None)
         };
         let mut encoder = device.create_command_encoder(&Default::default());
         paint(duplicate).prepare(&device, &queue, &screen(), &mut encoder, &mut resources);
@@ -764,14 +724,14 @@ fn scopes_share_local_preparation_and_do_not_label_held_readbacks_as_the_new_gra
         gpu.invalidate();
         queue.submit([encoder.finish()]);
         assert!(
-            gpu.status_processing(&image, &latest, frame, settings)
+            gpu.status_authored(&image, &latest, frame, settings)
                 .is_none()
         );
     });
 }
 
 #[test]
-fn reusable_tiles_grade_original_pixels_before_rotated_target_averaging() {
+fn original_tiles_grade_pixels_before_rotated_target_averaging() {
     use antitone::{
         crop::Crop,
         geometry::{FramePoint, PhotoOrientation, QuarterTurns, RollOrientation},
@@ -802,7 +762,7 @@ fn reusable_tiles_grade_original_pixels_before_rotated_target_averaging() {
             } else {
                 calibration()
             };
-            let processing = input(&device, cal, layers());
+            let processing = input(&device, cal, layers(), corrected.then(|| gpu_field.clone()));
             let global = Pipeline::new(cal, RollSettings::default(), DMat3::IDENTITY).unwrap();
             let working: Vec<_> = (AREA.y..AREA.y + AREA.height)
                 .flat_map(|y| {
@@ -858,22 +818,6 @@ fn reusable_tiles_grade_original_pixels_before_rotated_target_averaging() {
                     .unwrap();
                     let bounds = frame.bounds().unwrap();
                     let average = AreaAverage::new_affine(&device, frame).await.unwrap();
-                    let mut tile = GpuImage::new_shared(
-                        &renderer,
-                        &device,
-                        6,
-                        4,
-                        &[[0; 4]; 24],
-                        DMat3::IDENTITY,
-                        target,
-                    )
-                    .await
-                    .unwrap();
-                    tile.set_flat_field(
-                        corrected.then(|| gpu_field.clone()),
-                        SourceGeometry::new([bounds.x, bounds.y, 6, 4], [6, 4]).unwrap(),
-                    )
-                    .unwrap();
                     for y in (0..bounds.height).step_by(4) {
                         for x in (0..bounds.width).step_by(6) {
                             let pixels: Vec<_> = (0..4)
@@ -887,14 +831,22 @@ fn reusable_tiles_grade_original_pixels_before_rotated_target_averaging() {
                                     })
                                 })
                                 .collect();
-                            tile.write_source(&queue, &pixels).unwrap();
-                            tile.set_geometry(
-                                SourceGeometry::new([bounds.x + x, bounds.y + y, 6, 4], [6, 4])
-                                    .unwrap(),
+                            let tile = GpuImage::new_shared(
+                                &renderer,
+                                &device,
+                                [6, 4],
+                                &pixels,
+                                DMat3::IDENTITY,
+                                Some(
+                                    SourceGeometry::new([bounds.x + x, bounds.y + y, 6, 4], [6, 4])
+                                        .unwrap(),
+                                ),
+                                target,
                             )
+                            .await
                             .unwrap();
                             let mut encoder = device.create_command_encoder(&Default::default());
-                            tile.encode_processing(&device, &mut encoder, &processing)
+                            tile.encode_authored(&device, &mut encoder, &processing)
                                 .unwrap();
                             average
                                 .accumulate(&device, &mut encoder, &tile.linear, [x, y])

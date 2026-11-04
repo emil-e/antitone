@@ -2,8 +2,8 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
@@ -174,8 +174,8 @@ fn exercise(
             let previous = accepted.take();
             let next = monitor.phase(case, || {
                 let snapshot = snapshot(&scan, local, edit)?;
-                let input: ProcessingInput = if local {
-                    Arc::new(ProcessingInput::new(
+                let input: AuthoredPhotograph = if local {
+                    Arc::new(AuthoredPhotograph::new(
                         &device.limits(),
                         cal,
                         RollSettings::default(),

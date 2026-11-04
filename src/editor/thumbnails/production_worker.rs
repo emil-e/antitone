@@ -150,9 +150,9 @@ impl Worker {
                 Default::default(),
             )?)?;
             frame.output = proxy.dimensions();
-            let input =
-                crate::gpu::input::ProcessingInput::from_recipe(&self.device.limits(), &recipe)?;
-            let spec = SourceRequest::for_processing(frame, &input)?;
+            let spec = SourceRequest::for_recipe(frame, &recipe)?;
+            let capture =
+                crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
             let kernels = self
                 .kernels
                 .get_or_init(|| pollster::block_on(ViewKernels::new(&self.device)))
@@ -168,13 +168,13 @@ impl Worker {
                     .as_ref()
                     .map(|correction| correction.gpu.clone()),
                 spec,
-                &input,
+                &capture,
             )?;
             metrics.calculation_seconds = tick.elapsed().as_secs_f64();
             (source, Some(produced))
         };
         let tick = std::time::Instant::now();
-        let capture = crate::gpu::view::input::ViewInput::Recipe(recipe.clone());
+        let capture = crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
         let (source, view) = if let Some(produced) = produced {
             let view = RenderedView::from_processed(
                 &self.device,

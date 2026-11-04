@@ -6,10 +6,10 @@
 ))]
 use crate as api;
 use crate::adjustment_layers::AdjustmentLayerSettings;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::raw_test_support::train_raw;
 use api::adjustment_layers::AdjustmentLayer;
 use api::adjustment_layers::AdjustmentLayerCoverage;
@@ -235,9 +235,14 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
             let geometry =
                 SourceGeometry::new([region.x, region.y, region.width, region.height], size)
                     .unwrap();
-            let mut source =
-                ProcessingSource::new_continuous(&device, &pixels, scan.camera_to_ap1).unwrap();
-            source.set_geometry(geometry).unwrap();
+            let source = ProcessingSource::new_continuous(
+                &device,
+                &pixels,
+                scan.camera_to_ap1,
+                Some(geometry),
+            )
+            .unwrap();
+
             assert_eq!(source.byte_len(), pixels.len() as u64 * 16);
             for i in [0, pixels.len() / 2, pixels.len() - 1] {
                 let xy = raster
@@ -276,7 +281,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                 )
                 .unwrap();
                 let tick = Instant::now();
-                let grade = match ProcessingInput::new(
+                let grade = match AuthoredPhotograph::new(
                     &device.limits(),
                     calibration,
                     roll,
@@ -293,7 +298,7 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                     }
                 };
                 let preparation_ms = tick.elapsed().as_secs_f64() * 1000.;
-                let input = ProcessingInput::from(grade.clone());
+                let input = AuthoredPhotograph::from(grade.clone());
                 let encode = |encoder: &mut wgpu::CommandEncoder| {
                     kernel
                         .encode_grade(&device, encoder, &source, &output, &grade)
@@ -364,18 +369,18 @@ fn real_raw_adjustment_layer_preview_tiles_and_refinement() {
                     grade.byte_len()
                 );
                 for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                    let mut image = GpuImage::new_continuous_shared(
+                    let image = GpuImage::new_continuous_shared(
                         &renderer,
                         &device,
-                        size[0],
-                        size[1],
+                        [size[0], size[1]],
                         &pixels,
                         scan.camera_to_ap1,
+                        Some(geometry),
                         target,
                     )
                     .await
                     .unwrap();
-                    image.set_geometry(geometry).unwrap();
+
                     assert_eq!(
                         image.processing_byte_len(),
                         (

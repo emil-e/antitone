@@ -139,6 +139,18 @@ impl Grading {
         &self.snapshot
     }
 
+    #[cfg(feature = "editor")]
+    pub(crate) fn byte_len_for(layers: &AdjustmentLayerSnapshot) -> u64 {
+        let active = layers
+            .layers()
+            .iter()
+            .filter(|layer| layer.is_active())
+            .count()
+            .max(1);
+        (active * std::mem::size_of::<AdjustmentLayerParameters>()
+            + std::mem::size_of::<AdjustmentLayerContext>()) as u64
+    }
+
     pub fn byte_len(&self) -> u64 {
         self.layers.len() as u64 + std::mem::size_of::<AdjustmentLayerContext>() as u64
     }

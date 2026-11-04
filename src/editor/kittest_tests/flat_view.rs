@@ -1,4 +1,5 @@
 use super::*;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 
 #[test]
 fn standalone_reference_supplies_the_painted_canvas_and_scopes_at_both_layouts() {
@@ -55,7 +56,7 @@ fn standalone_reference_supplies_the_painted_canvas_and_scopes_at_both_layouts()
                         editor.source_exposure,
                     )
                     .unwrap();
-                assert_eq!(view.processing(), ProcessingInput::from(expected));
+                assert_eq!(view.processing(), AuthoredPhotograph::from(expected));
                 assert!(view.spec.is_inspection());
                 assert_eq!(editor.document.project, before);
             });

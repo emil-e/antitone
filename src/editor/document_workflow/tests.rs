@@ -430,14 +430,22 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             (
                 e.document.input,
                 e.document.state.project.scan.clone(),
-                digital_proxy_pixels(e, &uncorrected),
+                digital_proxy_pixels(e, &uncorrected, None),
             )
         });
         let mut cleared_scan = scan.clone().unwrap();
         cleared_scan.flat_field = None;
         // The fixture really exercises an active GPU correction, not just saved settings.
-        let corrected_pixels =
-            app.read(|e| digital_proxy_pixels(e, e.document.visit.canvas.ready.as_ref().unwrap()));
+        let corrected_pixels = app.read(|e| {
+            digital_proxy_pixels(
+                e,
+                e.document.visit.canvas.ready.as_ref().unwrap(),
+                e.document
+                    .correction
+                    .as_ref()
+                    .map(|correction| correction.gpu.clone()),
+            )
+        });
         assert!(
             corrected_pixels
                 .iter()
@@ -472,7 +480,14 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 e.history_label(history::Direction::Undo),
                 Some("Input stage")
             );
-            let actual = digital_proxy_pixels(e, e.document.visit.canvas.ready.as_ref().unwrap());
+            let actual = digital_proxy_pixels(
+                e,
+                e.document.visit.canvas.ready.as_ref().unwrap(),
+                e.document
+                    .correction
+                    .as_ref()
+                    .map(|correction| correction.gpu.clone()),
+            );
             assert_eq!(actual.len(), expected_pixels.len());
             for (a, b) in actual.iter().zip(&expected_pixels) {
                 for channel in 0..3 {
@@ -508,7 +523,11 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
     });
     scheduler.close_and_wait().unwrap();
 
-    fn digital_proxy_pixels(e: &Editor, ready: &crate::editor::Ready) -> Vec<[f32; 4]> {
+    fn digital_proxy_pixels(
+        e: &Editor,
+        ready: &crate::editor::Ready,
+        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
+    ) -> Vec<[f32; 4]> {
         use crate::gpu::view::RenderedView;
         use crate::gpu::view::ViewKernels;
         use crate::gpu::view::request::SourceRequest;
@@ -520,19 +539,25 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
         let mut frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
         frame.output = ready.proxy.size();
         let matrix = ready.proxy.matrix();
-        let spec = SourceRequest::new(frame, InputSettings::Digital, matrix, None).unwrap();
+        let spec = SourceRequest::new(
+            frame,
+            InputSettings::Digital,
+            matrix,
+            field.as_ref().map(|field| field.field().clone()),
+        )
+        .unwrap();
         let source = ready
             .proxy
             .view_source(
                 queue,
                 &crate::gpu::submission::SubmissionGate::default(),
                 pollster::block_on(ViewKernels::new(device)).unwrap(),
-                &spec.processing_fixture(),
+                &spec.processing_fixture().with_flat_field(field),
                 spec,
             )
             .unwrap();
-        let parameters = crate::gpu::input::ProcessingInput::from(Arc::new(
-            crate::gpu::input::ProcessingInput::new(
+        let parameters = crate::gpu::test_inputs::AuthoredPhotograph::from(Arc::new(
+            crate::gpu::test_inputs::AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 Default::default(),

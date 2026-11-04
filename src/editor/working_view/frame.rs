@@ -1,6 +1,7 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
-use crate::gpu::view::input::ViewInput;
+use crate::gpu::photograph::request::PhotographRequest;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
 /// One captured view request and the immutable pixels needed to produce it.
@@ -8,7 +9,7 @@ use crate::gpu::view::request::SourceRequest;
 pub(in crate::editor) struct Demand {
     pub spec: SourceRequest,
     pub pixels: source::Context,
-    pub capture: ViewInput,
+    pub capture: PhotographRequest,
 }
 
 pub(super) struct Calculation {
@@ -18,7 +19,8 @@ pub(super) struct Calculation {
 }
 
 impl Demand {
-    pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<ProcessingInput, Error> {
+    #[cfg(test)]
+    pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<AuthoredPhotograph, Error> {
         self.capture.processing(limits, &self.spec.repairs)
     }
 
@@ -35,13 +37,13 @@ impl Demand {
         Self {
             spec,
             pixels,
-            capture: ViewInput::Processing(processing),
+            capture: PhotographRequest::Fixture(processing),
         }
     }
 
     pub(super) fn same_source(&self, other: &Self) -> bool {
         self.pixels.source.identity() == other.pixels.source.identity()
-            && self.spec.is_inspection() == other.spec.is_inspection()
+            && self.capture.is_inspection() == other.capture.is_inspection()
     }
 
     pub(super) fn calculation(&self, source: &ViewSource) -> Result<Calculation, Error> {
@@ -52,7 +54,7 @@ impl Demand {
             .correction
             .as_ref()
             .map(|field| field.gpu.clone());
-        if let ViewInput::Recipe(recipe) = &self.capture {
+        if let PhotographRequest::Recipe(recipe) = &self.capture {
             let (photo, plan) = crate::gpu::photograph::PhotographGraph::preview(
                 &limits,
                 &scan,
@@ -68,21 +70,12 @@ impl Demand {
                 plan,
             });
         }
-        let input = self.processing(&limits)?;
         let spec = source.spec.clone().with_repairs(self.spec.repairs.clone());
-        let native = crate::gpu::view::acquisition::AcquiredViewRaster::source_graphs(
-            &scan,
-            field,
-            &input,
-            std::slice::from_ref(&spec),
-        )?
-        .remove(0);
-        let (image, plan) = crate::gpu::view::processing::ProcessedView::definition(
-            &limits,
-            &spec,
-            native.clone(),
-            &input,
-        )?;
+        let native = self
+            .capture
+            .source_graphs(&scan, field, std::slice::from_ref(&spec))?
+            .remove(0);
+        let (image, plan) = self.capture.filtered(&limits, &spec, native.clone())?;
         Ok(Calculation {
             image,
             native,
@@ -112,7 +105,7 @@ impl Frame {
     }
 
     #[cfg(test)]
-    pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<ProcessingInput, Error> {
+    pub(super) fn processing(&self, limits: &wgpu::Limits) -> Result<AuthoredPhotograph, Error> {
         self.request.processing(limits)
     }
 
@@ -134,7 +127,6 @@ impl Frame {
             }
         }
         let device = self.source.renderer.evaluation().device();
-        let input = request.processing(&device.limits())?;
         let processed = sources
             .into_iter()
             .zip(calculations)
@@ -143,7 +135,6 @@ impl Frame {
                 crate::gpu::view::processing::ProcessedView::prepare_calculation(
                     device,
                     source.acquired(),
-                    &input,
                     calculation.image,
                     calculation.plan,
                     self.processed.get(index),

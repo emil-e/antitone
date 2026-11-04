@@ -128,18 +128,7 @@ fn cost_and_retirement(with_underlay: bool) {
                 let previous_underlay = accepted_underlay.take();
                 let previous_displayed = displayed.take();
                 let photo = if case == "target-only" || case == "navigation-only" {
-                    previous
-                        .as_ref()
-                        .unwrap()
-                        .graded
-                        .as_ref()
-                        .unwrap()
-                        .grade
-                        .as_ref()
-                        .unwrap()
-                        .snapshot()
-                        .layers()[0]
-                        .photo
+                    previous.as_ref().unwrap().processing().snapshot().layers()[0].photo
                 } else {
                     AdjustmentLayerSettings {
                         exposure: 0.25 * f64::from(edit),

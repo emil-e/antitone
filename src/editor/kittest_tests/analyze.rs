@@ -1,5 +1,5 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 
 fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     harness.step();
@@ -26,7 +26,7 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     harness.read(|editor| assert!(!editor.busy));
     harness.read(|editor| {
         let source =
-            ProcessingInput::from(editor.source_parameters(editor.source_exposure).unwrap());
+            AuthoredPhotograph::from(editor.source_parameters(editor.source_exposure).unwrap());
         let signature = editor
             .document
             .visit
@@ -37,7 +37,11 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             .as_ref()
             .expect("review uses original-source tool presentation");
         assert!(
-            signature.capture == crate::gpu::view::input::ViewInput::Processing(source.clone())
+            signature.capture
+                == crate::gpu::photograph::request::PhotographRequest::inspection(
+                    source.parameters()
+                )
+                .unwrap()
         );
         assert_eq!(
             signature.composition,

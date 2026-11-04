@@ -1,7 +1,8 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
 use crate::viewport::CanvasLayout;
 
+#[cfg(test)]
+mod immutable_source_tests;
 mod source_view;
 #[cfg(test)]
 mod tests;
@@ -466,19 +467,24 @@ impl Editor {
         (geometry, panning)
     }
 
-    fn canvas_parameters(
+    fn canvas_calculation(
         &mut self,
         ui: &mut egui::Ui,
         image: ImageMode,
         cx: &UiContext<'_, Self>,
-    ) -> Option<ProcessingInput> {
+    ) -> Option<(
+        crate::gpu::photograph::request::PhotographRequest,
+        crate::gpu::repairs::Snapshot,
+    )> {
+        use crate::gpu::photograph::request::PhotographRequest;
         let inspection = image.inspection(self.canvas_inspection());
         let bypass_look = image.is_sample() || self.document.analysis_review().is_some();
-        let mut recipe = None;
-        let mut parameters = if inspection {
-            let source_parameters = self.source_parameters(self.source_exposure);
-            match source_parameters {
-                Ok(parameters) => ProcessingInput::from(parameters),
+        let capture = if inspection {
+            match self
+                .source_parameters(self.source_exposure)
+                .and_then(PhotographRequest::inspection)
+            {
+                Ok(capture) => capture,
                 Err(error) => {
                     ui.label(format!("Source inspection unavailable: {error}"));
                     return None;
@@ -491,40 +497,46 @@ impl Editor {
                     self.document.roll,
                     self.document.visit.adjustment_layer_settings,
                 )
-                .and_then(|mut captured| {
+                .map(|mut recipe| {
                     if bypass_look {
-                        captured.luts = Default::default();
+                        recipe.luts = Default::default();
                     }
-                    let limits = self
-                        .document
-                        .visit
-                        .working_view
-                        .device()
-                        .map(|device| device.limits())
-                        .unwrap_or_default();
-                    let processing = ProcessingInput::from_recipe(&limits, &captured)?;
-                    recipe = Some(Arc::new(captured));
-                    Ok(processing)
+                    PhotographRequest::Recipe(Arc::new(recipe))
                 });
+            let captured = captured.and_then(|capture| {
+                let limits = self
+                    .document
+                    .visit
+                    .working_view
+                    .device()
+                    .map(|device| device.limits())
+                    .unwrap_or_default();
+                capture.validate(&limits, &Default::default())?;
+                Ok(capture)
+            });
             match captured {
-                Ok(p) => p,
+                Ok(capture) => capture,
                 Err(error) => {
                     ui.label(format!("Positive preview unavailable: {error}"));
                     return None;
                 }
             }
         };
-        if !inspection {
+        let mut repairs = Default::default();
+        let recipe = if let PhotographRequest::Recipe(recipe) = &capture {
             if let Some(signature) = self.dust_signature() {
                 self.schedule_dust(signature, cx);
             }
-            match self.dust_gpu_snapshot(parameters.grade().map(|grade| grade.snapshot())) {
-                Ok(repairs) => parameters.repairs = repairs,
+            match self.dust_gpu_snapshot(Some(&recipe.grade)) {
+                Ok(snapshot) => repairs = snapshot,
                 Err(error) => self.status = format!("Dust view unavailable: {error}"),
             }
-        }
+            Some(recipe.clone())
+        } else {
+            None
+        };
         self.observe_grade(recipe);
-        Some(parameters)
+        Some((capture, repairs))
     }
 
     fn canvas_image(
@@ -568,14 +580,8 @@ impl Editor {
                 frame: (!composition.is_exact()).then(|| geometry.frame_raster(pixels_per_point)),
             })
         };
-        let parameters = self.canvas_parameters(ui, image, cx)?;
-        let capture = self
-            .active_canvas()
-            .grade
-            .recipe()
-            .map(crate::gpu::view::input::ViewInput::Recipe)
-            .unwrap_or_else(|| crate::gpu::view::input::ViewInput::Processing(parameters.clone()));
-        if (working || !parameters.repairs.0.is_empty())
+        let (capture, repairs) = self.canvas_calculation(ui, image, cx)?;
+        if (working || !repairs.0.is_empty())
             && self.document.visit.working_view.observe(
                 physical_frame,
                 capture.clone(),
@@ -593,8 +599,8 @@ impl Editor {
         self.observe_original(
             purpose,
             self.source_context().map(|source| original_view::Demand {
-                capture,
-                repairs: parameters.repairs.clone(),
+                capture: capture.clone(),
+                repairs: repairs.clone(),
                 target: self.document.target,
                 view,
                 composition,
@@ -607,13 +613,14 @@ impl Editor {
             self.document.thumbnails.reserve_view(0);
             true
         };
-        let rendered = match self.working_view(physical_frame, &parameters, image, ui.ctx(), cx) {
-            Ok(view) => view,
-            Err(error) => {
-                self.document.visit.working_view.error = Some(error.to_string());
-                self.document.visit.working_view.hold(self.document.target)
-            }
-        };
+        let rendered =
+            match self.working_view(physical_frame, (&capture, &repairs), image, ui.ctx(), cx) {
+                Ok(view) => view,
+                Err(error) => {
+                    self.document.visit.working_view.error = Some(error.to_string());
+                    self.document.visit.working_view.hold(self.document.target)
+                }
+            };
         if purpose.is_some()
             && !self.busy
             && reference_allowed
@@ -639,7 +646,7 @@ impl Editor {
                 || (rendered.spec.frame().composition == physical_frame.composition
                     && rendered.spec.frame().min == physical_frame.min
                     && rendered.spec.frame().max == physical_frame.max
-                    && rendered.spec.repairs == parameters.repairs)
+                    && rendered.spec.repairs == repairs)
         });
         let tool = if purpose == Some(OriginalPurpose::Tool) {
             match self.original_rendered(OriginalPurpose::Tool) {
@@ -673,7 +680,7 @@ impl Editor {
         } else if let Some(paint) = self.preview_paint(
             &proxy,
             geometry,
-            &parameters,
+            (&capture, &repairs),
             pending,
             source_outside_frame,
             ui.ctx(),
@@ -681,9 +688,7 @@ impl Editor {
             paint
         } else {
             ui.label(
-                if !parameters.repairs.0.is_empty()
-                    && self.document.visit.working_view.error.is_none()
-                {
+                if !repairs.0.is_empty() && self.document.visit.working_view.error.is_none() {
                     "Updating repairs…"
                 } else {
                     "Preview unavailable"
@@ -709,27 +714,29 @@ impl Editor {
         &mut self,
         proxy: &crate::viewer::GpuProxy,
         geometry: CanvasLayout,
-        parameters: &ProcessingInput,
+        (capture, repairs): (
+            &crate::gpu::photograph::request::PhotographRequest,
+            &crate::gpu::repairs::Snapshot,
+        ),
         placeholder: bool,
         source_outside_frame: bool,
         context: &egui::Context,
     ) -> Option<ImagePaint> {
         // Sparse repairs need original-sample footprints. The shared acquisition worker supplies
         // those views; a cached selected preview may stand in until the working view arrives.
-        if !parameters.repairs.0.is_empty() && !placeholder {
+        if !repairs.0.is_empty() && !placeholder {
             return None;
         }
-        let mut preview = parameters.clone();
-        if placeholder {
-            preview.repairs = Default::default();
-        }
-        let parameters = &preview;
+        let repairs = if placeholder {
+            Default::default()
+        } else {
+            repairs.clone()
+        };
         let device = self.document.visit.working_view.device()?;
         let queue = self.document.visit.working_view.queue()?;
         let kernels = self.document.visit.working_view.kernels.get()?.clone();
         let frame = preview_frame(geometry.composition, proxy.size(), source_outside_frame).ok()?;
         let composition = frame.composition;
-        let inspection = parameters.grade().is_none();
         let display_rect = if source_outside_frame {
             geometry.screen_region(composition.area())
         } else {
@@ -750,15 +757,16 @@ impl Editor {
                 y_axis: [0., max.y - origin.y],
             }
         };
-        let capture = self
-            .active_canvas()
-            .grade
-            .recipe()
-            .map(crate::gpu::view::input::ViewInput::Recipe)
-            .unwrap_or_else(|| crate::gpu::view::input::ViewInput::Processing(parameters.clone()));
+        let capture = capture.clone();
         if let Some((source, requested_frame, rendered)) = &self.active_canvas().preview_rendered
             && source.same_source(proxy)
             && rendered.capture == capture
+            && rendered.has_correction(
+                self.document
+                    .correction
+                    .as_ref()
+                    .map(|correction| &correction.gpu),
+            )
             && *requested_frame == frame
             && rendered.target == self.document.target
         {
@@ -769,17 +777,19 @@ impl Editor {
                 context.clone(),
             ));
         }
-        let spec = if inspection {
-            crate::gpu::view::request::SourceRequest::inspection(frame)
-        } else {
-            crate::gpu::view::request::SourceRequest::for_processing(frame, parameters)
-        }
-        .ok()?
-        .with_repairs(parameters.repairs.clone())
-        .with_pipeline(parameters.pixel_pipeline())
-        .ok()?;
+        let spec = capture.source_request(frame, repairs).ok()?;
         let (source, processed) = proxy
-            .preview(queue, &self.submissions, kernels, parameters, spec)
+            .preview(
+                queue,
+                &self.submissions,
+                kernels,
+                &capture,
+                self.document
+                    .correction
+                    .as_ref()
+                    .map(|correction| correction.gpu.clone()),
+                spec,
+            )
             .ok()?;
         let previous = self
             .active_canvas()

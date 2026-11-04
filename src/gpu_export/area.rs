@@ -16,29 +16,67 @@ pub(super) fn write(
 ) -> Result<execution::Stats, Error> {
     let composition = request.composition;
     let format = request.format;
-    let (output, encoding) = match format {
-        Format::Tiff(target) => (
-            OutputReference::DisplayReferred(target),
-            SampleEncoding::Rgb16,
-        ),
-        Format::Exr(_) => (OutputReference::SceneReferred, SampleEncoding::LinearFloat),
+    let output = match format {
+        Format::Tiff(target) => OutputReference::DisplayReferred(target),
+        Format::Exr(_) => OutputReference::SceneReferred,
     };
 
+    if request.scan.area != composition.area()
+        || request.scan.flat_field() != request.field.as_ref().map(|field| field.field())
+    {
+        return Err(Error::Gpu("processing source/recipe mismatch".into()));
+    }
+    let photograph = crate::gpu::photograph::PhotographGraph::original(
+        &device.limits(),
+        crate::gpu::evaluation::camera_source(request.scan)?,
+        request.field,
+        crate::gpu::interpretation::InputTransform::for_scan(request.scan, request.input)?,
+        crate::gpu::grading::Grading::new(
+            &device.limits(),
+            request.roll,
+            request.grade,
+            request.scan.area,
+        )?,
+        crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?,
+        &request.pipeline,
+    )?;
+    let definition =
+        crate::gpu::evaluation::Reference::capture(device, renderer, output, &request.luts)?
+            .compose(photograph.processed, renderer)?;
+    write_calculation(
+        renderer,
+        device,
+        gpu,
+        definition,
+        composition,
+        format,
+        destination,
+        check,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_calculation(
+    renderer: &GpuRenderer,
+    device: &wgpu::Device,
+    gpu: (&wgpu::Queue, &SubmissionGate),
+    definition: Arc<crate::gpu::evaluation::ImageNode>,
+    composition: Composition,
+    format: Format,
+    destination: (&Path, Overwrite),
+    check: impl FnMut() -> Result<(), Error>,
+) -> Result<execution::Stats, Error> {
+    let encoding = match format {
+        Format::Tiff(target) => SampleEncoding::Rgb16(target),
+        Format::Exr(_) => SampleEncoding::LinearFloat,
+    };
     execution::execute(
         renderer,
         device,
         gpu,
         execution::Request {
-            scan: request.scan,
-            field: request.field,
-            input: request.input,
-            roll: request.roll,
-            grade: request.grade,
-            repairs: request.repairs,
+            definition,
             composition,
-            stages: request.pipeline,
-            output,
-            luts: request.luts,
             encoding,
         },
         |render, complete| encode_with_checked(composition, format, destination, render, complete),

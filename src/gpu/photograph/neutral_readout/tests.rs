@@ -4,7 +4,7 @@ use crate::gpu::photograph::PhotographGraph;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
     geometry::SourceRegion,
-    gpu::input::ProcessingInput,
+    gpu::test_inputs::AuthoredPhotograph,
     processing::{Calibration, InputSettings},
 };
 use glam::{DMat3, DVec3};
@@ -39,7 +39,7 @@ fn neutral_readout_preserves_folded_range_for_f64_statistics_and_representable_l
     }
     let layers = AdjustmentLayerSnapshot::new(vec![]).unwrap();
     assert!(
-        ProcessingInput::validate(
+        AuthoredPhotograph::validate(
             &device,
             input,
             RollSettings::default(),

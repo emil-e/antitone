@@ -181,9 +181,11 @@ impl Editor {
             .and_then(|tool| tool.warning.clone())
             .or_else(|| self.viewer_warning());
         let look_error = self.look_rendering_error();
-        let painted_source = self.canvas_frame.displayed.as_ref().is_some_and(|painted| {
-            matches!(&painted.view.capture, working_view::Capture::Primitive(input) if input.grade().is_none())
-        });
+        let painted_source = self
+            .canvas_frame
+            .displayed
+            .as_ref()
+            .is_some_and(|painted| painted.view.capture.is_inspection());
         let bar = if fullscreen {
             presentation::ViewerBar::Overlay
         } else {

@@ -1,6 +1,7 @@
 use super::*;
 #[cfg(test)]
-use crate::gpu::input::ProcessingInput;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::InputSettings;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerCoverage},
@@ -518,12 +519,13 @@ impl Editor {
     }
 
     #[cfg(test)]
+    #[cfg(test)]
     pub(super) fn view_processing(
         &self,
         input: impl Into<InputSettings>,
         roll: RollSettings,
         photo: AdjustmentLayerSettings,
-    ) -> Result<ProcessingInput, Error> {
+    ) -> Result<AuthoredPhotograph, Error> {
         let recipe = self.view_recipe(input, roll, photo)?;
         let limits = self
             .document
@@ -532,7 +534,7 @@ impl Editor {
             .device()
             .map(|device| device.limits())
             .unwrap_or_default();
-        ProcessingInput::from_recipe(&limits, &recipe)
+        AuthoredPhotograph::from_recipe(&limits, &recipe)
     }
 
     pub(super) fn mask_interaction(

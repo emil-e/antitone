@@ -39,19 +39,17 @@ impl Correction {
             if document.project.order.contains(&source.id) {
                 settings.require_source(&source.development)?;
                 let matrix = glam::DMat3::from_cols_array_2d(&source.development.camera_to_ap1);
-                let mut input = if source.development.lens_correction.is_some() {
-                    crate::gpu::source::ProcessingSource::new_continuous(
-                        device,
-                        &[[0.; 4]],
-                        matrix,
-                    )?
-                } else {
-                    crate::gpu::source::ProcessingSource::new(device, &[[0; 4]], matrix)?
-                };
-                input.set_flat_field(
-                    Some(gpu.clone()),
-                    SourceGeometry::new(source.development.active_area, [1, 1])?,
+                let continuous = source.development.lens_correction.is_some();
+                crate::gpu::parameters::CameraMatrix::require_source(matrix, continuous)?;
+                gpu.validate_matrix(
+                    matrix,
+                    if continuous {
+                        crate::processing::MAX_SOURCE_GAIN
+                    } else {
+                        1.
+                    },
                 )?;
+                SourceGeometry::new(source.development.active_area, [1, 1])?;
             }
         }
         let maximum_gain = settings.map.bounds().1.max_element();

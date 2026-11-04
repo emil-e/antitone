@@ -1,8 +1,8 @@
 use super::*;
 use crate::geometry::{Composition, FramePoint};
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::parameters::ProcessingParameters;
-use crate::gpu::view::input::ViewInput;
+use crate::gpu::photograph::request::PhotographRequest;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
 #[test]
@@ -16,7 +16,8 @@ fn demand_revision_tracks_view_intent_and_idle_requires_presentation() {
         .unwrap(),
     )
     .unwrap();
-    let processing = ViewInput::Processing(ProcessingInput::from(ProcessingParameters::source()));
+    let processing =
+        PhotographRequest::Fixture(AuthoredPhotograph::from(ProcessingParameters::source()));
 
     let mut working = WorkingView::default();
     assert_eq!(working.revision(), None);
@@ -342,8 +343,8 @@ fn a_departed_downstream_capture_cannot_latch_failure_for_the_same_native_reques
         result: Err("old downstream failure".into()),
     };
     let mut latest = first;
-    latest.capture = ViewInput::Processing(
-        ProcessingInput::new(
+    latest.capture = PhotographRequest::Fixture(
+        AuthoredPhotograph::new(
             &Default::default(),
             crate::processing::InputSettings::Digital,
             RollSettings {

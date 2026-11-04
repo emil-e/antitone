@@ -1,6 +1,6 @@
 #![cfg(all(feature = "gpu", target_os = "macos"))]
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::photograph::test_support::CameraFixture;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
@@ -112,7 +112,7 @@ fn native_negative_and_digital_primitives_preserve_analytic_values_order_and_flo
         let mut signed = false;
         let mut hdr = false;
         for matrix in matrices {
-            let source = ProcessingSource::new(&device, &codes, matrix).unwrap();
+            let source = ProcessingSource::new(&device, &codes, matrix, None).unwrap();
             for input in [InputSettings::from(interpretation), InputSettings::Digital] {
                 for roll in [
                     RollSettings::default(),
@@ -412,7 +412,7 @@ fn layer_range_preflight_covers_creative_stages() {
     )])
     .unwrap();
     assert!(
-        ProcessingInput::validate_limits(
+        AuthoredPhotograph::validate_limits(
             &limits,
             extreme,
             RollSettings::default(),
@@ -429,7 +429,7 @@ fn layer_range_preflight_covers_creative_stages() {
         })])
         .unwrap();
     assert!(
-        ProcessingInput::validate_limits(
+        AuthoredPhotograph::validate_limits(
             &limits,
             extreme,
             RollSettings::default(),
@@ -465,7 +465,7 @@ fn gpu_parameters_reject_overflow_instead_of_silent_cpu_fallback() {
             exposure: 16.0,
             ..Default::default()
         })])
-        .and_then(|snapshot| ProcessingInput::validate_limits(
+        .and_then(|snapshot| AuthoredPhotograph::validate_limits(
             &wgpu::Limits::default(),
             interpretation,
             roll,

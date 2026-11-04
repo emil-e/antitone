@@ -1,9 +1,9 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
 use crate::viewer::readback::image_pixels;
 
-fn preview_image(editor: &Editor, input: &ProcessingInput) -> Arc<GpuImage> {
+fn preview_image(editor: &Editor, input: &AuthoredPhotograph) -> Arc<GpuImage> {
     let (_, frame, view) = editor
         .document
         .visit
@@ -338,7 +338,6 @@ fn cached_selected_images_do_not_alias_filmstrip_processing() {
                 &device,
                 OutputTarget::DisplayP3,
                 &source.development,
-                None,
             )
             .await
             .unwrap();
@@ -472,7 +471,7 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
 }
 
 #[test]
-fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
+fn project_correction_changes_preserve_pending_camera_samples() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
@@ -503,24 +502,29 @@ fn correction_is_preview_owned_and_change_invalidates_only_pending_display() {
                     Correction::prepare(&device, &editor.document, None).unwrap();
                 let before = editor.document.state.project.clone();
                 editor.load(path, cx);
-                let proxy = &editor
+                assert_eq!(editor.document.state.project, before);
+                let proxy = editor
                     .document
                     .visit
                     .pending_preview
                     .as_ref()
                     .unwrap()
-                    .proxy;
-                for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-                    assert_eq!(
-                        proxy.image(target).unwrap().source_revision(),
-                        0,
-                        "correction belongs to the immutable initial source, not a later write"
-                    );
-                }
-                assert_eq!(editor.document.state.project, before);
+                    .proxy
+                    .clone();
+                editor.document.state.project.set_flat_field(None);
                 editor.document.correction = None;
                 editor.validate_pending_preview();
-                assert!(editor.document.visit.pending_preview.is_none());
+                assert!(
+                    proxy.same_source(
+                        &editor
+                            .document
+                            .visit
+                            .pending_preview
+                            .as_ref()
+                            .unwrap()
+                            .proxy
+                    )
+                );
                 assert!(editor.busy);
                 assert!(editor.document.visit.canvas.ready.is_none());
                 assert!(editor.document.visit.source.pending());
@@ -705,7 +709,6 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                         .1
                         .image(editor.document.target)
                         .unwrap();
-                    let source_revision = selected.source_revision();
                     let mut positive_pixels = None;
 
                     for source_mode in [false, true] {
@@ -783,7 +786,6 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                                 .any(|channel| (a[channel] - b[channel]).abs() > 1e-4)),
                         "inverting the nonneutral local must visibly change the rendered preview"
                     );
-                    assert_eq!(selected.source_revision(), source_revision);
                     assert!(Arc::ptr_eq(
                         &editor
                             .document

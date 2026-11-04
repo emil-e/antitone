@@ -1,11 +1,11 @@
 use super::*;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::parameters::CameraMatrix;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::RollSettings;
 #[cfg(target_os = "macos")]
 use crate::{
@@ -201,27 +201,32 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
             codes[0] = [0, 0, 0, 124];
             codes[1] = [65535, 65535, 65535, 0];
             codes[2] = [65535, 0, 0, 42];
-            let mut source = ProcessingSource::new(&device, &codes, matrix).unwrap();
-            source.set_flat_field(Some(gpu.clone()), geometry).unwrap();
+            let source = ProcessingSource::new(&device, &codes, matrix, Some(geometry)).unwrap();
             assert_eq!(source.byte_len(), codes.len() as u64 * 8);
             assert!(
-                source
-                    .set_flat_field(None, SourceGeometry::new([0, 0, 1, 1], [1, 1]).unwrap())
-                    .is_err()
+                ProcessingSource::new(
+                    &device,
+                    &codes,
+                    matrix,
+                    Some(SourceGeometry::new([0, 0, 1, 1], [1, 1]).unwrap())
+                )
+                .is_err()
             );
-            assert!(source.flat_field.is_some());
-            assert_eq!(source.geometry, Some(geometry));
-            {
-                let value = f32::MAX as f64;
-                let unsupported = Arc::new(
-                    FlatField::from_nodes(field.area(), [2, 2], vec![DVec3::splat(value); 4])
+            let unsupported = Arc::new(
+                GpuFlatField::new(
+                    &device,
+                    Arc::new(
+                        FlatField::from_nodes(
+                            field.area(),
+                            [2, 2],
+                            vec![DVec3::splat(f32::MAX as f64); 4],
+                        )
                         .unwrap(),
-                );
-                let unsupported = Arc::new(GpuFlatField::new(&device, unsupported).unwrap());
-                assert!(source.set_flat_field(Some(unsupported), geometry).is_err());
-                assert!(Arc::ptr_eq(source.flat_field.as_ref().unwrap(), &gpu));
-                assert_eq!(source.geometry, Some(geometry));
-            }
+                    ),
+                )
+                .unwrap(),
+            );
+            assert!(unsupported.validate_matrix(matrix, 1.).is_err());
             let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::bytes_of(&flat::FieldGeometry::new(&gpu, geometry)),
@@ -373,7 +378,7 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                         .unwrap(),
                     ),
                     Some(
-                        ProcessingInput::new(
+                        AuthoredPhotograph::new(
                             &device.limits(),
                             input,
                             roll,
@@ -392,10 +397,23 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 if let Some(grade) = &grade {
                     kernel
-                        .encode_grade(&device, &mut encoder, &source, &output, grade)
+                        .encode_grade(
+                            &device,
+                            &mut encoder,
+                            &source,
+                            &output,
+                            &grade.clone().with_flat_field(Some(gpu.clone())),
+                        )
                         .unwrap();
                 } else {
-                    kernel.encode(&device, &mut encoder, &source, &output, parameters);
+                    kernel.encode_with_field(
+                        &device,
+                        &mut encoder,
+                        &source,
+                        &output,
+                        parameters,
+                        Some(gpu.clone()),
+                    );
                 }
                 let bytes = codes.len() as u64 * 16;
                 encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, bytes);
@@ -429,8 +447,6 @@ fn main(@builtin(global_invocation_id) id:vec3u) {
                     assert_eq!(value.w, mask as f32);
                 }
             }
-            source.set_flat_field(None, geometry).unwrap();
-            assert!(source.flat_field.is_none());
         }
     });
 }

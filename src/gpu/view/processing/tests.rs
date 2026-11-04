@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::evaluation as e;
-use crate::gpu::input::ProcessingInput;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::{frame_raster::FrameRaster, geometry::Composition};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -33,8 +33,8 @@ fn frame() -> FrameRaster {
     .unwrap()
 }
 
-fn input(limits: &wgpu::Limits, exposure: f64) -> ProcessingInput {
-    ProcessingInput::new(
+fn input(limits: &wgpu::Limits, exposure: f64) -> AuthoredPhotograph {
+    AuthoredPhotograph::new(
         limits,
         crate::processing::InputSettings::Digital,
         crate::processing::RollSettings {

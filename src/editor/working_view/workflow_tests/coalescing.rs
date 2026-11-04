@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
-use crate::gpu::view::input::ViewInput;
+use crate::gpu::photograph::request::PhotographRequest;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 
 #[test]
@@ -20,7 +20,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
             panic!("negative fixture");
         };
         balance.warmth = gamma;
-        let processing = ProcessingInput::new(
+        let processing = AuthoredPhotograph::new(
             &wgpu::Limits::default(),
             settings,
             RollSettings {
@@ -43,7 +43,7 @@ fn running_photographic_capture_progresses_with_matching_gamma_and_wb_before_lat
         Demand {
             spec,
             pixels: pixels.clone(),
-            capture: ViewInput::Processing(processing),
+            capture: PhotographRequest::Fixture(processing),
         }
     };
     let first = capture(0.02, 0.15);

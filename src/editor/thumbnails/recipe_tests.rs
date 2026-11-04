@@ -1,7 +1,7 @@
 use super::*;
 use crate::dust_repair::{RepairOrigin, SupportMask, nearest_offset};
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 
 #[cfg(feature = "ocio-reference")]
 mod pixel_tests;
@@ -663,7 +663,7 @@ fn authored_offscreen_cpu_completion_advances_to_positive_cards_when_the_view_be
     .unwrap();
     editor.document.visit.working_view.observe(
         frame,
-        crate::gpu::view::input::ViewInput::Processing(ProcessingInput::from(
+        crate::gpu::photograph::request::PhotographRequest::Fixture(AuthoredPhotograph::from(
             ProcessingParameters::source(),
         )),
         editor.document.target,

@@ -14,7 +14,7 @@ use crate::{
     scan::Scan,
 };
 #[cfg(feature = "editor")]
-use crate::{frame_raster::FrameRaster, gpu::input::ProcessingInput};
+use crate::{frame_raster::FrameRaster, gpu::test_inputs::AuthoredPhotograph};
 use std::{path::Path, sync::Arc};
 
 #[test]
@@ -196,7 +196,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
     ])
     .unwrap();
     let grade = Arc::new(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             Default::default(),
@@ -206,7 +206,7 @@ fn original_reference_film_matches_authoritative_tiff_at_native_scale() {
         )
         .unwrap(),
     );
-    let input = crate::gpu::input::ProcessingInput::from(grade);
+    let input = crate::gpu::test_inputs::AuthoredPhotograph::from(grade);
     let gate = SubmissionGate::default();
     let generation = AtomicU64::new(1);
     let directory = tempfile::tempdir().unwrap();

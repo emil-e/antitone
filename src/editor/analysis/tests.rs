@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::parameters::ProcessingParameters;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
 use crate::project::SourceDevelopment;
 
@@ -360,10 +360,10 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     let area = rect([12, 12, 800, 600]);
     let composition = Composition::new(area, Default::default(), Default::default()).unwrap();
     let frame = crate::frame_raster::FrameRaster::full(composition).unwrap();
-    let input = ProcessingInput::from(ProcessingParameters::source());
+    let input = AuthoredPhotograph::from(ProcessingParameters::source());
     editor.document.visit.working_view.observe(
         frame,
-        crate::gpu::view::input::ViewInput::Processing(input.clone()),
+        crate::gpu::photograph::request::PhotographRequest::Fixture(input.clone()),
         editor.document.target,
     );
     assert!(editor.document.visit.working_view.revision().is_some());

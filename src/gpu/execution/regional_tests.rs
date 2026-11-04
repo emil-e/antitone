@@ -1,6 +1,8 @@
 use super::*;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::submission::SubmissionGate;
+use crate::rendering::OutputTarget;
+use crate::scan::Scan;
 #[cfg(feature = "ocio-reference")]
 use crate::{
     adjustment_layers::{
@@ -9,7 +11,7 @@ use crate::{
     crop::Crop,
     frame_raster::FrameRaster,
     geometry::{Composition, FramePoint},
-    gpu::input::ProcessingInput,
+    gpu::test_inputs::AuthoredPhotograph,
     processing::{InputSettings, RollSettings},
 };
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -286,7 +288,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         .unwrap();
     let source = crate::scan::ImageSource::new(&scan, InputSettings::Digital).unwrap();
     let gpu = Arc::new(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             roll,
@@ -296,7 +298,7 @@ fn regional_original_grade_gaussian_and_display_precede_rotated_reconstruction_a
         )
         .unwrap(),
     );
-    let input = ProcessingInput::from(gpu).with_pixel_pipeline(
+    let input = AuthoredPhotograph::from(gpu).with_pixel_pipeline(
         crate::pixel_pipeline::PixelPipeline::emulation(
             crate::grain::GrainSettings {
                 enabled: true,

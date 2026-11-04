@@ -2,13 +2,8 @@
 
 use crate::Error;
 use crate::gpu::evaluation;
-use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::submission::SubmissionGate;
 use crate::renderer::GpuRenderer;
-use crate::rendering::OutputReference;
-use crate::rendering::OutputTarget;
-use crate::scan::Scan;
 use std::sync::Arc;
 
 #[cfg(all(test, target_os = "macos"))]
@@ -22,76 +17,55 @@ pub struct Demand {
     pub frame: Option<crate::frame_raster::FrameRaster>,
 }
 
-pub(crate) struct Request<'a> {
-    pub scan: &'a Scan,
-    pub field: Option<Arc<GpuFlatField>>,
-    pub input: &'a ProcessingInput,
-    pub target: OutputTarget,
-    pub demand: Demand,
+fn validate_demand(area: crate::raw::Rect, demand: Demand) -> Result<(), Error> {
+    if let Some(frame) = demand.frame
+        && (frame.composition.area() != area
+            || frame.bounds()? != demand.area
+            || frame.output != demand.output)
+    {
+        return Err(Error::InvalidParameter(
+            "inconsistent frame refinement request",
+        ));
+    }
+    Ok(())
 }
 
-impl Request<'_> {
-    pub fn definition(
-        self,
-        device: &wgpu::Device,
-        renderer: &GpuRenderer,
-    ) -> Result<Arc<evaluation::ImageNode>, Error> {
-        self.validate()?;
-        let Self {
-            scan,
-            field,
-            input,
-            target,
-            demand,
-        } = self;
-        let root = evaluation::original_chain(
-            device,
-            renderer,
-            scan,
-            field,
-            input,
-            OutputReference::DisplayReferred(target),
-            &input.pixel_pipeline(),
-        )?;
-        let mut grid = if let Some(frame) = demand.frame {
-            evaluation::Grid::from_frame(frame)
-        } else {
-            evaluation::Grid::axis_aligned(
-                [f64::from(demand.area.x), f64::from(demand.area.y)],
-                [
-                    f64::from(demand.area.width) / f64::from(demand.output[0]),
-                    f64::from(demand.area.height) / f64::from(demand.output[1]),
-                ],
-            )
-        };
-        grid.coverage = 8;
-        let domain = evaluation::Domain {
-            bounds: Some(crate::gpu::evaluation::CellRegion::new(
-                [0, 0],
-                demand.output,
-            )),
-            grid,
-            meaning: root.domain().meaning,
-        };
-        evaluation::reconstruct(root, domain)
+pub(crate) fn definition(
+    root: Arc<evaluation::ImageNode>,
+    demand: Demand,
+) -> Result<Arc<evaluation::ImageNode>, Error> {
+    let area = root.domain().finite()?.source()?;
+    if !root
+        .domain()
+        .finite()?
+        .contains_region(demand.area.try_into()?)
+    {
+        return Err(Error::InvalidParameter(
+            "refinement demand exceeds the source",
+        ));
     }
-
-    pub fn validate(&self) -> Result<(), Error> {
-        self.scan.validate_area(self.demand.area)?;
-        if self.scan.flat_field() != self.field.as_ref().map(|field| field.field()) {
-            return Err(Error::Gpu("CPU and GPU flat-field resources differ".into()));
-        }
-        if let Some(frame) = self.demand.frame
-            && (frame.composition.area() != self.scan.area
-                || frame.bounds()? != self.demand.area
-                || frame.output != self.demand.output)
-        {
-            return Err(Error::InvalidParameter(
-                "inconsistent frame refinement request",
-            ));
-        }
-        Ok(())
-    }
+    validate_demand(area, demand)?;
+    let mut grid = if let Some(frame) = demand.frame {
+        evaluation::Grid::from_frame(frame)
+    } else {
+        evaluation::Grid::axis_aligned(
+            [f64::from(demand.area.x), f64::from(demand.area.y)],
+            [
+                f64::from(demand.area.width) / f64::from(demand.output[0]),
+                f64::from(demand.area.height) / f64::from(demand.output[1]),
+            ],
+        )
+    };
+    grid.coverage = 8;
+    let domain = evaluation::Domain {
+        bounds: Some(crate::gpu::evaluation::CellRegion::new(
+            [0, 0],
+            demand.output,
+        )),
+        grid,
+        meaning: root.domain().meaning,
+    };
+    evaluation::reconstruct(root, domain)
 }
 
 pub(crate) struct Completed {

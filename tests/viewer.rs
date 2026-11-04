@@ -2,7 +2,8 @@
 use antitone::adjustment_layers::{
     AdjustmentLayer, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
 };
-use antitone::gpu::input::ProcessingInput;
+#[path = "support/calculation.rs"]
+mod calculation;
 use antitone::{
     color::{Balance, ap1_to_ap0},
     flat_field::FlatField,
@@ -11,8 +12,8 @@ use antitone::{
     rendering::{CpuRenderer, OutputTarget},
     viewer::GpuImage,
 };
+use calculation::ImageCalculations;
 use glam::{DMat3, DVec3};
-use std::sync::Arc;
 
 #[test]
 fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
@@ -69,7 +70,7 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
         };
         let calibration = field.processing_calibration(base).unwrap();
         let mut cases = vec![(
-            ProcessingInput::from(ProcessingParameters::source()),
+            calculation::inspection_with_field(ProcessingParameters::source(), Some(gpu.clone())),
             scans.iter().map(|p| matrix * p).collect::<Vec<_>>(),
         )];
         for response in [
@@ -93,13 +94,14 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             };
             let pipeline = Pipeline::new(input, roll, matrix).unwrap();
             cases.push((
-                ProcessingInput::new(
+                calculation::photograph_with_field(
                     &device.limits(),
                     input,
                     roll,
                     AdjustmentLayerSnapshot::new(vec![]).unwrap(),
                     matrix,
                     [12, 12, 8640, 5760].into(),
+                    Some(gpu.clone()),
                 )
                 .unwrap(),
                 scans
@@ -109,15 +111,22 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
             ));
         }
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-            let mut image = GpuImage::new(&device, &queue, 8, 8, &pixels, matrix, target)
-                .await
-                .unwrap();
-            image.set_flat_field(Some(gpu.clone()), geometry).unwrap();
+            let image = GpuImage::new(
+                &device,
+                &queue,
+                [8, 8],
+                &pixels,
+                matrix,
+                Some(geometry),
+                target,
+            )
+            .await
+            .unwrap();
             assert_eq!(image.processing_byte_len(), (64 * 8, 64 * 16));
             for (parameters, working) in &cases {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 image
-                    .encode_processing(&device, &mut encoder, parameters)
+                    .encode_authored(&device, &mut encoder, parameters)
                     .unwrap();
                 queue.submit([encoder.finish()]);
                 let expected = CpuRenderer::new(target).unwrap().render(working).unwrap();
@@ -131,7 +140,6 @@ fn corrected_viewer_shares_the_field_and_matches_both_cpu_output_targets() {
                     }
                 }
             }
-            image.set_flat_field(None, geometry).unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());
             image.encode(&device, &mut encoder, ProcessingParameters::source());
             queue.submit([encoder.finish()]);
@@ -247,16 +255,16 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
             .unwrap();
             let parameters = AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                 .and_then(|snapshot| {
-                    ProcessingInput::new(
+                    calculation::photograph_with_field(
                         &device.limits(),
                         calibration,
                         roll,
                         snapshot,
                         matrix,
                         [0, 0, 8192, 8192].into(),
+                        corrected.then(|| gpu.clone()),
                     )
                 })
-                .map(|grade| ProcessingInput::from(Arc::new(grade)))
                 .unwrap();
             let working: Vec<_> = (area.y..area.y + area.height)
                 .flat_map(|y| {
@@ -317,17 +325,6 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                         .unwrap();
                         let bounds = raster.bounds().unwrap();
                         let average = AreaAverage::new_affine(&device, raster).await.unwrap();
-                        let mut tile = GpuImage::new_shared(
-                            &renderer,
-                            &device,
-                            6,
-                            4,
-                            &[[0; 4]; 24],
-                            matrix,
-                            target,
-                        )
-                        .await
-                        .unwrap();
                         for y in (0..bounds.height).step_by(4) {
                             for x in (0..bounds.width).step_by(6) {
                                 let pixels: Vec<_> = (0..4)
@@ -341,16 +338,26 @@ fn corrected_rotated_tiles_use_original_source_coordinates_before_native_camera_
                                         })
                                     })
                                     .collect();
-                                tile.write_source(&queue, &pixels).unwrap();
-                                tile.set_flat_field(
-                                    corrected.then(|| gpu.clone()),
-                                    SourceGeometry::new([bounds.x + x, bounds.y + y, 6, 4], [6, 4])
+                                let tile = GpuImage::new_shared(
+                                    &renderer,
+                                    &device,
+                                    [6, 4],
+                                    &pixels,
+                                    matrix,
+                                    Some(
+                                        SourceGeometry::new(
+                                            [bounds.x + x, bounds.y + y, 6, 4],
+                                            [6, 4],
+                                        )
                                         .unwrap(),
+                                    ),
+                                    target,
                                 )
+                                .await
                                 .unwrap();
                                 let mut encoder =
                                     device.create_command_encoder(&Default::default());
-                                tile.encode_processing(&device, &mut encoder, &parameters)
+                                tile.encode_authored(&device, &mut encoder, &parameters)
                                     .unwrap();
                                 average
                                     .accumulate(&device, &mut encoder, &tile.linear, [x, y])
@@ -518,7 +525,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             (
                 AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                     .and_then(|snapshot| {
-                        ProcessingInput::new(
+                        calculation::photograph(
                             &device.limits(),
                             settings.negative_input().unwrap(),
                             roll,
@@ -527,35 +534,42 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                             [0, 0, 8192, 8192].into(),
                         )
                     })
-                    .map(|grade| ProcessingInput::from(Arc::new(grade)))
                     .unwrap(),
                 values,
             )
         })
         .into();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-            let image = GpuImage::new(&device, &queue, 4, 2, &pixels, matrix, target)
+            let image = GpuImage::new(&device, &queue, [4, 2], &pixels, matrix, None, target)
                 .await
                 .unwrap();
             assert_eq!(
                 image.processing_byte_len(),
                 (pixels.len() as u64 * 8, pixels.len() as u64 * 16)
             );
-            assert!(image.write_source(&queue, &pixels[..7]).is_err());
+            assert!(
+                GpuImage::new(&device, &queue, [4, 2], &pixels[..7], matrix, None, target)
+                    .await
+                    .is_err()
+            );
             let rendered = GpuImage::new_rendered(&device, &queue, 4, 2, target)
                 .await
                 .unwrap();
             assert_eq!(rendered.processing_byte_len(), (0, 0));
-            assert!(rendered.write_source(&queue, &pixels).is_err());
+            assert!(
+                rendered
+                    .inspection(ProcessingParameters::source(), None)
+                    .is_err()
+            );
             for (parameters, working) in [
                 (
-                    ProcessingInput::from(ProcessingParameters::source()),
+                    calculation::inspection(ProcessingParameters::source()),
                     &working,
                 ),
                 (
                     AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(photo)])
                         .and_then(|snapshot| {
-                            ProcessingInput::new(
+                            calculation::photograph(
                                 &device.limits(),
                                 input.negative_input().unwrap(),
                                 roll,
@@ -564,7 +578,6 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
                                 [0, 0, 8192, 8192].into(),
                             )
                         })
-                        .map(|grade| ProcessingInput::from(Arc::new(grade)))
                         .unwrap(),
                     &positive,
                 ),
@@ -573,7 +586,7 @@ fn reusable_gpu_viewer_matches_cpu_targets_and_extended_srgb_presentation() {
             ] {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 image
-                    .encode_processing(&device, &mut encoder, &parameters)
+                    .encode_authored(&device, &mut encoder, &parameters)
                     .unwrap();
                 queue.submit([encoder.finish()]);
                 let expected = CpuRenderer::new(target).unwrap().render(working).unwrap();
@@ -676,10 +689,17 @@ fn oriented_presentation_matches_exact_source_pixel_mapping() {
             .map(|i| [3000 + i * 2500, 12000 + i * 700, 35000 - i * 1500, 0])
             .collect();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-            let image =
-                GpuImage::new_shared(&renderer, &device, 5, 3, &pixels, DMat3::IDENTITY, target)
-                    .await
-                    .unwrap();
+            let image = GpuImage::new_shared(
+                &renderer,
+                &device,
+                [5, 3],
+                &pixels,
+                DMat3::IDENTITY,
+                None,
+                target,
+            )
+            .await
+            .unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());
             image.encode(&device, &mut encoder, ProcessingParameters::source());
             queue.submit([encoder.finish()]);
@@ -870,7 +890,7 @@ fn gpu_yellows_retain_hue_and_continuity_across_exposure() {
             .map(|p| matrix * (DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64) / 65535.))
             .collect();
         for target in [OutputTarget::Srgb, OutputTarget::DisplayP3] {
-            let image = GpuImage::new(&device, &queue, 321, 3, &pixels, matrix, target)
+            let image = GpuImage::new(&device, &queue, [321, 3], &pixels, matrix, None, target)
                 .await
                 .unwrap();
             let mut encoder = device.create_command_encoder(&Default::default());

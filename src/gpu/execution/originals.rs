@@ -2,17 +2,11 @@
 
 use super::{OutputBlock, Request, SampleEncoding};
 use crate::gpu::evaluation;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::rgb16;
 use crate::gpu::submission::SubmissionGate;
 #[cfg(all(test, target_os = "macos"))]
 use crate::scan::Scan;
-use crate::{
-    Error,
-    renderer::GpuRenderer,
-    rendering::{OutputReference, OutputTarget},
-};
-use std::sync::Arc;
+use crate::{Error, renderer::GpuRenderer, rendering::OutputTarget};
 
 #[cfg(feature = "export")]
 use crate::export_timing::timed;
@@ -310,70 +304,35 @@ pub(crate) fn execute(
     renderer: &GpuRenderer,
     device: &wgpu::Device,
     (queue, gate): (&wgpu::Queue, &SubmissionGate),
-    request: Request<'_>,
+    request: Request,
     sink: impl FnOnce(&mut RenderBlock<'_>, &mut Complete<'_>) -> Result<(), Error>,
     mut check: impl FnMut() -> Result<(), Error>,
 ) -> Result<Stats, Error> {
     check()?;
-    if request.output == OutputReference::SceneReferred && request.encoding == SampleEncoding::Rgb16
+    if matches!(request.encoding, SampleEncoding::Rgb16(_))
+        && request.definition.domain().meaning != evaluation::Meaning::Display
     {
         return Err(Error::InvalidParameter(
             "RGB16 requires display-referred processing",
         ));
     }
+    if request.definition.domain().finite()?.source()? != request.composition.area()
+        || request.definition.domain().grid != evaluation::Grid::axis_aligned([0.; 2], [1.; 2])
+    {
+        return Err(Error::InvalidParameter(
+            "original calculation and output source grid differ",
+        ));
+    }
     let checks = std::cell::RefCell::new(check);
     let check = || (checks.borrow_mut())();
-    if request.scan.area != request.composition.area()
-        || request.scan.flat_field() != request.field.as_ref().map(|f| f.field())
-    {
-        return Err(Error::Gpu("processing source/recipe mismatch".into()));
-    }
-    let program =
-        crate::gpu::interpretation::InputTransform::for_scan(request.scan, request.input)?;
-    let photographic = Arc::new(crate::gpu::grading::Grading::new(
-        &device.limits(),
-        request.roll,
-        request.grade.clone(),
-        request.scan.area,
-    )?);
-    let grade = Arc::new(ProcessingInput::compose(
-        &device.limits(),
-        program,
-        photographic,
-        request.scan.area,
-    )?);
-    let pipeline = &request.stages;
-    let repairs = crate::gpu::repairs::Snapshot::logical(request.repairs.to_vec())?;
-    repairs.require_area(request.scan.area)?;
-    if !repairs.0.is_empty() {
-        grade.validate_repairs(&device.limits(), repairs.bound())?;
-    }
-    let mut processing =
-        crate::gpu::input::ProcessingInput::from(grade.clone()).with_luts(request.luts.clone());
-    processing.repairs = repairs.clone();
-    let _lut_resources = if request.output.display_target().is_some() {
-        request
-            .luts
-            .assets()
-            .map(|asset| renderer.look_resource(device, asset))
-            .collect::<Result<Vec<_>, _>>()?
-    } else {
-        Vec::new()
-    };
+    #[cfg(all(test, target_os = "macos"))]
+    let look_payload_bytes = evaluation::Reference::image_lut_bytes(&request.definition);
+    let original = request.definition;
     let target = match request.encoding {
         SampleEncoding::LinearFloat => None,
-        SampleEncoding::Rgb16 => request.output.display_target(),
+        SampleEncoding::Rgb16(target) => Some(target),
     };
     let reconstruction = timed!(Setup, Reconstructor::new_output(device, target))?;
-    let original = evaluation::original_chain(
-        device,
-        renderer,
-        request.scan,
-        request.field.clone(),
-        &processing,
-        request.output,
-        pipeline,
-    )?;
     let size = request.composition.size();
     let domain = evaluation::Domain {
         bounds: Some(crate::gpu::evaluation::CellRegion::new([0, 0], size)),
@@ -389,10 +348,7 @@ pub(crate) fn execute(
     let mut executor = renderer.evaluation.executor();
     #[cfg(all(test, target_os = "macos"))]
     let mut stats = Stats {
-        look_payload_bytes: _lut_resources
-            .iter()
-            .map(|resource| resource.byte_len())
-            .sum(),
+        look_payload_bytes,
         ..Default::default()
     };
     #[cfg(not(all(test, target_os = "macos")))]

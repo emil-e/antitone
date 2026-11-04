@@ -75,7 +75,7 @@ fn photographic_constants_and_layer_queries_can_be_captured_without_a_device() {
         exposure: 0.5,
         ..Default::default()
     });
-    let input = crate::gpu::input::ProcessingInput::new(
+    let input = crate::gpu::test_inputs::AuthoredPhotograph::new(
         &wgpu::Limits::default(),
         crate::processing::InputSettings::Digital,
         RollSettings::default(),

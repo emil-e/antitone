@@ -1,9 +1,12 @@
 //! Original-camera operators. Existing photographic, repair, grain and look shaders own the math.
 
 use super::*;
+#[cfg(test)]
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
+#[cfg(test)]
 use crate::gpu::photograph::PhotographGraph;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 
 struct Native {
     scan: crate::scan::Scan,
@@ -92,12 +95,13 @@ pub fn camera_source(scan: &crate::scan::Scan) -> Result<Arc<ImageNode>, Error> 
     })))
 }
 
+#[cfg(test)]
 pub(crate) fn original_chain(
     device: &wgpu::Device,
     renderer: &crate::renderer::GpuRenderer,
     scan: &crate::scan::Scan,
     field: Option<Arc<GpuFlatField>>,
-    input: &ProcessingInput,
+    input: &AuthoredPhotograph,
     reference: crate::rendering::OutputReference,
     stages: &crate::pixel_pipeline::PixelPipeline,
 ) -> Result<Arc<ImageNode>, Error> {

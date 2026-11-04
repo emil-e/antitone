@@ -10,7 +10,6 @@ use crate::gpu::evaluation::ImageNode;
 use crate::gpu::evaluation::Region;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::grading::Grading;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::photograph::PhotographGraph;
 use crate::processing::InputSettings;
 use crate::processing::NegativeInput;
@@ -149,27 +148,14 @@ impl<'a> Samples<'a> {
         layers: AdjustmentLayerSnapshot,
     ) -> Result<PhotographGraph, Error> {
         let program = crate::gpu::interpretation::InputTransform::for_scan(self.scan, input)?;
-        let matrix = self.scan.positive_matrix(&input)?;
-
-        let grade = Arc::new(Grading::new(
-            &self.services.device.limits(),
-            roll,
-            layers,
-            self.scan.area,
-        )?);
-        let pipeline = Arc::new(ProcessingInput::compose(
-            &self.services.device.limits(),
-            program,
-            grade,
-            self.scan.area,
-        )?);
-
-        PhotographGraph::new(
+        PhotographGraph::original(
             &self.services.device.limits(),
             self.source.clone(),
             self.field.clone(),
-            &ProcessingInput::from(pipeline),
-            matrix,
+            program,
+            Grading::new(&self.services.device.limits(), roll, layers, self.scan.area)?,
+            Default::default(),
+            &Default::default(),
         )
     }
 

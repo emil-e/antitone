@@ -13,10 +13,6 @@ pub(super) struct GradeScope {
 }
 
 impl GradeScope {
-    pub(super) fn recipe(&self) -> Option<Arc<ImageRecipe>> {
-        self.recipe.clone()
-    }
-
     fn matches(&self, recipe: Option<&ImageRecipe>) -> bool {
         match (self.recipe.as_deref(), recipe) {
             (None, None) => true,

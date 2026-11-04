@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
-use crate::gpu::view::input::ViewInput;
+use crate::gpu::photograph::request::PhotographRequest;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{
     application::test_support::with_application,
@@ -505,14 +505,14 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
     );
     let pixels = e.source_context().unwrap();
     let device = e.document.visit.working_view.device().unwrap().clone();
-    let input = ProcessingInput::from_recipe(&device.limits(), &recipe).unwrap();
+    let input = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
     let mut frame = FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
     let spec = SourceRequest::for_processing(frame, &input).unwrap();
     let demand = Demand {
         spec,
         pixels,
-        capture: ViewInput::Recipe(recipe.clone()),
+        capture: PhotographRequest::Recipe(recipe.clone()),
     };
     with_application(e, |app| {
         app.enter(|e, cx| e.request_working(demand, cx));
@@ -523,14 +523,14 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         app.update(|e| {
             let working = &mut e.document.visit.working_view;
             let ready = working.frame.as_ref().unwrap().clone();
-            let ViewInput::Recipe(captured) = &ready.request.capture else {
+            let PhotographRequest::Recipe(captured) = &ready.request.capture else {
                 panic!("recipe capture was replaced");
             };
             assert!(Arc::ptr_eq(captured, &recipe));
             assert_eq!(ready.processed.len(), 2);
             let mut different = (*recipe).clone();
             different.roll.exposure = 2.;
-            let changed = ProcessingInput::from_recipe(&device.limits(), &different).unwrap();
+            let changed = AuthoredPhotograph::from_recipe(&device.limits(), &different).unwrap();
             for value in &ready.processed {
                 assert!(matches!(
                     value.pixels,
@@ -575,7 +575,7 @@ fn recipe_request_produces_complete_graph_values_and_presents_them_without_recom
         scope.set_retention_enabled(false);
         let mut edited = (*recipe).clone();
         edited.roll.exposure = 2.;
-        wanted.capture = ViewInput::Recipe(Arc::new(edited));
+        wanted.capture = PhotographRequest::Recipe(Arc::new(edited));
         let input = wanted.processing(&device.limits()).unwrap();
         app.enter(|e, cx| e.request_working(wanted, cx));
         let definition = app.read(|e| {
@@ -716,13 +716,13 @@ fn resolved_repair_arguments_require_new_values_even_when_the_recipe_is_unchange
     let resolved = crate::gpu::repairs::Snapshot(vec![
         crate::gpu::repairs::Patch::new(device, evaluated).unwrap(),
     ]);
-    let processing = ProcessingInput::from_recipe(&device.limits(), &recipe).unwrap();
+    let processing = AuthoredPhotograph::from_recipe(&device.limits(), &recipe).unwrap();
     let mut frame = FrameRaster::full(recipe.composition).unwrap();
     frame.output = [32, 24];
     let initial = Demand {
         spec: SourceRequest::for_processing(frame, &processing).unwrap(),
         pixels,
-        capture: ViewInput::Recipe(recipe),
+        capture: PhotographRequest::Recipe(recipe),
     };
     assert!(initial.spec.repairs.0.is_empty());
     with_application(e, |app| {
@@ -800,13 +800,13 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
                     .clone(),
             )
         });
-        let processing = ProcessingInput::from(
+        let processing = AuthoredPhotograph::from(
             crate::gpu::parameters::ProcessingParameters::source_inspection(1.2).unwrap(),
         );
         let edited = Demand {
             spec: spec.clone(),
             pixels: input,
-            capture: ViewInput::Processing(processing.clone()),
+            capture: PhotographRequest::Fixture(processing.clone()),
         };
         assert!(
             before.request.capture != edited.capture,

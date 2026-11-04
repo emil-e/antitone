@@ -1,10 +1,10 @@
 #![cfg(feature = "gpu")]
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::photograph::test_support::CameraFixture;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use antitone::adjustment_layers::AdjustmentLayer;
 use antitone::adjustment_layers::AdjustmentLayerCoverage;
 use antitone::adjustment_layers::AdjustmentLayerSettings;
@@ -90,16 +90,15 @@ fn source(
     area: SourceRegion,
     size: [u32; 2],
     matrix: DMat3,
-    field: Option<Arc<GpuFlatField>>,
 ) -> (ProcessingSource, Vec<[u16; 4]>) {
     let pixels = pixels(SourceRaster::new(area, size).unwrap());
-    let mut source = ProcessingSource::new(device, &pixels, matrix).unwrap();
-    source
-        .set_flat_field(
-            field,
-            SourceGeometry::new([area.x, area.y, area.width, area.height], size).unwrap(),
-        )
-        .unwrap();
+    let source = ProcessingSource::new(
+        device,
+        &pixels,
+        matrix,
+        Some(SourceGeometry::new([area.x, area.y, area.width, area.height], size).unwrap()),
+    )
+    .unwrap();
     assert_eq!(source.byte_len(), pixels.len() as u64 * 8);
     (source, pixels)
 }
@@ -111,7 +110,7 @@ fn read(
     kernel: &CameraFixture,
     source: &ProcessingSource,
     n: usize,
-    grade: &ProcessingInput,
+    grade: &AuthoredPhotograph,
     legacy: Option<ProcessingParameters>,
 ) -> Vec<[f32; 4]> {
     let size = n as u64 * 16;
@@ -298,13 +297,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
     );
     let gpu_field = Arc::new(GpuFlatField::new(&device, field.clone()).unwrap());
     for corrected in [false, true] {
-        let (source, pixels) = source(
-            &device,
-            area,
-            size,
-            matrix(),
-            corrected.then(|| gpu_field.clone()),
-        );
+        let (source, pixels) = source(&device, area, size, matrix());
         for case in 0..18 {
             let mask = if case % 2 == 0 {
                 AdjustmentLayerCoverage::Linear {
@@ -366,7 +359,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
                 .collect(),
             )
             .unwrap();
-            let grade = ProcessingInput::new(
+            let grade = AuthoredPhotograph::new(
                 &device.limits(),
                 calibration(),
                 RollSettings::default(),
@@ -376,6 +369,7 @@ fn analytic_linear_radial_and_ordered_weighted_controls_match_independent_refere
             )
             .unwrap();
             assert_eq!(grade.snapshot(), &snapshot);
+            let grade = grade.with_flat_field(corrected.then(|| gpu_field.clone()));
             let actual = read(
                 &device,
                 &queue,
@@ -436,7 +430,7 @@ fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
         ),
     ])
     .unwrap();
-    let grade = ProcessingInput::new(
+    let grade = AuthoredPhotograph::new(
         &device.limits(),
         calibration(),
         roll,
@@ -445,7 +439,7 @@ fn roll_and_photo_wb_precede_local_grading_at_the_current_default_gamma() {
         area,
     )
     .unwrap();
-    let (source, pixels) = source(&device, area, size, matrix(), None);
+    let (source, pixels) = source(&device, area, size, matrix());
     let actual = read(
         &device,
         &queue,
@@ -533,7 +527,7 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
         )
         .unwrap();
         for matrix in [DMat3::IDENTITY, matrix()] {
-            let grade = ProcessingInput::new(
+            let grade = AuthoredPhotograph::new(
                 &device.limits(),
                 input,
                 roll,
@@ -544,7 +538,7 @@ fn tightened_global_local_bounds_admit_photographic_stacks_with_independent_pixe
             .unwrap_or_else(|error| {
                 panic!("gamma={gamma} global={global:?} count={count} matrix={matrix:?}: {error}")
             });
-            let (source, pixels) = source(&device, area, size, matrix, None);
+            let (source, pixels) = source(&device, area, size, matrix);
             let actual = read(
                 &device,
                 &queue,
@@ -608,13 +602,15 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
         } else {
             calibration()
         };
-        let mut source = ProcessingSource::new(&device, &pixels, matrix()).unwrap();
-        source
-            .set_flat_field(
-                corrected.then(|| Arc::new(GpuFlatField::new(&device, field.clone()).unwrap())),
-                SourceGeometry::new([120, 80, 32, 8], [32, 8]).unwrap(),
-            )
-            .unwrap();
+        let source = ProcessingSource::new(
+            &device,
+            &pixels,
+            matrix(),
+            Some(SourceGeometry::new([120, 80, 32, 8], [32, 8]).unwrap()),
+        )
+        .unwrap();
+        let gpu_field =
+            corrected.then(|| Arc::new(GpuFlatField::new(&device, field.clone()).unwrap()));
         let mut layers = vec![
             adjustment(
                 AdjustmentLayerCoverage::Linear {
@@ -655,8 +651,10 @@ fn default_response_ordered_locals_preserve_corrected_noisy_shadows_and_floor_fl
                 .collect(),
             )
             .unwrap();
-            let grade = ProcessingInput::new(&device.limits(), cal, roll, snapshot, matrix(), area)
-                .unwrap();
+            let grade =
+                AuthoredPhotograph::new(&device.limits(), cal, roll, snapshot, matrix(), area)
+                    .unwrap();
+            let grade = grade.with_flat_field(gpu_field.clone());
             let actual = read(
                 &device,
                 &queue,
@@ -715,7 +713,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
     let (device, queue, kernel) = context();
     let area = SourceRegion::from([0, 0, 8, 8]);
     let pixels = pixels(SourceRaster::new(area, [8, 8]).unwrap());
-    let source = ProcessingSource::new(&device, &pixels, matrix()).unwrap();
+    let source = ProcessingSource::new(&device, &pixels, matrix(), None).unwrap();
     let global = AdjustmentLayerSettings {
         contrast: 0.71,
         saturation: 1.8,
@@ -726,7 +724,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             global,
         )])
         .unwrap();
-    let prepared = ProcessingInput::new(
+    let prepared = AuthoredPhotograph::new(
         &device.limits(),
         calibration(),
         RollSettings::default(),
@@ -790,7 +788,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             a,
         ])
         .unwrap();
-        let prepared = ProcessingInput::new(
+        let prepared = AuthoredPhotograph::new(
             &device.limits(),
             calibration(),
             RollSettings::default(),
@@ -799,7 +797,7 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
             area,
         )
         .unwrap();
-        let mut source = ProcessingSource::new(&device, &pixels, matrix()).unwrap();
+        let mut source = ProcessingSource::new(&device, &pixels, matrix(), None).unwrap();
         if mode == 3 {
             let output = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
@@ -813,9 +811,13 @@ fn local_bypasses_preserve_bits_and_only_active_masks_require_geometry() {
                     .encode_grade(&device, &mut encoder, &source, &output, &prepared)
                     .is_err()
             );
-            source
-                .set_geometry(SourceGeometry::new([0, 0, 8, 8], [8, 8]).unwrap())
-                .unwrap();
+            source = ProcessingSource::new(
+                &device,
+                &pixels,
+                matrix(),
+                Some(SourceGeometry::new([0, 0, 8, 8], [8, 8]).unwrap()),
+            )
+            .unwrap();
         }
         let actual = read(
             &device,
@@ -836,7 +838,7 @@ fn source_centres_at_nonzero_origins_preserve_fractional_mask_geometry() {
     let area = SourceRegion::from([8000, 6000, 128, 96]);
     let size = [8, 6];
     let point = [f64::from(area.x) + 8.5, f64::from(area.y) + 8.5];
-    let (source, pixels) = source(&device, area, size, matrix(), None);
+    let (source, pixels) = source(&device, area, size, matrix());
     for mask in [
         AdjustmentLayerCoverage::Linear {
             start: SourcePoint([point[0] - 0.25, point[1]]),
@@ -863,7 +865,7 @@ fn source_centres_at_nonzero_origins_preserve_fractional_mask_geometry() {
                 ),
             ])
             .unwrap();
-        let grade = ProcessingInput::new(
+        let grade = AuthoredPhotograph::new(
             &device.limits(),
             calibration(),
             RollSettings::default(),
@@ -933,7 +935,7 @@ fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
         ),
     ])
     .unwrap();
-    let grade = ProcessingInput::new(
+    let grade = AuthoredPhotograph::new(
         &device.limits(),
         calibration(),
         RollSettings::default(),
@@ -942,7 +944,7 @@ fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
         area,
     )
     .unwrap();
-    let (full, full_pixels) = source(&device, area, [27, 24], matrix(), None);
+    let (full, full_pixels) = source(&device, area, [27, 24], matrix());
     let full_output = read(
         &device,
         &queue,
@@ -959,7 +961,7 @@ fn proxy_and_padded_tiles_agree_with_same_full_source_pixels() {
         (SourceRegion::from([140, 80, 10, 24]), [10, 24]),
     ] {
         let raster = SourceRaster::new(region, size).unwrap();
-        let (source, pixels) = source(&device, region, size, matrix(), None);
+        let (source, pixels) = source(&device, region, size, matrix());
         let output = read(
             &device,
             &queue,
@@ -1002,7 +1004,7 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
     };
     let roll = RollSettings::default();
     let camera_matrix = matrix();
-    let (source, pixels) = source(&device, area, [8, 8], camera_matrix, None);
+    let (source, pixels) = source(&device, area, [8, 8], camera_matrix);
     for exposure in [-2., 0., 2.] {
         for contrast in [0.4, 1., 1.6] {
             let photo = AdjustmentLayerSettings {
@@ -1021,7 +1023,7 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
                 adjustment(mask, photo),
             ])
             .unwrap();
-            let prepared = ProcessingInput::new(
+            let prepared = AuthoredPhotograph::new(
                 &device.limits(),
                 input,
                 roll,
@@ -1055,7 +1057,7 @@ fn full_and_fractional_weights_apply_exposure_contrast_and_saturation() {
 fn ordered_attenuation_and_amplification_restore_the_input() {
     let (device, queue, kernel) = context();
     let area = SourceRegion::from([0, 0, 8, 8]);
-    let (source, pixels) = source(&device, area, [8, 8], matrix(), None);
+    let (source, pixels) = source(&device, area, [8, 8], matrix());
     let mask = AdjustmentLayerCoverage::Linear {
         start: SourcePoint([-2., 0.]),
         end: SourcePoint([-1., 0.]),
@@ -1080,7 +1082,7 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
         .collect(),
     )
     .unwrap();
-    let grade = ProcessingInput::new(
+    let grade = AuthoredPhotograph::new(
         &device.limits(),
         calibration(),
         RollSettings::default(),
@@ -1089,7 +1091,7 @@ fn ordered_attenuation_and_amplification_restore_the_input() {
         area,
     )
     .unwrap();
-    let identity = ProcessingInput::new(
+    let identity = AuthoredPhotograph::new(
         &device.limits(),
         calibration(),
         RollSettings::default(),
@@ -1144,7 +1146,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     );
     let stack = AdjustmentLayerSnapshot::new(vec![active; 16]).unwrap();
     assert!(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             calibration(),
             RollSettings::default(),
@@ -1172,7 +1174,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
     ])
     .unwrap();
     assert!(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             calibration(),
             RollSettings::default(),
@@ -1183,7 +1185,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
         .is_err()
     );
     let grade =
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             calibration(),
             RollSettings::default(),
@@ -1198,7 +1200,7 @@ fn unsupported_ordered_ranges_mask_constants_and_camera_basis_reject_before_disp
             area,
         )
         .unwrap();
-    let (source, pixels) = source(&device, area, [8, 8], DMat3::IDENTITY, None);
+    let (source, pixels) = source(&device, area, [8, 8], DMat3::IDENTITY);
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: pixels.len() as u64 * 16,

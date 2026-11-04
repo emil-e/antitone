@@ -4,24 +4,12 @@ use super::operations::{Native, Working};
 use super::*;
 use crate::gpu::grading::Grading;
 use crate::gpu::photograph::PhotographGraph;
-use crate::{
-    gpu::interpretation::InputTransform, pixel_pipeline::PixelPipeline, processing::RollSettings,
-};
+#[cfg(feature = "editor")]
+use crate::processing::RollSettings;
+use crate::{gpu::interpretation::InputTransform, pixel_pipeline::PixelPipeline};
 
 #[cfg(all(test, feature = "editor"))]
 mod tests;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Boundary {
-    Codes,
-    Camera,
-    Native,
-    Unrepaired,
-    Neutral,
-    Roll,
-    Graded,
-    Processed,
-}
 
 pub enum Component {
     Camera,
@@ -138,6 +126,33 @@ impl Images {
 }
 
 impl Assembly {
+    pub fn photographic(
+        limits: &wgpu::Limits,
+        definition: CameraInput,
+        program: InputTransform,
+        grading: Grading,
+        repairs: crate::gpu::repairs::Snapshot,
+    ) -> Result<Self, Error> {
+        let area = grading.area;
+        repairs.require_area(area)?;
+        admission::prepare(
+            limits,
+            program.input,
+            grading.roll,
+            grading.snapshot(),
+            program.matrix,
+            area,
+            repairs.bound(),
+        )?;
+        let mut assembly = Self::captured(Captured::new(
+            definition,
+            Interpretation::Program(program, Default::default()),
+        )?);
+        assembly.grading = Some(grading);
+        assembly.repairs = repairs;
+        Ok(assembly)
+    }
+
     pub fn captured(capture: Arc<Captured>) -> Self {
         let interpretation = capture.interpretation;
 
@@ -217,7 +232,7 @@ impl Assembly {
         )?;
 
         Ok(PhotographGraph {
-            camera: source,
+            codes: source,
             unrepaired: images.at(Boundary::Unrepaired),
             neutral: images.at(Boundary::Neutral),
             roll: images.at(Boundary::Roll),
@@ -302,7 +317,7 @@ impl Assembly {
         )?;
         Ok((
             PhotographGraph {
-                camera: source,
+                codes: source,
                 unrepaired: native.at(Boundary::Unrepaired),
                 neutral,
                 roll: images.at(Boundary::Roll),
@@ -399,7 +414,12 @@ impl Assembly {
                     ))?;
                     ImageNode::new(
                         Domain {
-                            meaning: Meaning::Neutral,
+                            meaning: match self.interpretation {
+                                Interpretation::Packed(parameters) if !parameters.graded() => {
+                                    Meaning::Inspection
+                                }
+                                _ => Meaning::Neutral,
+                            },
                             ..image.domain()
                         },
                         Some(image),

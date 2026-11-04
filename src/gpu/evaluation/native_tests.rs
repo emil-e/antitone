@@ -2,7 +2,7 @@ use super::*;
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::geometry::Composition;
 use crate::gpu::grading::Grading;
-use crate::gpu::input::ProcessingInput;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::InputSettings;
 use crate::processing::RollSettings;
 use crate::rendering::OutputTarget;
@@ -11,7 +11,7 @@ use std::sync::atomic::AtomicU64;
 struct Case {
     scan: Arc<crate::scan::Scan>,
     node: Arc<ImageNode>,
-    input: ProcessingInput,
+    input: AuthoredPhotograph,
     demand: crate::refinement::ViewRequest,
 }
 
@@ -49,8 +49,8 @@ fn case(
         .unwrap()
         .unwrap()
         .image_mtf_sigma;
-    let input = ProcessingInput::from(Arc::new(
-        ProcessingInput::new(
+    let input = AuthoredPhotograph::from(Arc::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             roll,

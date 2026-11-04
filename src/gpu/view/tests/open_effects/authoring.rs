@@ -146,25 +146,23 @@ fn parameterized_definitions_reach_native_regional_resident_and_physical_consume
             ) < 2e-5,
             "regional composition"
         );
-        let mut resident = pollster::block_on(crate::viewer::GpuImage::new_continuous_shared(
+        let resident = pollster::block_on(crate::viewer::GpuImage::new_continuous_shared(
             &renderer,
             &device,
-            area.width,
-            area.height,
+            [area.width, area.height],
             &camera,
             scan.positive_matrix(&InputSettings::Digital).unwrap(),
-            target,
-        ))
-        .unwrap();
-        resident
-            .set_geometry(
+            Some(
                 SourceGeometry::original_tile(
                     [area.x, area.y, area.width, area.height],
                     [area.width, area.height],
                 )
                 .unwrap(),
-            )
-            .unwrap();
+            ),
+            target,
+        ))
+        .unwrap();
+
         let mut encoder = device.create_command_encoder(&Default::default());
         resident
             .prepare_processing(&device, &mut encoder, &processing)

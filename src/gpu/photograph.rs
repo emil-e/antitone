@@ -2,13 +2,17 @@
 
 use crate::Error;
 use crate::gpu::evaluation::*;
+#[cfg(any(test, feature = "editor"))]
 use crate::gpu::flat::FieldGeometry;
 use crate::gpu::flat::GpuFlatField;
 use crate::gpu::grading::Grading;
-use crate::gpu::input::ProcessingInput;
+#[cfg(any(test, feature = "editor"))]
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::source::ProcessingSource;
+#[cfg(any(test, feature = "editor"))]
 use crate::gpu::source::SourceGeometry;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use std::sync::Arc;
 
 pub(crate) mod admission;
@@ -21,22 +25,43 @@ pub mod camera_response;
     any(feature = "editor", feature = "export")
 ))]
 pub mod neutral_readout;
-mod operations;
+pub(crate) mod operations;
+#[cfg(feature = "project")]
+mod recipe;
+#[cfg(feature = "editor")]
+pub(crate) mod request;
+#[cfg(all(feature = "ui", feature = "render"))]
+mod resident;
 pub(crate) mod shader;
 #[cfg(all(test, feature = "editor"))]
 mod tests;
 use operations::{Camera, CameraInput, Captured, Interpretation, Mapping, Repairs, ResidentCamera};
-#[cfg(any(feature = "ui", feature = "editor"))]
+#[cfg(all(feature = "render", any(feature = "ui", feature = "editor")))]
 mod prewarm;
 #[cfg(test)]
 pub mod test_support;
 
-use assembly::{Assembly, Boundary};
+use self::Endpoint as Boundary;
+use assembly::Assembly;
+
+/// A photographic calculation endpoint, including the pre-inversion source-view branch.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Endpoint {
+    Codes,
+    Camera,
+    Native,
+    Unrepaired,
+    Neutral,
+    Roll,
+    Graded,
+    Processed,
+    Inspection(crate::gpu::interpretation::InspectionView),
+}
 
 /// Captured camera, neutral and photographic image boundaries.
 /// Each boundary is calculated by its captured operations.
 pub struct PhotographGraph {
-    pub camera: Arc<ImageNode>,
+    pub codes: Arc<ImageNode>,
     pub unrepaired: Arc<ImageNode>,
     pub neutral: Arc<ImageNode>,
     pub roll: Arc<ImageNode>,
@@ -101,6 +126,24 @@ impl PhotographGraph {
             node = current.input();
         }
         0
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn has_correction(
+        image: &Arc<ImageNode>,
+        field: Option<&Arc<GpuFlatField>>,
+    ) -> bool {
+        let mut image = Some(image);
+        while let Some(node) = image {
+            if let Some(camera) =
+                (node.operation().as_ref() as &dyn std::any::Any).downcast_ref::<Camera>()
+            {
+                return camera.captured.field.as_ref().map(|field| field.field())
+                    == field.map(|field| field.field());
+            }
+            image = node.input();
+        }
+        false
     }
 
     #[cfg(feature = "editor")]
@@ -262,21 +305,81 @@ impl PhotographGraph {
         ))
     }
 
-    pub fn new(
+    /// Capture original-cell operations; these arguments are also used by analytic consumers.
+    pub(crate) fn original(
         limits: &wgpu::Limits,
         source: Arc<ImageNode>,
         field: Option<Arc<GpuFlatField>>,
-        input: &ProcessingInput,
+        program: crate::gpu::interpretation::InputTransform,
+        grading: Grading,
+        repairs: crate::gpu::repairs::Snapshot,
+        stages: &crate::pixel_pipeline::PixelPipeline,
+    ) -> Result<Self, Error> {
+        if source.domain().meaning != Meaning::CameraCodes
+            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
+        {
+            return Err(Error::InvalidParameter(
+                "photographic conversion requires original camera cells",
+            ));
+        }
+        grading.require_extent(source.domain().finite()?.source()?)?;
+        Assembly::photographic(
+            limits,
+            CameraInput {
+                matrix: program.matrix,
+                field,
+                continuous: true,
+                mapping: Mapping::Originals,
+            },
+            program,
+            grading,
+            repairs,
+        )?
+        .photograph(source, stages)
+    }
+
+    pub(crate) fn inspection_original(
+        source: Arc<ImageNode>,
+        field: Option<Arc<GpuFlatField>>,
+        matrix: glam::DMat3,
+        view: crate::gpu::interpretation::InspectionView,
+    ) -> Result<Arc<ImageNode>, Error> {
+        if source.domain().meaning != Meaning::CameraCodes
+            || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
+        {
+            return Err(Error::InvalidParameter(
+                "inspection requires original camera cells",
+            ));
+        }
+        Assembly::captured(Captured::new(
+            CameraInput {
+                matrix,
+                field,
+                continuous: true,
+                mapping: Mapping::Originals,
+            },
+            Interpretation::Packed(view.parameters()?),
+        )?)
+        .prefix(source, Boundary::Codes, Boundary::Unrepaired)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new(
+        limits: &wgpu::Limits,
+        source: Arc<ImageNode>,
+        field: Option<Arc<GpuFlatField>>,
+        input: &AuthoredPhotograph,
         matrix: glam::DMat3,
     ) -> Result<Self, Error> {
         Self::new_with_stages(limits, source, field, input, matrix, &Default::default())
     }
 
+    #[cfg(test)]
     pub(crate) fn new_with_stages(
         limits: &wgpu::Limits,
         source: Arc<ImageNode>,
         field: Option<Arc<GpuFlatField>>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         matrix: glam::DMat3,
         stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Self, Error> {
@@ -293,11 +396,7 @@ impl PhotographGraph {
         frame: crate::frame_raster::FrameRaster,
         native_grid: Option<crate::frame_raster::FrameRaster>,
     ) -> Result<(Self, crate::acquisition::Plan), Error> {
-        let mut input = ProcessingInput::from_recipe(limits, recipe)?;
-        input.repairs = repairs.clone();
-        let program = input.source_transform().ok_or(Error::InvalidParameter(
-            "working photograph has no captured source interpretation",
-        ))?;
+        let program = crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)?;
         if !program.matches_native(scan)?
             || scan.flat_field() != recipe.neutral.correction.as_ref()
             || recipe.neutral.correction.as_ref() != field.as_ref().map(|field| field.field())
@@ -306,22 +405,26 @@ impl PhotographGraph {
                 "physical-view source authority differs from originals".into(),
             ));
         }
-        Self::preview_with_input(
-            limits,
-            crate::gpu::evaluation::camera_source(scan)?,
-            field,
-            &input,
+        let source = crate::gpu::evaluation::camera_source(scan)?;
+        if frame.composition.area() != source.domain().finite()?.source()? {
+            return Err(Error::InvalidParameter(
+                "frame belongs to a different source grid",
+            ));
+        }
+        Self::recipe_assembly(limits, &source, field, recipe, repairs)?.preview(
+            source,
+            &recipe.pixel_pipeline()?,
             frame,
             native_grid,
         )
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn preview_with_input(
         limits: &wgpu::Limits,
         source: Arc<ImageNode>,
         field: Option<Arc<GpuFlatField>>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         frame: crate::frame_raster::FrameRaster,
         native_grid: Option<crate::frame_raster::FrameRaster>,
     ) -> Result<(Self, crate::acquisition::Plan), Error> {
@@ -341,11 +444,12 @@ impl PhotographGraph {
         )
     }
 
+    #[cfg(test)]
     fn original_assembly(
         limits: &wgpu::Limits,
         source: &Arc<ImageNode>,
         field: Option<Arc<GpuFlatField>>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         matrix: glam::DMat3,
     ) -> Result<Assembly, Error> {
         if source.domain().meaning != Meaning::CameraCodes
@@ -367,16 +471,17 @@ impl PhotographGraph {
                 matrix,
                 field,
                 continuous: true,
-                mapping: Mapping::originals(),
+                mapping: Mapping::Originals,
             },
             input,
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn from_resident_with_stages(
         limits: &wgpu::Limits,
         source: &ProcessingSource,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         raster: crate::gpu::raster::Raster,
         stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Self, Error> {
@@ -388,7 +493,7 @@ impl PhotographGraph {
                 "processing source layout differs from plan",
             ));
         }
-        if !input.repairs.0.is_empty() && source.geometry.is_none() {
+        if !input.repairs.0.is_empty() && source.geometry().is_none() {
             return Err(Error::Gpu(
                 "repair rendering needs original source geometry".into(),
             ));
@@ -413,20 +518,21 @@ impl PhotographGraph {
         Self::capture(
             limits,
             CameraInput {
-                matrix: source.camera_to_ap1,
-                field: source.flat_field.clone(),
+                matrix: source.camera_matrix(),
+                field: input.field.clone(),
                 continuous: source.continuous,
-                mapping: Mapping::Resident(source.geometry),
+                mapping: Mapping::Resident(source.geometry()),
             },
             input,
         )?
         .photograph(camera, stages)
     }
 
+    #[cfg(test)]
     fn capture(
         limits: &wgpu::Limits,
         definition: CameraInput,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
     ) -> Result<Assembly, Error> {
         let matrix = definition.matrix;
         let mapping = definition.mapping;
@@ -507,7 +613,7 @@ impl NeutralInput {
                     Domain {
                         bounds: None,
                         grid,
-                        meaning: Meaning::Neutral,
+                        meaning: neutral.domain().meaning,
                     },
                 )
             })
@@ -566,11 +672,6 @@ impl NeutralInput {
                 "neutral source layout differs from its grid",
             ));
         }
-        if source.camera_to_ap1 != self.interpretation.matrix() {
-            return Err(Error::InvalidParameter(
-                "neutral source matrix differs from captured input",
-            ));
-        }
         let domain = Domain {
             bounds: Some(crate::gpu::evaluation::CellRegion::new(
                 [0, 0],
@@ -594,7 +695,7 @@ impl NeutralInput {
                 matrix: self.interpretation.matrix(),
                 field: self.field.clone(),
                 continuous: source.continuous,
-                mapping: Mapping::Resident(source.geometry),
+                mapping: Mapping::Resident(source.geometry()),
             },
         )
     }

@@ -26,7 +26,7 @@ Small coloured reference boxes indicate nominal 100% RGB/CMY code colours; magni
 
 ## Keep feedback coherent
 
-Only one reduction/diagnostic readback is outstanding. Latest-result status requires exact processing content and visible-frame identity, so an old completion cannot become current: a different source/revision, displayed framing, target or vector scale must not inherit incompatible old bins; suspension clears them. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit.
+Only one reduction/diagnostic readback is outstanding. Latest-result status requires exact processing content and visible-frame identity, so an old completion cannot become current: a different source, calculation, displayed framing, target or vector scale must not inherit incompatible old bins; suspension clears them. Compatible holding uses logical source authority, not an immutable rendered-image pointer that changes on every edit.
 
 The Scopes disclosure collapses the plot and suspends its work. A single header menu selects the plot type and vectorscope magnification. Plot controls do not change photographic processing: visibility and plot sizing are application preferences, while selection, magnification and GPU diagnostics are transient.
 

@@ -1,4 +1,4 @@
-//! Lowered photographic controls or directly supplied mathematical processing inputs.
+//! Authored mathematical inputs for tests that supply their own camera raster.
 
 use crate::gpu::grading::Grading;
 use crate::gpu::interpretation::InputTransform;
@@ -13,13 +13,14 @@ use crate::{
 use glam::{DMat3, DVec3};
 use std::sync::Arc;
 
-/// Captured source and photographic settings. Components prepare their own GPU work.
+/// Mathematical controls shared by fixtures, separate from application recipe capture.
 #[derive(Clone)]
-pub struct ProcessingInput {
+pub struct AuthoredPhotograph {
     processing: Processing,
     luts: crate::looks::LutChain,
     pixel_pipeline: crate::pixel_pipeline::PixelPipeline,
     pub(crate) repairs: super::repairs::Snapshot,
+    pub(crate) field: Option<Arc<super::flat::GpuFlatField>>,
 }
 
 #[derive(Clone)]
@@ -55,25 +56,26 @@ impl Processing {
     }
 }
 
-impl From<ProcessingParameters> for ProcessingInput {
+impl From<ProcessingParameters> for AuthoredPhotograph {
     fn from(parameters: ProcessingParameters) -> Self {
         Self::capture(Processing::Parameters(Arc::new(parameters)))
     }
 }
 
-impl From<Arc<ProcessingInput>> for ProcessingInput {
-    fn from(input: Arc<ProcessingInput>) -> Self {
+impl From<Arc<AuthoredPhotograph>> for AuthoredPhotograph {
+    fn from(input: Arc<AuthoredPhotograph>) -> Self {
         input.as_ref().clone()
     }
 }
 
-impl ProcessingInput {
+impl AuthoredPhotograph {
     fn capture(processing: Processing) -> Self {
         Self {
             processing,
             luts: Default::default(),
             pixel_pipeline: Default::default(),
             repairs: Default::default(),
+            field: None,
         }
     }
 
@@ -207,21 +209,9 @@ impl ProcessingInput {
     pub fn byte_len(&self) -> u64 {
         self.grade().map_or(0, |grade| grade.byte_len())
     }
-
-    #[cfg(feature = "editor")]
-    pub(crate) fn byte_len_for(layers: &AdjustmentLayerSnapshot) -> u64 {
-        let active = layers
-            .layers()
-            .iter()
-            .filter(|layer| layer.is_active())
-            .count()
-            .max(1);
-        (active * std::mem::size_of::<super::grading::AdjustmentLayerParameters>()
-            + std::mem::size_of::<super::grading::AdjustmentLayerContext>()) as u64
-    }
 }
 
-impl ProcessingInput {
+impl AuthoredPhotograph {
     /// Capture all photographic components and source interpretation from one recipe.
     #[cfg(all(
         feature = "project",
@@ -254,6 +244,11 @@ impl ProcessingInput {
         .with_pixel_pipeline(recipe.pixel_pipeline()?))
     }
 
+    pub fn with_flat_field(mut self, field: Option<Arc<super::flat::GpuFlatField>>) -> Self {
+        self.field = field;
+        self
+    }
+
     /// Rendering is downstream of photographic processing; source inspection bypasses both LUTs.
     pub fn with_luts(mut self, luts: impl Into<crate::looks::LutChain>) -> Self {
         self.luts = if self.is_positive() {
@@ -282,7 +277,7 @@ impl ProcessingInput {
     }
 }
 
-impl ProcessingInput {
+impl AuthoredPhotograph {
     pub(crate) fn require_source(&self, source: &ProcessingSource) -> Result<(), Error> {
         if let Processing::Parameters(parameters) = &self.processing
             && parameters.graded()
@@ -291,15 +286,9 @@ impl ProcessingInput {
                 "photographic input requires captured interpretation and grading",
             ));
         }
-        if let Processing::Photograph {
-            source: program,
-            grading,
-            area,
-        } = &self.processing
-        {
-            program.require_source(source)?;
-            grading.require_geometry(source.geometry)?;
-            if let Some(geometry) = source.geometry.filter(|geometry| geometry.is_pair()) {
+        if let Processing::Photograph { grading, area, .. } = &self.processing {
+            grading.require_geometry(source.geometry())?;
+            if let Some(geometry) = source.geometry().filter(|geometry| geometry.is_pair()) {
                 for region in geometry.regions() {
                     if region.x < area.x
                         || region.y < area.y
@@ -317,7 +306,7 @@ impl ProcessingInput {
     }
 }
 
-impl ProcessingInput {
+impl AuthoredPhotograph {
     pub(crate) fn is_positive(&self) -> bool {
         match &self.processing {
             Processing::Parameters(parameters) => parameters.graded(),
@@ -349,6 +338,7 @@ impl ProcessingInput {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn grade_shared(&self) -> Option<&Arc<Grading>> {
         match &self.processing {
             Processing::Photograph { grading, .. } => Some(grading),
@@ -357,14 +347,17 @@ impl ProcessingInput {
     }
 }
 
-impl ProcessingInput {
+impl AuthoredPhotograph {
     pub(crate) fn look_id(&self) -> Option<crate::looks::LookId> {
         self.luts.id()
     }
 
     /// Look changes rerender, but may reuse an immutable graded AP1 prefix.
     pub(crate) fn same_photographic(&self, other: &Self) -> bool {
-        if self.repairs != other.repairs {
+        if self.repairs != other.repairs
+            || self.field.as_ref().map(|field| field.field())
+                != other.field.as_ref().map(|field| field.field())
+        {
             return false;
         }
         self.processing.same_content(&other.processing)
@@ -372,15 +365,15 @@ impl ProcessingInput {
     }
 }
 
-impl PartialEq for ProcessingInput {
+impl PartialEq for AuthoredPhotograph {
     fn eq(&self, other: &Self) -> bool {
         self.look_id() == other.look_id() && self.same_photographic(other)
     }
 }
 
-impl std::fmt::Debug for ProcessingInput {
+impl std::fmt::Debug for AuthoredPhotograph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProcessingInput")
+        f.debug_struct("AuthoredPhotograph")
             .field(
                 "inspection",
                 &matches!(self.processing, Processing::Parameters(_)),
@@ -476,7 +469,7 @@ mod tests {
                 spread: 0.,
             },
         ));
-        let captured = ProcessingInput::from_recipe(&wgpu::Limits::default(), &recipe).unwrap();
+        let captured = AuthoredPhotograph::from_recipe(&wgpu::Limits::default(), &recipe).unwrap();
         assert_eq!(
             captured.input_transform().matrix,
             DMat3::from_diagonal(DVec3::new(1.8, 2.2, 2.4))
@@ -513,7 +506,7 @@ mod tests {
         project.source_mut(id).unwrap().crop = None;
         assert_eq!(captured.pixel_pipeline(), pipeline);
         assert!(
-            ProcessingInput::from_recipe(
+            AuthoredPhotograph::from_recipe(
                 &wgpu::Limits::default(),
                 &project.image_recipe(id).unwrap(),
             )
@@ -525,7 +518,7 @@ mod tests {
 
     #[test]
     fn source_inspection_cannot_adopt_grain() {
-        let source = ProcessingInput::from(ProcessingParameters::source());
+        let source = AuthoredPhotograph::from(ProcessingParameters::source());
         let pipeline =
             PixelPipeline::film(GrainPreset::ThirtyFiveMm.settings(), [3000, 2000], 17).unwrap();
         assert!(!pipeline.is_empty(), "the attempted effect must be active");
@@ -534,8 +527,8 @@ mod tests {
         assert!(film.pixel_pipeline().is_empty());
     }
 
-    fn positive_fixture() -> ProcessingInput {
-        ProcessingInput::from(
+    fn positive_fixture() -> AuthoredPhotograph {
+        AuthoredPhotograph::from(
             ProcessingParameters::interpret(
                 crate::processing::InputSettings::Digital,
                 Default::default(),

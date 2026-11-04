@@ -64,7 +64,8 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
             .unwrap()
             .unwrap();
         let (native, view) = product.positive.as_ref().unwrap();
-        let crate::gpu::view::input::ViewInput::Recipe(captured) = &view.capture else {
+        let crate::gpu::photograph::request::PhotographRequest::Recipe(captured) = &view.capture
+        else {
             panic!("photographic thumbnail must retain its resolved recipe")
         };
         assert_eq!(captured.neutral.reference.as_ref(), Some(&reference));

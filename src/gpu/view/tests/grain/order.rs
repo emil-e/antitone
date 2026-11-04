@@ -1,6 +1,6 @@
 use super::*;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::{
     adjustment_layers::{AdjustmentLayer, AdjustmentLayerStack},
     processing::InvertedPixel,
@@ -32,8 +32,8 @@ fn complete_ordered_grade_precedes_image_mtf_and_unblurred_grain() {
             amount: 0.055,
             colour: 0.5,
         };
-        let input = ProcessingInput::from(Arc::new(
-            ProcessingInput::new(
+        let input = AuthoredPhotograph::from(Arc::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 InputSettings::Digital,
                 Default::default(),

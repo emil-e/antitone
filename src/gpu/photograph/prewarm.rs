@@ -1,6 +1,6 @@
 use super::*;
 use crate::gpu::grading::Grading;
-use crate::gpu::input::ProcessingInput;
+use crate::gpu::interpretation::{InputTransform, InspectionView};
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::photograph::PhotographGraph;
 use crate::gpu::source::ProcessingSource;
@@ -11,26 +11,41 @@ impl PhotographGraph {
         device: &wgpu::Device,
         renderer: &crate::renderer::GpuRenderer,
     ) -> Result<(), Error> {
-        let source = ProcessingSource::new(device, &[[0u16; 4]], glam::DMat3::IDENTITY)?;
-        for input in [
-            ProcessingInput::from(ProcessingParameters::source()),
-            ProcessingInput::new(
-                &device.limits(),
+        let source = ProcessingSource::new(device, &[[0u16; 4]], glam::DMat3::IDENTITY, None)?;
+        let camera = Self::resident_codes(
+            &source,
+            crate::gpu::raster::Raster::native([0, 0, 1, 1].into()),
+        )?;
+        let inspection = Self::resident_inspection(
+            camera.clone(),
+            &source,
+            None,
+            InspectionView::new(glam::DMat3::IDENTITY, 0.)?,
+        )?;
+        let positive = Self::resident_photograph(
+            &device.limits(),
+            camera,
+            CameraInput {
+                matrix: glam::DMat3::IDENTITY,
+                field: None,
+                continuous: source.continuous,
+                mapping: Mapping::Resident(source.geometry()),
+            },
+            InputTransform::new(
                 crate::processing::InputSettings::Digital,
+                glam::DMat3::IDENTITY,
+            )?,
+            Grading::new(
+                &device.limits(),
                 Default::default(),
                 crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![])?,
-                glam::DMat3::IDENTITY,
                 [0, 0, 1, 1].into(),
             )?,
-        ] {
-            let image = Self::from_resident_with_stages(
-                &device.limits(),
-                &source,
-                &input,
-                crate::gpu::raster::Raster::native([0, 0, 1, 1].into()),
-                &input.pixel_pipeline(),
-            )?
-            .processed;
+            Default::default(),
+            &Default::default(),
+        )?
+        .processed;
+        for image in [inspection, positive] {
             renderer.evaluation().prewarm_image(image)?;
         }
         Ok(())
@@ -48,7 +63,10 @@ impl PhotographGraph {
         };
         Grading::prewarm(device, context, domain)?;
         context.prewarm_image(inspect(
-            borrowed_input(domain),
+            borrowed_input(Domain {
+                meaning: Meaning::Inspection,
+                ..domain
+            }),
             ProcessingParameters::source(),
         )?)
     }

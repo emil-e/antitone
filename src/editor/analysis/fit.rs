@@ -321,23 +321,18 @@ impl Fit {
                 return Ok(None);
             }
             let record = project.source(*id)?;
-            let mut input = if record.development.lens_correction.is_some() {
-                crate::gpu::source::ProcessingSource::new_continuous(
-                    device,
-                    &[[0.; 4]],
-                    self.matrix,
-                )?
-            } else {
-                crate::gpu::source::ProcessingSource::new(device, &[[0; 4]], self.matrix)?
-            };
+            let continuous = record.development.lens_correction.is_some();
+            crate::gpu::parameters::CameraMatrix::require_source(self.matrix, continuous)?;
             if let Some(correction) = &self.correction {
-                input.set_flat_field(
-                    Some(correction.gpu.clone()),
-                    crate::gpu::source::SourceGeometry::new(
-                        record.development.active_area,
-                        [1, 1],
-                    )?,
+                correction.gpu.validate_matrix(
+                    self.matrix,
+                    if continuous {
+                        crate::processing::MAX_SOURCE_GAIN
+                    } else {
+                        1.
+                    },
                 )?;
+                crate::gpu::source::SourceGeometry::new(record.development.active_area, [1, 1])?;
             }
         }
         if cancelled() {

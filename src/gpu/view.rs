@@ -4,10 +4,11 @@ use crate::Error;
 #[cfg(test)]
 use crate::adjustment_layers::AdjustmentLayerSnapshot;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
+use crate::gpu::photograph::request::PhotographRequest;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::submission::SubmissionGate;
-use crate::gpu::view::input::ViewInput;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 #[cfg(test)]
 use crate::grain::GrainSettings;
 #[cfg(test)]
@@ -24,7 +25,6 @@ use wgpu::util::DeviceExt;
 
 pub mod acquisition;
 mod composite;
-pub mod input;
 pub mod processing;
 mod repair_reconstruction;
 pub mod request;
@@ -80,7 +80,11 @@ impl ViewSource {
                 coverage: 8,
                 ..crate::gpu::evaluation::Grid::from_frame(spec.plan.output())
             },
-            meaning: crate::gpu::evaluation::Meaning::Neutral,
+            meaning: if spec.is_inspection() {
+                crate::gpu::evaluation::Meaning::Inspection
+            } else {
+                crate::gpu::evaluation::Meaning::Neutral
+            },
         });
         Self {
             data: Arc::new(crate::gpu::view::acquisition::AcquiredViewRaster {
@@ -157,7 +161,7 @@ impl ViewSource {
         proxy: &crate::scan::CameraProxy,
         field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
-        input: &ProcessingInput,
+        request: &PhotographRequest,
     ) -> Result<(Arc<Self>, Arc<crate::gpu::view::processing::ProcessedView>), Error> {
         let (acquired, processed) =
             crate::gpu::view::acquisition::AcquiredViewRaster::camera_preview(
@@ -168,7 +172,7 @@ impl ViewSource {
                 proxy,
                 field,
                 spec,
-                input,
+                request,
             )?;
         Ok((Self::from_acquired(kernels, acquired), processed))
     }
@@ -182,7 +186,7 @@ impl ViewSource {
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,
         source: Arc<ProcessingSource>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         spec: SourceRequest,
     ) -> Result<Arc<Self>, Error> {
         let acquired = crate::gpu::view::acquisition::AcquiredViewRaster::from_processing(
@@ -205,7 +209,8 @@ impl ViewSource {
         renderer: Arc<crate::renderer::GpuRenderer>,
         kernels: Arc<ViewKernels>,
         source: Arc<ProcessingSource>,
-        input: &ProcessingInput,
+        request: &PhotographRequest,
+        field: Option<Arc<GpuFlatField>>,
         spec: SourceRequest,
     ) -> Result<(Arc<Self>, Arc<crate::gpu::view::processing::ProcessedView>), Error> {
         let (acquired, processed) =
@@ -215,7 +220,8 @@ impl ViewSource {
                 submissions,
                 renderer,
                 source,
-                input,
+                request,
+                field,
                 spec,
             )?;
         Ok((Self::from_acquired(kernels, acquired), processed))
@@ -359,7 +365,7 @@ impl std::ops::Deref for GradedView {
 pub struct RenderedView {
     pub image: Arc<GpuImage>,
     pub spec: SourceRequest,
-    pub capture: ViewInput,
+    pub capture: PhotographRequest,
     pub target: OutputTarget,
     graded: Option<Arc<GradedView>>,
     group: Option<crate::renderer::RenderBinding>,
@@ -369,7 +375,17 @@ pub struct RenderedView {
 }
 
 impl RenderedView {
-    pub fn processing(&self) -> ProcessingInput {
+    pub fn has_correction(&self, field: Option<&Arc<GpuFlatField>>) -> bool {
+        self.graded.as_ref().is_some_and(|graded| {
+            crate::gpu::photograph::PhotographGraph::has_correction(
+                &graded.source.definition,
+                field,
+            )
+        })
+    }
+
+    #[cfg(test)]
+    pub fn processing(&self) -> AuthoredPhotograph {
         self.capture
             .processing(self.image.device_limits(), &self.spec.repairs)
             .expect("rendered capture was admitted")
@@ -400,9 +416,7 @@ impl RenderedView {
                     + graded.source.spec.repairs.byte_len()
                     + (self.spec.repairs.0.capacity() + graded.source.spec.repairs.0.len()) as u64
                         * std::mem::size_of::<Arc<super::repairs::Patch>>() as u64
-                    + graded.grade.as_ref().map_or(0, |grade| {
-                        2 * (grade.byte_len() + grade.snapshot().retained_bytes() as u64)
-                    })
+                    + crate::gpu::grading::Grading::captured_bytes(&graded.definition)
             })
     }
 
@@ -410,7 +424,7 @@ impl RenderedView {
     pub fn new(
         device: &wgpu::Device,
         source: Arc<ViewSource>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
@@ -423,7 +437,7 @@ impl RenderedView {
             input,
             target,
             previous,
-            ViewInput::Processing(input.clone()),
+            PhotographRequest::Fixture(input.clone()),
         )
     }
 
@@ -431,7 +445,7 @@ impl RenderedView {
     pub fn inspection(
         device: &wgpu::Device,
         source: Arc<ViewSource>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
     ) -> Result<Arc<Self>, Error> {
@@ -446,7 +460,7 @@ impl RenderedView {
             input,
             target,
             previous,
-            ViewInput::Processing(input.clone()),
+            PhotographRequest::Fixture(input.clone()),
         )
     }
 
@@ -456,30 +470,29 @@ impl RenderedView {
         queue: &wgpu::Queue,
         submissions: &SubmissionGate,
         source: Arc<ViewSource>,
-        capture: ViewInput,
+        capture: PhotographRequest,
         field: Option<Arc<GpuFlatField>>,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
     ) -> Result<(Arc<ViewSource>, Arc<Self>), Error> {
-        let input = capture.processing(&device.limits(), &source.spec.repairs)?;
-        let program = input.source_transform().ok_or(Error::InvalidParameter(
-            "positive preview requires captured source interpretation",
-        ))?;
+        let program = capture.input_transform()?;
         let native = crate::gpu::photograph::NeutralInput {
-            interpretation: crate::gpu::interpretation::SourceInterpretation::Photograph(*program),
+            interpretation: crate::gpu::interpretation::SourceInterpretation::Photograph(program),
             field,
-            repairs: input.repairs.clone(),
+            repairs: source.spec.repairs.clone(),
         }
         .recompose_resident(&source.definition)?;
         let prior = previous
             .and_then(|view| view.graded.as_ref())
             .map(|graded| &graded.data);
+        let (root, plan) = capture.filtered(&device.limits(), &source.spec, native.clone())?;
         let (data, processed) = source.acquired().process_from_retained(
             device,
             queue,
             submissions,
             native,
-            &input,
+            root,
+            plan,
             prior,
         )?;
         let source = if Arc::ptr_eq(&data, &source.data) {
@@ -496,10 +509,10 @@ impl RenderedView {
     fn prepare(
         device: &wgpu::Device,
         source: Arc<ViewSource>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         target: OutputTarget,
         previous: Option<&Arc<Self>>,
-        capture: ViewInput,
+        capture: PhotographRequest,
     ) -> Result<Arc<Self>, Error> {
         let prior = previous.and_then(|p| p.graded.as_ref());
         let data = crate::gpu::view::processing::ProcessedView::prepare(
@@ -521,7 +534,7 @@ impl RenderedView {
     fn from_graded(
         device: &wgpu::Device,
         source: Arc<ViewSource>,
-        capture: ViewInput,
+        capture: PhotographRequest,
         target: OutputTarget,
         graded: Arc<GradedView>,
     ) -> Result<Arc<Self>, Error> {
@@ -560,7 +573,7 @@ impl RenderedView {
     pub fn from_processed(
         device: &wgpu::Device,
         source: Arc<ViewSource>,
-        capture: ViewInput,
+        capture: PhotographRequest,
         target: OutputTarget,
         data: Arc<crate::gpu::view::processing::ProcessedView>,
         previous: Option<&Arc<Self>>,
@@ -581,7 +594,7 @@ impl RenderedView {
     pub fn reference(
         image: Arc<GpuImage>,
         spec: SourceRequest,
-        capture: ViewInput,
+        capture: PhotographRequest,
         target: OutputTarget,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -597,10 +610,20 @@ impl RenderedView {
         })
     }
 
+    pub fn matches_capture(
+        &self,
+        spec: &SourceRequest,
+        capture: &PhotographRequest,
+        target: OutputTarget,
+    ) -> bool {
+        self.spec == *spec && self.target == target && self.capture == *capture
+    }
+
+    #[cfg(test)]
     pub fn matches(
         &self,
         spec: &SourceRequest,
-        processing: &ProcessingInput,
+        processing: &AuthoredPhotograph,
         target: OutputTarget,
     ) -> bool {
         self.spec == *spec

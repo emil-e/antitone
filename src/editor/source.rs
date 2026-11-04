@@ -373,10 +373,6 @@ impl Developed {
             [width, height],
             &pixels,
             scan.camera_to_ap1,
-            self.context
-                .correction
-                .as_ref()
-                .map(|correction| correction.gpu.clone()),
             crate::gpu::source::SourceGeometry::new(
                 [a.x, a.y, a.width, a.height],
                 [width, height],

@@ -1,7 +1,8 @@
 //! Purpose-bound original-sample reconstruction, independent of normal working-view acceptance.
 use super::*;
 #[cfg(test)]
-use crate::gpu::input::ProcessingInput;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use std::sync::{Mutex, Weak};
 #[cfg(test)]
 mod tests;
@@ -14,7 +15,7 @@ pub(super) enum OriginalPurpose {
 
 #[derive(Clone, PartialEq)]
 pub(super) struct Demand {
-    pub capture: crate::gpu::view::input::ViewInput,
+    pub capture: crate::gpu::photograph::request::PhotographRequest,
     pub repairs: crate::gpu::repairs::Snapshot,
     pub target: OutputTarget,
     pub view: Option<ViewRequest>,
@@ -25,7 +26,7 @@ pub(super) struct Demand {
 #[cfg(test)]
 impl Demand {
     pub fn fixture(
-        input: ProcessingInput,
+        input: AuthoredPhotograph,
         target: OutputTarget,
         view: Option<ViewRequest>,
         composition: Composition,
@@ -33,7 +34,7 @@ impl Demand {
     ) -> Self {
         Self {
             repairs: input.repairs.clone(),
-            capture: crate::gpu::view::input::ViewInput::Processing(input),
+            capture: crate::gpu::photograph::request::PhotographRequest::Fixture(input),
             target,
             view,
             composition,
@@ -247,7 +248,6 @@ impl OriginalView {
     pub(super) fn rendered(
         &mut self,
         purpose: OriginalPurpose,
-        limits: &wgpu::Limits,
     ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
         use crate::frame_raster::FrameRaster;
         use crate::gpu::view::RenderedView;
@@ -273,13 +273,25 @@ impl OriginalView {
                 frame
             }
         };
-        let input = wanted.capture.processing(limits, &wanted.repairs)?;
         let identity =
             crate::gpu::source::identity::Identity::camera(wanted.source.source.identity());
-        let spec = if input.grade().is_none() {
-            SourceRequest::inspection(frame)?
-        } else {
-            SourceRequest::for_processing(frame, &input)?
+        let spec = match &wanted.capture {
+            crate::gpu::photograph::request::PhotographRequest::Recipe(recipe) => {
+                SourceRequest::for_recipe(frame, recipe)?
+            }
+            crate::gpu::photograph::request::PhotographRequest::Inspection(_) => {
+                SourceRequest::for_frame(frame)?
+            }
+            #[cfg(test)]
+            crate::gpu::photograph::request::PhotographRequest::Fixture(input)
+                if input.grade().is_some() =>
+            {
+                SourceRequest::for_processing(frame, input)?
+            }
+            #[cfg(test)]
+            crate::gpu::photograph::request::PhotographRequest::Fixture(_) => {
+                SourceRequest::for_frame(frame)?
+            }
         }
         .with_identity(identity)
         .with_repairs(wanted.repairs.clone());
@@ -302,16 +314,6 @@ impl Editor {
         &mut self,
         purpose: OriginalPurpose,
     ) -> Result<Option<Arc<crate::gpu::view::RenderedView>>, Error> {
-        let limits = self
-            .document
-            .visit
-            .working_view
-            .device()
-            .map(|device| device.limits())
-            .unwrap_or_default();
-        self.active_canvas_mut()
-            .grade
-            .original
-            .rendered(purpose, &limits)
+        self.active_canvas_mut().grade.original.rendered(purpose)
     }
 }

@@ -20,8 +20,13 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
             [65536., 100000.25, 70000.5, 0.],
             [MAX_CAMERA_SOURCE_CODE, 1_000_000., 123456., 0.],
         ];
-        let mut source =
-            ProcessingSource::new_continuous(&device, &pixels, DMat3::IDENTITY).unwrap();
+        let source = ProcessingSource::new_continuous(
+            &device,
+            &pixels,
+            DMat3::IDENTITY,
+            Some(SourceGeometry::new([0, 0, 3, 1], [3, 1]).unwrap()),
+        )
+        .unwrap();
         let inspected = process(
             &device,
             &queue,
@@ -55,9 +60,6 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
             } else {
                 None
             };
-            source
-                .set_flat_field(field, SourceGeometry::new([0, 0, 3, 1], [3, 1]).unwrap())
-                .unwrap();
             let calibration = Calibration {
                 dmin: DVec3::splat(0.7),
                 dmax: DVec3::splat(0.01),
@@ -85,6 +87,19 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
                 let photo = AdjustmentLayerSettings::default();
                 let parameters =
                     ProcessingParameters::interpret(input, roll, DMat3::IDENTITY).unwrap();
+                let grade = antitone::gpu::test_inputs::AuthoredPhotograph::new(
+                    &device.limits(),
+                    input,
+                    roll,
+                    antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+                        antitone::adjustment_layers::AdjustmentLayer::global(photo),
+                    ])
+                    .unwrap(),
+                    DMat3::IDENTITY,
+                    [0, 0, 3, 1].into(),
+                )
+                .unwrap()
+                .with_flat_field(field.clone());
                 let output = process(
                     &device,
                     &queue,
@@ -92,7 +107,7 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
                     &source,
                     pixels.len(),
                     parameters,
-                    None,
+                    Some(&grade),
                 );
                 let scalar = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
                     antitone::adjustment_layers::AdjustmentLayer::global(photo),
@@ -126,12 +141,12 @@ fn headroom_survives_gpu_inspection_inversion_and_residual_gains_without_lut_ind
                 }
             }
         }
-        source.write_continuous(&queue, &pixels).unwrap();
         for invalid in [MAX_CAMERA_SOURCE_CODE + 1., f32::INFINITY, f32::NAN, -1.] {
             let mut bad = pixels;
             bad[0][0] = invalid;
-            assert!(source.write_continuous(&queue, &bad).is_err());
-            assert!(ProcessingSource::new_continuous(&device, &bad, DMat3::IDENTITY).is_err());
+            assert!(
+                ProcessingSource::new_continuous(&device, &bad, DMat3::IDENTITY, None).is_err()
+            );
         }
     });
 }

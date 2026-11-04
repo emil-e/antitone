@@ -60,10 +60,10 @@ fn train_native_source_and_gpu_match_scalar_with_unchanged_numerical_gate() {
         let adapter = instance.request_adapter(&Default::default()).await.unwrap();
         let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let source =
-            ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1).unwrap();
+            ProcessingSource::new_continuous(&device, &codes, train.camera_to_ap1, None).unwrap();
         assert_eq!(source.byte_len(), codes.len() as u64 * 16);
         let kernel = CameraFixture::new(&device).await.unwrap();
-        let grade = antitone::gpu::input::ProcessingInput::new(
+        let grade = antitone::gpu::test_inputs::AuthoredPhotograph::new(
             &device.limits(),
             input,
             roll,

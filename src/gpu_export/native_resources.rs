@@ -82,33 +82,48 @@ fn native_output_resources() {
                 let (output, encoding) = match format {
                     Format::Tiff(target) => (
                         crate::rendering::OutputReference::DisplayReferred(target),
-                        execution::SampleEncoding::Rgb16,
+                        execution::SampleEncoding::Rgb16(target),
                     ),
                     _ => (
                         crate::rendering::OutputReference::SceneReferred,
                         execution::SampleEncoding::LinearFloat,
                     ),
                 };
+                let photograph = crate::gpu::photograph::PhotographGraph::original(
+                    &device.limits(),
+                    crate::gpu::evaluation::camera_source(&scan)?,
+                    None,
+                    crate::gpu::interpretation::InputTransform::for_scan(
+                        &scan,
+                        crate::processing::InputSettings::Digital,
+                    )?,
+                    crate::gpu::grading::Grading::new(
+                        &device.limits(),
+                        Default::default(),
+                        grade.clone(),
+                        scan.area,
+                    )?,
+                    Default::default(),
+                    &crate::pixel_pipeline::PixelPipeline::film(
+                        film,
+                        composition.size(),
+                        (1 << 60) + 17,
+                    )?,
+                )?;
+                let definition = crate::gpu::evaluation::Reference::capture(
+                    &device,
+                    &renderer,
+                    output,
+                    &Default::default(),
+                )?
+                .compose(photograph.processed, &renderer)?;
                 return execution::execute(
                     &renderer,
                     &device,
                     (&queue, &gate),
                     execution::Request {
-                        scan: &scan,
-                        field: None,
-                        input: crate::processing::InputSettings::Digital,
-                        roll: Default::default(),
-                        grade: grade.clone(),
-                        repairs: &[],
+                        definition,
                         composition,
-                        stages: crate::pixel_pipeline::PixelPipeline::film(
-                            film,
-                            composition.size(),
-                            (1 << 60) + 17,
-                        )
-                        .unwrap(),
-                        output,
-                        luts: (None).into(),
                         encoding,
                     },
                     |render, complete| {

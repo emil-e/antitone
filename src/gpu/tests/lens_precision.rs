@@ -166,8 +166,8 @@ fn synthetic(near_base: bool) -> Dataset {
 }
 
 enum ProcessingCase {
-    Source(ProcessingParameters),
-    Layers(antitone::gpu::input::ProcessingInput),
+    Source(ProcessingParameters, Option<Arc<GpuFlatField>>),
+    Layers(antitone::gpu::test_inputs::AuthoredPhotograph),
 }
 
 struct Gpu {
@@ -240,10 +240,14 @@ impl Gpu {
         let start = Instant::now();
         let mut encoder = self.device.create_command_encoder(&Default::default());
         match parameters {
-            ProcessingCase::Source(parameters) => {
-                self.kernel
-                    .encode(&self.device, &mut encoder, source, output, *parameters)
-            }
+            ProcessingCase::Source(parameters, field) => self.kernel.encode_with_field(
+                &self.device,
+                &mut encoder,
+                source,
+                output,
+                *parameters,
+                field.clone(),
+            ),
             ProcessingCase::Layers(grade) => self
                 .kernel
                 .encode_grade(&self.device, &mut encoder, source, output, grade)
@@ -309,13 +313,17 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
         .iter()
         .map(|p| p.map(|v| v.round() as u16))
         .collect();
-    let mut float_source =
-        ProcessingSource::new_continuous(&gpu.device, &dataset.codes, dataset.matrix).unwrap();
-    let mut integer_source =
-        fits_rgb16.then(|| ProcessingSource::new(&gpu.device, &codes16, dataset.matrix).unwrap());
+    let geometry = dataset.flat.then(|| {
+        SourceGeometry::new([0, 0, dataset.size[0], dataset.size[1]], dataset.size).unwrap()
+    });
+    let float_source =
+        ProcessingSource::new_continuous(&gpu.device, &dataset.codes, dataset.matrix, geometry)
+            .unwrap();
+    let integer_source = fits_rgb16
+        .then(|| ProcessingSource::new(&gpu.device, &codes16, dataset.matrix, geometry).unwrap());
     let rounded: Vec<_> = dataset.codes.iter().map(|&p| quantized(p, 0)).collect();
-    let mut rounded_float_source =
-        ProcessingSource::new_continuous(&gpu.device, &rounded, dataset.matrix).unwrap();
+    let rounded_float_source =
+        ProcessingSource::new_continuous(&gpu.device, &rounded, dataset.matrix, geometry).unwrap();
     let gain = if dataset.flat {
         DVec3::new(0.9, 1.1, 1.05)
     } else {
@@ -353,25 +361,24 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
             + 0.5 / dataset.size[1] as f64;
         (nodes[0] * (1. - u) + nodes[1] * u) * (1. - v) + (nodes[2] * (1. - u) + nodes[3] * u) * v
     };
-    if dataset.flat {
-        let area = [0, 0, dataset.size[0], dataset.size[1]];
-        let field = Arc::new(
+    let field = if dataset.flat {
+        Some(Arc::new(
             GpuFlatField::new(
                 &gpu.device,
-                Arc::new(FlatField::from_nodes(area, [2, 2], nodes.to_vec()).unwrap()),
+                Arc::new(
+                    FlatField::from_nodes(
+                        [0, 0, dataset.size[0], dataset.size[1]],
+                        [2, 2],
+                        nodes.to_vec(),
+                    )
+                    .unwrap(),
+                ),
             )
             .unwrap(),
-        );
-        let geometry = SourceGeometry::new(area, dataset.size).unwrap();
-        for source in [&mut float_source, &mut rounded_float_source]
-            .into_iter()
-            .chain(integer_source.iter_mut())
-        {
-            source
-                .set_flat_field(Some(field.clone()), geometry)
-                .unwrap();
-        }
-    }
+        ))
+    } else {
+        None
+    };
     let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("precision timing output"),
         size: dataset.codes.len() as u64 * 16,
@@ -540,7 +547,7 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
                 antitone::adjustment_layers::AdjustmentLayer::global(photo),
             ])
             .and_then(|snapshot| {
-                antitone::gpu::input::ProcessingInput::new(
+                antitone::gpu::test_inputs::AuthoredPhotograph::new(
                     &gpu.device.limits(),
                     cal,
                     roll,
@@ -549,8 +556,9 @@ fn report(dataset: &Dataset, gpu: &Gpu, output_dir: &Path, csv: &mut fs::File) {
                     [0, 0, dataset.size[0], dataset.size[1]].into(),
                 )
             })
-            .map(ProcessingCase::Layers),
-            None => ProcessingParameters::source_inspection(exposure).map(ProcessingCase::Source),
+            .map(|grade| ProcessingCase::Layers(grade.with_flat_field(field.clone()))),
+            None => ProcessingParameters::source_inspection(exposure)
+                .map(|parameters| ProcessingCase::Source(parameters, field.clone())),
         };
         match parameters {
             Ok(parameters) => {

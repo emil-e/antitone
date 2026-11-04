@@ -122,7 +122,7 @@ use operators::*;
 pub use operators::{pointwise, source};
 #[cfg(all(feature = "raw", feature = "render"))]
 pub use original::camera_source;
-#[cfg(all(feature = "raw", feature = "render"))]
+#[cfg(all(test, feature = "raw", feature = "render"))]
 pub(crate) use original::original_chain;
 pub(crate) use plan::{Job, Plan, Policy, Tile};
 #[cfg(test)]

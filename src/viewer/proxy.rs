@@ -1,9 +1,9 @@
 //! One immutable camera proxy, with only the active target's mutable output retained.
 use super::*;
-use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::source::ProcessingSource;
 use crate::gpu::source::SourceGeometry;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 #[cfg(test)]
 mod tests;
 
@@ -22,14 +22,12 @@ struct ProxyState {
 
 impl GpuProxy {
     #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         renderer: Arc<GpuRenderer>,
         device: &wgpu::Device,
         size: [u32; 2],
         pixels: &[[u16; 4]],
         matrix: DMat3,
-        field: Option<Arc<GpuFlatField>>,
         geometry: SourceGeometry,
     ) -> Result<Self, Error> {
         if size[0].checked_mul(size[1]).map(u64::from) != Some(pixels.len() as u64) {
@@ -37,19 +35,16 @@ impl GpuProxy {
                 "source dimensions do not match the GPU image",
             ));
         }
-        let mut source = ProcessingSource::new(device, pixels, matrix)?;
-        source.set_flat_field(field, geometry)?;
+        let source = ProcessingSource::new(device, pixels, matrix, Some(geometry))?;
         Ok(Self::from_source(renderer, device, size, source))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_continuous(
         renderer: Arc<GpuRenderer>,
         device: &wgpu::Device,
         size: [u32; 2],
         pixels: &[[f32; 4]],
         matrix: DMat3,
-        field: Option<Arc<GpuFlatField>>,
         geometry: SourceGeometry,
     ) -> Result<Self, Error> {
         if size[0].checked_mul(size[1]).map(u64::from) != Some(pixels.len() as u64) {
@@ -57,8 +52,7 @@ impl GpuProxy {
                 "source dimensions do not match the GPU image",
             ));
         }
-        let mut source = ProcessingSource::new_continuous(device, pixels, matrix)?;
-        source.set_flat_field(field, geometry)?;
+        let source = ProcessingSource::new_continuous(device, pixels, matrix, Some(geometry))?;
         Ok(Self::from_source(renderer, device, size, source))
     }
 
@@ -111,7 +105,7 @@ impl GpuProxy {
         queue: &wgpu::Queue,
         submissions: &crate::gpu::submission::SubmissionGate,
         kernels: Arc<crate::gpu::view::ViewKernels>,
-        input: &ProcessingInput,
+        input: &AuthoredPhotograph,
         spec: crate::gpu::view::request::SourceRequest,
     ) -> Result<Arc<crate::gpu::view::ViewSource>, Error> {
         crate::gpu::view::ViewSource::from_processing(
@@ -134,7 +128,8 @@ impl GpuProxy {
         queue: &wgpu::Queue,
         submissions: &crate::gpu::submission::SubmissionGate,
         kernels: Arc<crate::gpu::view::ViewKernels>,
-        input: &ProcessingInput,
+        request: &crate::gpu::photograph::request::PhotographRequest,
+        field: Option<Arc<crate::gpu::flat::GpuFlatField>>,
         spec: crate::gpu::view::request::SourceRequest,
     ) -> Result<
         (
@@ -150,7 +145,8 @@ impl GpuProxy {
             self.0.renderer.clone(),
             kernels,
             self.0.source.clone(),
-            input,
+            request,
+            field,
             spec.capture(self.0.identity.clone().unwrap_or_else(|| {
                 crate::gpu::source::identity::Identity::Resident(Arc::downgrade(&self.0.source))
             }))?,
@@ -168,10 +164,7 @@ impl GpuProxy {
             &self.0.device,
             self.0.size[0],
             self.0.size[1],
-            Some((
-                self.0.renderer.clone(),
-                ImageSource::Shared(self.0.source.clone()),
-            )),
+            Some((self.0.renderer.clone(), self.0.source.clone())),
             self.0.renderer.display.clone(),
             target,
         ))?);

@@ -2,7 +2,7 @@
 use super::*;
 use crate::gpu::submission::SubmissionGate;
 use crate::gpu::view::request::SourceRequest;
-use crate::{adjustment_layers::AdjustmentLayer, gpu::input::ProcessingInput};
+use crate::{adjustment_layers::AdjustmentLayer, gpu::test_inputs::AuthoredPhotograph};
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Instant,
@@ -75,8 +75,8 @@ fn acquisition_execution_resources() {
         checkpoint("setup", start);
 
         let make_input = |ev: f64| {
-            ProcessingInput::from(Arc::new(
-                ProcessingInput::new(
+            AuthoredPhotograph::from(Arc::new(
+                AuthoredPhotograph::new(
                     &device.limits(),
                     InputSettings::Digital,
                     Default::default(),

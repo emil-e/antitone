@@ -3,8 +3,8 @@ use crate::adjustment_layers::AdjustmentLayerStack;
 use crate::geometry::SourcePoint;
 use crate::geometry::SourceRegion;
 use crate::gpu::flat::GpuFlatField;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::photograph::PhotographGraph;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::Calibration;
 use crate::processing::InputPipeline;
 use crate::processing::InputSettings;
@@ -91,7 +91,7 @@ fn streamed_repairs_and_spatial_filtering_preserve_the_resident_composition() {
     };
     let evaluated =
         Arc::new(crate::dust_repair::evaluate(&repair, area, |_| Ok([0.25, 0.5, 0.75])).unwrap());
-    let mut input = ProcessingInput::new(
+    let mut input = AuthoredPhotograph::new(
         &device.limits(),
         InputSettings::Digital,
         Default::default(),
@@ -210,7 +210,7 @@ fn photographic_identities_follow_captured_operations_not_physical_fusion() {
     });
     let layers = AdjustmentLayerSnapshot::new(vec![layer]).unwrap();
     let make = |settings, roll, layers| {
-        let input = ProcessingInput::new(
+        let input = AuthoredPhotograph::new(
             &device.limits(),
             settings,
             roll,
@@ -266,7 +266,7 @@ fn photographic_identities_follow_captured_operations_not_physical_fusion() {
         *gamma = 0.8;
     }
     let interpreted = make(gamma, RollSettings::default(), layers);
-    assert_eq!(original.camera.identity(), interpreted.camera.identity());
+    assert_eq!(original.codes.identity(), interpreted.codes.identity());
     assert_ne!(original.neutral.identity(), interpreted.neutral.identity());
 }
 
@@ -425,7 +425,7 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
         }),
     ] {
         let pipeline = Arc::new(
-            ProcessingInput::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 settings,
                 roll,
@@ -436,7 +436,7 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
             .unwrap(),
         );
         let scalar_input = InputPipeline::new(settings, matrix).unwrap();
-        let mut input = ProcessingInput::from(pipeline);
+        let mut input = AuthoredPhotograph::from(pipeline);
         input.repairs = snapshot.clone();
         let photo = PhotographGraph::new(
             &device.limits(),
@@ -450,7 +450,7 @@ fn camera_neutral_repair_roll_and_stack_remain_addressable_under_generic_composi
             &device,
             &queue,
             &renderer,
-            photo.camera.clone(),
+            photo.codes.clone(),
             region,
             Policy::Composed,
         )
@@ -619,7 +619,7 @@ fn keeping_a_neutral_image_does_not_retain_its_downstream_grade() {
     let (device, queue, renderer) = crate::gpu::test_support::render_context();
     let area = SourceRegion::from([11, 17, 3, 2]);
     let pipeline = Arc::new(
-        ProcessingInput::new(
+        AuthoredPhotograph::new(
             &device.limits(),
             InputSettings::Digital,
             Default::default(),
@@ -630,7 +630,7 @@ fn keeping_a_neutral_image_does_not_retain_its_downstream_grade() {
         .unwrap(),
     );
     let grade = Arc::downgrade(pipeline.grade_shared().unwrap());
-    let input = ProcessingInput::from(pipeline);
+    let input = AuthoredPhotograph::from(pipeline);
     let pixels = vec![[0.25 * 65535., 0.5 * 65535., 1.5 * 65535., 0.]; 6];
     let photo = PhotographGraph::new(
         &device.limits(),

@@ -3,8 +3,8 @@ use super::*;
 use crate::frame_raster::FrameRaster;
 use crate::geometry::Composition;
 use crate::geometry::FramePoint;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::RenderedView;
 use crate::gpu::view::ViewKernels;
 use crate::gpu::view::request::SourceRequest;
@@ -139,8 +139,8 @@ fn raf_import_reopen_view_and_bounded_exports() {
                     spec,
                 )
                 .unwrap();
-            let input: ProcessingInput = Arc::new(
-                ProcessingInput::new(
+            let input: AuthoredPhotograph = Arc::new(
+                AuthoredPhotograph::new(
                     &device.limits(),
                     settings,
                     document.project.roll,

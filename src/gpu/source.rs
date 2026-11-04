@@ -1,9 +1,8 @@
 //! Resident camera samples and their source-coordinate geometry.
 
-use crate::gpu::{flat::GpuFlatField, parameters::CameraMatrix};
-use crate::{Error, geometry::SourceRaster, processing::validate_camera_matrix};
+use crate::gpu::parameters::CameraMatrix;
+use crate::{Error, geometry::SourceRaster};
 use glam::DMat3;
-use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 #[cfg(feature = "editor")]
@@ -113,44 +112,28 @@ impl SourceGeometry {
 pub struct ProcessingSource {
     pub(crate) input: wgpu::Buffer,
     pub(crate) pixels: u32,
-    pub(crate) camera_to_ap1: DMat3,
-    pub(crate) geometry: Option<SourceGeometry>,
-    pub(crate) flat_field: Option<Arc<GpuFlatField>>,
+    camera_to_ap1: DMat3,
+    geometry: Option<SourceGeometry>,
     pub(crate) continuous: bool,
 }
 
 impl ProcessingSource {
-    #[cfg(feature = "editor")]
-    #[cfg(test)]
     pub(crate) fn camera_matrix(&self) -> DMat3 {
         self.camera_to_ap1
     }
 
-    pub(crate) fn with_matrix(self: &Arc<Self>, matrix: DMat3) -> Result<Arc<Self>, Error> {
-        if self.camera_to_ap1 == matrix {
-            return Ok(self.clone());
-        }
-        validate_camera_matrix(matrix)?;
-        CameraMatrix::new(matrix)?;
-        if self.continuous {
-            CameraMatrix::new(matrix * crate::processing::MAX_SOURCE_GAIN)?;
-        }
-        Ok(Arc::new(Self {
-            input: self.input.clone(),
-            pixels: self.pixels,
-            camera_to_ap1: matrix,
-            geometry: self.geometry,
-            flat_field: self.flat_field.clone(),
-            continuous: self.continuous,
-        }))
-    }
-
-    pub fn new(device: &wgpu::Device, pixels: &[[u16; 4]], matrix: DMat3) -> Result<Self, Error> {
+    pub fn new(
+        device: &wgpu::Device,
+        pixels: &[[u16; 4]],
+        matrix: DMat3,
+        geometry: Option<SourceGeometry>,
+    ) -> Result<Self, Error> {
         Self::from_bytes(
             device,
             bytemuck::cast_slice(pixels),
             pixels.len(),
             matrix,
+            geometry,
             false,
         )
     }
@@ -160,6 +143,7 @@ impl ProcessingSource {
         device: &wgpu::Device,
         pixels: &[[f32; 4]],
         matrix: DMat3,
+        geometry: Option<SourceGeometry>,
     ) -> Result<Self, Error> {
         Self::validate_continuous(pixels)?;
         Self::from_bytes(
@@ -167,6 +151,7 @@ impl ProcessingSource {
             bytemuck::cast_slice(pixels),
             pixels.len(),
             matrix,
+            geometry,
             true,
         )
     }
@@ -191,6 +176,7 @@ impl ProcessingSource {
         bytes: &[u8],
         length: usize,
         matrix: DMat3,
+        geometry: Option<SourceGeometry>,
         continuous: bool,
     ) -> Result<Self, Error> {
         let count =
@@ -201,75 +187,24 @@ impl ProcessingSource {
         {
             return Err(Error::Gpu("source exceeds GPU limits".into()));
         }
-        validate_camera_matrix(matrix)?;
-        let camera_to_ap1 = matrix;
-        CameraMatrix::new(matrix)?;
-        if continuous {
-            CameraMatrix::new(camera_to_ap1 * crate::processing::MAX_SOURCE_GAIN)?;
+        if geometry.is_some_and(|geometry| geometry.pixels() != count) {
+            return Err(Error::Gpu(
+                "source geometry differs from sample storage".into(),
+            ));
         }
+        CameraMatrix::require_source(matrix, continuous)?;
+        let camera_to_ap1 = matrix;
         Ok(Self {
             input: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("camera source samples"),
                 contents: bytes,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::STORAGE,
             }),
             pixels: count,
             camera_to_ap1,
-            geometry: None,
-            flat_field: None,
+            geometry,
             continuous,
         })
-    }
-
-    pub fn set_geometry(&mut self, geometry: SourceGeometry) -> Result<(), Error> {
-        if geometry.pixels() != self.pixels {
-            return Err(Error::Gpu(
-                "source geometry differs from RGB16 storage".into(),
-            ));
-        }
-        self.geometry = Some(geometry);
-        Ok(())
-    }
-
-    pub fn set_flat_field(
-        &mut self,
-        field: Option<Arc<GpuFlatField>>,
-        geometry: SourceGeometry,
-    ) -> Result<(), Error> {
-        if let Some(field) = &field {
-            field.validate_matrix(
-                self.camera_to_ap1,
-                if self.continuous {
-                    crate::processing::MAX_SOURCE_GAIN
-                } else {
-                    1.
-                },
-            )?;
-        }
-        self.set_geometry(geometry)?;
-        self.flat_field = field;
-        Ok(())
-    }
-
-    pub fn write(&self, queue: &wgpu::Queue, pixels: &[[u16; 4]]) -> Result<(), Error> {
-        if self.continuous || pixels.len() != self.pixels as usize {
-            return Err(Error::Gpu(
-                "invalid replacement source tile or format".into(),
-            ));
-        }
-        queue.write_buffer(&self.input, 0, bytemuck::cast_slice(pixels));
-        Ok(())
-    }
-
-    pub fn write_continuous(&self, queue: &wgpu::Queue, pixels: &[[f32; 4]]) -> Result<(), Error> {
-        if !self.continuous || pixels.len() != self.pixels as usize {
-            return Err(Error::Gpu(
-                "invalid replacement continuous source tile".into(),
-            ));
-        }
-        Self::validate_continuous(pixels)?;
-        queue.write_buffer(&self.input, 0, bytemuck::cast_slice(pixels));
-        Ok(())
     }
 
     pub fn byte_len(&self) -> u64 {
@@ -280,7 +215,6 @@ impl ProcessingSource {
         self.pixels
     }
 
-    #[cfg(all(feature = "render", any(feature = "ui", feature = "raw")))]
     pub(crate) fn geometry(&self) -> Option<SourceGeometry> {
         self.geometry
     }

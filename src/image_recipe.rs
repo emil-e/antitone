@@ -1,4 +1,4 @@
-//! Immutable accepted positive-image choices, independent of execution and output target.
+//! Immutable photographic choices, independent of execution, calibration readiness and output target.
 use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
@@ -150,11 +150,6 @@ impl Project {
     /// Capture one source's accepted photograph without acquiring pixels or resolving repairs.
     pub fn image_recipe(&self, id: SourceId) -> Result<ImageRecipe, Error> {
         let source = self.source(id)?;
-        if self.input.is_negative() && self.input.calibration().is_none() {
-            return Err(Error::Project(
-                "positive recipe requires calibration".into(),
-            ));
-        }
         self.image_recipe_for_source(source, &self.input, self.roll)
     }
 

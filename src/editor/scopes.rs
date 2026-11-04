@@ -1,6 +1,7 @@
 use super::*;
 #[cfg(test)]
-use crate::gpu::input::ProcessingInput;
+#[cfg(test)]
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::{
     frame_raster::FrameRaster,
     gpu_scopes::{GpuScopes, ScopePaint},
@@ -250,7 +251,7 @@ impl Editor {
     #[cfg(test)]
     pub(super) fn scope_input(
         &self,
-    ) -> Result<(Arc<GpuImage>, ProcessingInput, FrameRaster), &'static str> {
+    ) -> Result<(Arc<GpuImage>, AuthoredPhotograph, FrameRaster), &'static str> {
         let ScopeInput { view, frame, .. } = self.scope_request()?;
         let device = self
             .document

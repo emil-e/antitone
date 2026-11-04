@@ -34,11 +34,12 @@ pub(crate) mod image_mtf;
 pub(crate) mod pixel_pipeline;
 pub(crate) mod raster;
 
-pub mod input;
 pub mod parameters;
 pub(crate) mod repairs;
 pub mod source;
 pub mod submission;
+#[cfg(test)]
+pub(crate) mod test_inputs;
 #[cfg(all(test, target_os = "macos", feature = "raw", feature = "export"))]
 pub(crate) mod timestamp_ledger;
 #[cfg(feature = "editor")]

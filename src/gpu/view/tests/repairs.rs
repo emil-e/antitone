@@ -1,8 +1,8 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerSettings;
-use crate::gpu::input::ProcessingInput;
 use crate::gpu::source::SourceGeometry;
 use crate::gpu::submission::SubmissionGate;
+use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::gpu::view::request::SourceRequest;
 use crate::{
     adjustment_layers::AdjustmentLayerSnapshot,
@@ -167,22 +167,23 @@ fn render_repaired(
     )
     .unwrap()
     .unwrap();
-    let mut input: ProcessingInput = crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
-        crate::adjustment_layers::AdjustmentLayer::global(photo),
-    ])
-    .and_then(|snapshot| {
-        crate::gpu::input::ProcessingInput::new(
-            &device.limits(),
-            calibration(),
-            roll,
-            snapshot,
-            source.spec.matrix(),
-            source.spec.area,
-        )
-    })
-    .map(Arc::new)
-    .unwrap()
-    .into();
+    let mut input: AuthoredPhotograph =
+        crate::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            crate::adjustment_layers::AdjustmentLayer::global(photo),
+        ])
+        .and_then(|snapshot| {
+            crate::gpu::test_inputs::AuthoredPhotograph::new(
+                &device.limits(),
+                calibration(),
+                roll,
+                snapshot,
+                source.spec.matrix(),
+                source.spec.area,
+            )
+        })
+        .map(Arc::new)
+        .unwrap()
+        .into();
     input.repairs = snapshot.clone();
     let view = RenderedView::new(device, source, &input, target, previous).unwrap();
     view.ensure_submitted(
@@ -375,8 +376,8 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             balance: Balance::default(),
         };
         let roll = RollSettings::default();
-        let mut input: ProcessingInput = Arc::new(
-            ProcessingInput::new(
+        let mut input: AuthoredPhotograph = Arc::new(
+            AuthoredPhotograph::new(
                 &device.limits(),
                 negative,
                 roll,
@@ -429,7 +430,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
             crate::adjustment_layers::AdjustmentLayer::global(photo),
         ])
         .and_then(|snapshot| {
-            crate::gpu::input::ProcessingInput::new(
+            crate::gpu::test_inputs::AuthoredPhotograph::new(
                 &device.limits(),
                 calibration(),
                 roll,
@@ -441,7 +442,7 @@ fn sparse_repair_projection_retains_signed_hdr_and_repair_values_extend_range_pr
         .map(Arc::new)
         .unwrap();
         assert!(
-            ProcessingInput::validate_repaired(
+            AuthoredPhotograph::validate_repaired(
                 &device,
                 calibration(),
                 roll,

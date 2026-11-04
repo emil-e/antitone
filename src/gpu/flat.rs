@@ -47,7 +47,7 @@ impl GpuFlatField {
         &self.field
     }
 
-    pub(super) fn validate_matrix(&self, matrix: DMat3, source_gain: f64) -> Result<(), Error> {
+    pub(crate) fn validate_matrix(&self, matrix: DMat3, source_gain: f64) -> Result<(), Error> {
         let (_, max) = self.bounds;
         // Camera gains execute before the matrix, so small coefficients cannot rescue overflow.
         if max.max_element() * source_gain > f32::MAX as f64 / 16. {
