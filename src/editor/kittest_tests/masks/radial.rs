@@ -189,8 +189,13 @@ fn selected_radial_handles_commit_axes_rotation_and_feather_without_changing_oth
                 assert!(
                     editor.mask_preview_source().is_some(),
                     "gesture={} error={:?} status={}",
-                    editor.document.mask_edit().is_some(),
-                    editor.document.mask_edit().and_then(MaskEdit::error),
+                    editor.document.visit.masks.gesture().is_some(),
+                    editor
+                        .document
+                        .visit
+                        .masks
+                        .gesture()
+                        .and_then(MaskEdit::error),
                     editor.status
                 )
             });

@@ -62,6 +62,7 @@ impl Editor {
             }),
         };
         self.cancel_active_tool();
+        self.document.visit.masks.cancel();
         let id =
             self.begin_document_operation(matches!(&work, Preparation::New | Preparation::Open(_)));
         self.tasks.begin(match &work {
@@ -191,7 +192,6 @@ impl Editor {
                 }
                 self.remember_imported_look();
                 self.document.visit.adjustment_layers = layer_selection;
-                self.document.set_mask_edit(None);
                 if new_project {
                     self.tab = 0;
                     self.preferences

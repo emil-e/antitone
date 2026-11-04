@@ -1,6 +1,5 @@
 use super::*;
 #[cfg(test)]
-#[cfg(test)]
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::processing::InputSettings;
 use crate::{
@@ -14,14 +13,11 @@ use std::{
     cell::RefCell,
     rc::{Rc, Weak},
 };
+mod contextual;
 mod creation;
 mod radial;
 
-/// Non-owning observation for admission and navigation outside the tool callback.
-#[derive(Default)]
-pub(super) struct State {
-    creation: Weak<RefCell<MaskEdit>>,
-}
+pub(super) use contextual::MaskEditor;
 
 pub(super) use creation::CreationTool;
 
@@ -75,7 +71,6 @@ pub(super) struct MaskEdit {
     above: Option<AdjustmentLayerId>,
     mask: Option<AdjustmentLayerCoverage>,
     preview: Option<Source>,
-    compare: bool,
     kind: Kind,
     feather: f64,
     drag: Option<MaskDrag>,
@@ -270,11 +265,11 @@ impl Editor {
     }
 
     pub(super) fn masking(&self) -> bool {
-        self.creating_mask() || self.document.mask_edit().is_some()
+        self.creating_mask() || self.document.visit.masks.editing()
     }
 
     pub(super) fn mask_dragging(&self) -> bool {
-        self.document.mask_edit().is_some_and(MaskEdit::dragging)
+        self.document.visit.masks.dragging()
             || self
                 .document
                 .visit
@@ -323,21 +318,19 @@ impl Editor {
     }
 
     pub(super) fn mask_help(&self) -> Option<&'static str> {
-        if !(self.tab == 1) {
+        if self.tab != 1 {
             return None;
         }
         self.document
-            .mask_edit()
-            .map(|edit| edit.kind)
-            .or_else(|| {
-                self.selected_mask()
-                    .map(|adjustment| match adjustment.mask {
-                        AdjustmentLayerCoverage::Global {} => {
-                            unreachable!("global layers have no mask handles")
-                        }
-                        AdjustmentLayerCoverage::Linear { .. } => Kind::Linear,
-                        AdjustmentLayerCoverage::Radial { .. } => Kind::Radial,
-                    })
+            .visit
+            .masks
+            .appearance(self.selected_mask())
+            .map(|layer| match layer.mask {
+                AdjustmentLayerCoverage::Global {} => {
+                    unreachable!("global layers have no mask handles")
+                }
+                AdjustmentLayerCoverage::Linear { .. } => Kind::Linear,
+                AdjustmentLayerCoverage::Radial { .. } => Kind::Radial,
             })
             .map(Kind::help)
     }
@@ -358,10 +351,11 @@ impl Editor {
 
     pub(super) fn mask_pointer_interest(&self, layout: CanvasLayout, point: egui::Pos2) -> bool {
         self.mask_handles_available()
-            && (self.document.mask_edit().is_some()
-                || self
-                    .selected_mask()
-                    .is_some_and(|adjustment| hits(adjustment.mask, layout, point)))
+            && self
+                .document
+                .visit
+                .masks
+                .pointer_interest(self.selected_mask(), layout, point)
     }
 
     pub(super) fn begin_linear_mask(&mut self, id: Option<AdjustmentLayerId>) {
@@ -373,11 +367,15 @@ impl Editor {
     }
 
     fn begin_mask(&mut self, kind: Kind, id: Option<AdjustmentLayerId>) {
-        if !self.prepare_tool()
+        if !self.tool_start_available()
+            || id.is_some() && self.has_hosted_tool()
             || self.document.visit.canvas.ready.is_none()
             || !self.document.input.ready()
             || self.fullscreen.is_some()
         {
+            return;
+        }
+        if id.is_none() && !self.prepare_tool() {
             return;
         }
         self.document.source = false;
@@ -421,7 +419,6 @@ impl Editor {
                     },
                     mask,
                     preview: None,
-                    compare: self.document.visit.working_view.compare,
                     kind,
                     feather: match mask {
                         Some(AdjustmentLayerCoverage::Radial { feather, .. }) => feather,
@@ -436,8 +433,7 @@ impl Editor {
                     self.document
                         .set_hosted_tool(tool::Placement::Photo, Box::new(CreationTool::new(edit)));
                 } else {
-                    self.document.set_mask_edit(Some(edit));
-                    self.document.visit.working_view.compare = false;
+                    self.document.visit.masks.begin(edit);
                 }
                 self.status = format!("Draw {} · Escape cancels", kind.title().to_lowercase());
             }
@@ -450,13 +446,15 @@ impl Editor {
             && self.mask_source().ok().as_ref() == Some(&edit.source)
             && self.document.roll == edit.roll
             && self.document.input == edit.input
+            && edit.id.is_none_or(|id| {
+                self.adjustment_layer_target() == adjustment_layers::Target::Layer(id)
+            })
     }
 
     pub(super) fn finish_mask(&mut self, accept: bool) {
-        let Some(edit) = self.document.take_mask_edit() else {
+        let Some(edit) = self.document.visit.masks.finish() else {
             return;
         };
-        self.document.visit.working_view.compare = edit.compare;
         if !accept || !(self.tab == 1) {
             self.status = "Mask gesture cancelled".into();
             return;
@@ -494,12 +492,14 @@ impl Editor {
     }
 
     pub(super) fn mask_preview_source(&self) -> Option<&Source> {
-        if self.fullscreen.is_some() || self.tab != 1 || !(self.tab == 1) {
+        if self.fullscreen.is_some() || self.tab != 1 {
             return None;
         }
         self.document
-            .mask_edit()
-            .filter(|edit| edit.id.is_some() && self.mask_is_current(edit))
+            .visit
+            .masks
+            .gesture()
+            .filter(|edit| self.mask_is_current(edit))
             .and_then(|edit| edit.preview.as_ref())
     }
 
@@ -517,7 +517,6 @@ impl Editor {
         }
     }
 
-    #[cfg(test)]
     #[cfg(test)]
     pub(super) fn view_processing(
         &self,
@@ -555,14 +554,23 @@ impl Editor {
             )
         });
         if !allowed || !ui.is_enabled() || self.busy || self.fullscreen.is_some() || self.tab != 1 {
-            if released && self.document.mask_edit().is_some_and(MaskEdit::dragging) {
+            if released && self.document.visit.masks.dragging() {
                 self.finish_mask(false);
             }
             return;
         }
-        if !down && !released && self.document.mask_edit().is_some_and(MaskEdit::dragging) {
+        if !down && !released && self.document.visit.masks.dragging() {
             self.finish_mask(false);
             return;
+        }
+        if self
+            .document
+            .visit
+            .masks
+            .gesture()
+            .is_some_and(|edit| !self.mask_is_current(edit))
+        {
+            self.finish_mask(false);
         }
         if pressed
             && response.is_pointer_button_down_on()
@@ -570,7 +578,7 @@ impl Editor {
             && !panning
             && let Some(origin) = origin.filter(|point| layout.canvas.contains(*point))
         {
-            if self.document.mask_edit().is_none() && self.mask_pointer_interest(layout, origin) {
+            if !self.document.visit.masks.editing() && self.mask_pointer_interest(layout, origin) {
                 let Some(adjustment) = self.selected_mask() else {
                     return;
                 };
@@ -583,35 +591,16 @@ impl Editor {
                     AdjustmentLayerCoverage::Radial { .. } => self.begin_radial_mask(Some(id)),
                 }
             }
-            if let Some(edit) = self.document.mask_edit_mut() {
-                edit.begin_drag(layout, origin);
-            }
+            self.document.visit.masks.begin_drag(layout, origin);
         }
         if !panning
             && let Some(point) = point
-            && let Some(mut edit) = self.document.take_mask_edit()
+            && let Some(candidate) = self.document.visit.masks.update(point)
         {
-            if let Some(drag) = &edit.drag {
-                edit.mask = Some(drag.update(point));
-                if let Some(AdjustmentLayerCoverage::Radial { feather, .. }) = edit.mask {
-                    edit.feather = feather;
-                }
-                edit.preview = match edit
-                    .candidate()
-                    .and_then(|(source, _)| self.validate_source_candidate(&source).map(|_| source))
-                {
-                    Ok(source) => {
-                        edit.error = None;
-                        Some(source)
-                    }
-                    Err(error) => {
-                        edit.error = Some(error.to_string());
-                        None
-                    }
-                };
-                ui.ctx().request_repaint();
-            }
-            self.document.set_mask_edit(Some(edit));
+            let candidate = candidate
+                .and_then(|source| self.validate_source_candidate(&source).map(|_| source));
+            self.document.visit.masks.preview(candidate);
+            ui.ctx().request_repaint();
         }
         if response.hovered()
             && let Some(point) = point
@@ -623,7 +612,7 @@ impl Editor {
                 egui::CursorIcon::Crosshair
             });
         }
-        if released && self.document.mask_edit().is_some_and(MaskEdit::dragging) {
+        if released && self.document.visit.masks.dragging() {
             self.finish_mask(true);
             ui.ctx().request_repaint();
         }
@@ -638,22 +627,11 @@ impl Editor {
         {
             return;
         }
-        let selected = self.selected_mask();
-        let mask = match self.document.mask_edit() {
-            Some(edit) => edit.mask,
-            None => selected.map(|adjustment| adjustment.mask),
-        };
-        let Some(mask) = mask else {
-            return;
-        };
-        let invert = selected.is_some_and(|adjustment| adjustment.invert);
-        paint_geometry(
+        self.document.visit.masks.paint(
             ui,
             layout,
-            mask,
-            invert,
+            self.selected_mask(),
             self.document.visit.adjustment_layers.show_coverage,
-            self.document.mask_edit().is_some_and(MaskEdit::dragging),
         );
     }
 }

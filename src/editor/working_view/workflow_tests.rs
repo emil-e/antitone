@@ -842,7 +842,10 @@ fn queued_navigation_uses_latest_demand_and_reuses_native_values_after_output_ch
                 );
             }
             working.render(&processing, target, &ui).unwrap();
-            let rendered = working.present(spec.frame(), None).unwrap().unwrap();
+            let rendered = working
+                .present(spec.frame(), None, working.compare)
+                .unwrap()
+                .unwrap();
             assert!(rendered.processing() == processing);
             assert_eq!(rendered.target, OutputTarget::Srgb);
             (rendered, device, queue, gate)

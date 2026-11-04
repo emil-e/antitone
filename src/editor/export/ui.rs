@@ -214,8 +214,8 @@ impl Editor {
     }
 
     pub(in crate::editor) fn open_export_dialog(&mut self) {
-        if self.tool_interacting() {
-            self.status = "Finish the active tool before exporting".into();
+        if self.tool_interacting() || self.document.visit.masks.editing() {
+            self.status = "Finish the active interaction before exporting".into();
             return;
         }
         if self.dust_search_pending() {

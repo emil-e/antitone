@@ -432,7 +432,9 @@ impl Editor {
         } else {
             self.navigate(ui, response, geometry, pixels_per_point)
         };
-        if !fullscreen && (self.document.mask_edit().is_some() || self.mask_handles_available()) {
+        if !fullscreen
+            && (self.document.visit.masks.gesture().is_some() || self.mask_handles_available())
+        {
             self.mask_interaction(ui, response, geometry, panning, canvas_input);
         }
         self.active_canvas_mut().last_layout = Some((geometry, pixels_per_point));
@@ -562,7 +564,8 @@ impl Editor {
         {
             self.discard_original();
         }
-        let purpose = if normal && !inspection && self.document.visit.working_view.compare {
+        let compare = self.comparing_original();
+        let purpose = if normal && !inspection && compare {
             Some(OriginalPurpose::Reference)
         } else {
             (!source_outside_frame && !pending && image.is_sample())
@@ -590,7 +593,10 @@ impl Editor {
                 Ok(view) => view,
                 Err(error) => {
                     self.document.visit.working_view.error = Some(error.to_string());
-                    self.document.visit.working_view.hold(self.document.target)
+                    self.document
+                        .visit
+                        .working_view
+                        .hold(self.document.target, compare)
                 }
             };
         if purpose.is_some()

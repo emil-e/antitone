@@ -98,10 +98,17 @@ impl Editor {
         }
         let mask_pointer =
             ui.input(|input| input.pointer.press_origin().or(input.pointer.hover_pos()));
-        let masking =
-            self.tab == 1 && self.document.mask_edit().is_some() && self.fullscreen.is_none()
-                || mask_pointer.is_some_and(|point| self.mask_pointer_interest(geometry, point));
-        let captured_mask = masking && self.document.mask_edit().is_some_and(MaskEdit::dragging);
+        let masking = self.tab == 1
+            && self.document.visit.masks.gesture().is_some()
+            && self.fullscreen.is_none()
+            || mask_pointer.is_some_and(|point| self.mask_pointer_interest(geometry, point));
+        let captured_mask = masking
+            && self
+                .document
+                .visit
+                .masks
+                .gesture()
+                .is_some_and(MaskEdit::dragging);
         let canvas_tool = masking && self.fullscreen.is_none();
         let (zoom, translation, touch, pointer, space) = ui.input(|input| {
             (

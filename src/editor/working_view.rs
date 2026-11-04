@@ -357,9 +357,13 @@ impl WorkingView {
         self.reference.is_some()
     }
 
-    pub(super) fn hold(&mut self, target: OutputTarget) -> Option<Arc<RenderedView>> {
+    pub(super) fn hold(
+        &mut self,
+        target: OutputTarget,
+        compare: bool,
+    ) -> Option<Arc<RenderedView>> {
         self.displayed = self.wanted.as_ref().and_then(|wanted| {
-            self.present(wanted.spec.frame(), self.displayed.as_ref())
+            self.present(wanted.spec.frame(), self.displayed.as_ref(), compare)
                 .ok()
                 .flatten()
                 .or_else(|| self.rendered.clone())
@@ -712,6 +716,7 @@ impl WorkingView {
         &self,
         frame: FrameRaster,
         previous: Option<&Arc<RenderedView>>,
+        compare: bool,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         let is_current_source = |rendered: &RenderedView| {
             self.wanted.as_ref().is_some_and(|wanted| {
@@ -719,7 +724,7 @@ impl WorkingView {
                     && wanted.capture.is_inspection() == rendered.capture.is_inspection()
             })
         };
-        if self.compare
+        if compare
             && self
                 .wanted
                 .as_ref()
@@ -1047,6 +1052,10 @@ pub(super) async fn acquire_images(
 }
 
 impl Editor {
+    pub(super) fn comparing_original(&self) -> bool {
+        self.document.visit.working_view.compare && !self.document.visit.masks.editing()
+    }
+
     pub(super) fn admit_view_reference(&mut self, frame: FrameRaster) -> bool {
         let pixels = frame.output.iter().fold(16usize, |bytes, dimension| {
             bytes.saturating_mul(*dimension as usize)
@@ -1071,7 +1080,7 @@ impl Editor {
         } else {
             pixels
         };
-        let allowed = if self.document.visit.working_view.compare {
+        let allowed = if self.comparing_original() {
             self.document.thumbnails.reserve_view(0);
             true
         } else if self
@@ -1105,6 +1114,7 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) -> Result<Option<Arc<RenderedView>>, Error> {
         let inspection = image.inspection(self.canvas_inspection());
+        let compare = self.comparing_original();
         let previous = self.document.visit.working_view.displayed.take();
         if self
             .document
@@ -1137,7 +1147,7 @@ impl Editor {
                 .document
                 .visit
                 .working_view
-                .present(frame, previous.as_ref())?
+                .present(frame, previous.as_ref(), compare)?
                 .filter(|rendered| rendered.target == self.document.target);
             self.document.visit.working_view.updating =
                 !self.document.visit.working_view.support_ready()
@@ -1161,7 +1171,11 @@ impl Editor {
         if self.document_pending.is_some() {
             // Candidate preparation must not retire the accepted view before replacement succeeds.
             self.document.visit.working_view.displayed = previous;
-            return Ok(self.document.visit.working_view.hold(self.document.target));
+            return Ok(self
+                .document
+                .visit
+                .working_view
+                .hold(self.document.target, compare));
         }
 
         if repairs.0.is_empty()
@@ -1198,7 +1212,7 @@ impl Editor {
                 .document
                 .visit
                 .working_view
-                .present(frame, previous.as_ref())?
+                .present(frame, previous.as_ref(), compare)?
                 .filter(|rendered| rendered.target == self.document.target);
             self.document.visit.working_view.updating |= self
                 .document
@@ -1241,7 +1255,7 @@ impl Editor {
             .document
             .visit
             .working_view
-            .present(frame, previous.as_ref())?
+            .present(frame, previous.as_ref(), compare)?
             .filter(|rendered| rendered.target == self.document.target);
         self.document.visit.working_view.updating |= self
             .document
