@@ -91,6 +91,51 @@ impl Document {
             .unwrap_or_else(|| crate::source::FileKey::unversioned(path))
     }
 
+    pub fn source_key(&self, id: SourceId) -> Result<crate::source::SourceKey> {
+        let source = self.project.source(id)?;
+        let path = self.source_path(id)?;
+        Ok(crate::source::SourceKey::for_load(
+            &path,
+            self.file_key(&path),
+            &source.development,
+        ))
+    }
+
+    pub async fn acquire_source(
+        &self,
+        id: SourceId,
+        sources: &dyn crate::source::SourceProvider,
+        exposures: &crate::exposure_metadata::Store,
+        cancelled: &crate::cancellation::Cancellation,
+    ) -> Result<Option<crate::scan::Scan>> {
+        if cancelled.is_cancelled() {
+            return Ok(None);
+        }
+        self.project.source(id)?.grade_snapshot()?;
+        let key = self.source_key(id)?;
+        let reference = self.exposure_slot(exposures, id);
+        let load = crate::photo_preparation::acquire(
+            sources,
+            key,
+            crate::source::Priority::Foreground,
+            self.project.input,
+            reference,
+        );
+        let result = futures_lite::future::or(
+            async {
+                cancelled.wait().await;
+                Ok(None)
+            },
+            async { load.await.map(|prepared| Some(prepared.scan())) },
+        )
+        .await;
+        if cancelled.is_cancelled() {
+            Ok(None)
+        } else {
+            result
+        }
+    }
+
     pub(super) fn capture_source_files(&mut self) -> Result<()> {
         self.source_files = self
             .project

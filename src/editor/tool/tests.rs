@@ -388,9 +388,7 @@ fn document_analysis_and_photo_tool_installation_are_exclusive_in_both_direction
     assert!(editor.activate_tool(Placement::Photo, Box::new(Probe::new(&dropped, &actions))));
     editor
         .document
-        .set_analysis_operation(Some(analysis_workflow::Operation::new(
-            analysis_workflow::Phase::Review,
-        )));
+        .set_analysis_operation(Some(analysis::Operation::new(analysis::Phase::Review)));
     assert_eq!(dropped.get(), 1);
     assert!(editor.current_tool().unwrap().is::<AnalyzeTool>());
     assert!(editor.document.tool.is_none());

@@ -1,10 +1,9 @@
 //! Document-owned region preparation, awaited independently by feature actions.
-use super::{
-    Document, Editor, Task, TaskProgress, TaskRequest, UiContext,
-    analysis_services::{Cancellation, Services},
-    document,
+use super::{Document, Editor, Task, TaskProgress, TaskRequest, UiContext, document};
+use crate::{
+    cancellation::Cancellation,
+    spatial_metadata::{Metadata, Request},
 };
-use crate::spatial_metadata::{Metadata, Request};
 use futures_channel::oneshot;
 use std::sync::{Arc, Mutex};
 
@@ -68,10 +67,12 @@ impl Editor {
                 .all(|id| inputs.iter().any(|input| input.source == *id));
         let pixels_ready = !sampling
             || inputs.iter().all(|input| {
-                self.document
-                    .sampling_inputs
-                    .get(&document, input.source)
-                    .is_ok_and(|p| p.is_some())
+                document.source_key(input.source).is_ok_and(|key| {
+                    self.document
+                        .sampling_inputs
+                        .get(input.source, &key)
+                        .is_some()
+                })
             });
         if self.document.spatial_preparing.is_none() && complete && pixels_ready {
             let _ = send.send(Some(Arc::new(ready)));
@@ -92,15 +93,13 @@ impl Editor {
             self.tasks.begin(Task::Regions(id));
             self.busy = true;
             self.status = "Preparing film and picture regions…".into();
-            let services = self.source_services.as_ref().map(|source| {
-                let mut services = Services::new(
-                    source,
-                    source.provider(Some(self.document.cache.clone())),
-                    self.document.exposures.clone(),
-                );
-                services.sampling_inputs = self.document.sampling_inputs.clone();
-                services
-            });
+            let device = self
+                .source_services
+                .as_ref()
+                .map(|source| source.device.clone());
+            let sources = self.source_provider();
+            let sampling_inputs = self.document.sampling_inputs.clone();
+            let exposures = self.document.exposures.clone();
             let progress = Arc::new(Progress::default());
             let produced = progress.clone();
             let retire = cancelled.cancel_on_drop();
@@ -122,12 +121,21 @@ impl Editor {
                                 })
                             });
                     }
-                    let services =
-                        services.ok_or_else(|| "Source services unavailable".to_owned())?;
-                    preparation::prepare(captured, services, cancelled, move |done, total| {
-                        *produced.latest.lock().unwrap() = Some((done, total));
-                        produced.changed.notify(usize::MAX);
-                    })
+                    let device = device.ok_or_else(|| "GPU device unavailable".to_owned())?;
+                    let sources =
+                        sources.ok_or_else(|| "Source provider unavailable".to_owned())?;
+                    preparation::prepare(
+                        captured,
+                        device,
+                        sources,
+                        sampling_inputs,
+                        exposures,
+                        cancelled,
+                        move |done, total| {
+                            *produced.latest.lock().unwrap() = Some((done, total));
+                            produced.changed.notify(usize::MAX);
+                        },
+                    )
                     .await
                     .map_err(|error| error.to_string())
                 };

@@ -637,7 +637,7 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         revision.receive(Ok(Some(image.clone())));
                     }
                     let before = editor.document.state.project.clone();
-                    let reply = analysis_workflow::testing::fitting(editor);
+                    let reply = analysis::testing::fitting(editor);
                     editor.begin_analysis(cx);
                     assert!(
                         editor.document.visit.canvas.grade.original.wanted == signature,
@@ -944,7 +944,7 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
     let mut editor = super::super::tests::with_document_services(ready_state());
     let (reply, receive) = futures_channel::oneshot::channel();
     editor.document.spatial_reply = Some(receive);
-    let mut numerical = analysis_workflow::testing::preparation(&mut editor);
+    let mut numerical = analysis::testing::preparation(&mut editor);
     let metadata = editor.document.capture().ready_spatial_metadata();
     let hold = crate::background::testing::pause();
     editor.tab = 1;
@@ -1012,7 +1012,7 @@ fn photo_numeric_focus_commit_precedes_analysis_area_preparation_snapshot() {
         });
         click_label(app, &ctx, "Analyze");
         reply.send(Ok(Some(metadata))).unwrap();
-        let request = analysis_workflow::testing::request(app, &mut numerical);
+        let request = analysis::testing::request(app, &mut numerical);
         app.read(|e| {
             let snapshot = &request.document;
             assert_eq!(

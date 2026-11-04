@@ -92,7 +92,7 @@ Roll EV receives the median total EV, and each Photo EV receives its total minus
 
 ## Review uses finished detection
 
-The document-placed [Analyze tool](../src/editor/analysis_interaction.rs) owns its unfinished task, source-keyed sampling edits, gestures and temporary view. Its task awaits shared detection and review confirmation before fitting. Confirmation snapshots the areas and displayed source; fitting remains provisional until validated installation. Browsing replaces the photo visit while the tool's drafts survive ([architecture](architecture.md#scopes-nested-disposable-ui-state) owns that model). Reusable original sampling inputs belong to the document; active fitting retains its own input snapshot.
+The document-placed [Analyze tool](../src/editor/analysis.rs) owns its unfinished task, source-keyed sampling edits, gestures and temporary view. Its task awaits shared detection and review confirmation before fitting. Confirmation snapshots the areas and displayed source; fitting remains provisional until validated installation. Browsing replaces the photo visit while the tool's drafts survive ([architecture](architecture.md#scopes-nested-disposable-ui-state) owns that model). Reusable original sampling inputs belong to the document; active fitting retains its own input snapshot.
 
 While each original is available, shared preparation copies the current canonical grid's 8×8 camera-code patches and native-floor decisions. These document-owned working inputs retain original coordinates and precision, independently of saved regions and the full-image LRU; they hold no native image leases. Reviewed windows, material support and the current flat-field correction select and evaluate those patches after confirmation. Closing the document or removing a source releases its working inputs. Their reported bytes count owned patch payloads, not total process memory.
 
@@ -114,9 +114,9 @@ Faint/off-image or scene-confounded boundaries can defeat area suggestions; hold
 
 - [Footprint selection](../src/scan/analysis.rs), [GPU camera sampling](../src/gpu/analysis/sampling.rs) and [Dmin estimator](../src/sampling.rs): eligible original pixels and endpoint statistics.
 - [Estimator](../src/roll_analysis.rs) and [curve fitter](../src/roll_analysis/gamma.rs): the numerical proposal.
-- [Spatial hypotheses](../src/scan_regions.rs), [review assembly](../src/editor/analysis_review/preparation.rs), [source services](../src/editor/analysis_services.rs) and [review controller](../src/editor/analysis_review.rs): finished source-owned support, authored windows and review lifecycle.
-- [Captured sampling/fitting](../src/editor/analysis/fit.rs) and [action](../src/editor/analysis_workflow.rs): awaited preparation, review decisions, fitting, cancellation acknowledgement and validated acceptance.
-- [Editor analysis](../src/editor/analysis.rs): adequacy and atomic installation of reviewed areas with grade.
+- [Spatial hypotheses](../src/scan_regions.rs), [shared preparation](../src/editor/spatial/preparation.rs) and [document retention](../src/editor/document_scope.rs): reusable source-owned support and original sampling inputs.
+- [Editor Analyze](../src/editor/analysis.rs): tool interaction, review assembly, awaited preparation, cancellation acknowledgement and atomic installation of reviewed areas with grade.
+- [Captured sampling/fitting](../src/editor/analysis/fit.rs): footprint eligibility, GPU measurements and validated numerical proposals.
 - [Scalar tests](../tests/roll_analysis.rs), [sampling tests](../tests/roll_sampling.rs) and [editor tests](../src/editor/analysis/tests.rs): synthetic recovery, invariance and transaction behavior.
 
 Use [development checks](development.md#roll-analysis) for changes and [diagnostics](diagnostics.md#analyze-roll) for real-RAW exercises.

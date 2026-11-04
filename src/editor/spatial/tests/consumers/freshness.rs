@@ -1,5 +1,5 @@
 use super::*;
-use crate::editor::analysis_review;
+use crate::editor::analysis;
 
 #[test]
 fn a_completed_reply_cannot_publish_after_supporting_geometry_changes() {
@@ -82,7 +82,7 @@ fn analysis_verification_checks_hidden_dimension_supporters_not_only_visible_sam
     supplied(&mut editor);
     editor.document.state.project.order.truncate(1);
     let mut request = editor.analysis_request().unwrap();
-    assert!(analysis_review::verify(&request).is_ok());
+    assert!(analysis::verify(&request).is_ok());
     request
         .document
         .project
@@ -91,7 +91,7 @@ fn analysis_verification_checks_hidden_dimension_supporters_not_only_visible_sam
         .development
         .active_area[2] -= 1;
     assert!(
-        analysis_review::verify(&request).is_err(),
+        analysis::verify(&request).is_err(),
         "a hidden supporting observation is still a real dependency"
     );
     assert!(

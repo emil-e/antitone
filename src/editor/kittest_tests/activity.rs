@@ -188,11 +188,11 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             });
             drop(admission);
             // Presentation fixture; worker acknowledgement is exercised through the
-            // real feature continuation in analysis_workflow::acknowledgement_tests.
+            // real feature continuation in analysis::acknowledgement_tests.
             harness.update(|editor| {
                 editor.document.set_analysis_operation(Some(
-                    super::super::analysis_workflow::Operation::new(
-                        super::super::analysis_workflow::Phase::Preparing(9000),
+                    super::super::analysis::Operation::new(
+                        super::super::analysis::Phase::Preparing(9000),
                     ),
                 ));
             });
@@ -230,7 +230,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             );
             harness.update(|editor| {
                 editor.document.analysis_operation_mut().unwrap().phase =
-                    super::super::analysis_workflow::Phase::Fitting(9000);
+                    super::super::analysis::Phase::Fitting(9000);
                 editor.tasks.begin(Task::Analyze(9000));
                 editor.tasks.elapse(Duration::from_secs(1));
                 editor.tasks.report(

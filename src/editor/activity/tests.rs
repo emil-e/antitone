@@ -204,7 +204,7 @@ fn file_progress_is_request_owned_and_returns_to_indeterminate_before_promotion(
 }
 
 #[test]
-fn unavailable_export_and_analysis_services_leave_no_working_feedback() {
+fn unavailable_export_services_and_analysis_device_leave_no_working_feedback() {
     for export in [true, false] {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
@@ -273,7 +273,7 @@ fn analysis_cancellation_is_reachable_from_every_stage_and_stays_pending_until_a
         crate::application::test_support::with_application(fixture(), |app| {
             let reply = app.enter(|editor, cx| {
                 add_ready_fixture(editor);
-                let reply = super::super::analysis_workflow::testing::fitting(editor);
+                let reply = super::super::analysis::testing::fitting(editor);
                 editor.begin_analysis(cx);
                 editor.tasks.elapse(Duration::from_secs(1));
                 let id = editor.analysis_work_id().unwrap();
@@ -325,7 +325,7 @@ fn retired_analysis_progress_and_cancel_actions_cannot_touch_the_new_task() {
     crate::application::test_support::with_application(fixture(), |app| {
         let (mut reply, id, cancelled, action) = app.enter(|editor, cx| {
             add_ready_fixture(editor);
-            let reply = super::super::analysis_workflow::testing::fitting(editor);
+            let reply = super::super::analysis::testing::fitting(editor);
             editor.begin_analysis(cx);
             let id = editor.analysis_work_id().unwrap();
             let cancelled = editor
@@ -337,7 +337,7 @@ fn retired_analysis_progress_and_cancel_actions_cannot_touch_the_new_task() {
             let action = editor.tasks.view().unwrap().cancel.unwrap();
             (reply, id, cancelled, action)
         });
-        super::super::analysis_workflow::testing::request(app, &mut reply);
+        super::super::analysis::testing::request(app, &mut reply);
         let (_regions, receive) = futures_channel::oneshot::channel();
         app.enter(|editor, cx| {
             editor.document.spatial_reply = Some(receive);

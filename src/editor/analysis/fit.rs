@@ -1,6 +1,6 @@
 //! Captured roll sampling and fitting. Native awaits retain no blocking worker;
 //! each measured source is released before only bounded statistics advance.
-use super::super::analysis_services::{Cancellation, Services};
+use crate::renderer::GpuRenderer;
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
 
@@ -23,7 +23,10 @@ fn inside_film(footprint: Rect, planes: &[crate::spatial_metadata::Plane], inset
     })
 }
 
-struct Fit {
+pub(super) struct Fit {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    renderer: Arc<GpuRenderer>,
     request: Arc<Request>,
     correction: Option<Arc<Correction>>,
     matrix: glam::DMat3,
@@ -34,8 +37,10 @@ struct Fit {
 }
 
 impl Fit {
-    fn new(
-        device: &wgpu::Device,
+    pub(super) fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        renderer: Arc<GpuRenderer>,
         mut request: Request,
         input: source::Context,
     ) -> Result<Self, Error> {
@@ -43,8 +48,8 @@ impl Fit {
         if request.areas.is_none() && request.local_support && request.film.is_none() {
             request.film = scan.propose_flat_field_area()?;
         }
-        request.document.validate_for_device(device)?;
-        analysis_review::verify(&request)?;
+        request.document.validate_for_device(&device)?;
+        analysis::verify(&request)?;
         let project = &request.document.project;
         if project.order.is_empty() || !project.order.contains(&request.selected) {
             return Err(Error::UnusableSample("no selected roll photo"));
@@ -64,6 +69,9 @@ impl Fit {
         let support = request.film;
         let owned = Vec::with_capacity(project.order.len());
         Ok(Self {
+            device,
+            queue,
+            renderer,
             request: Arc::new(request),
             correction: input.correction,
             matrix,
@@ -121,7 +129,6 @@ impl Fit {
         &mut self,
         index: usize,
         mut scan: Scan,
-        services: &Services,
         cancelled: impl Fn() -> bool,
     ) -> Result<bool, Error> {
         if cancelled() {
@@ -136,11 +143,13 @@ impl Fit {
             correction.settings.require_source(&actual.development)?;
             scan.set_flat_field(Some(correction.settings.map.clone()))?;
         }
-        let renderer = services.renderers.get(&services.device, &services.queue)?;
+        let renderer = self.renderer.clone();
+        let queue = self.queue.clone();
+        let device = self.device.clone();
         let sampler = crate::gpu::analysis::CameraSampler::new(
-            &services.device,
+            &device,
             &renderer,
-            (&services.queue, services.renderers.submissions()),
+            (&queue, &renderer.submissions),
             &scan,
         )?;
         self.sample_camera(index, scan.area, &sampler, cancelled)
@@ -150,7 +159,6 @@ impl Fit {
         &mut self,
         index: usize,
         input: Arc<crate::scan::AnalysisInput>,
-        services: &Services,
         cancelled: impl Fn() -> bool,
     ) -> Result<bool, Error> {
         if cancelled() {
@@ -163,11 +171,13 @@ impl Fit {
             correction.settings.require_source(&record.development)?;
         }
         let active = input.area();
-        let renderer = services.renderers.get(&services.device, &services.queue)?;
+        let renderer = self.renderer.clone();
+        let queue = self.queue.clone();
+        let device = self.device.clone();
         let sampler = crate::gpu::analysis::CameraSampler::retained(
-            &services.device,
+            &device,
             &renderer,
-            (&services.queue, services.renderers.submissions()),
+            (&queue, &renderer.submissions),
             input,
             self.correction.as_ref().map(|c| c.settings.map.clone()),
         )?;
@@ -263,12 +273,8 @@ impl Fit {
         Ok(true)
     }
 
-    fn finish(
-        mut self,
-        services: &Services,
-        cancelled: impl Fn() -> bool,
-    ) -> Result<Option<Outcome>, Error> {
-        let device = &services.device;
+    fn finish(mut self, cancelled: impl Fn() -> bool) -> Result<Option<Outcome>, Error> {
+        let device = &self.device;
         if cancelled() {
             return Ok(None);
         }
@@ -283,10 +289,9 @@ impl Fit {
                 picture: &frame.picture.pixels,
             })
             .collect();
-        let renderer = services.renderers.get(device, &services.queue)?;
         let mut model = crate::gpu::analysis::ResponseModel::new(
-            renderer.evaluation(),
-            (&services.queue, services.renderers.submissions()),
+            self.renderer.evaluation(),
+            (&self.queue, &self.renderer.submissions),
         );
         let Some(proposal) = roll_analysis::estimate_with_model(
             &frames,
@@ -314,7 +319,7 @@ impl Fit {
                 .analysis_regions
                 .extend(approved.entries.clone());
         }
-        analysis_review::verify(request)?;
+        analysis::verify(request)?;
         candidate.validate_for_device(device)?;
         for id in &project.order {
             if cancelled() {
@@ -346,109 +351,101 @@ impl Fit {
     }
 }
 
-pub(in crate::editor) async fn run(
-    request: Request,
-    input: source::Context,
-    services: Services,
-    cancelled: Cancellation,
-    mut progress: impl FnMut(usize, usize),
-) -> Result<Option<Outcome>, Error> {
-    let device = services.device.clone();
-    let Some(mut state) = services
-        .cpu(&cancelled, move || Fit::new(&device, request, input))
+impl Fit {
+    pub(super) async fn run(
+        mut self,
+        sources: Arc<dyn SourceProvider>,
+        sampling_inputs: SamplingInputs,
+        exposures: Arc<crate::exposure_metadata::Store>,
+        cancelled: Cancellation,
+        mut progress: impl FnMut(usize, usize),
+    ) -> Result<Option<Outcome>, Error> {
+        let total = self.request.document.project.order.len();
+        if self.needs_support() {
+            progress(0, total);
+            for index in 0..total {
+                let Some(scan) = self
+                    .request
+                    .document
+                    .acquire_source(
+                        self.request.document.project.order[index],
+                        sources.as_ref(),
+                        &exposures,
+                        &cancelled,
+                    )
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                let Some(next) = background::compute(&cancelled, move || {
+                    self.observe_support(index, scan)?;
+                    Ok(self)
+                })
+                .await?
+                else {
+                    return Ok(None);
+                };
+                self = next;
+                if !self.needs_support() {
+                    break;
+                }
+            }
+        }
+        let Some(mut state) = background::compute(&cancelled, move || {
+            self.geometry()?;
+            Ok(self)
+        })
         .await?
-    else {
-        return Ok(None);
-    };
-    let total = state.request.document.project.order.len();
-    if state.needs_support() {
-        progress(0, total);
+        else {
+            return Ok(None);
+        };
         for index in 0..total {
             if cancelled.is_cancelled() {
                 return Ok(None);
             }
-            let Some(scan) = services
-                .acquire(state.request.clone(), index, cancelled.clone())
-                .await?
-            else {
-                return Ok(None);
+            progress(index, total);
+            let source = state.request.document.project.order[index];
+            let retained = if state.request.areas.is_some() {
+                sampling_inputs.get(source, &state.request.document.source_key(source)?)
+            } else {
+                None
             };
-            let Some(next) = services
-                .cpu(&cancelled, move || {
-                    state.observe_support(index, scan)?;
-                    Ok(state)
+            let retired = cancelled.clone();
+            let measured = if let Some(input) = retained {
+                background::compute(&cancelled, move || {
+                    let keep = state.sample_retained(index, input, || retired.is_cancelled())?;
+                    Ok((state, keep))
                 })
                 .await?
-            else {
+            } else {
+                let Some(scan) = state
+                    .request
+                    .document
+                    .acquire_source(source, sources.as_ref(), &exposures, &cancelled)
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                background::compute(&cancelled, move || {
+                    let keep = state.sample(index, scan, || retired.is_cancelled())?;
+                    Ok((state, keep))
+                })
+                .await?
+            };
+            let Some((next, keep)) = measured else {
                 return Ok(None);
             };
             state = next;
-            if !state.needs_support() {
-                break;
+            if !keep {
+                return Ok(None);
             }
         }
-    }
-    let Some(mut state) = services
-        .cpu(&cancelled, move || {
-            state.geometry()?;
-            Ok(state)
-        })
-        .await?
-    else {
-        return Ok(None);
-    };
-    for index in 0..total {
-        if cancelled.is_cancelled() {
-            return Ok(None);
-        }
-        progress(index, total);
-        let retained = if state.request.areas.is_some() {
-            services.sampling_inputs.get(
-                &state.request.document,
-                state.request.document.project.order[index],
-            )?
-        } else {
-            None
-        };
+        progress(total, total);
         let retired = cancelled.clone();
-        let queries = services.clone();
-        let measured = if let Some(input) = retained {
-            services
-                .cpu(&cancelled, move || {
-                    let keep =
-                        state.sample_retained(index, input, &queries, || retired.is_cancelled())?;
-                    Ok((state, keep))
-                })
+        Ok(
+            background::compute(&cancelled, move || state.finish(|| retired.is_cancelled()))
                 .await?
-        } else {
-            let Some(scan) = services
-                .acquire(state.request.clone(), index, cancelled.clone())
-                .await?
-            else {
-                return Ok(None);
-            };
-            services
-                .cpu(&cancelled, move || {
-                    let keep = state.sample(index, scan, &queries, || retired.is_cancelled())?;
-                    Ok((state, keep))
-                })
-                .await?
-        };
-        let Some((next, keep)) = measured else {
-            return Ok(None);
-        };
-        state = next;
-        if !keep {
-            return Ok(None);
-        }
+                .flatten(),
+        )
     }
-    progress(total, total);
-    let queries = services.clone();
-    let retired = cancelled.clone();
-    Ok(services
-        .cpu(&cancelled, move || {
-            state.finish(&queries, || retired.is_cancelled())
-        })
-        .await?
-        .flatten())
 }

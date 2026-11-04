@@ -68,8 +68,7 @@ fn removing_a_photo_releases_its_sampling_inputs_and_undo_does_not_restore_worki
     editor
         .document
         .sampling_inputs
-        .insert(&document, id, input)
-        .unwrap();
+        .insert(id, document.source_key(id).unwrap(), input);
     editor.document.roll_selection.only(id);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
@@ -91,8 +90,7 @@ fn removing_a_photo_releases_its_sampling_inputs_and_undo_does_not_restore_worki
             assert!(
                 e.document
                     .sampling_inputs
-                    .get(&e.document.capture(), id)
-                    .unwrap()
+                    .get(id, &e.document.source_key(id).unwrap())
                     .is_none()
             );
         });

@@ -1,18 +1,17 @@
-use super::super::preparation_tests::{detect, observed, request, review_services};
+use super::preparation_tests::{detect, observed, request};
 use super::*;
 use std::sync::atomic::Ordering;
 
 #[test]
-fn async_review_uses_finished_results_even_when_source_acquisition_is_forbidden() {
+fn async_review_uses_finished_results_without_source_dependencies() {
     let (mut request, _directory, device, queue) = request();
     let (scheduler, count) = observed();
     detect(&mut request, &scheduler, &device, &queue);
     let before = request.document.project.clone();
-    let services = review_services(&device, &queue);
     for _ in 0..2 {
-        let approved = futures_lite::future::block_on(prepare(
+        let approved = futures_lite::future::block_on(prepare_review(
             request.clone(),
-            services.clone(),
+            device.clone(),
             Cancellation::default(),
             |_, _| {},
         ))
@@ -35,9 +34,9 @@ fn async_assembly_cancellation_keeps_finished_shared_results_and_accepted_state(
     let ready = request.document.spatial_metadata.clone();
     let cancelled = Cancellation::default();
     let control = cancelled.clone();
-    let result = futures_lite::future::block_on(prepare(
+    let result = futures_lite::future::block_on(prepare_review(
         request.clone(),
-        review_services(&device, &queue),
+        device,
         cancelled,
         move |index, _| {
             if index == 1 {

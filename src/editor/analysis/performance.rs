@@ -384,7 +384,7 @@ fn profile_complete_roll_area_preparation() {
         arm != "warm" || comparison.is_some(),
         "warm arm requires ANTITONE_REGION_PERF_COMPARE from the cold run"
     );
-    let result = cache_observation::with_monitor(|monitor, device, queue| {
+    let result = cache_observation::with_monitor(|monitor, device, _queue| {
         let start = Instant::now();
         let mut document = Document::default();
         let cache = Arc::new(crate::source::SourceCache::new(0));
@@ -465,20 +465,13 @@ fn profile_complete_roll_area_preparation() {
             let misses = AcquisitionCounts::default();
             let prepare_start = Instant::now();
             let (prepared, timings) = region_timing::record(|| {
-                let services = crate::editor::analysis_services::Services {
-                    sources: Arc::new(CountedSources {
-                        counts: requests.clone(),
-                        inner: cache.provider(Arc::new(CountedSources {
-                            counts: misses.clone(),
-                            inner: scheduler.provider(None),
-                        })),
-                    }),
-                    sampling_inputs: Default::default(),
-                    exposures: Arc::default(),
-                    device: device.clone(),
-                    queue: queue.clone(),
-                    renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
-                };
+                let sources = Arc::new(CountedSources {
+                    counts: requests.clone(),
+                    inner: cache.provider(Arc::new(CountedSources {
+                        counts: misses.clone(),
+                        inner: scheduler.provider(None),
+                    })),
+                });
                 let metadata = crate::region_timing::timed!(
                     "shared_detection",
                     guarded(
@@ -488,7 +481,10 @@ fn profile_complete_roll_area_preparation() {
                             futures_lite::future::block_on(
                                 crate::editor::spatial::preparation::prepare(
                                     Arc::new(request.document.clone()),
-                                    services,
+                                    device.clone(),
+                                    sources,
+                                    Default::default(),
+                                    Arc::default(),
                                     cancelled.clone(),
                                     |_, _| {},
                                 ),
@@ -505,21 +501,12 @@ fn profile_complete_roll_area_preparation() {
                 detected.document.spatial_metadata = Arc::new(metadata.metadata);
                 let approved = crate::region_timing::timed!(
                     "review_assembly",
-                    preparation::assemble(
-                        &detected,
-                        device,
-                        || cancelled.is_cancelled(),
-                        |_, _| {}
-                    )
+                    assemble_review(&detected, device, || cancelled.is_cancelled(), |_, _| {})
                 )?;
                 // Finished results must survive another consumer/review without native work.
                 let native_before = events.lock().unwrap().len();
-                let repeated = preparation::assemble(
-                    &detected,
-                    device,
-                    || cancelled.is_cancelled(),
-                    |_, _| {},
-                )?;
+                let repeated =
+                    assemble_review(&detected, device, || cancelled.is_cancelled(), |_, _| {})?;
                 assert_eq!(events.lock().unwrap().len(), native_before);
                 assert_eq!(
                     approved.as_ref().map(|a| &a.entries),

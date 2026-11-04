@@ -1,4 +1,4 @@
-use super::tests::{LIMIT, fixture};
+use super::workflow_tests::{LIMIT, fixture};
 use super::*;
 use crate::{
     application::test_support::{TestApplication, with_application},
@@ -17,7 +17,6 @@ fn start_cpu(
     continued: Rc<Cell<bool>>,
 ) {
     fn work<T: 'static>(
-        services: Services,
         entered: mpsc::Sender<()>,
         resume: mpsc::Receiver<()>,
         returned: mpsc::Sender<()>,
@@ -25,14 +24,13 @@ fn start_cpu(
     ) -> testing::Work<T> {
         Box::new(move |_, stopped| {
             Box::pin(async move {
-                let result = services
-                    .cpu(&stopped, move || {
-                        entered.send(()).unwrap();
-                        resume.recv_timeout(LIMIT).unwrap();
-                        returned.send(()).unwrap();
-                        Ok(())
-                    })
-                    .await;
+                let result = background::compute(&stopped, move || {
+                    entered.send(()).unwrap();
+                    resume.recv_timeout(LIMIT).unwrap();
+                    returned.send(()).unwrap();
+                    Ok(())
+                })
+                .await;
                 continued.set(true);
                 result.map(|_| None).map_err(|error| error.to_string())
             })
@@ -40,14 +38,12 @@ fn start_cpu(
     }
     app.enter(|editor, access| {
         let request = editor.analysis_request().unwrap();
-        let services = editor.analysis_services().unwrap();
         if fitting {
-            editor.document.analysis_fit_work =
-                Some(work(services, entered, resume, returned, continued));
+            editor.document.analysis_fit_work = Some(work(entered, resume, returned, continued));
             editor.start_analysis(request, access);
         } else {
             editor.document.analysis_preparation_work =
-                Some(work(services, entered, resume, returned, continued));
+                Some(work(entered, resume, returned, continued));
             editor.prepare_analysis_review(request, access);
         }
     });

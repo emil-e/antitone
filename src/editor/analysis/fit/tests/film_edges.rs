@@ -94,7 +94,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
         let before = request.document.project.clone();
         let physical = request.document.spatial_metadata.clone();
         let (scheduler, _) = observed();
-        let services = Services {
+        let services = Resources {
             sampling_inputs: Default::default(),
             exposures: Arc::default(),
             sources: scheduler.provider(None),
@@ -103,7 +103,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
             renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
         };
         let captured = input(&services, &request);
-        let mut state = Fit::new(&services.device, request.clone(), captured.clone()).unwrap();
+        let mut state = services.fit(request.clone(), captured.clone()).unwrap();
         state.geometry().unwrap();
         for index in 0..2 {
             let mut scan = futures_lite::future::block_on(services.acquire(
@@ -140,7 +140,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
                     }
                 }
             }
-            assert!(state.sample(index, scan, &services, || false).unwrap());
+            assert!(state.sample(index, scan, || false).unwrap());
             let frame = &state.owned[index];
             let expected = if index == 0 {
                 [3100, 1560]
@@ -171,7 +171,7 @@ fn measured_film_edge_filters_both_populations_without_rephasing_or_dropping_the
                 frame.picture.pixels.len()
             );
         }
-        let outcome = state.finish(&services, || false).unwrap().unwrap();
+        let outcome = state.finish(|| false).unwrap().unwrap();
         assert_eq!(
             outcome.frames, 2,
             "the edge source remains a contributing photograph"
@@ -257,7 +257,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
     let before = request.document.project.clone();
     let physical = request.document.spatial_metadata.clone();
     let (scheduler, _) = observed();
-    let services = Services {
+    let services = Resources {
         sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),
@@ -266,7 +266,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
         renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
-    let mut state = Fit::new(&services.device, request.clone(), captured).unwrap();
+    let mut state = services.fit(request.clone(), captured).unwrap();
     state.geometry().unwrap();
     for index in 0..2 {
         let mut scan = futures_lite::future::block_on(services.acquire(
@@ -298,7 +298,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
                 }
             }
         }
-        assert!(state.sample(index, scan, &services, || false).unwrap());
+        assert!(state.sample(index, scan, || false).unwrap());
         let expected = if index == 0 {
             [3100, 1560]
         } else {
@@ -325,7 +325,7 @@ fn nominal_crop_and_authored_areas_do_not_admit_light_into_either_analysis_popul
             }
         }
     }
-    let outcome = state.finish(&services, || false).unwrap().unwrap();
+    let outcome = state.finish(|| false).unwrap().unwrap();
     assert_eq!(outcome.frames, 2);
     assert!(
         outcome
@@ -381,7 +381,7 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
     );
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
-    let services = Services {
+    let services = Resources {
         sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),
@@ -390,7 +390,7 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
         renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
-    let mut state = Fit::new(&services.device, request.clone(), captured).unwrap();
+    let mut state = services.fit(request.clone(), captured).unwrap();
     state.geometry().unwrap();
     let scan = futures_lite::future::block_on(services.acquire(
         Arc::new(request.clone()),
@@ -399,7 +399,7 @@ fn shared_holder_support_filters_authored_analysis_without_trimming_nominal_crop
     ))
     .unwrap()
     .unwrap();
-    assert!(state.sample(0, scan, &services, || false).unwrap());
+    assert!(state.sample(0, scan, || false).unwrap());
     // Source centres12..300retain37film rows; picture centres100..300retain26.
     assert_eq!(state.owned[0].film.pixels.len(), 2294);
     assert_eq!(state.owned[0].picture.pixels.len(), 1040);
@@ -429,7 +429,7 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
     metadata.groups[0].sources[1].film = metadata.groups[0].sources[0].film.clone();
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
-    let services = Services {
+    let services = Resources {
         sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),
@@ -438,7 +438,7 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
-    let mut state = Fit::new(&services.device, request.clone(), captured).unwrap();
+    let mut state = services.fit(request.clone(), captured).unwrap();
     state.geometry().unwrap();
     for index in 0..2 {
         let scan = futures_lite::future::block_on(services.acquire(
@@ -448,13 +448,13 @@ fn insufficient_roll_film_support_is_not_recovered_by_relaxing_the_edge_band() {
         ))
         .unwrap()
         .unwrap();
-        assert!(state.sample(index, scan, &services, || false).unwrap());
+        assert!(state.sample(index, scan, || false).unwrap());
         // Fourteen retained grid columns leave enough picture statistics, but
         // their 868 film samples per photo cannot satisfy the 2048 roll minimum.
         assert_eq!(state.owned[index].picture.pixels.len(), 560);
         assert_eq!(state.owned[index].film.pixels.len(), 868);
     }
-    let error = state.finish(&services, || false).err().unwrap();
+    let error = state.finish(|| false).err().unwrap();
     assert!(
         error
             .to_string()
@@ -482,7 +482,7 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
         ],
     );
     let (scheduler, _) = observed();
-    let services = Services {
+    let services = Resources {
         sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),
@@ -491,7 +491,7 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
         renderers: Arc::new(crate::renderer::RendererCache::new(Default::default())),
     };
     let captured = input(&services, &request);
-    let mut state = Fit::new(&services.device, request.clone(), captured).unwrap();
+    let mut state = services.fit(request.clone(), captured).unwrap();
     state.geometry().unwrap();
     let scan = futures_lite::future::block_on(services.acquire(
         Arc::new(request),
@@ -500,7 +500,7 @@ fn unknown_camera_and_inferred_limits_do_not_exclude_samples() {
     ))
     .unwrap()
     .unwrap();
-    assert!(state.sample(0, scan, &services, || false).unwrap());
+    assert!(state.sample(0, scan, || false).unwrap());
     assert_eq!(state.owned[0].film.pixels.len(), 3844);
     assert_eq!(state.owned[0].picture.pixels.len(), 1600);
     scheduler.close_and_wait().unwrap();
@@ -513,7 +513,7 @@ fn too_little_picture_after_edge_exclusion_fails_without_relaxing_or_installing_
     attach_film(&mut request, 1, left_edge(400.));
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
-    let services = Services {
+    let services = Resources {
         sampling_inputs: Default::default(),
         exposures: Arc::default(),
         sources: scheduler.provider(None),

@@ -1,10 +1,67 @@
 use super::*;
 use crate::{
-    editor::analysis_review::preparation_tests::{observed, request},
+    editor::analysis::preparation_tests::{observed, request},
     scan_regions::Areas,
 };
 
 mod film_edges;
+
+struct Resources {
+    sources: Arc<dyn SourceProvider>,
+    sampling_inputs: SamplingInputs,
+    exposures: Arc<crate::exposure_metadata::Store>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    renderers: Arc<crate::renderer::RendererCache>,
+}
+
+impl Resources {
+    fn fit(&self, request: Request, input: source::Context) -> Result<Fit, Error> {
+        Fit::new(
+            self.device.clone(),
+            self.queue.clone(),
+            self.renderers.get(&self.device, &self.queue)?,
+            request,
+            input,
+        )
+    }
+
+    async fn acquire(
+        &self,
+        request: Arc<Request>,
+        index: usize,
+        cancelled: Cancellation,
+    ) -> Result<Option<Scan>, Error> {
+        request
+            .document
+            .acquire_source(
+                request.document.project.order[index],
+                self.sources.as_ref(),
+                &self.exposures,
+                &cancelled,
+            )
+            .await
+    }
+}
+
+async fn run(
+    request: Request,
+    input: source::Context,
+    resources: Resources,
+    cancelled: Cancellation,
+    progress: impl FnMut(usize, usize),
+) -> Result<Option<Outcome>, Error> {
+    let state = resources.fit(request, input)?;
+    state
+        .run(
+            resources.sources,
+            resources.sampling_inputs,
+            resources.exposures,
+            cancelled,
+            progress,
+        )
+        .await
+}
 
 fn approved(request: &mut Request) {
     let entries = request
@@ -34,10 +91,10 @@ fn approved(request: &mut Request) {
         .iter()
         .map(|&id| thumbnails::FileKey::new(&request.document.source_path(id).unwrap()))
         .collect();
-    request.areas = Some(analysis_review::Approved { entries, files });
+    request.areas = Some(analysis::Approved { entries, files });
 }
 
-fn input(services: &Services, request: &Request) -> source::Context {
+fn input(services: &Resources, request: &Request) -> source::Context {
     let scan = futures_lite::future::block_on(services.acquire(
         Arc::new(request.clone()),
         0,
@@ -53,13 +110,13 @@ fn input(services: &Services, request: &Request) -> source::Context {
 }
 
 #[test]
-fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_frame() {
+fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_frame() {
     let (mut request, _directory, device, queue) = request();
     approved(&mut request);
     request.document.project.set_gamma(0.7);
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
-    let services = Services {
+    let services = Resources {
         exposures: Arc::default(),
         sampling_inputs: Default::default(),
         sources: scheduler.provider(None),
@@ -70,7 +127,7 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
     let captured = input(&services, &request);
     // Inspect the sampling boundary directly: every ordered frame contributes both
     // populations, with the same per-frame bound used by the numerical estimator.
-    let mut state = Fit::new(&services.device, request.clone(), captured.clone()).unwrap();
+    let mut state = services.fit(request.clone(), captured.clone()).unwrap();
     state.geometry().unwrap();
     for index in 0..before.order.len() {
         let scan = futures_lite::future::block_on(services.acquire(
@@ -80,7 +137,7 @@ fn captured_services_fit_reviewed_support_and_keep_only_bounded_statistics_per_f
         ))
         .unwrap()
         .unwrap();
-        assert!(state.sample(index, scan, &services, || false).unwrap());
+        assert!(state.sample(index, scan, || false).unwrap());
         let frame = &state.owned[index];
         assert!(frame.film.pixels.len() <= MAX_SAMPLES_PER_FRAME);
         assert!(
@@ -146,7 +203,7 @@ fn cancellation_after_sampling_cannot_return_a_partially_fitted_document() {
     approved(&mut request);
     let before = request.document.project.clone();
     let (scheduler, _) = observed();
-    let services = Services {
+    let services = Resources {
         exposures: Arc::default(),
         sampling_inputs: Default::default(),
         sources: scheduler.provider(None),

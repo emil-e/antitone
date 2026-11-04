@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{
-        analysis_workflow::tests::{LIMIT, fixture},
+        analysis::workflow_tests::{LIMIT, fixture},
         history::Direction,
         source_loading,
     },
