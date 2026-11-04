@@ -15,7 +15,7 @@ fn mapping(app: &TestApplication<'_, Editor>) -> (TextureMapping, FrameRaster, b
             app.enter(|editor, cx| {
                 let ready = editor.document.visit.canvas.ready.as_ref().unwrap();
                 let proxy = ready.proxy.clone();
-                let composition = editor.canvas_composition(ready.area, None);
+                let composition = editor.canvas_composition(ready.area);
                 let size = composition.size();
                 let canvas = egui::Rect::from_min_size(
                     egui::Pos2::ZERO,

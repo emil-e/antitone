@@ -36,7 +36,7 @@ impl Editor {
         !self.busy && !self.document.gamma_pivot.pending() && self.roll_navigation_available()
     }
 
-    fn roll_navigation_available(&self) -> bool {
+    pub(super) fn roll_navigation_available(&self) -> bool {
         (!self.busy
             || self.document.visit.canvas.ready.is_none()
                 && self.document.visit.canvas.selection_timing.is_some())

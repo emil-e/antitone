@@ -11,7 +11,8 @@ use crate::{
     },
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
+    rc::Rc,
     sync::{Arc, Weak, mpsc},
 };
 
@@ -44,10 +45,8 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
         app.read(|editor| assert_eq!(editor.test_pick(), Some(Pick::Dmin.display())));
         app.enter(|editor, cx| {
             editor.request_analysis(cx);
-            assert!(matches!(
-                editor.document.tool.as_ref(),
-                Some(Tool::Analyze(_))
-            ));
+            assert!(editor.current_tool().unwrap().is::<AnalyzeTool>());
+            assert!(editor.document.tool.is_none());
             let reference = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/raw/bare-light.dng");
             editor.begin_flat_edit(reference, None, cx);
@@ -109,15 +108,30 @@ fn changing_input_from_review_retires_its_projection_on_success_and_failure() {
     }
 }
 
+#[derive(Clone, Default)]
+struct ContinuationProbe {
+    retired: Rc<Cell<bool>>,
+    continued: Rc<Cell<bool>>,
+}
+struct Retirement(Rc<Cell<bool>>);
+impl Drop for Retirement {
+    fn drop(&mut self) {
+        self.0.set(true);
+    }
+}
+
 fn held_work<T: Send + 'static>(
     services: Services,
     output: T,
     entered: mpsc::Sender<Weak<crate::scan::DevelopedSource>>,
     release: mpsc::Receiver<()>,
     returned: mpsc::Sender<()>,
+    probe: ContinuationProbe,
 ) -> testing::Work<T> {
     Box::new(move |request, stopped| {
+        let retired = Retirement(probe.retired.clone());
         Box::pin(async move {
+            let _retired = retired;
             // This scripted task acquires an unviewed original to probe physical-input
             // cleanup, not to model production review assembly's metadata-only input.
             let scan = services
@@ -125,7 +139,7 @@ fn held_work<T: Send + 'static>(
                 .await
                 .map_err(|error| error.to_string())?
                 .expect("unviewed original");
-            services
+            let result = services
                 .cpu(&stopped, move || {
                     entered.send(Arc::downgrade(scan.source())).unwrap();
                     release.recv_timeout(LIMIT).unwrap();
@@ -133,8 +147,9 @@ fn held_work<T: Send + 'static>(
                     returned.send(()).unwrap();
                     Ok(output)
                 })
-                .await
-                .map_err(|error| error.to_string())
+                .await;
+            probe.continued.set(true);
+            result.map_err(|error| error.to_string())
         })
     })
 }
@@ -152,6 +167,7 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                 let (entered, starts) = mpsc::channel();
                 let (release, resume) = mpsc::channel();
                 let (returned, returns) = mpsc::channel();
+                let probe = ContinuationProbe::default();
                 let (before, proposed) = app.enter(|editor, cx| {
                     let reviewed = editor.document.analysis_review().unwrap().approved.clone();
                     let services = Services::new(
@@ -176,13 +192,20 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                             entered,
                             resume,
                             returned,
+                            probe.clone(),
                         ));
                         editor.confirm_analysis_review(cx);
                         (before, Some(proposed))
                     } else {
                         editor.finish_pick(cx);
-                        editor.document.analysis_preparation_work =
-                            Some(held_work(services, reviewed, entered, resume, returned));
+                        editor.document.analysis_preparation_work = Some(held_work(
+                            services,
+                            reviewed,
+                            entered,
+                            resume,
+                            returned,
+                            probe.clone(),
+                        ));
                         let request = editor.analysis_request().unwrap();
                         editor.prepare_analysis_review(request, cx);
                         (before, None)
@@ -202,6 +225,7 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 let pixels = pixels.into_inner().unwrap();
+                assert!(!probe.retired.get() && !probe.continued.get());
                 if replace {
                     app.update(Editor::begin_crop);
                     app.pump();
@@ -215,6 +239,11 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                         "running CPU work must retain its native input"
                     );
                     assert!(matches!(returns.try_recv(), Err(mpsc::TryRecvError::Empty)));
+                    assert!(
+                        probe.retired.get(),
+                        "replacement must drop the waiting continuation before physical cleanup"
+                    );
+                    assert!(!probe.continued.get());
                 }
                 release.send(()).unwrap();
                 let deadline = std::time::Instant::now() + LIMIT;
@@ -227,7 +256,22 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 returns.recv_timeout(LIMIT).unwrap();
+                let turned = Rc::new(Cell::new(false));
+                let reached = turned.clone();
+                let turn = app.enter(|_, cx| {
+                    cx.spawn(move |_| async move {
+                        futures_lite::future::yield_now().await;
+                        reached.set(true);
+                    })
+                    .unwrap()
+                });
+                app.run_until(LIMIT, |_| turned.get());
+                drop(turn);
                 if replace {
+                    assert!(
+                        !probe.continued.get(),
+                        "retired work cannot resume after cleanup"
+                    );
                     app.read(|editor| {
                         assert!(editor.document.crop_edit().is_some());
                         assert_eq!(editor.document.project, before);
@@ -244,6 +288,12 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                 } else {
                     app.run_until(LIMIT, |editor| editor.document.analysis_review().is_some());
                     app.read(|editor| assert_eq!(editor.document.project, before));
+                }
+                if !replace {
+                    assert!(
+                        probe.continued.get() && probe.retired.get(),
+                        "unreplaced work must deliver its result through the observed continuation"
+                    );
                 }
             });
             sources.close_and_wait().unwrap();

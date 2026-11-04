@@ -516,7 +516,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
             set_layout(&mut harness, size, width);
             harness.get_by_label("Fit").click();
             harness.step();
-            harness.read(|editor| assert_eq!(editor.test_pick(), Some(flat::DISPLAY)));
+            harness.read(|editor| assert!(editor.current_tool().unwrap().is::<flat::FlatTool>()));
             harness.read(|editor| assert!(editor.document.flat_edit().is_some()));
             workflow::wait_settled(&mut harness);
             let geometry = harness.read(|editor| editor.canvas_frame.layout.unwrap().0);

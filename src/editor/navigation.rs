@@ -102,8 +102,7 @@ impl Editor {
             self.tab == 1 && self.document.mask_edit().is_some() && self.fullscreen.is_none()
                 || mask_pointer.is_some_and(|point| self.mask_pointer_interest(geometry, point));
         let captured_mask = masking && self.document.mask_edit().is_some_and(MaskEdit::dragging);
-        let picking = (self.legacy_pick().is_some() || masking) && self.fullscreen.is_none();
-        let canvas_tool = picking;
+        let canvas_tool = masking && self.fullscreen.is_none();
         let (zoom, translation, touch, pointer, space) = ui.input(|input| {
             (
                 input.zoom_delta(),
@@ -197,34 +196,6 @@ impl Editor {
                 egui::CursorIcon::Grab
             } else if masking {
                 egui::CursorIcon::Crosshair
-            } else if picking && !self.busy {
-                pointer
-                    .map(|point| {
-                        let region = if self.document.analysis_review().is_some()
-                            && !response.dragged_by(egui::PointerButton::Primary)
-                        {
-                            self.review_area_at(geometry, point).and_then(|picture| {
-                                let areas =
-                                    self.review_areas(self.document.visit.current_source?)?;
-                                crate::scan_regions::Areas::coverage(if picture {
-                                    areas.picture?
-                                } else {
-                                    areas.opening?
-                                })
-                                .ok()
-                            })
-                        } else {
-                            self.legacy_pick_region()
-                        };
-                        picker_cursor(
-                            geometry,
-                            point,
-                            region,
-                            self.active_canvas().pick_drag,
-                            response.dragged_by(egui::PointerButton::Primary),
-                        )
-                    })
-                    .unwrap_or(egui::CursorIcon::Crosshair)
             } else if pointer.is_some_and(|point| geometry.image.contains(point)) && !canvas_tool {
                 if self.active_canvas_mut().viewport.zoom.is_none() {
                     egui::CursorIcon::ZoomIn

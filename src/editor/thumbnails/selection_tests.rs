@@ -267,7 +267,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 match state {
                     "busy" => editor.busy = true,
                     "crop" => editor.begin_crop(),
-                    "pick" => editor.document.visit.picking.display = Some(Pick::Gamma.display()),
+                    "pick" => picking::preview(editor, Pick::Gamma.display()),
                     "flat" => editor
                         .document
                         .set_flat_edit(Some(crate::editor::flat::FlatEdit {
@@ -308,7 +308,6 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 editor.busy = false;
                 editor.hosted_action(tool::Action::Dismiss);
                 editor.document.set_flat_edit(None);
-                editor.document.visit.picking.display = None;
                 frame(editor, &context, vec![], cx);
             }
             frame(editor, &context, pointer(point, true), cx);

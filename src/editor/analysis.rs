@@ -1,12 +1,5 @@
 use super::*;
 
-pub(super) const AREA_DISPLAY: picking::Display = picking::Display {
-    label: "Picture area",
-    view: picking::View::Native,
-    area: true,
-    lock_layer_selection: false,
-    help: Some("Picture statistics only · source-aligned · not an output crop"),
-};
 use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
 
 #[cfg(all(test, feature = "ocio-reference"))]
@@ -196,10 +189,7 @@ impl Editor {
         let capabilities = self.document.input.capabilities();
         let commands = !self.busy
             && self.document.visit.canvas.ready.is_some()
-            && !self.picking()
-            && !self.cropping()
-            && !self.masking()
-            && !reviewing
+            && !self.tool_interacting()
             && !self.document.confirming();
         let mut analyze = false;
 

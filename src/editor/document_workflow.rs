@@ -263,8 +263,6 @@ impl Editor {
                 if input_changed {
                     self.document.source = !self.document.input.ready();
                 }
-                self.document.visit.picking = Default::default();
-                self.document.visit.canvas.pick_drag = None;
                 self.document.visit.return_notice = None;
                 self.document.export.draft = None;
                 self.document.export.summary = None;

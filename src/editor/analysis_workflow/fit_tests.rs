@@ -61,13 +61,14 @@ fn reviewed_fit_keeps_the_browsed_photo_and_undoes_support_and_grade_together() 
     with_application(editor, |app| {
         review(app);
         app.enter(|e, access| {
-            e.browse_analysis_review(other, access);
+            e.select_roll_photo(1, egui::Modifiers::NONE, access);
         });
         app.run_until(LIMIT, |e| !e.busy);
         app.read(|e| {
             assert_eq!(e.document.visit.current_source, Some(other));
             assert_eq!(e.document.state.project, before);
         });
+        app.update(|e| e.select_active_photo_only());
         confirm(app);
         app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.busy);
         app.read(|e| {
@@ -78,7 +79,7 @@ fn reviewed_fit_keeps_the_browsed_photo_and_undoes_support_and_grade_together() 
             assert_eq!(e.tab, 0);
             assert!(e.scopes.visible);
             assert!(
-                e.document.roll_selection.contains(first)
+                !e.document.roll_selection.contains(first)
                     && e.document.roll_selection.contains(other)
             );
             assert_eq!(e.document.state.project.analysis_regions.len(), 2);
@@ -120,7 +121,7 @@ fn cancelling_review_keeps_the_browsed_photo_and_its_layer_selection() {
     editor.select_adjustment_layer(Target::Layer(old_layer));
     with_application(editor, |app| {
         review(app);
-        app.enter(|editor, cx| editor.browse_analysis_review(other, cx));
+        app.enter(|editor, cx| editor.select_roll_photo(1, egui::Modifiers::NONE, cx));
         app.run_until(LIMIT, |editor| !editor.busy);
         let selected = app.read(|editor| editor.adjustment_layer_target());
         app.enter(|editor, cx| {

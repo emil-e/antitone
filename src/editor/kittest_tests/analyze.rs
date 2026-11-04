@@ -1,6 +1,8 @@
 use super::*;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 
+mod ownership;
+
 fn show_confirmation(harness: &mut Harness<'_, Editor>) {
     harness.step();
     harness
@@ -489,7 +491,7 @@ fn missing_area_cues_follow_the_photo_and_clear_without_an_inspector_panel() {
                 .areas
                 .picture = None
         });
-        h.update(|editor| editor.refresh_review_region());
+
         h.step();
         h.step();
         assert!(

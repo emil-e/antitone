@@ -118,7 +118,9 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
             assert_eq!(review.approved.entries.len(), 2);
             assert!(review.approved.entries.iter().all(|e| e.areas.ready()));
             assert_eq!(e.document.state.project, before);
-            assert_eq!(e.test_pick(), Some(crate::editor::analysis::AREA_DISPLAY));
+            assert!(e.current_tool().unwrap().is::<crate::editor::AnalyzeTool>());
+            assert!(e.document.visit.picker.display().is_none());
+            assert!(e.test_pick_region().is_some());
             assert!(!e.busy);
             assert!(e.tasks.view().is_none());
             assert_eq!(e.document.cache.charges().retained, 0);

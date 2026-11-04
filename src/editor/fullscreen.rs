@@ -28,7 +28,6 @@ impl Editor {
 
     pub(super) fn fullscreen_available(&self) -> bool {
         !self.fullscreen_blocked()
-            && self.document.analysis_review().is_none()
             && (self.fullscreen.is_some()
                 || (self.canvas_frame.layout.is_some() || self.selected_view().is_some())
                     && !(self.busy && self.picking()))

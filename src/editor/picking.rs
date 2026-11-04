@@ -6,18 +6,15 @@ use std::{
 };
 
 mod interaction;
-mod legacy;
 pub(super) mod measurement;
 #[cfg(test)]
 mod tests;
 pub(super) use interaction::{PickTool, paint_selection};
-pub(super) use legacy::Session;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum View {
     Working,
     Source,
-    Native,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,7 +131,7 @@ pub(super) fn preview(editor: &mut Editor, display: Display) {
 
 impl Editor {
     pub(super) fn picking(&self) -> bool {
-        self.document.visit.picker.display().is_some() || self.legacy_pick().is_some()
+        self.document.visit.picker.display().is_some()
     }
 
     #[cfg(test)]

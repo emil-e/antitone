@@ -132,17 +132,27 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 harness.step();
                 stage(&mut harness, "Roll");
             }
-            for (name, task, pick) in [
-                ("raw", Task::Photo(id), None),
-                ("reference", Task::Reference(id), Some(flat::DISPLAY)),
-                (
-                    "measurement",
-                    Task::Measurement(id, "Dmin"),
-                    Some(Pick::Dmin.display()),
-                ),
+            for (name, task) in [
+                ("raw", Task::Photo(id)),
+                ("reference", Task::Reference(id)),
+                ("measurement", Task::Measurement(id, "Dmin")),
             ] {
-                harness.update(|editor| held_activity(editor, task));
-                harness.update(|editor| editor.document.visit.picking.display = pick);
+                harness.update(|editor| {
+                    if name != "raw" {
+                        if name == "reference" {
+                            editor.document.set_flat_edit(Some(flat::FlatEdit {
+                                services: None,
+                                view: Default::default(),
+                                region: None,
+                                task: None,
+                                activity: Some(task.request()),
+                            }));
+                        } else {
+                            super::super::picking::preview(editor, Pick::Dmin.display());
+                        }
+                    }
+                    held_activity(editor, task);
+                });
                 if name == "measurement" {
                     harness.update(|editor| {
                         editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
@@ -162,8 +172,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 if let Some(ready) = ready {
                     harness.update(|editor| editor.document.visit.canvas.ready = Some(ready));
                 }
-                harness.update(|editor| editor.document.visit.picking.display = None);
-                harness.update(|editor| editor.set_test_pick_region(None));
+                harness.update(|editor| editor.end_tool());
                 harness.update(|editor| editor.tasks.finish(task.request()));
                 harness.update(|editor| editor.busy = false);
                 harness.step();

@@ -382,7 +382,7 @@ fn drafts_foreground_work_and_decisions_reject_selection_and_removal() {
                     .push(editor.document.state.project.order[4]);
                 match blocker {
                     "busy" => editor.busy = true,
-                    "pick" => editor.document.visit.picking.display = Some(Pick::Dmax.display()),
+                    "pick" => picking::preview(editor, Pick::Dmax.display()),
                     "failure" => editor.report_failure(FailureKind::Save, "fixture".into()),
                     "transition" => editor.transition = Some(Transition::Close),
                     "analysis" => editor.document_pending = Some(12),

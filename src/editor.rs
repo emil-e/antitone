@@ -76,7 +76,9 @@ mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
 mod analysis;
 mod analysis_inputs;
+mod analysis_interaction;
 mod analysis_review;
+use analysis_interaction::AnalyzeTool;
 mod analysis_services;
 mod analysis_workflow;
 mod dust;
@@ -886,11 +888,6 @@ impl Editor {
         {
             self.close_analysis();
         }
-        if let Some(review) = self.document.take_analysis_review() {
-            drop(review);
-            self.scopes.visible = self.preferences.scopes_visible;
-            self.document.visit.picking = Default::default();
-        }
         self.document.visit.pending_preview = None;
         self.document.visit.canvas.preview_rendered = None;
         self.document.visit.canvas.selection_timing = None;
@@ -921,10 +918,6 @@ impl Editor {
         );
     }
 
-    fn load(&mut self, path: PathBuf, cx: &UiContext<'_, Self>) {
-        self.load_source(path, true, cx);
-    }
-
     fn controls(
         &mut self,
         ui: &mut egui::Ui,
@@ -933,7 +926,6 @@ impl Editor {
         use controls::{ColorControl, Parameter};
         use presentation::SectionHeader;
 
-        let reviewing = self.document.analysis_review().is_some();
         let initial_input = self.document.input;
         let previous_orientation = (
             self.document.roll_orientation,
@@ -966,11 +958,8 @@ impl Editor {
         }
 
         let gamma_pending = self.document.gamma_pivot.pending();
-        let editable = !self.busy
-            && !self.creating_mask()
-            && !gamma_pending
-            && self.document.tool.is_none()
-            && self.document.input.ready();
+        let editable =
+            !self.busy && !self.tool_interacting() && !gamma_pending && self.document.input.ready();
         let can_pick = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
         let mut start_pick = None;
         let mut gamma_edited = false;
@@ -981,7 +970,7 @@ impl Editor {
                 if self.document.hosted_tool.occupied() {
                     self.hosted_drawer(ui, cx);
                 } else if self.tab == 1 {
-                    ui.add_enabled_ui(!reviewing && !self.busy, |ui| self.hosted_drawer(ui, cx));
+                    ui.add_enabled_ui(!self.busy, |ui| self.hosted_drawer(ui, cx));
                 }
                 if self.tab == 0 {
                     let displayed_input = self.gamma_pivot_input();
@@ -997,36 +986,39 @@ impl Editor {
                             .unwrap_or_default();
                         ui.horizontal(|ui| {
                             ui.label("Input stage");
-                            egui::ComboBox::from_id_salt("input-stage")
-                                .selected_text(if input.is_negative() {
-                                    "Negative"
-                                } else {
-                                    "Digital"
-                                })
-                                .show_ui(ui, |ui| {
-                                    if input.is_negative() {
-                                        let _ = ui.selectable_label(true, "Negative");
+                            ui.add_enabled_ui(!self.tool_interacting(), |ui| {
+                                egui::ComboBox::from_id_salt("input-stage")
+                                    .selected_text(if input.is_negative() {
+                                        "Negative"
                                     } else {
-                                        ui.add_enabled_ui(scan.is_ok(), |ui| {
-                                            if ui.selectable_label(false, "Negative").clicked() {
-                                                stage_target = Some(self.negative_input());
-                                            }
-                                        })
-                                        .response
-                                        .on_disabled_hover_text(scan_reason.clone());
-                                    }
-                                    if ui
-                                        .selectable_label(!input.is_negative(), "Digital")
-                                        .clicked()
-                                        && input.is_negative()
-                                    {
-                                        stage_target = Some(InputSettings::Digital);
-                                    }
-                                })
-                                .response
-                                .on_hover_text(
-                                    "How this roll's sources become a positive before grading.",
-                                );
+                                        "Digital"
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        if input.is_negative() {
+                                            let _ = ui.selectable_label(true, "Negative");
+                                        } else {
+                                            ui.add_enabled_ui(scan.is_ok(), |ui| {
+                                                if ui.selectable_label(false, "Negative").clicked()
+                                                {
+                                                    stage_target = Some(self.negative_input());
+                                                }
+                                            })
+                                            .response
+                                            .on_disabled_hover_text(scan_reason.clone());
+                                        }
+                                        if ui
+                                            .selectable_label(!input.is_negative(), "Digital")
+                                            .clicked()
+                                            && input.is_negative()
+                                        {
+                                            stage_target = Some(InputSettings::Digital);
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text(
+                                        "How this roll's sources become a positive before grading.",
+                                    )
+                            });
                         });
                         if capabilities.flat_field {
                             self.flat_controls(ui, cx);
@@ -1107,7 +1099,10 @@ impl Editor {
                                     self.gamma_pivot_tool(can_pick),
                                     |ui| {
                                         ui.add_enabled_ui(
-                                            editable || gamma_pending && !self.busy,
+                                            editable
+                                                || gamma_pending
+                                                    && !self.busy
+                                                    && !self.tool_interacting(),
                                             |ui| {
                                                 controls::parameter(ui, Parameter::Gamma, gamma);
                                                 controls::balance_body(
@@ -1220,7 +1215,7 @@ impl Editor {
                     }
                 } else {
                     if self.document.input.capabilities().grain {
-                        let allowed = !self.busy && !reviewing && !self.masking();
+                        let allowed = !self.busy && !self.tool_interacting();
                         ui.add_enabled_ui(allowed, |ui| {
                             presentation::section(
                                 ui,
@@ -1244,7 +1239,7 @@ impl Editor {
                         });
                     }
                     self.look_controls(ui, cx);
-                    ui.add_enabled_ui(!reviewing && !self.masking(), |ui| {
+                    ui.add_enabled_ui(!self.tool_interacting(), |ui| {
                         let changed = self.document.target != OutputTarget::DisplayP3;
                         let (_, action) = presentation::section(
                             ui,
@@ -1296,9 +1291,7 @@ impl Editor {
             });
 
         self.preferences.sections = presentation::collect_expansion(ui.ctx());
-        if !reviewing {
-            self.preferences.scopes_visible = self.scopes.visible;
-        }
+        self.preferences.scopes_visible = self.scopes.visible;
         self.preferences.scope_height_ratio = self.scopes.height_ratio;
         if previous_orientation
             != (
@@ -1422,9 +1415,6 @@ impl Editor {
         self.disable_blocked_workspace(ui);
         self.workspace_chrome(ui, cx, &mut actions);
         let (scope_slot, analyze) = self.edit_frame_controls(ui, cx);
-        if self.document.analysis_review().is_some() && !self.analysis_fitting() {
-            self.stash_review_region();
-        }
 
         let menu_zoom = match actions.menu {
             Some(crate::platform::menu::Action::ActualSize) => Some(1.),

@@ -279,7 +279,7 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             e.document.visit.working_view.support_ready()
         });
         let previous = harness.read(|editor| editor.document.visit.current_source.unwrap());
-        harness.enter(|editor, cx| editor.load_source(second, true, cx));
+        harness.enter(|editor, cx| editor.load(second, cx));
         // Deliver source readiness without painting or starting physical-view acquisition.
         harness.run_until(Duration::from_secs(15), |e| !e.busy);
         harness.read(|editor| {

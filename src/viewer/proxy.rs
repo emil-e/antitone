@@ -153,6 +153,7 @@ impl GpuProxy {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn image(&self, target: OutputTarget) -> Result<Arc<GpuImage>, Error> {
         let mut active = self.0.active.lock().unwrap();
         if let Some((current, image)) = &*active

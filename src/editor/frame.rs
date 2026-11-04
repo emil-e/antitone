@@ -27,7 +27,6 @@ impl Editor {
         if self.document.visit.canvas.ready.is_none() {
             self.document.visit.working_view.clear();
         }
-        self.stash_review_region();
         self.seed_thumbnail();
         self.validate_pending_preview();
     }
@@ -125,7 +124,7 @@ impl Editor {
     fn analysis_shortcuts(
         &mut self,
         ui: &mut egui::Ui,
-        cx: &UiContext<'_, Self>,
+        _cx: &UiContext<'_, Self>,
         text_was_focused: bool,
         dialog_escape_available: bool,
     ) {
@@ -155,26 +154,9 @@ impl Editor {
             && dialog_escape_available
             && !text_was_focused
             && !ui.ctx().egui_wants_keyboard_input()
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
-            if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                self.finish_pick(cx);
-            } else {
-                let previous =
-                    ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft));
-                let next =
-                    ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight));
-                if previous || next {
-                    let index = if previous {
-                        self.document.selected.saturating_sub(1)
-                    } else {
-                        (self.document.selected + 1)
-                            .min(self.document.state.project.order.len().saturating_sub(1))
-                    };
-                    if let Some(&id) = self.document.state.project.order.get(index) {
-                        self.browse_analysis_review(id, cx);
-                    }
-                }
-            }
+            self.cancel_analysis();
         }
     }
 
@@ -211,19 +193,6 @@ impl Editor {
     }
 
     fn tool_shortcuts(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
-        if self.legacy_pick().is_some()
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.status = "Pick cancelled; processing unchanged".into();
-            self.finish_pick(cx);
-            self.set_legacy_pick_region(None);
-        }
-        if self.legacy_pick().is_some()
-            && self.legacy_pick_region().is_some()
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
-        {
-            self.apply_pick(cx);
-        }
         self.with_current_tool(|tool, editor| tool.shortcuts(ui, editor));
         if let Some(tool) = self.current_tool() {
             let primary = tool

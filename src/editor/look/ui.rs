@@ -63,31 +63,12 @@ impl Editor {
         }
     }
     pub(in crate::editor) fn look_rendering_error(&self) -> Option<Error> {
-        if self.document.source || self.picking() || self.document.analysis_review().is_some() {
-            return None;
-        }
-        let id = self.document.state.project.output.luts().id()?;
-        if let Some(view) = self
-            .document
-            .visit
-            .working_view
-            .displayed
-            .as_ref()
-            .filter(|view| view.look_id() == Some(id))
-        {
-            return view.image.look_failure(id);
-        }
-        self.selected_view()?
-            .1
-            .image(self.document.target)
-            .ok()?
-            .look_failure(id)
+        let view = &self.canvas_frame.displayed.as_ref()?.view;
+        view.image.look_failure(view.look_id()?)
     }
 
     fn lut_controls_allowed(&self, slot: Slot) -> bool {
-        self.look_request_allowed(slot)
-            && self.document.analysis_review().is_none()
-            && !self.masking()
+        self.look_request_allowed(slot) && !self.tool_interacting()
     }
 
     pub(in crate::editor) fn look_controls(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {

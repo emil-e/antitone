@@ -211,9 +211,7 @@ impl Editor {
     fn adjustment_layer_actions_available(&self) -> bool {
         !self.busy
             && self.document.input.ready()
-            && !self.picking()
-            && !self.masking()
-            && self.document.analysis_review().is_none()
+            && !self.tool_interacting()
             && !self.document.visit.adjustment_layers.confirming()
     }
 
@@ -456,10 +454,7 @@ impl Editor {
 
     pub(super) fn adjustment_layer_owns_delete(&self) -> bool {
         self.tab == 1
-            && !self.dusting()
-            && !self.picking()
-            && !self.masking()
-            && self.document.analysis_review().is_none()
+            && !self.tool_interacting()
             && self.document.visit.adjustment_layers.owns_delete
             && matches!(self.adjustment_layer_target(), Target::Layer(_))
     }
@@ -503,8 +498,7 @@ impl Editor {
             record.adjustment.photo
         });
         let before = (photo, adjustment);
-        let available =
-            self.adjustment_layer_actions_available() && !self.dusting() && ui.is_enabled();
+        let available = self.adjustment_layer_actions_available() && ui.is_enabled();
         let mut action = None;
         let mut rename_finish = None;
         let mut invert_action = None;

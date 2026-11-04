@@ -312,68 +312,14 @@ impl Editor {
         }
     }
 
+    #[cfg(test)]
     fn begin_analysis_fit(&mut self, total: usize) -> Option<FitInput> {
-        let input = self.source_context()?;
-        let id = self.request_id();
-        self.document.analysis_operation_mut().unwrap().phase = Phase::Fitting(id);
-        self.document.thumbnails.cancel();
-        self.cancel_original_pending();
-        self.tasks.begin(Task::Analyze(id));
-        self.tasks.report(
-            TaskRequest::Analyze(id),
-            TaskProgress::Counted {
-                completed: 0,
-                total,
-            },
-        );
-        self.busy = true;
-        self.status = "Analyzing roll…".into();
-        Some(FitInput {
-            id,
-            source: input,
-            services: self.analysis_services(),
-        })
-    }
-
-    pub(super) fn submit_analysis_review(&mut self, areas: analysis_review::Approved) {
-        if !self
-            .document
-            .analysis_operation()
-            .is_some_and(|op| op.decision.is_some())
-        {
-            return;
-        }
-        let Some(fit) = self.begin_analysis_fit(self.document.project.order.len()) else {
-            return;
-        };
-        let decision = self
-            .document
-            .analysis_operation_mut()
-            .unwrap()
-            .decision
-            .take()
-            .unwrap();
-        let _ = decision.send(Confirmation {
-            selected: self.document.visit.current_source.expect("review source"),
-            areas,
-            fit,
-        });
+        self.with_analyze_tool(|tool, editor| tool.begin_analysis_fit(editor, total))
+            .flatten()
     }
 
     pub(super) fn cancel_analysis(&mut self) {
-        let Some(op) = &self.document.analysis_operation() else {
-            return;
-        };
-        if op.phase == Phase::Regions {
-            self.document.set_analysis_operation(None);
-            self.cancel_spatial();
-            return;
-        }
-        op.cancelled.cancel();
-        if let Some(id) = self.analysis_work_id() {
-            self.tasks.cancelling(TaskRequest::Analyze(id));
-        }
-        self.status = "Cancelling analysis…".into();
+        self.with_analyze_tool(|tool, editor| tool.cancel(editor));
     }
 
     pub(super) fn analysis_progress(&mut self, id: u64, done: usize, total: usize) {
@@ -400,5 +346,49 @@ impl Editor {
                 "Fitting gamma/WB/exposures and validating proposal…".into()
             };
         }
+    }
+}
+
+impl super::AnalyzeTool {
+    fn begin_analysis_fit(&mut self, editor: &mut Editor, total: usize) -> Option<FitInput> {
+        let input = editor.source_context()?;
+        let id = editor.request_id();
+        self.operation.phase = Phase::Fitting(id);
+        editor.document.thumbnails.cancel();
+        editor.cancel_original_pending();
+        editor.tasks.begin(Task::Analyze(id));
+        editor.tasks.report(
+            TaskRequest::Analyze(id),
+            TaskProgress::Counted {
+                completed: 0,
+                total,
+            },
+        );
+        editor.busy = true;
+        editor.status = "Analyzing roll…".into();
+        Some(FitInput {
+            id,
+            source: input,
+            services: editor.analysis_services(),
+        })
+    }
+
+    pub(super) fn submit_analysis_review(
+        &mut self,
+        editor: &mut Editor,
+        areas: analysis_review::Approved,
+    ) {
+        if self.operation.decision.is_none() {
+            return;
+        }
+        let Some(fit) = self.begin_analysis_fit(editor, editor.document.project.order.len()) else {
+            return;
+        };
+        let decision = self.operation.decision.take().unwrap();
+        let _ = decision.send(Confirmation {
+            selected: editor.document.visit.current_source.expect("review source"),
+            areas,
+            fit,
+        });
     }
 }

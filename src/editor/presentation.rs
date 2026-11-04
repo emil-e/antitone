@@ -522,11 +522,6 @@ pub(super) struct ToolGroup<'a> {
     pub(super) apply_enabled: bool,
 }
 
-pub(super) struct ToolActions {
-    pub(super) cancel: Response,
-    pub(super) apply: Response,
-}
-
 pub(super) struct RoleActions {
     pub(super) dismiss: Response,
     pub(super) primary: Option<Response>,
@@ -584,64 +579,12 @@ fn tool_group_frame<R>(
 }
 
 impl ToolGroup<'_> {
-    fn cancel(self) -> TextAction<'static> {
-        TextAction::new("Cancel")
-            .enabled(self.cancel_enabled)
-            .toolbar(0.)
-            .help("Cancel (Escape).")
-    }
-
     fn apply(self, label: &'static str) -> TextAction<'static> {
         TextAction::new(label)
             .enabled(self.apply_enabled)
             .primary()
             .toolbar(0.)
             .help("Apply (Enter).")
-    }
-
-    fn content_width(self, ui: &Ui, apply_label: &'static str) -> f32 {
-        tool_identity_width(ui, self.identity)
-            + self.cancel().width(ui)
-            + self.apply(apply_label).width(ui)
-            + 3. * ui.spacing().item_spacing.x
-            + TOOL_ACTION_SPACE
-    }
-
-    /// Complete single-line reservation, including frame margins, without widget IDs.
-    pub(super) fn width(self, ui: &Ui) -> f32 {
-        self.width_named(ui, "Apply")
-    }
-
-    pub(super) fn width_named(self, ui: &Ui, label: &'static str) -> f32 {
-        self.content_width(ui, label) + 2. * f32::from(TOOL_FRAME_MARGIN)
-    }
-
-    pub(super) fn show(self, ui: &mut Ui) -> egui::InnerResponse<ToolActions> {
-        self.show_named(ui, "Apply")
-    }
-
-    pub(super) fn show_named(
-        self,
-        ui: &mut Ui,
-        apply_label: &'static str,
-    ) -> egui::InnerResponse<ToolActions> {
-        self.show_warned(ui, apply_label, None)
-    }
-
-    pub(super) fn show_warned(
-        self,
-        ui: &mut Ui,
-        apply_label: &'static str,
-        warning: Option<&str>,
-    ) -> egui::InnerResponse<ToolActions> {
-        let actions = self.show_actions(ui, Some(apply_label), "Cancel", warning);
-        egui::InnerResponse {
-            inner: ToolActions {
-                cancel: actions.inner.dismiss,
-                apply: actions.inner.primary.unwrap(),
-            },
-            response: actions.response,
-        }
     }
 
     pub(super) fn width_actions(

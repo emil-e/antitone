@@ -83,7 +83,53 @@ impl Editor {
         request: &analysis::Request,
         result: Result<Option<Approved>, String>,
     ) -> Option<futures_channel::oneshot::Receiver<analysis_workflow::Confirmation>> {
-        self.sync_document();
+        self.with_analyze_tool(|tool, editor| tool.open_analysis_review(editor, request, result))
+            .flatten()
+    }
+    pub(super) fn close_analysis(&mut self) {
+        if self.document.hosted_tool.is::<AnalyzeTool>() {
+            self.end_tool();
+        }
+    }
+    pub(super) fn end_analysis_review(&mut self, _cx: &UiContext<'_, Self>) {
+        self.close_analysis();
+    }
+    #[cfg(test)]
+    pub(super) fn confirm_analysis_review(&mut self, cx: &UiContext<'_, Self>) {
+        self.with_analyze_tool(|tool, editor| tool.confirm_analysis_review(editor, cx));
+    }
+    #[cfg(test)]
+    pub(super) fn review_areas(&self, id: SourceId) -> Option<&Areas> {
+        self.document.analyze_tool()?.review_areas(id)
+    }
+    #[cfg(test)]
+    pub(super) fn review_area_at(
+        &self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) -> Option<bool> {
+        self.document
+            .analyze_tool()?
+            .review_area_at(self, geometry, point)
+    }
+    #[cfg(test)]
+    pub(super) fn select_review_area(
+        &mut self,
+        geometry: crate::viewport::CanvasLayout,
+        point: egui::Pos2,
+    ) {
+        self.with_analyze_tool(|tool, editor| tool.select_review_area(editor, geometry, point));
+    }
+}
+
+impl AnalyzeTool {
+    pub(super) fn open_analysis_review(
+        &mut self,
+        editor: &mut Editor,
+        request: &analysis::Request,
+        result: Result<Option<Approved>, String>,
+    ) -> Option<futures_channel::oneshot::Receiver<analysis_workflow::Confirmation>> {
+        editor.sync_document();
         match result {
             Ok(Some(approved)) => {
                 let replaces_photos = request.document.project.order.iter().any(|id| {
@@ -97,32 +143,34 @@ impl Editor {
                         })
                     })
                 });
-                self.document.set_analysis_review(Some(Review {
+                self.review = Some(Review {
                     document: request.document.clone(),
                     approved,
                     picture: false,
                     replaces_photos,
-                }));
-                self.tab = 0;
-                self.show_legacy_picker(analysis::AREA_DISPLAY);
-                self.refresh_review_region();
-                self.document.visit.canvas.viewport.fit();
-                self.status = "Review sampling areas".into();
+                });
+                editor.tab = 0;
+                self.visit = Some(editor.document.visit.view);
+                self.drag = None;
+                self.viewport.fit();
+                editor.status = "Review sampling areas".into();
                 let (decision, result) = futures_channel::oneshot::channel();
-                self.document.analysis_operation_mut()?.decision = Some(decision);
+                self.operation.decision = Some(decision);
                 return Some(result);
             }
-            Ok(None) => self.status = "Analysis-area preparation cancelled; grade unchanged".into(),
+            Ok(None) => {
+                editor.status = "Analysis-area preparation cancelled; grade unchanged".into()
+            }
             Err(error) => {
-                self.status = format!("Area preparation failed: {error}. Grade unchanged.")
+                editor.status = format!("Area preparation failed: {error}. Grade unchanged.")
             }
         }
         None
     }
 
     pub(super) fn review_areas(&self, id: SourceId) -> Option<&Areas> {
-        self.document
-            .analysis_review()?
+        self.review
+            .as_ref()?
             .approved
             .entries
             .iter()
@@ -130,32 +178,38 @@ impl Editor {
             .map(|r| &r.areas)
     }
 
-    pub(super) fn stash_review_region(&mut self) {
-        if self.analysis_fitting() {
+    pub(super) fn selected_region(&self, id: SourceId) -> Option<Coverage> {
+        let review = self.review.as_ref()?;
+        let areas = self.review_areas(id)?;
+        let quad = if review.picture {
+            areas.picture
+        } else {
+            areas.opening
+        }?;
+        Areas::coverage(quad).ok()
+    }
+
+    pub(super) fn edit_region(&mut self, source: SourceId, region: Coverage) {
+        if self.fitting() {
             return;
         }
-        let Some(region) = self.legacy_pick_region() else {
-            return;
-        };
-        let source = self.document.visit.current_source;
-        let Some(review) = self.document.analysis_review_mut() else {
+        let Some(review) = self.review.as_mut() else {
             return;
         };
         let Some(entry) = review
             .approved
             .entries
             .iter_mut()
-            .find(|r| Some(r.source) == source)
+            .find(|row| row.source == source)
         else {
             return;
         };
-        let quad = region.corners().map(|p| p.0);
         let old = if review.picture {
             entry.areas.picture
         } else {
             entry.areas.opening
         };
-        if old == Some(quad) {
+        if old == Some(region.corners().map(|point| point.0)) {
             return;
         }
         if review.picture {
@@ -165,7 +219,7 @@ impl Editor {
             let active = review
                 .document
                 .project
-                .source(entry.source)
+                .source(source)
                 .expect("review source")
                 .development
                 .active_area
@@ -174,91 +228,33 @@ impl Editor {
         }
     }
 
-    pub(super) fn refresh_review_region(&mut self) {
-        self.set_legacy_pick_region(
-            self.document
-                .analysis_review()
-                .and_then(|r| {
-                    self.document
-                        .visit
-                        .current_source
-                        .and_then(|id| r.approved.entries.iter().find(|e| e.source == id))
-                        .and_then(|e| {
-                            if r.picture {
-                                e.areas.picture
-                            } else {
-                                e.areas.opening
-                            }
-                        })
-                })
-                .and_then(|q| Areas::coverage(q).ok()),
-        );
-        self.document.visit.canvas.pick_drag = None;
-    }
-
-    pub(super) fn browse_analysis_review(&mut self, id: SourceId, cx: &UiContext<'_, Self>) {
-        if self.document.analysis_review().is_none() || self.analysis_fitting() {
+    pub(super) fn confirm_analysis_review(
+        &mut self,
+        editor: &mut Editor,
+        _cx: &UiContext<'_, Editor>,
+    ) {
+        if editor.busy || editor.document.visit.canvas.ready.is_none() || self.fitting() {
             return;
         }
-        let Some(index) = self
-            .document
-            .project
-            .order
-            .iter()
-            .position(|candidate| *candidate == id)
-        else {
-            return;
-        };
-        let path = self.document.source_path(id).expect("review source");
-        self.stash_review_region();
-        if self
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .is_none_or(|ready| ready.path != path)
-        {
-            self.load_source(path, false, cx);
-        }
-        self.document.selected = index;
-        self.document.visit.picking.display = Some(analysis::AREA_DISPLAY);
-        self.document.source = true;
-        self.refresh_review_region();
-    }
-
-    pub(super) fn end_analysis_review(&mut self, _cx: &UiContext<'_, Self>) {
-        self.close_analysis();
-    }
-
-    pub(super) fn close_analysis(&mut self) {
-        self.cancel_legacy_picker();
-        self.document.set_analysis_operation(None);
-    }
-
-    pub(super) fn confirm_analysis_review(&mut self, _cx: &UiContext<'_, Self>) {
-        if self.busy || self.document.visit.canvas.ready.is_none() || self.analysis_fitting() {
-            return;
-        }
-        self.stash_review_region();
-        self.sync_document();
-        let Some(review) = &self.document.analysis_review() else {
+        editor.sync_document();
+        let Some(review) = &self.review.as_ref() else {
             return;
         };
         if let Err(error) = verify_areas(&review.document, Some(&review.approved)) {
-            self.status = format!("Cannot analyze: {error}. Grade unchanged.");
+            editor.status = format!("Cannot analyze: {error}. Grade unchanged.");
             return;
         }
-        self.submit_analysis_review(review.approved.clone());
+        self.submit_analysis_review(editor, review.approved.clone());
     }
 
     pub(super) fn review_area_at(
         &self,
+        editor: &Editor,
         geometry: crate::viewport::CanvasLayout,
         point: egui::Pos2,
     ) -> Option<bool> {
-        let review = self.document.analysis_review()?;
-        let areas = self.review_areas(self.document.visit.current_source?)?;
+        let review = self.review.as_ref()?;
+        let areas = self.review_areas(editor.document.visit.current_source?)?;
         for (picture, quad) in [(false, areas.opening), (true, areas.picture)] {
             if let Some(quad) = quad
                 && let Ok(coverage) = Areas::coverage(quad)
@@ -323,31 +319,29 @@ impl Editor {
 
     pub(super) fn select_review_area(
         &mut self,
+        editor: &mut Editor,
         geometry: crate::viewport::CanvasLayout,
         point: egui::Pos2,
     ) {
-        self.stash_review_region();
-        if let Some(picture) = self.review_area_at(geometry, point)
-            && self
-                .document
-                .analysis_review()
-                .is_some_and(|r| r.picture != picture)
+        if let Some(picture) = self.review_area_at(editor, geometry, point)
+            && self.review.as_ref().is_some_and(|r| r.picture != picture)
         {
-            self.document.analysis_review_mut().unwrap().picture = picture;
-            self.refresh_review_region();
+            self.review.as_mut().unwrap().picture = picture;
+            self.drag = None;
         }
     }
 
     pub(super) fn paint_review_areas(
         &self,
+        editor: &Editor,
         ui: &egui::Ui,
         geometry: crate::viewport::CanvasLayout,
         canvas: egui::Rect,
     ) {
-        let Some(review) = &self.document.analysis_review() else {
+        let Some(review) = &self.review.as_ref() else {
             return;
         };
-        let other = self
+        let other = editor
             .document
             .visit
             .current_source
@@ -355,7 +349,7 @@ impl Editor {
             .and_then(|a| if review.picture { a.opening } else { a.picture })
             .and_then(|q| Areas::coverage(q).ok());
         let painter = ui.painter().with_clip_rect(canvas);
-        if let Some(material) = self
+        if let Some(material) = editor
             .document
             .visit
             .current_source
@@ -403,7 +397,17 @@ impl Editor {
                 }
             }
         }
-        for (coverage, active) in [(other, false), (self.legacy_pick_region(), true)] {
+        for (coverage, active) in [
+            (other, false),
+            (
+                editor
+                    .document
+                    .visit
+                    .current_source
+                    .and_then(|id| self.selected_region(id)),
+                true,
+            ),
+        ] {
             let Some(coverage) = coverage else {
                 continue;
             };
