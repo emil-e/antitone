@@ -22,7 +22,7 @@ pub(super) struct PhotoScope {
     pub calibration_action: Option<async_executor::Task<()>>,
     pub white_balance_action: Option<async_executor::Task<()>>,
     pub current_source: Option<super::SourceId>,
-    pub source: super::source_workflow::State,
+    pub source: super::source::State,
     pub working: super::working_view::State,
     pub adjustment_layers: super::AdjustmentLayerEditor,
 }

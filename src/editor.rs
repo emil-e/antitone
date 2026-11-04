@@ -105,7 +105,6 @@ mod photo_scope;
 mod photo_ui;
 mod picking;
 mod save;
-mod source_workflow;
 #[cfg(test)]
 use crate::export::Overwrite;
 mod roll_selection;
