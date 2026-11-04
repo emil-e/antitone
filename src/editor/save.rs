@@ -2,7 +2,8 @@
 mod tests;
 
 use super::{
-    Editor, FailureKind, Task, TaskRequest, UiContext, document::Document, document_services::Write,
+    Editor, FailureKind, Task, TaskRequest, UiContext,
+    document::{Document, Write},
 };
 
 #[derive(Default)]
