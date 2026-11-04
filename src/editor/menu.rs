@@ -72,7 +72,7 @@ impl Editor {
             self.menus.pending.insert(text, Action::Quit);
         } else {
             self.status =
-                "Finish the current operation or cancel the active tool before quitting".into();
+                "Finish or cancel the current operation or interaction before quitting".into();
         }
     }
 
@@ -85,7 +85,10 @@ impl Editor {
     }
 
     fn file_context_available(&self) -> bool {
-        !self.dust_search_pending() && !self.application_modal() && !self.tool_interacting()
+        !self.dust_search_pending()
+            && !self.application_modal()
+            && !self.tool_interacting()
+            && !self.document.visit.masks.editing()
     }
 
     fn application_modal(&self) -> bool {

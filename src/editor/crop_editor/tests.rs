@@ -20,10 +20,10 @@ impl DocumentScope {
     }
     pub(in crate::editor) fn set_crop_edit(&mut self, edit: Option<CropEdit>) {
         if let Some(edit) = edit {
-            self.tool.clear();
-            self.hosted_tool = tool::Slot::Empty;
-            self.visit.hosted_tool =
-                tool::Slot::Installed(Box::new(crop_editor::CropTool::from_edit(edit)));
+            self.set_hosted_tool(
+                tool::Placement::Photo,
+                Box::new(crop_editor::CropTool::from_edit(edit)),
+            );
         } else {
             self.clear_crop_edit();
         }

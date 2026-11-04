@@ -209,7 +209,7 @@ impl Editor {
                 ui.ctx().request_repaint();
             }
         }
-        if self.document.mask_edit().is_some()
+        if self.document.visit.masks.gesture().is_some()
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             self.finish_mask(false);
@@ -466,17 +466,9 @@ impl Editor {
         }
         let auto_crop = self.document.auto_crop_requested.take();
         if let Some(action) = actions.file {
-            if !self.masking() {
-                self.file_action(action, cx);
-            } else {
-                self.status = "Apply or cancel the mask before a file action".into();
-            }
+            self.file_action(action, cx);
         } else if actions.export {
-            if !self.masking() {
-                self.open_export_dialog();
-            } else {
-                self.status = "Apply or cancel the mask before exporting".into();
-            }
+            self.open_export_dialog();
         } else if let Some(action) = actions.menu {
             if self.menu_targets_text(action) {
                 // Fallback menu clicks arrive after text widgets have rendered.

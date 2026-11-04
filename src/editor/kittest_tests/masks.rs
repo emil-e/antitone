@@ -1,5 +1,6 @@
 use super::*;
 use crate::adjustment_layers::AdjustmentLayerCoverage;
+mod contextual;
 mod creation;
 mod radial;
 mod workflows;
@@ -174,7 +175,8 @@ fn selected_linear_handles_preview_commit_and_cancel_individual_gestures_through
             });
             let end = egui::pos2(layout.canvas.right() - 8., layout.canvas.bottom() - 12.);
             hold_drag(&mut harness, start, end);
-            harness.read(|editor| assert!(editor.document.mask_edit().unwrap().dragging()));
+            harness
+                .read(|editor| assert!(editor.document.visit.masks.gesture().unwrap().dragging()));
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
             let (preview, preview_end, original_end) = harness.read(|editor| {
                 let preview = editor
@@ -395,7 +397,7 @@ fn captured_masks_block_fit_zoom_and_middle_pan_until_release() {
             let end = start + egui::vec2(20., 15.);
             let viewport = h.read(|editor| editor.document.visit.canvas.viewport);
             hold_drag(&mut h, start, end);
-            h.read(|editor| assert!(editor.document.mask_edit().unwrap().dragging()));
+            h.read(|editor| assert!(editor.document.visit.masks.gesture().unwrap().dragging()));
             h.key_press(egui::Key::Z);
             h.step();
             h.event(egui::Event::Zoom(1.25));

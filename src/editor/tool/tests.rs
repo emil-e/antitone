@@ -391,12 +391,12 @@ fn document_analysis_and_photo_tool_installation_are_exclusive_in_both_direction
         .set_analysis_operation(Some(analysis::Operation::new(analysis::Phase::Review)));
     assert_eq!(dropped.get(), 1);
     assert!(editor.current_tool().unwrap().is::<AnalyzeTool>());
-    assert!(editor.document.tool.is_none());
+    assert!(editor.document.visit.masks.gesture().is_none());
     assert!(editor.activate_tool(
         Placement::Document,
         Box::new(Probe::new(&dropped, &actions))
     ));
-    assert!(editor.document.tool.is_none());
+    assert!(editor.document.visit.masks.gesture().is_none());
     assert!(editor.current_tool().is_some());
     assert_eq!(actions.get(), 0);
     editor.hosted_action(Action::Dismiss);

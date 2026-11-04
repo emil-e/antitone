@@ -153,6 +153,9 @@ impl Editor {
     }
 
     pub(super) fn select_adjustment_layer(&mut self, target: Target) {
+        if target != self.adjustment_layer_target() {
+            self.finish_mask(false);
+        }
         if self
             .document
             .visit
@@ -468,7 +471,7 @@ impl Editor {
     }
 
     pub(super) fn adjustment_layer_overlays_visible(&self) -> bool {
-        self.document.mask_edit().is_some()
+        self.document.visit.masks.gesture().is_some()
             || (!self.document.visit.adjustment_layers.panel_collapsed
                 && !self.document.visit.adjustment_layers.adjusting_values)
     }
@@ -748,7 +751,13 @@ impl Editor {
                 }
             });
         }
-        if let Some(error) = self.document.mask_edit().and_then(MaskEdit::error) {
+        if let Some(error) = self
+            .document
+            .visit
+            .masks
+            .gesture()
+            .and_then(MaskEdit::error)
+        {
             ui.weak(format!(
                 "Mask not accepted: {error}. Draw again or Escape to cancel."
             ));

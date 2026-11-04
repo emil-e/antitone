@@ -41,7 +41,6 @@ use document_scope::DocumentScope;
 mod editing;
 mod history;
 mod icons;
-mod legacy_tool;
 mod menu;
 mod preferences;
 mod presentation;

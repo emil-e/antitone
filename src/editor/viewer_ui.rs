@@ -167,15 +167,15 @@ impl Editor {
                         " · Look unavailable"
                     } else if self.document.visit.working_view.error.is_some() {
                         " · View unavailable"
-                    } else if self.document.visit.working_view.compare
+                    } else if self.comparing_original()
                         && self.active_canvas().grade.original.failed()
                     {
                         " · Reference unavailable"
-                    } else if self.document.visit.working_view.compare
+                    } else if self.comparing_original()
                         && self.document.visit.working_view.reference_ready()
                     {
                         " · Original reference"
-                    } else if self.document.visit.working_view.compare {
+                    } else if self.comparing_original() {
                         " · Preparing reference"
                     } else if self.document.visit.working_view.displayed.is_none() {
                         " · Acquiring view"

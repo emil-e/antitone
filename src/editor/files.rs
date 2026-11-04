@@ -132,8 +132,8 @@ impl Editor {
             self.status = "Wait for donor selection before changing or saving the document".into();
             return;
         }
-        if self.tool_interacting() {
-            self.status = "Finish the active tool before a file action".into();
+        if self.tool_interacting() || self.document.visit.masks.editing() {
+            self.status = "Finish the active interaction before a file action".into();
             return;
         }
         match action {

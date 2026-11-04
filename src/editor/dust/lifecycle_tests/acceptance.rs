@@ -510,7 +510,7 @@ fn retirement_drops_search_owner_without_borrowing_captured_edits() {
                         let accepted = e.effective_dust_repairs(source);
                         queue(e, [80, 80], cx);
                         assert!(e.current_tool().unwrap().is::<DustTool>());
-                        assert!(e.document.tool.is_none());
+                        assert!(e.document.visit.masks.gesture().is_none());
                         e.begin_dust_mask(Some(RepairId(1)));
                         e.document
                             .dust_mask_draft_mut()

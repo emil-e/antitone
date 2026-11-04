@@ -162,28 +162,6 @@ impl Slot {
     }
 }
 
-/// Legacy state can be inspected or retired, but installation shares the host's
-/// exclusive activation boundary rather than exposing a mutable Option.
-#[derive(Default)]
-pub(super) struct LegacySlot(Option<legacy_tool::Tool>);
-impl std::ops::Deref for LegacySlot {
-    type Target = Option<legacy_tool::Tool>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl LegacySlot {
-    pub fn as_mut(&mut self) -> Option<&mut legacy_tool::Tool> {
-        self.0.as_mut()
-    }
-    pub fn take(&mut self) -> Option<legacy_tool::Tool> {
-        self.0.take()
-    }
-    pub fn clear(&mut self) {
-        self.0 = None;
-    }
-}
-
 impl DocumentScope {
     fn hosted_slot_mut(&mut self, placement: Placement) -> &mut Slot {
         match placement {
@@ -197,12 +175,8 @@ impl DocumentScope {
     }
     pub(super) fn set_hosted_tool(&mut self, placement: Placement, tool: Box<dyn Tool>) {
         self.clear_hosted_tools();
-        self.tool.clear();
+        self.visit.masks.cancel();
         *self.hosted_slot_mut(placement) = Slot::Installed(tool);
-    }
-    pub(super) fn set_legacy_tool(&mut self, tool: legacy_tool::Tool) {
-        self.clear_hosted_tools();
-        self.tool.0 = Some(tool);
     }
     pub(super) fn clear_crop_edit(&mut self) {
         if self.visit.hosted_tool.is::<crop_editor::CropTool>() {
@@ -212,6 +186,14 @@ impl DocumentScope {
 }
 
 impl Editor {
+    pub(super) fn tool_activity(&self) -> Option<TaskRequest> {
+        self.hosted_tool_activity()
+    }
+
+    pub(super) fn tool_interacting(&self) -> bool {
+        self.has_hosted_tool()
+    }
+
     pub(super) fn tool_start_available(&self) -> bool {
         (!self.busy || self.tool_activity().is_some())
             && !self.document.gamma_pivot.pending()
@@ -235,17 +217,6 @@ impl Editor {
     pub(super) fn cancel_active_tool(&mut self) {
         if self.has_hosted_tool() {
             self.retire_hosted_tool();
-            return;
-        }
-        let activity = self.tool_activity();
-        match self.document.tool.as_ref() {
-            Some(legacy_tool::Tool::Mask(_)) => self.finish_mask(false),
-            None => {}
-        }
-        if let Some(activity) = activity
-            && self.tasks.finish(activity)
-        {
-            self.busy = self.document_pending.is_some();
         }
     }
 

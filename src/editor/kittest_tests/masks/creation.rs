@@ -23,7 +23,7 @@ fn creation_has_shared_drawer_and_viewer_identity_with_cancel_and_no_apply_step(
                 };
                 h.read(|editor| {
                     assert!(editor.creating_mask());
-                    assert!(editor.document.mask_edit().is_none());
+                    assert!(editor.document.visit.masks.gesture().is_none());
                     assert!(
                         editor
                             .current_tool()

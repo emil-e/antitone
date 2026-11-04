@@ -3,14 +3,14 @@ use super::{Editor, TaskRequest, WorkingView};
 #[cfg(test)]
 mod tests;
 
-/// Visit-owned images, readiness, picker projection and repair evaluation.
-/// Hosted photo interactions end with the visit; legacy ones retire before replacement.
+/// Visit-owned images, readiness, contextual mask editing and repair evaluation.
+/// Hosted photo interactions and unfinished mask gestures end with the visit.
 #[derive(Default)]
 pub(super) struct PhotoScope {
     pub view: u64,
     pub hosted_tool: super::tool::Slot,
     pub dust: super::dust::PhotoState,
-    pub masks: super::mask_editor::State,
+    pub masks: super::mask_editor::MaskEditor,
     pub working_view: WorkingView,
     pub canvas: super::canvas_view::CanvasView,
     pub pending_preview: Option<super::thumbnails::SelectedPreview>,
@@ -45,9 +45,6 @@ impl PhotoScope {
 impl Editor {
     pub(super) fn replace_photo_scope(&mut self, view: u64) {
         self.canvas_frame = Default::default();
-        if self.document.is_photo_bound() {
-            self.cancel_active_tool();
-        }
         let hosted_activity = self.document.visit.hosted_tool.activity(self);
         let activity = self.document.visit.activity();
         let layers = self.document.visit.adjustment_layers.selection_only();
