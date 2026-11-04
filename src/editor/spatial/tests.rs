@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod concurrency;
 mod consumers;
 
 const LIMIT: Duration = Duration::from_secs(30);
