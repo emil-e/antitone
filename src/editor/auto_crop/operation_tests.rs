@@ -1,6 +1,7 @@
 use super::*;
 use crate::application::test_support::{TestApplication, with_application};
 use crate::editor::crop_editor::tests::request_auto_crop;
+use futures_channel::oneshot;
 use std::time::Duration;
 
 const LIMIT: Duration = Duration::from_secs(5);
@@ -8,7 +9,7 @@ const LIMIT: Duration = Duration::from_secs(5);
 #[test]
 fn photo_proposal_state_is_not_redirected_to_supersession_and_releases_without_cycles() {
     for poll_before_retirement in [false, true] {
-        let (editor, _files) = super::super::tests::fixture();
+        let (editor, _files) = super::tests::fixture();
         let accepted = editor.document.state.project.clone();
         with_application(editor, |app| {
             let (reply, old) = app.enter(|editor, cx| {
@@ -94,7 +95,7 @@ fn request(app: &mut TestApplication<'_, Editor>) {
 
 #[test]
 fn a_one_photo_batch_reviews_the_explicit_photo_instead_of_seeding_manual_crop() {
-    let (mut editor, _files) = super::super::tests::fixture();
+    let (mut editor, _files) = super::tests::fixture();
     let current = editor.document.visit.current_source.unwrap();
     let photo = editor.document.project.order[1];
     assert_ne!(photo, current);
@@ -155,7 +156,7 @@ fn a_one_photo_batch_reviews_the_explicit_photo_instead_of_seeding_manual_crop()
 
 #[test]
 fn a_photo_proposal_only_seeds_its_own_existing_crop_without_accepting_an_edit() {
-    let (mut editor, _files) = super::super::tests::fixture();
+    let (mut editor, _files) = super::tests::fixture();
     editor.begin_crop();
     let current = editor.document.visit.current_source.unwrap();
     let other = editor.document.project.order[1];
@@ -186,7 +187,7 @@ fn a_photo_proposal_only_seeds_its_own_existing_crop_without_accepting_an_edit()
 
 #[test]
 fn apply_accepts_the_current_batch_atomically_and_ends_the_interaction() {
-    let (editor, _files) = super::super::tests::fixture();
+    let (editor, _files) = super::tests::fixture();
     let accepted = editor.document.state.project.clone();
     with_application(editor, |app| {
         request(app);
@@ -227,7 +228,7 @@ fn apply_accepts_the_current_batch_atomically_and_ends_the_interaction() {
 
 #[test]
 fn rejected_apply_keeps_the_review_without_history_and_a_valid_retry_can_accept() {
-    let (editor, _files) = super::super::tests::fixture();
+    let (editor, _files) = super::tests::fixture();
     with_application(editor, |app| {
         request(app);
         let (id, changed) = app.update(|editor| {
@@ -269,7 +270,7 @@ fn rejected_apply_keeps_the_review_without_history_and_a_valid_retry_can_accept(
 
 #[test]
 fn cancelling_the_waiting_review_retires_its_action_and_allows_another_complete_operation() {
-    let (editor, _files) = super::super::tests::fixture();
+    let (editor, _files) = super::tests::fixture();
     let accepted = editor.document.state.project.clone();
     with_application(editor, |app| {
         request(app);

@@ -910,7 +910,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             // Supply the chooser's path through the real admitted control action.
             app.enter(|e, cx| {
                 e.control_command(
-                    super::super::editing::Command::FlatEdit(path("bare-light.dng"), None),
+                    crate::editor::editing::Command::FlatEdit(path("bare-light.dng"), None),
                     cx,
                 )
             });
