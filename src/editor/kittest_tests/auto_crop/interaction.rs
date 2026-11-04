@@ -203,6 +203,7 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                 set_layout(&mut h, size, width);
                 stage(&mut h, "Roll");
                 let original = h.read(|e| e.document.state.project.clone());
+                let regions = h.read(|e| e.document.spatial.ready());
                 workflow::enter_numeric(&mut h, "Gamma", "0.73");
                 stage(&mut h, "Photo");
                 workflow::enter_numeric(&mut h, "Exposure", "1.25");
@@ -214,7 +215,6 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                 stage(&mut h, "Roll");
                 click_action(&mut h, "Auto-crop roll");
                 overlay::wait_context(&mut h);
-                let regions = h.read(|e| e.document.spatial.ready());
                 h.read(|e| {
                     assert!(Arc::ptr_eq(&regions, &e.document.spatial.ready()));
                     assert_eq!(e.document.visit.adjustment_layer_settings.exposure, 1.25);
@@ -236,6 +236,10 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                 workflow::enter_numeric(&mut h, "Margin", "2");
                 h.step();
                 h.read(|e| {
+                    assert!(
+                        Arc::ptr_eq(&regions, &e.document.spatial.ready()),
+                        "margin editing must reuse shared metadata"
+                    );
                     let preview = e.document.thumbnails.preview();
                     assert_eq!(preview.compositions.len(), original.order.len());
                     for (id, framing) in &preview.compositions {
@@ -254,6 +258,10 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                 h.step();
                 h.step();
                 h.read(|e| {
+                    assert!(
+                        Arc::ptr_eq(&regions, &e.document.spatial.ready()),
+                        "acceptance/cancellation must preserve shared metadata"
+                    );
                     assert!(!e.has_hosted_tool());
                     assert!(
                         e.document.thumbnails.preview().compositions.is_empty(),

@@ -189,10 +189,7 @@ impl Editor {
         let capabilities = self.document.input.capabilities();
         let commands = !self.busy
             && self.document.visit.canvas.ready.is_some()
-            && !self.picking()
-            && !self.cropping()
-            && !self.masking()
-            && !reviewing
+            && !self.tool_interacting()
             && !self.document.confirming();
         let mut analyze = false;
 

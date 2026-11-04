@@ -27,6 +27,43 @@ fn control_state(h: &mut Harness<'_, Editor>, disabled: bool) {
     ] {
         stage(h, tab);
         if tab == "Roll" {
+            let orientation = h.read(|editor| editor.document.roll_orientation);
+            assert!(
+                !orientation.is_identity(),
+                "fixture must make Reset meaningful"
+            );
+            let before = h.read(|editor| editor.document.project.clone());
+            let history = h.read(|editor| editor.history_label(Direction::Undo));
+            for label in [
+                "Turn left",
+                "Turn right",
+                "Flip horizontal",
+                "Flip vertical",
+                "Reset scan orientation",
+            ] {
+                let command = h.get_by_role_and_label(Role::Button, label);
+                assert_eq!(
+                    command.accesskit_node().is_disabled(),
+                    disabled,
+                    "Roll shelf: {label}"
+                );
+                if disabled {
+                    command.click();
+                    h.step();
+                    h.step();
+                    h.read(|editor| {
+                        assert_eq!(
+                            editor.document.project, before,
+                            "blocked {label} must not change accepted settings"
+                        );
+                        assert_eq!(
+                            editor.history_label(Direction::Undo),
+                            history,
+                            "blocked {label} must not record history"
+                        );
+                    });
+                }
+            }
             let input_stage = h
                 .query_all_by_role(Role::ComboBox)
                 .find(|node| node.accesskit_node().value().as_deref() == Some("Negative"))
@@ -173,6 +210,9 @@ fn digital_texture_controls_wait_for_photo_tools_and_resume_after_retirement() {
 fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_controls_and_replacements()
  {
     tools::calibrated_harness(|mut h| {
+        stage(&mut h, "Roll");
+        click(&mut h, "Turn left");
+        h.read(|editor| assert!(!editor.document.roll_orientation.is_identity()));
         stage(&mut h, "Photo");
         click(&mut h, "Add linear");
         let image = h.read(|editor| editor.canvas_frame.layout.unwrap().0.image);
@@ -224,6 +264,24 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
             wait_for(&mut h, |editor| !editor.busy);
             h.read(|editor| assert!(editor.has_hosted_tool(), "{tool}: {}", editor.status));
             control_state(&mut h, true);
+            stage(&mut h, "Roll");
+            for replacement in ["Analyze", "Auto-crop roll"] {
+                assert!(
+                    !h.get_by_role_and_label(egui::accesskit::Role::Button, replacement)
+                        .accesskit_node()
+                        .is_disabled(),
+                    "{tool}: can replace with {replacement}"
+                );
+            }
+            if matches!(tool, "Dust repair" | "Auto-crop roll" | "Flat-field") {
+                save_capture(
+                    &h.render().unwrap(),
+                    &format!(
+                        "shared-roll-toolbar-{}",
+                        tool.replace(' ', "-").to_lowercase()
+                    ),
+                );
+            }
             stage(&mut h, "Photo");
             for replacement in ["Crop & straighten", "Dust repair", "Add radial"] {
                 h.get_by_role_and_label(egui::accesskit::Role::Button, replacement)
@@ -271,6 +329,9 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
             });
         }
         control_state(&mut h, false);
+        stage(&mut h, "Roll");
+        click(&mut h, "Reset scan orientation");
+        h.read(|editor| assert!(editor.document.roll_orientation.is_identity()));
         stage(&mut h, "Photo");
         workflow::enter_numeric(&mut h, "Exposure", "0.625");
         h.read(|editor| {

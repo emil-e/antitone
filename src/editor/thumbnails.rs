@@ -1020,7 +1020,9 @@ impl Editor {
             return parameters
                 .as_ref()
                 .map_err(Clone::clone)
-                .and_then(|parameters| PhotographRequest::inspection(*parameters).map_err(|error| error.to_string()));
+                .and_then(|parameters| {
+                    PhotographRequest::inspection(*parameters).map_err(|error| error.to_string())
+                });
         }
         if !self.input().ready() {
             return self
@@ -1040,16 +1042,18 @@ impl Editor {
 
     #[cfg(test)]
     fn thumbnail_parameters(&self, source: &Source) -> Result<AuthoredPhotograph, String> {
-        self.thumbnail_request(source)?.processing(
-            &self
-                .document
-                .visit
-                .working_view
-                .device()
-                .map(|device| device.limits())
-                .unwrap_or_default(),
-            &Default::default(),
-        ).map_err(|error| error.to_string())
+        self.thumbnail_request(source)?
+            .processing(
+                &self
+                    .document
+                    .visit
+                    .working_view
+                    .device()
+                    .map(|device| device.limits())
+                    .unwrap_or_default(),
+                &Default::default(),
+            )
+            .map_err(|error| error.to_string())
     }
 
     fn thumbnail_work_allowed(&self) -> bool {
