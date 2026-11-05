@@ -72,7 +72,7 @@ fn wait_gamma(h: &mut Harness<'_, Editor>) {
 }
 
 #[test]
-fn admitted_save_waits_for_gamma_and_overlapping_cold_source_preparation() {
+fn admitted_save_waits_for_gamma_but_not_independent_cold_source_preparation() {
     use std::sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -84,7 +84,7 @@ fn admitted_save_waits_for_gamma_and_overlapping_cold_source_preparation() {
     let destination = directory.path().join("deferred.antitone");
     tools::calibrated_harness(|mut h| {
         h.enter(|editor, cx| editor.add_raws(vec![second.clone()], cx));
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.get_by_label("patches.dng").click();
         h.step();
         wait_for(&mut h, |editor| {
@@ -102,7 +102,7 @@ fn admitted_save_waits_for_gamma_and_overlapping_cold_source_preparation() {
         h.get_by_label("Apply").click();
         h.step();
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document.visit.picker.display().is_none()
+            !editor.interaction_blocked() && editor.document.visit.picker.display().is_none()
         });
         h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
 
@@ -149,30 +149,34 @@ fn admitted_save_waits_for_gamma_and_overlapping_cold_source_preparation() {
         h.get_by_label("cold-source.dng").click();
         h.step();
         wait_for(&mut h, |_| entered.load(Ordering::Acquire));
-        h.read(|editor| assert!(editor.busy && editor.document.visit.canvas.ready.is_none()));
+        h.read(|editor| {
+            assert!(!editor.interaction_blocked() && editor.document.visit.canvas.ready.is_none())
+        });
         solve.run();
         wait_gamma(&mut h);
         h.run_steps(3);
         let accepted = h.read(|editor| {
             assert!(
-                editor.busy,
-                "source preparation must still be parked after gamma accepts"
+                editor.document.visit.source.pending(),
+                "source preparation is still parked after gamma accepts"
             );
             assert_eq!(editor.document.input.gamma(), 0.9);
             assert_ne!(editor.document.roll.wb, Balance::default());
-            assert_eq!(
-                editor.document.deferred_menu.front(),
-                Some(&crate::platform::menu::Action::Save)
-            );
+
             (editor.document.input, editor.document.roll)
         });
-        assert!(
-            !destination.exists(),
-            "Save must not dispatch through another operation"
-        );
+        wait_for(&mut h, |editor| {
+            destination.exists() && editor.document_pending.is_none()
+        });
+        h.read(|editor| {
+            assert!(
+                editor.document.visit.source.pending(),
+                "Save completes while independent source preparation stays parked"
+            )
+        });
         release.0.send(()).unwrap();
         wait_for(&mut h, |editor| {
-            destination.exists() && !editor.busy && !editor.document.dirty()
+            destination.exists() && !editor.interaction_blocked() && !editor.document.dirty()
         });
         let saved = crate::project::Project::load(&destination).unwrap();
         assert_eq!((saved.input, saved.roll), accepted);
@@ -187,7 +191,7 @@ fn a_committed_gamma_solve_survives_browsing_tabs_and_hidden_controls() {
     std::fs::copy(fixture("illuminated-patches.dng"), &second).unwrap();
     tools::calibrated_harness(|mut h| {
         h.enter(|editor, cx| editor.add_raws(vec![second.clone()], cx));
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.get_by_label("patches.dng").click();
         h.step();
         wait_for(&mut h, |editor| {
@@ -216,7 +220,7 @@ fn a_committed_gamma_solve_survives_browsing_tabs_and_hidden_controls() {
         h.get_by_label("Apply").click();
         h.step();
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document.visit.picker.display().is_none()
+            !editor.interaction_blocked() && editor.document.visit.picker.display().is_none()
         });
         h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
         let mut captured = h.read(|editor| crate::editor::picking::capture_scan(editor).unwrap());
@@ -322,7 +326,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
         h.get_by_label("Apply").click();
         h.step();
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document.visit.picker.display().is_none()
+            !editor.interaction_blocked() && editor.document.visit.picker.display().is_none()
         });
         h.read(|editor| {
             assert!(editor.document.gamma_pivot.locked(), "{}", editor.status);
@@ -356,7 +360,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
         solve.run();
         wait_gamma(&mut h);
         wait_for(&mut h, |editor| {
-            path.exists() && !editor.busy && !editor.document.dirty()
+            path.exists() && !editor.interaction_blocked() && !editor.document.dirty()
         });
         let saved = crate::project::Project::load(&path).unwrap();
         h.read(|editor| {
@@ -384,14 +388,14 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
         assert!((held_roll_colour(&h) - held).abs().max_element() < 1e-4);
         h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         h.step();
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.read(|editor| assert_eq!(editor.document.state.project, numeric));
         h.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::Z,
         );
         h.step();
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.read(|editor| assert_eq!(editor.document.state.project, wheel));
 
         h.get_by_label("White balance wheel").scroll_to_me();
@@ -442,7 +446,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
         assert_eq!(saved.roll, reset.roll);
         open_project(&mut h, path);
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document_pending.is_none()
+            !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         h.read(|editor| {
             assert!(!editor.document.gamma_pivot.locked());

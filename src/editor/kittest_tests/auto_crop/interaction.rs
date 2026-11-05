@@ -82,7 +82,7 @@ fn batch_owns_its_global_drawer_blocks_grading_and_is_replaced_by_crop_at_both_l
 }
 
 #[test]
-fn preparation_keeps_footer_cancel_available_and_apply_waits_for_ready_proposals() {
+fn preparation_exposes_modal_cancellation_and_apply_waits_for_ready_proposals() {
     for cancel in [true, false] {
         for (size, width) in [
             (egui::vec2(1100., 800.), 315.),
@@ -113,7 +113,9 @@ fn preparation_keeps_footer_cancel_available_and_apply_waits_for_ready_proposals
                 h.step();
                 h.step();
                 h.read(|editor| {
-                    assert!(editor.busy && editor.document.spatial_preparing.is_some());
+                    assert!(
+                        editor.interaction_blocked() && editor.document.spatial_preparing.is_some()
+                    );
                     assert!(
                         editor.document.spatial_reply.is_none(),
                         "producer must capture the held reply rather than reuse ready metadata"
@@ -123,12 +125,18 @@ fn preparation_keeps_footer_cancel_available_and_apply_waits_for_ready_proposals
                             && !editor.document.auto_crop.reviewing()
                     );
                 });
+                h.update(|editor| editor.activities.elapse(Duration::from_secs(1)));
+                h.step();
+                h.step();
                 let identity = h.get_by_label("Active tool: Auto-crop · Working").rect();
                 assert!(h.ctx.content_rect().contains_rect(identity));
                 assert!(
-                    !h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
-                        .accesskit_node()
-                        .is_disabled()
+                    !h.get_by_role_and_label(
+                        egui::accesskit::Role::Button,
+                        "Cancel region preparation"
+                    )
+                    .accesskit_node()
+                    .is_disabled()
                 );
                 assert!(
                     h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
@@ -140,19 +148,27 @@ fn preparation_keeps_footer_cancel_available_and_apply_waits_for_ready_proposals
                     &format!("auto-crop-preparing-footer-{width}-offscreen"),
                 );
                 if cancel {
-                    h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
-                        .click();
+                    h.get_by_role_and_label(
+                        egui::accesskit::Role::Button,
+                        "Cancel region preparation",
+                    )
+                    .click();
                     h.step();
+                    wait_for(&mut h, |editor| {
+                        editor.document.spatial_preparing.is_none()
+                            && !editor.document.auto_crop.active()
+                    });
                     h.read(|editor| {
                         assert!(!editor.document.auto_crop.active());
                         assert!(
-                            editor.document.spatial_preparing.is_some(),
-                            "shared preparation outlives its consumer"
+                            editor.document.spatial_preparing.is_none(),
+                            "modal Cancel stops the producer"
                         );
                         assert_eq!(editor.document.state.project, before);
                     });
                 }
-                reply.send(Ok(Some((*metadata).clone()))).unwrap();
+                let sent = reply.send(Ok(Some((*metadata).clone())));
+                assert_eq!(sent.is_err(), cancel);
                 wait_for(&mut h, |editor| {
                     editor.document.spatial_preparing.is_none()
                         && (cancel || editor.document.auto_crop.reviewing())
@@ -175,6 +191,10 @@ fn preparation_keeps_footer_cancel_available_and_apply_waits_for_ready_proposals
                     h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply")
                         .click();
                     h.step();
+                    wait_for(&mut h, |editor| {
+                        editor.document.spatial_preparing.is_none()
+                            && !editor.document.auto_crop.active()
+                    });
                     h.read(|editor| {
                         assert!(!editor.document.auto_crop.active());
                         assert_ne!(
@@ -296,7 +316,9 @@ fn grading_and_filmstrip_previews_stay_independent_of_batch_acceptance() {
                 if accept {
                     h.update(|e| host::App::menu_action(e, crate::platform::menu::Action::Undo));
                     h.step();
-                    wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+                    wait_for(&mut h, |e| {
+                        !e.interaction_blocked() && e.document_pending.is_none()
+                    });
                     h.read(|e| assert_eq!(e.document.state.project, graded, "one history action undoes only crop acceptance, not independent grading"));
                 }
             });

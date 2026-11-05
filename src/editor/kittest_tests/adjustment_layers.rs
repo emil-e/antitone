@@ -629,7 +629,7 @@ fn source_switch_cancels_hidden_text_without_applying_it_to_another_photo() {
         harness.get_by_label("patches.dng").click();
         harness.step();
         wait_for(&mut harness, |editor| {
-            editor.document.visit.current_source == Some(other) && !editor.busy
+            editor.document.visit.current_source == Some(other) && !editor.interaction_blocked()
         });
         harness.read(|editor| {
             assert_eq!(

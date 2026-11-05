@@ -74,7 +74,7 @@ fn an_unlisted_caller_awaits_the_whole_interaction_and_receives_its_own_value_ty
                 editor.test_pick().unwrap().label,
                 "Custom camera statistics"
             );
-            assert!(!editor.busy && !editor.measurement_pending());
+            assert!(!editor.interaction_blocked() && !editor.measurement_pending());
             assert_eq!(editor.document.state.project, before);
         });
         app.pump();
@@ -93,7 +93,7 @@ fn an_unlisted_caller_awaits_the_whole_interaction_and_receives_its_own_value_ty
         assert!(called.load(Ordering::Relaxed));
         assert_eq!(consumed_area.get(), Some(768));
         app.read(|editor| {
-            assert!(editor.test_pick().is_none() && !editor.busy);
+            assert!(editor.test_pick().is_none() && !editor.interaction_blocked());
             assert_eq!(editor.document.state.project, before);
         });
     });
@@ -125,8 +125,8 @@ fn the_picker_completes_measurement_without_polling_its_callers_result_future() 
         assert!(called.load(Ordering::Relaxed));
         assert_eq!(pollster::block_on(value), Some(42));
         app.read(|editor| {
-            assert!(!editor.busy);
-            assert!(editor.tasks.view().is_none());
+            assert!(!editor.interaction_blocked());
+            assert!(editor.activities.view().is_none());
         });
     });
 }
@@ -149,14 +149,14 @@ fn dropping_the_unpolled_result_after_submission_does_not_admit_measurement() {
             );
             editor.set_test_pick_region(Some(region(editor)));
             editor.hosted_action(crate::editor::tool::Action::Primary);
-            assert!(editor.busy);
+            assert!(editor.interaction_blocked());
             drop(value);
         });
         app.pump();
         assert!(!called.load(Ordering::Relaxed));
         app.read(|editor| {
-            assert!(!editor.test_picker_active() && !editor.busy);
-            assert!(editor.tasks.view().is_none());
+            assert!(!editor.test_picker_active() && !editor.interaction_blocked());
+            assert!(editor.activities.view().is_none());
         });
     });
 }
@@ -182,6 +182,8 @@ fn replacing_running_work_retires_picker_observation_without_losing_physical_inp
             value
         });
         let call = gate.next(app);
+        app.update(Editor::end_tool);
+        app.pump();
         app.update(|editor| {
             editor.begin_crop();
             editor.document.visit.canvas.ready = None;
@@ -205,7 +207,7 @@ fn replacing_running_work_retires_picker_observation_without_losing_physical_inp
         }
         app.read(|editor| {
             assert!(editor.cropping());
-            assert!(!editor.busy && editor.tasks.view().is_none());
+            assert!(!editor.interaction_blocked() && editor.activities.view().is_none());
             assert_eq!(editor.document.state.project, before);
         });
     });
@@ -241,7 +243,7 @@ fn replacing_an_unpolled_request_cannot_reopen_it_over_the_successor() {
             assert!(editor.cropping());
             assert!(!editor.test_picker_active());
             assert!(editor.test_pick().is_none());
-            assert!(!editor.busy);
+            assert!(!editor.interaction_blocked());
             assert_eq!(editor.document.state.project, before);
         });
     });
@@ -261,7 +263,7 @@ fn discarding_an_unpolled_pick_inside_a_state_transaction_safely_withdraws_it() 
             drop(value);
         });
         app.pump();
-        assert!(app.read(|editor| editor.test_pick().is_none() && !editor.busy));
+        assert!(app.read(|editor| editor.test_pick().is_none() && !editor.interaction_blocked()));
     });
 }
 
@@ -283,7 +285,7 @@ fn dropping_a_polled_pick_inside_a_state_transaction_defers_its_ui_cleanup() {
         assert!(app.read(|editor| editor.test_pick().is_some()));
         app.update(|_| drop(value));
         app.pump();
-        assert!(app.read(|editor| editor.test_pick().is_none() && !editor.busy));
+        assert!(app.read(|editor| editor.test_pick().is_none() && !editor.interaction_blocked()));
     });
 }
 
@@ -328,8 +330,8 @@ fn dropping_the_caller_during_measurement_withdraws_ui_but_retains_running_input
         assert!(source.upgrade().is_some());
         assert!(!resumed.get());
         app.read(|editor| {
-            assert!(editor.test_pick().is_none() && !editor.busy);
-            assert!(editor.tasks.view().is_none());
+            assert!(editor.test_pick().is_none() && !editor.interaction_blocked());
+            assert!(editor.activities.view().is_none());
             assert_eq!(editor.document.state.project, before);
         });
         call.run();
@@ -344,7 +346,7 @@ fn dropping_the_caller_during_measurement_withdraws_ui_but_retains_running_input
         }
         assert!(!resumed.get());
         app.read(|editor| {
-            assert!(editor.test_pick().is_none() && !editor.busy);
+            assert!(editor.test_pick().is_none() && !editor.interaction_blocked());
             assert_eq!(editor.document.state.project, before);
         });
     });
@@ -373,7 +375,7 @@ fn cancelling_selection_resumes_the_caller_without_a_value_or_running_measuremen
         app.run_until(Duration::from_secs(5), |_| task.is_finished());
         assert_eq!(pollster::block_on(task), None);
         assert!(!called.load(Ordering::Relaxed));
-        assert!(app.read(|editor| editor.test_pick().is_none() && !editor.busy));
+        assert!(app.read(|editor| editor.test_pick().is_none() && !editor.interaction_blocked()));
     });
 }
 
@@ -400,8 +402,8 @@ fn measurement_failures_are_presented_and_the_caller_only_needs_to_handle_no_val
         assert_eq!(pollster::block_on(task), None);
         app.read(|editor| {
             assert!(editor.status.contains("declared measurement failure"));
-            assert!(editor.test_pick().is_none() && !editor.busy);
-            assert!(editor.tasks.view().is_none());
+            assert!(editor.test_pick().is_none() && !editor.interaction_blocked());
+            assert!(editor.activities.view().is_none());
             assert_eq!(editor.document.state.project, before);
         });
     });
@@ -434,7 +436,7 @@ fn dropping_an_unpolled_caller_withdraws_the_interaction_without_resuming_it() {
         drop(task);
         app.pump();
         assert!(!resumed.get() && !called.load(Ordering::Relaxed));
-        assert!(app.read(|editor| editor.test_pick().is_none() && !editor.busy));
+        assert!(app.read(|editor| editor.test_pick().is_none() && !editor.interaction_blocked()));
     });
 }
 
@@ -531,7 +533,7 @@ fn a_worker_panic_yields_no_value_and_does_not_strand_the_interaction() {
         assert_eq!(pollster::block_on(task), None);
         app.read(|editor| {
             assert!(editor.status.contains("panicked"));
-            assert!(editor.test_pick().is_none() && !editor.busy);
+            assert!(editor.test_pick().is_none() && !editor.interaction_blocked());
         });
     });
 }

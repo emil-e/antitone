@@ -1,8 +1,8 @@
 //! Explicit source acquisition and preparation. Each consumer leases immutable
 //! development and carries its own correction; no selected-source slot is needed.
 use super::{
-    AdjustmentLayerEditor, Correction, Editor, Ready, SelectionTiming, Task, TaskRequest,
-    UiContext, document, source_loading, thumbnails,
+    ActivityOptions, AdjustmentLayerEditor, Correction, Editor, Ready, SelectionTiming, UiContext,
+    document, source_loading, thumbnails,
 };
 use crate::{
     Error,
@@ -26,6 +26,58 @@ pub(super) struct Context {
 }
 
 impl Editor {
+    pub(super) fn selected_area(&self) -> Option<crate::raw::Rect> {
+        self.document
+            .visit
+            .current_source
+            .and_then(|id| self.document.project.source(id).ok())
+            .map(|source| source.development.active_area.into())
+            .or_else(|| {
+                self.document
+                    .visit
+                    .canvas
+                    .ready
+                    .as_ref()
+                    .map(|ready| ready.area)
+            })
+    }
+
+    pub(super) fn capture_source_context(
+        &self,
+    ) -> Result<impl Future<Output = Result<Context, String>> + use<>, String> {
+        let ready = self.source_context();
+        let request = if ready.is_none() {
+            let id = self
+                .document
+                .visit
+                .current_source
+                .ok_or("No selected photo")?;
+            let path = self
+                .document
+                .source_path(id)
+                .map_err(|error| error.to_string())?;
+            let services = self
+                .source_services
+                .clone()
+                .ok_or("Source services unavailable")?;
+            Some((services, self.source_input(path)))
+        } else {
+            None
+        };
+
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
+        // Keep acquisition state off callers' stacks, including the already-ready fast path.
+        Ok(Box::pin(async move {
+            let _retire = retire;
+            if let Some(ready) = ready {
+                return Ok(ready);
+            }
+            let (services, request) = request.expect("captured selected source");
+            services.acquire(request, cancelled).await
+        }))
+    }
+
     pub(super) fn source_provider(&self) -> Option<Arc<dyn crate::source::SourceProvider>> {
         self.source_services
             .as_ref()
@@ -424,6 +476,7 @@ impl Developed {
 pub(super) struct State {
     task: Option<async_executor::Task<()>>,
     completion: Option<Result<Box<Ready>, String>>,
+
     pub key: Option<SourceKey>,
 }
 
@@ -532,9 +585,11 @@ impl Editor {
         self.document.visit.canvas.selection_timing =
             selecting_photo.then(|| Arc::new(SelectionTiming::new(self.id, started)));
         self.document.source = !self.document.input.ready();
-        self.busy = true;
         self.status = "Developing full-resolution RAW…".into();
-        self.tasks.begin(Task::Photo(self.id));
+
+        let activity = self
+            .activities
+            .start(ActivityOptions::new("Loading photo…"));
         let request = self.source_input(path);
         self.document.visit.source.key = request.expected.as_ref().and_then(|source| {
             SourceKey::from_revision(&request.path, request.file.clone(), &source.development)
@@ -549,6 +604,7 @@ impl Editor {
                 Some(services) => services.prepare(request, cancelled).await.map(Box::new),
                 None => Err("Source services unavailable".into()),
             };
+            drop(activity);
             cx.update(|editor| editor.source_result(view, result));
         }) else {
             self.source_result(view, Err("Application stopped".into()));
@@ -605,7 +661,7 @@ impl Editor {
         };
         let view = self.document.visit.view;
         self.document.visit.source = State::default();
-        self.tasks.finish(TaskRequest::Photo(view));
+
         if result.is_err() {
             self.document.visit.pending_preview = None;
         }
@@ -618,7 +674,7 @@ impl Editor {
                 "selected_switch"
             );
         }
-        self.busy = false;
+
         match result {
             Ok(ready) => {
                 log::info!(
@@ -685,9 +741,5 @@ impl Editor {
     // during preparation becomes usable without another load or another paint.
     pub(super) fn resume_source_after_document(&mut self) {
         self.resume_source_completion();
-        if self.document.visit.source.pending() {
-            self.busy = true;
-            self.tasks.begin(Task::Photo(self.document.visit.view));
-        }
     }
 }

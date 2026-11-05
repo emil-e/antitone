@@ -66,7 +66,9 @@ fn opening_without_saved_exposure_is_independent_of_the_previous_documents_refer
         with_application(editor(loader.clone()), |app| {
             for path in paths {
                 app.enter(|e, cx| e.start_document(Preparation::Open(path.clone()), cx));
-                app.run_until(Duration::from_secs(15), |e| !e.busy);
+                app.run_until(Duration::from_secs(15), |e| {
+                    !e.interaction_blocked() && !e.document.visit.source.pending()
+                });
                 app.read(|e| {
                     let ready = e
                         .document
@@ -130,7 +132,9 @@ fn reopening_keeps_the_recorded_baseline_when_legacy_fingerprints_differ() {
     let loader = source_loading::SourceLoader::new();
     with_application(editor(loader.clone()), |app| {
         app.enter(|e, cx| e.start_document(Preparation::Open(project), cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         app.read(|e| {
             assert_eq!(
                 e.document
@@ -251,7 +255,9 @@ fn history_restoration_checks_known_offscreen_normalization_in_the_target_projec
     editor.record_edit(target.project.clone(), "Remove photo", None);
     with_application(editor, |app| {
         app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         app.read(|e| {
             assert_eq!(
                 e.document.state.project, removed,
@@ -278,11 +284,15 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
     with_application(editor, |app| {
         for path in [first.path(), removed.path()] {
             app.enter(|e, cx| e.add_raws(vec![path.to_owned()], cx));
-            app.run_until(Duration::from_secs(15), |e| !e.busy);
+            app.run_until(Duration::from_secs(15), |e| {
+                !e.interaction_blocked() && !e.document.visit.source.pending()
+            });
         }
         let removed_id = app.read(|e| e.document.state.project.order[1]);
         app.enter(|e, cx| e.load(removed.path().to_owned(), cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         app.read(|e| {
             assert!(
                 (e.document
@@ -301,10 +311,14 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
             )
         });
         app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         app.read(|e| assert_eq!(e.document.state.project.order.len(), 1));
         app.enter(|e, cx| e.add_raws(vec![replacement.path().to_owned()], cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         app.read(|e| {
             assert_eq!(
                 e.document.state.project.order[1], removed_id,
@@ -312,7 +326,9 @@ fn undoing_an_import_then_adding_another_photo_does_not_reuse_the_removed_baseli
             )
         });
         app.enter(|e, cx| e.load(replacement.path().to_owned(), cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         app.read(|e| {
             assert!(
                 (e.document

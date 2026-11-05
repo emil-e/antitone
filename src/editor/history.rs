@@ -241,7 +241,7 @@ impl Editor {
     }
 
     pub(super) fn history_available(&self) -> bool {
-        !self.busy
+        !self.interaction_blocked()
             && !self.document.gamma_pivot.pending()
             && self.failure.is_none()
             && self.menus.panel.is_none()

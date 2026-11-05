@@ -60,20 +60,20 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
             editor.save_project(path.clone(), crate::project::Save::New, None, cx)
         });
         wait_for(&mut harness, |editor| {
-            !editor.busy && editor.document_pending.is_none()
+            !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
         let saved = harness.read(|editor| editor.document.state.project.clone());
         assert_eq!(crate::project::Project::load(&path).unwrap(), saved);
         harness.enter(|editor, cx| editor.start_document(Preparation::Open(path), cx));
         wait_for(&mut harness, |editor| {
-            !editor.busy && editor.document_pending.is_none()
+            !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         harness
             .read(|editor| assert_eq!(editor.document.state.project, saved, "{}", editor.status));
         harness.get_by_label("working-photo.dng").click();
         harness.step();
-        wait_for(&mut harness, |editor| !editor.busy);
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(selected)));
         harness.read(|editor| {
             assert_eq!(
@@ -89,10 +89,10 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
         });
         harness.get_by_label("patches.dng").click();
         harness.step();
-        wait_for(&mut harness, |editor| !editor.busy);
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         harness.get_by_label("working-photo.dng").click();
         harness.step();
-        wait_for(&mut harness, |editor| !editor.busy);
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         harness.read(|editor| {
             assert_eq!(
                 editor.adjustment_layer_target(),
@@ -135,7 +135,7 @@ fn gradient_layers_then_global_finish_survive_save_open_source_return_and_gpu_ex
                 )
             });
             wait_for(&mut harness, |editor| {
-                !editor.busy && editor.document.export.operation.is_none()
+                !editor.interaction_blocked() && editor.document.export.operation.is_none()
             });
             harness.read(|editor| assert!(destination.exists(), "{}", editor.status));
             match format {

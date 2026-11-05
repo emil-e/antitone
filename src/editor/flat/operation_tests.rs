@@ -53,7 +53,7 @@ fn apply(app: &TestApplication<'_, Editor>) {
 }
 
 fn wait(app: &mut TestApplication<'_, Editor>) {
-    app.run_until(Duration::from_secs(20), |e| !e.busy);
+    app.run_until(Duration::from_secs(20), |e| !e.interaction_blocked());
 }
 
 fn import(app: &mut TestApplication<'_, Editor>) {
@@ -170,7 +170,7 @@ fn accepted_correction_outlives_tool_dismissal_before_and_after_its_first_poll()
                     editor.document.flat_edit().is_none(),
                     "Apply ends selection synchronously"
                 );
-                assert!(editor.busy);
+                assert!(editor.interaction_blocked());
                 assert_eq!(editor.document.project, before);
                 assert!(editor.document.correction.is_none());
                 editor.document_pending.unwrap()
@@ -181,7 +181,7 @@ fn accepted_correction_outlives_tool_dismissal_before_and_after_its_first_poll()
             app.update(Editor::finish_flat_edit);
             app.read(|editor| {
                 assert_eq!(editor.document_pending, Some(request));
-                assert!(editor.busy);
+                assert!(editor.interaction_blocked());
                 assert_eq!(editor.document.project, before);
             });
             drop(hold);
@@ -224,7 +224,7 @@ fn retiring_preparation_or_replacing_accepted_work_cannot_publish_into_a_success
             app.pump();
             app.read(|e| {
                 assert_eq!(e.document.state.project, before);
-                assert_eq!(e.busy, accept);
+                assert_eq!(e.interaction_blocked(), accept);
                 assert_eq!(e.document_pending.is_some(), accept);
                 assert!(e.document.flat_edit().is_none());
             });
@@ -340,6 +340,7 @@ fn departed_reference_waiter_can_join_running_unpack_without_stale_publication()
             std::thread::sleep(Duration::from_millis(1));
         }
         app.update(Editor::finish_flat_edit);
+        app.pump();
         begin(app, "bare-light.dng");
         app.pump();
         assert_eq!(count.load(Ordering::Relaxed), 1);
@@ -420,14 +421,14 @@ fn accepted_correction_completes_after_the_display_visit_retires() {
             e.replace_photo_scope(e.id);
             e.finish_flat_edit();
             assert_eq!(e.document_pending, Some(accepted_request));
-            assert!(e.busy && !e.has_hosted_tool());
+            assert!(e.interaction_blocked() && !e.has_hosted_tool());
             assert_eq!(e.document.project, before);
         });
         drop(hold);
         wait(app);
         app.read(|e| {
             assert!(e.document.flat_edit().is_none() && e.document_pending.is_none());
-            assert!(!e.busy && e.tasks.view().is_none());
+            assert!(!e.interaction_blocked() && e.activities.view().is_none());
             assert!(e.document.correction.is_some(), "{}", e.status);
             assert_eq!(e.document.state.project.order, before.order);
             assert_eq!(e.document.state.project.dmin(), before.dmin());
@@ -476,7 +477,7 @@ fn reference_failure_after_a_visit_change_finishes_its_own_preparation_activity(
         });
         wait(app);
         app.read(|e| {
-            assert!(e.document.flat_edit().is_none() && e.tasks.view().is_none());
+            assert!(e.document.flat_edit().is_none() && e.activities.view().is_none());
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
@@ -631,10 +632,12 @@ fn missing_reference_services_finish_activity_and_preserve_accepted_state() {
     with_application(e, |app| {
         let before = app.update(|e| e.history_snapshot());
         begin(app, "bare-light.dng");
-        assert!(app.read(|e| e.busy && e.document.flat_edit().unwrap().task.is_some()));
+        assert!(
+            app.read(|e| e.interaction_blocked() && e.document.flat_edit().unwrap().task.is_some())
+        );
         wait(app);
         app.read(|e| {
-            assert!(!e.busy && e.tasks.view().is_none());
+            assert!(!e.interaction_blocked() && e.activities.view().is_none());
             assert!(e.document.flat_edit().is_none());
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
@@ -671,12 +674,16 @@ fn ending_setup_while_waiting_for_support_leaves_the_working_view_and_allows_a_n
         wait(app);
         app.update(|e| {
             assert!(e.document.flat_edit().unwrap().view.ready.is_some());
-            assert!(!e.busy && e.document_pending.is_none());
+            assert!(!e.interaction_blocked() && e.document_pending.is_none());
             e.finish_flat_edit();
         });
         app.pump();
         app.read(|e| {
-            assert!(e.document.flat_edit().is_none() && !e.busy && e.tasks.view().is_none());
+            assert!(
+                e.document.flat_edit().is_none()
+                    && !e.interaction_blocked()
+                    && e.activities.view().is_none()
+            );
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert_eq!(e.document.source, source);
@@ -713,7 +720,7 @@ fn retired_setup_cleanup_does_not_end_a_new_reference_interaction() {
                 .flat_edit()
                 .expect("replacement setup remains active");
             assert!(edit.view.ready.is_some());
-            assert!(!e.busy && e.document_pending.is_none());
+            assert!(!e.interaction_blocked() && e.document_pending.is_none());
             assert!(e.test_pick_region().is_some());
             assert_eq!(e.document.state.project, before);
         });
@@ -934,7 +941,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                     .is_disabled()
             );
             frame(app, &context, key(egui::Key::Enter));
-            assert!(!app.read(|e| e.busy));
+            assert!(!app.read(|e| e.interaction_blocked()));
             app.update(|e| e.set_test_pick_region(Some(region)));
             if enter {
                 frame(app, &context, key(egui::Key::Enter));
@@ -942,7 +949,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 click(app, &context, "Apply");
             }
             app.read(|e| {
-                assert!(e.busy && e.document_pending.is_some());
+                assert!(e.interaction_blocked() && e.document_pending.is_some());
                 assert!(!e.has_hosted_tool() && e.document.flat_edit().is_none());
                 assert_eq!(e.document.state.project, before);
             });
@@ -960,7 +967,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
             );
             frame(app, &context, key(egui::Key::Escape));
             assert!(app.read(|e| e.document.flat_edit().is_none()
-                && e.busy
+                && e.interaction_blocked()
                 && e.document_pending.is_some()));
             // The document operation completes without another UI frame.
             wait(app);
@@ -996,7 +1003,7 @@ fn reference_button_and_enter_accept_and_return_without_post_draw_launchers_or_a
                 click(app, &context, "Cancel");
             }
             app.read(|e| {
-                assert!(e.document.flat_edit().is_none() && !e.busy);
+                assert!(e.document.flat_edit().is_none() && !e.interaction_blocked());
                 assert_eq!(e.document.state.project, accepted);
                 assert_eq!(e.document.visit.current_source, selected);
                 assert_eq!(e.document.visit.canvas.viewport, viewport);
@@ -1039,7 +1046,9 @@ fn unpolled_preparation_can_be_retired_and_closed_execution_rejects_new_work() {
             wait(app);
             app.read(|e| {
                 assert!(
-                    e.document.flat_edit().is_none() && !e.busy && e.document_pending.is_none()
+                    e.document.flat_edit().is_none()
+                        && !e.interaction_blocked()
+                        && e.document_pending.is_none()
                 );
                 assert_eq!(e.document.state.project, before);
             });
@@ -1055,7 +1064,9 @@ fn unpolled_preparation_can_be_retired_and_closed_execution_rejects_new_work() {
             }
             app.read(|e| {
                 assert!(
-                    e.document.flat_edit().is_none() && !e.busy && e.document_pending.is_none()
+                    e.document.flat_edit().is_none()
+                        && !e.interaction_blocked()
+                        && e.document_pending.is_none()
                 );
                 assert_eq!(e.document.state.project, before);
                 assert_eq!(

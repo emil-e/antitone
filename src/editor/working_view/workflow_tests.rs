@@ -989,7 +989,7 @@ fn save_completion_readmits_existing_working_demand_without_another_paint() {
         });
         app.read(|e| {
             assert!(e.document.visit.working_view.source().unwrap().spec == spec);
-            assert!(e.document.visit.working.task.is_none() && !e.busy);
+            assert!(e.document.visit.working.task.is_none() && !e.interaction_blocked());
             assert!(e.failure.is_none(), "{}", e.status);
         });
         assert!(path.is_file());
@@ -1016,7 +1016,7 @@ fn guarded_save_close_does_not_readmit_waiting_working_demand() {
         app.run_until(Duration::from_secs(15), |e| e.allow_close);
         app.pump();
         app.read(|e| {
-            assert!(e.document_pending.is_none() && !e.busy);
+            assert!(e.document_pending.is_none() && !e.interaction_blocked());
             assert!(e.document.visit.working.task.is_none());
             assert!(
                 e.document.visit.working_view.source().is_none(),

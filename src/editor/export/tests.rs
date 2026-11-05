@@ -222,11 +222,11 @@ fn captured_export_completes_without_paint_without_rereading_live_document_data(
             });
             app.read(|editor| {
                 assert!(
-                    !editor.busy && editor.failure.is_none(),
+                    !editor.interaction_blocked() && editor.failure.is_none(),
                     "{}",
                     editor.status
                 );
-                assert!(editor.tasks.view().is_none());
+                assert!(editor.activities.view().is_none());
                 if replace_data {
                     assert!(editor.document.state.project.sources.is_empty());
                 } else {
@@ -257,7 +257,14 @@ fn replacing_the_export_owner_discards_old_output_and_publishes_the_captured_rep
         wait_for_submission(app, &starts);
         let (id, cancelled) = app.read(|editor| {
             (
-                editor.document.export.operation.as_ref().unwrap().activity,
+                editor
+                    .document
+                    .export
+                    .operation
+                    .as_ref()
+                    .unwrap()
+                    .activity
+                    .clone(),
                 editor
                     .document
                     .export
@@ -279,16 +286,17 @@ fn replacing_the_export_owner_discards_old_output_and_publishes_the_captured_rep
         app.pump();
         assert!(cancelled.is_cancelled());
         app.update(|editor| {
-            let current = editor.document.export.operation.as_ref().unwrap().activity;
+            let current = editor
+                .document
+                .export
+                .operation
+                .as_ref()
+                .unwrap()
+                .activity
+                .clone();
             assert_ne!(current, id);
-            editor.cancel_task(TaskRequest::Export(id));
-            editor.tasks.report(
-                TaskRequest::Export(id),
-                TaskProgress::Counted {
-                    completed: 9,
-                    total: 10,
-                },
-            );
+            id.request_cancel();
+            id.progress(9, 10);
             assert!(
                 !editor
                     .document
@@ -299,7 +307,7 @@ fn replacing_the_export_owner_discards_old_output_and_publishes_the_captured_rep
                     .cancelled
                     .is_cancelled()
             );
-            assert!(editor.tasks.is_current(TaskRequest::Export(current)) && editor.busy);
+            assert!(current.view().is_some() && editor.interaction_blocked());
         });
         assert!(!old.exists());
         release.send(()).unwrap();
@@ -308,7 +316,7 @@ fn replacing_the_export_owner_discards_old_output_and_publishes_the_captured_rep
         });
         app.read(|editor| {
             assert!(
-                !editor.busy && editor.failure.is_none(),
+                !editor.interaction_blocked() && editor.failure.is_none(),
                 "{}",
                 editor.status
             )
@@ -415,7 +423,7 @@ fn a_stop_after_publication_acknowledges_the_committed_file_without_rewriting_su
         });
         app.read(|editor| {
             assert!(
-                !editor.busy && editor.failure.is_none(),
+                !editor.interaction_blocked() && editor.failure.is_none(),
                 "{}",
                 editor.status
             );
@@ -444,13 +452,22 @@ fn running_cancel_waits_for_acknowledgement_and_preserves_the_destination() {
         });
         wait_for_submission(app, &starts);
         app.update(|editor| {
-            let activity = editor.document.export.operation.as_ref().unwrap().activity;
-            editor.cancel_task(TaskRequest::Export(activity));
+            let activity = editor
+                .document
+                .export
+                .operation
+                .as_ref()
+                .unwrap()
+                .activity
+                .clone();
+            activity.request_cancel();
         });
         app.read(|editor| {
             let operation = editor.document.export.operation.as_ref().unwrap();
             assert!(operation.cancelled.is_cancelled());
-            assert!(editor.busy && editor.tasks.view().unwrap().cancel.is_none());
+            assert!(
+                editor.interaction_blocked() && editor.activities.view().unwrap().cancel.is_none()
+            );
             assert_eq!(editor.document.state.project, accepted);
         });
         assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
@@ -459,7 +476,11 @@ fn running_cancel_waits_for_acknowledgement_and_preserves_the_destination() {
             editor.document.export.operation.is_none()
         });
         app.read(|editor| {
-            assert!(!editor.busy && editor.tasks.view().is_none() && editor.failure.is_none());
+            assert!(
+                !editor.interaction_blocked()
+                    && editor.activities.view().is_none()
+                    && editor.failure.is_none()
+            );
             assert!(editor.status.contains("cancel"));
             assert_eq!(editor.document.state.project, accepted);
         });
@@ -489,7 +510,7 @@ fn failed_export_survives_status_updates_until_a_successful_retry() {
         });
         let details = app.read(|editor| {
             assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
-            assert!(!editor.busy && editor.tasks.view().is_none());
+            assert!(!editor.interaction_blocked() && editor.activities.view().is_none());
             editor.failure.as_ref().unwrap().details.clone()
         });
         assert!(!path.exists());
@@ -506,7 +527,7 @@ fn failed_export_survives_status_updates_until_a_successful_retry() {
         });
         app.pump();
         app.read(|editor| {
-            assert!(editor.busy && editor.document.export.operation.is_some());
+            assert!(editor.interaction_blocked() && editor.document.export.operation.is_some());
             assert_eq!(editor.failure.as_ref().unwrap().details, details);
         });
         drop(paused);
@@ -514,7 +535,11 @@ fn failed_export_survives_status_updates_until_a_successful_retry() {
             editor.document.export.operation.is_none()
         });
         app.read(|editor| {
-            assert!(editor.failure.is_none() && !editor.busy && editor.tasks.view().is_none());
+            assert!(
+                editor.failure.is_none()
+                    && !editor.interaction_blocked()
+                    && editor.activities.view().is_none()
+            );
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(
                 editor.document.export.summary.as_ref().unwrap().exported(),

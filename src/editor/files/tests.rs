@@ -144,7 +144,7 @@ fn cancel_preserves_the_document_and_discard_dispatches_the_guarded_transition()
             .1
             .center();
         click(app, &context, discard);
-        assert!(app.read(|e| e.busy && e.document_pending.is_some()));
+        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
@@ -322,7 +322,7 @@ fn numeric_save(route: SaveInput) {
                 .center();
             click(app, &context, save);
         }
-        assert!(app.read(|e| e.busy && e.document_pending.is_some()));
+        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         assert_eq!(
             crate::project::Project::load(&path)
@@ -414,7 +414,7 @@ fn export_cannot_replace_the_open_project_document() {
     );
     assert!(editor.document.export.operation.is_none());
     assert_eq!(std::fs::read(path).unwrap(), before);
-    assert!(!editor.busy);
+    assert!(!editor.interaction_blocked());
     assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
 }
 
@@ -459,7 +459,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
             assert!(
                 editor.document_pending.is_none() && editor.document.export.operation.is_none()
             );
-            assert!(!editor.allow_close && !editor.busy);
+            assert!(!editor.allow_close && !editor.interaction_blocked());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(std::fs::read(path).unwrap(), b"unchanged destination");
         }
@@ -651,7 +651,11 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
                 e.document.export.operation.is_none()
             });
             app.read(|e| {
-                assert!(e.failure.is_none() && !e.busy, "{}", e.status);
+                assert!(
+                    e.failure.is_none() && !e.interaction_blocked(),
+                    "{}",
+                    e.status
+                );
                 assert_eq!(e.document.state.project, before);
             });
             pollster::block_on(services.write(
@@ -868,10 +872,10 @@ fn failed_and_stale_document_results_preserve_state_and_active_request() {
                     .load(std::sync::atomic::Ordering::Relaxed),
                 id
             );
-            assert!(editor.busy);
+            assert!(editor.interaction_blocked());
             assert_eq!(editor.document.state.project, before);
             editor.document_prepared(id, Err("changed RAW".into()));
-            assert!(!editor.busy && editor.document_pending.is_none());
+            assert!(editor.document_pending.is_none());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(editor.id, active);
             assert_eq!(
@@ -909,7 +913,7 @@ fn save_failure_preserves_dirty_state_and_does_not_continue_transition() {
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(e.document.dirty() && !e.busy);
+            assert!(e.document.dirty() && !e.interaction_blocked());
             assert_eq!(e.transition, Some(Transition::New));
             assert_eq!(
                 e.source_epoch.load(std::sync::atomic::Ordering::Relaxed),

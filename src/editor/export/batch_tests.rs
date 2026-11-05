@@ -121,7 +121,7 @@ fn captured_multisource_batch_finishes_without_paint_after_live_selection_change
         });
         app.read(|editor| {
             assert!(
-                !editor.busy && editor.failure.is_none(),
+                !editor.interaction_blocked() && editor.failure.is_none(),
                 "{}",
                 editor.status
             );

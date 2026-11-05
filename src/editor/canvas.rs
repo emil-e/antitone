@@ -81,7 +81,7 @@ impl Viewer<'_> {
             if let Some(layout) = layout {
                 editor.canvas_frame.layout = Some((layout, ui.ctx().pixels_per_point()));
                 editor.paint_canvas_selection(ui, layout, fullscreen);
-            } else if let Some(task) = editor.tasks.view() {
+            } else if let Some(task) = editor.activities.view() {
                 task.viewer(ui, rect);
             }
             layout
@@ -598,7 +598,7 @@ impl Editor {
                 }
             };
         if purpose.is_some()
-            && !self.busy
+            && !self.interaction_blocked()
             && reference_allowed
             && (!working || self.document.visit.working_view.support_ready())
         {
@@ -837,13 +837,13 @@ impl Editor {
             }
         });
         let Some((_, proxy, pending)) = selected else {
-            if let Some(view) = self.tasks.view() {
+            if let Some(view) = self.activities.view() {
                 view.viewer(ui, canvas);
             } else {
                 ui.painter().text(
                     canvas.center(),
                     egui::Align2::CENTER_CENTER,
-                    if self.busy {
+                    if self.interaction_blocked() {
                         "Working…"
                     } else {
                         "Add scans to begin"

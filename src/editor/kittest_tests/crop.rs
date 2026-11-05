@@ -94,14 +94,14 @@ fn crop_owned_view_retires_without_accepting_drafts_or_overwriting_normal_naviga
         });
         h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document.visit.canvas.ready.is_some()
+            !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
         });
         stage(&mut h, "Photo");
         for exit in ["Cancel", "Dust repair", "Escape while dragging"] {
             h.get_by_label("patches.dng").click();
             h.step();
             wait_for(&mut h, |editor| {
-                !editor.busy && editor.document.visit.canvas.ready.is_some()
+                !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
             });
             h.update(|editor| {
                 let (layout, density) = editor.active_canvas().last_layout.unwrap();
@@ -183,7 +183,7 @@ fn crop_owned_view_retires_without_accepting_drafts_or_overwriting_normal_naviga
             }
             h.step();
             wait_for(&mut h, |editor| {
-                !editor.busy
+                !editor.interaction_blocked()
                     && editor.document.crop_edit().is_none()
                     && editor.document.visit.canvas.ready.is_some()
             });
@@ -236,7 +236,7 @@ fn crop_owned_view_retires_without_accepting_drafts_or_overwriting_normal_naviga
         h.get_by_label("patches.dng").click();
         h.step();
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document.visit.canvas.ready.is_some()
+            !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
         });
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Crop & straighten")
             .click();
@@ -262,7 +262,7 @@ fn crop_owned_view_retires_without_accepting_drafts_or_overwriting_normal_naviga
         });
         h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
         h.step();
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
         h.read(|editor| assert!(editor.document.visit.crop.is_none()));
     });
 }
@@ -297,7 +297,7 @@ fn crop_preview_keeps_original_coordinate_repairs_through_rotation_and_resize() 
         });
         h.enter(|e, cx| e.add_raws(vec![damaged], cx));
         wait_for(&mut h, |e| {
-            !e.busy && e.document.visit.canvas.ready.is_some()
+            !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
         });
         h.update(|e| {
             e.document.source = false;
@@ -463,7 +463,9 @@ fn crop_pixels_follow_straightening_orientation_resize_and_clipped_navigation() 
                 });
             }
             harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
-            wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+            wait_for(&mut harness, |e| {
+                !e.interaction_blocked() && e.document_pending.is_none()
+            });
             harness.update(|editor| {
                 assert!(
                     editor.document.visit.canvas.ready.is_some(),

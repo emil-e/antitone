@@ -176,7 +176,9 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             h.step();
             h.read(|editor| {
                 assert!(
-                    !output.exists() && editor.document.export.operation.is_none() && !editor.busy,
+                    !output.exists()
+                        && editor.document.export.operation.is_none()
+                        && !editor.interaction_blocked(),
                     "output commands cannot export a draft"
                 )
             });
@@ -184,7 +186,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 h.get_by_label(&format!("crop-{index}.dng")).click();
                 h.step();
                 wait_for(&mut h, |e| {
-                    !e.busy && e.document.visit.canvas.ready.is_some()
+                    !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
                 });
                 wait_context(&mut h);
                 h.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[index])));
@@ -232,7 +234,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             h.get_by_label("crop-0.dng").click();
             h.step();
             wait_for(&mut h, |e| {
-                !e.busy && e.document.visit.canvas.ready.is_some()
+                !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
             });
             let crop = expected.source(ids[0]).unwrap().crop.unwrap();
             wait_crop(&mut h, crop);
@@ -254,7 +256,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
                 )
             });
             h.step();
-            wait_for(&mut h, |e| !e.busy);
+            wait_for(&mut h, |e| !e.interaction_blocked());
             h.read(|editor| assert!(editor.failure.is_none(), "{}", editor.status));
             let mut decoder =
                 tiff::decoder::Decoder::new(std::fs::File::open(output).unwrap()).unwrap();
@@ -333,10 +335,10 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         h.step();
         h.event(egui::Event::Text("3.5".into()));
         h.step();
-        h.update(|editor| editor.busy = true);
+        h.update(|editor| editor.set_test_busy(true));
         h.step();
         h.step();
-        h.update(|editor| editor.busy = false);
+        h.update(|editor| editor.set_test_busy(false));
         h.step();
         h.step();
         h.read(|editor| assert_eq!(editor.auto_crop_margin, 0.5));

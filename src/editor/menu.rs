@@ -77,11 +77,11 @@ impl Editor {
     }
 
     pub(super) fn file_available(&self) -> bool {
-        !self.busy && self.file_context_available()
+        !self.interaction_blocked() && self.file_context_available()
     }
 
     fn save_available(&self) -> bool {
-        (!self.busy || self.document.spatial_preparing.is_some()) && self.file_context_available()
+        !self.interaction_blocked() && self.file_context_available()
     }
 
     fn file_context_available(&self) -> bool {
@@ -93,7 +93,7 @@ impl Editor {
 
     fn application_modal(&self) -> bool {
         self.allow_close
-            || self.tasks.blocks_workspace() && self.document.spatial_preparing.is_none()
+            || self.activities.blocks_workspace() && self.document.spatial_preparing.is_none()
             || self.failure.is_some()
             || self.document_pending.is_some()
             || self.document.export.draft.is_some()
@@ -145,7 +145,7 @@ impl Editor {
                 state.enabled.insert(Redo);
             }
         }
-        if !self.busy {
+        if !self.interaction_blocked() {
             state.enabled.extend([About, Settings, Help]);
         }
         if self.save_available() {
@@ -153,11 +153,11 @@ impl Editor {
         }
         if self.file_available() {
             state.enabled.extend([New, Open, AddScans, Close]);
-            if self.document.input.ready() && self.document.visit.canvas.ready.is_some() {
+            if self.document.input.ready() && self.selected_area().is_some() {
                 state.enabled.insert(Export);
             }
         }
-        if self.document.visit.canvas.ready.is_some() && !self.busy && !self.mask_dragging() {
+        if self.selected_area().is_some() && !self.interaction_blocked() && !self.mask_dragging() {
             state.enabled.extend([Fit, ActualSize, ZoomIn, ZoomOut]);
         }
         if self.fullscreen_available() {

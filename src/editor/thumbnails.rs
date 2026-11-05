@@ -1056,7 +1056,7 @@ impl Editor {
     }
 
     fn thumbnail_work_allowed(&self) -> bool {
-        !self.busy
+        !self.interaction_blocked()
             && self.document.thumbnails.budgets.pressure != memory::Pressure::Critical
             && !self.picking()
             && !self.cropping()

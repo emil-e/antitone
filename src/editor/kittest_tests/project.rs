@@ -158,7 +158,9 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         .into();
     editor_harness_with_thumbnails(true, |mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(paths.clone(), cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -202,7 +204,7 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         harness.step();
         harness.get_by_label("working.dng").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[1])));
         stage(&mut harness, "Photo");
         enter_numeric(&mut harness, "Exposure", "7.123456789012345");
@@ -263,11 +265,15 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         let pixel = compare_pixel(&harness);
         save_existing_project(&mut harness);
         native_file_action(&mut harness, crate::platform::menu::Action::New);
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert!(editor.document.state.project.development().is_none()));
         harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_none()));
         harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| {
             assert_eq!(
                 editor
@@ -289,7 +295,9 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
         open_project(&mut harness, directory.path().join("film.antitone"));
         harness.get_by_label("Discard changes").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         harness.read(|editor| assert!(!editor.document.dirty()));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(ids[1])));
@@ -341,7 +349,9 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             .save(&adjusted_path, crate::project::Save::New)
             .unwrap();
         open_project(&mut harness, adjusted_path);
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
         let adjusted_pixel = compare_pixel(&harness);
         stage(&mut harness, "Photo");
@@ -354,7 +364,9 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             &mut harness,
             directory.path().join("adjusted.antitone.json"),
         );
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert_eq!(editor.document.state.project, adjusted));
         harness.read(|editor| assert!(!editor.document.dirty()));
         wait_settled(&mut harness);
@@ -385,7 +397,9 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
             let path = directory.path().join(format!("{name}.antitone.json"));
             rejected.save(&path, crate::project::Save::New).unwrap();
             open_project(&mut harness, path);
-            wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+            wait_for(&mut harness, |e| {
+                !e.interaction_blocked() && e.document_pending.is_none()
+            });
             harness.read(|editor| {
                 assert!(
                     editor.status.contains(if missing {
@@ -442,7 +456,9 @@ fn project_widgets_save_precision_order_and_reject_open_atomically() {
                 "transition Save did not dispatch"
             )
         });
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert_eq!(editor.document.state.project, dirty));
         harness.read(|editor| assert!(editor.document.dirty()));
         harness.read(|editor| assert_eq!(editor.transition, Some(files::Transition::New)));

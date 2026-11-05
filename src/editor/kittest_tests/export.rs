@@ -9,7 +9,7 @@ fn fixture_editor(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir)) {
             editor.add_raws(vec![fixture("patches.dng"), fixture("roll-0.dng")], cx)
         });
         wait_for(&mut harness, |editor| {
-            !editor.busy && editor.document_pending.is_none()
+            !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         harness.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(0.8)));
@@ -149,7 +149,7 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
     fixture_editor(|mut harness, directory| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("bare-light.dng")], cx));
         wait_for(&mut harness, |editor| {
-            !editor.busy && editor.document_pending.is_none()
+            !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         harness
             .get_by_label("roll-0.dng")
@@ -175,7 +175,7 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
         let admission = crate::background::testing::pause();
         harness.get_by_label("Export 2 photos").click();
         harness.step();
-        harness.update(|editor| editor.tasks.elapse(Duration::from_secs(1)));
+        harness.update(|editor| editor.activities.elapse(Duration::from_secs(1)));
         harness.try_run_realtime().unwrap();
         let progress =
             harness.get_by_role_and_label(egui::accesskit::Role::ProgressIndicator, "Exporting…");
@@ -197,7 +197,7 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
                     .is_cancelled()
             );
             assert!(
-                editor.tasks.view().unwrap().cancel.is_none(),
+                editor.activities.view().unwrap().cancel.is_none(),
                 "cancellation stays pending until service acknowledgement"
             );
         });
@@ -209,7 +209,11 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
             editor.document.export.operation.is_none()
         });
         harness.read(|editor| {
-            assert!(editor.failure.is_none() && !editor.busy && editor.tasks.view().is_none());
+            assert!(
+                editor.failure.is_none()
+                    && !editor.interaction_blocked()
+                    && editor.activities.view().is_none()
+            );
             assert_eq!(editor.document.state.project, accepted);
         });
         assert!(!directory.path().join("patches.exr").exists());

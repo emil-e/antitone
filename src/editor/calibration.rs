@@ -17,14 +17,19 @@ pub(super) fn pick_dmin<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let mut image = picking::capture_scan(editor)?;
+    let image = picking::capture_input(editor)?;
     let services = editor.source_services.clone();
-    let reading = picking::pick(
+    let reading = picking::pick_prepared(
         editor,
         DMIN,
-        move |region, cancelled| {
-            let services = picking::query_services(services.as_ref())?;
-            query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+        async move {
+            let mut image = image.await?;
+            Ok(
+                move |region, cancelled: crate::cancellation::Cancellation| {
+                    let services = picking::query_services(services.as_ref())?;
+                    query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+                },
+            )
         },
         cx.clone(),
     );
@@ -45,14 +50,19 @@ pub(super) fn pick_dmax<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let mut image = picking::capture_scan(editor)?;
+    let image = picking::capture_input(editor)?;
     let services = editor.source_services.clone();
-    let reading = picking::pick(
+    let reading = picking::pick_prepared(
         editor,
         DMAX,
-        move |region, cancelled| {
-            let services = picking::query_services(services.as_ref())?;
-            query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+        async move {
+            let mut image = image.await?;
+            Ok(
+                move |region, cancelled: crate::cancellation::Cancellation| {
+                    let services = picking::query_services(services.as_ref())?;
+                    query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+                },
+            )
         },
         cx.clone(),
     );
@@ -73,17 +83,22 @@ pub(super) fn pick_gamma<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let mut image = picking::capture_scan(editor)?;
+    let image = picking::capture_input(editor)?;
     let services = editor.source_services.clone();
     let input = editor.input();
-    let reading = picking::pick(
+    let reading = picking::pick_prepared(
         editor,
         GAMMA,
-        move |region, cancelled| {
-            let services = picking::query_services(services.as_ref())?;
-            query::gamma(services, &mut image, region, input, &|| {
-                cancelled.is_cancelled()
-            })
+        async move {
+            let mut image = image.await?;
+            Ok(
+                move |region, cancelled: crate::cancellation::Cancellation| {
+                    let services = picking::query_services(services.as_ref())?;
+                    query::gamma(services, &mut image, region, input, &|| {
+                        cancelled.is_cancelled()
+                    })
+                },
+            )
         },
         cx.clone(),
     );

@@ -158,7 +158,7 @@ fn failed_candidate_preserves_the_visit_source_and_history() {
         app.enter(|editor, cx| {
             editor.start_document(Preparation::Open("unavailable.antitone".into()), cx);
             let request = editor.document_pending.unwrap();
-            assert!(editor.busy && editor.document_pending.is_some());
+            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
             assert_eq!(editor.document.visit.view, view);
             assert!(Arc::ptr_eq(
                 &editor
@@ -214,7 +214,7 @@ fn same_source_correction_preserves_visit_but_opening_the_same_data_replaces_it(
             app.enter(|editor, cx| {
                 editor.start_document(work, cx);
                 let request = editor.document_pending.unwrap();
-                assert!(editor.busy && editor.document_pending.is_some());
+                assert!(editor.interaction_blocked() && editor.document_pending.is_some());
                 editor.document_prepared(
                     request,
                     Ok(Box::new(Prepared {

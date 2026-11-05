@@ -66,7 +66,7 @@ fn pending_material_preparation_preserves_the_independent_lut_and_cancel_keeps_b
                 .accesskit_node()
                 .is_disabled()
         );
-        let request = h.read(|e| e.document.look.as_ref().unwrap().activity);
+        let request = h.read(|e| e.document.look.as_ref().unwrap().activity.clone());
         h.enter(|e, cx| e.select_look(look::Source::Loaded(constant_asset(0.7)), cx));
         h.read(|e| {
             assert_eq!(e.document.look.as_ref().unwrap().activity, request);

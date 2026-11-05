@@ -164,9 +164,13 @@ fn proxy_and_working_image_keep_the_same_crop_after_apply_and_source_revisit() {
             app.read(|editor| assert!(editor.document.visit.crop.is_some()));
             provisional_then_physical(app);
             app.enter(|editor, cx| editor.load(second, cx));
-            app.run_until(Duration::from_secs(20), |editor| !editor.busy);
+            app.run_until(Duration::from_secs(20), |editor| {
+                !editor.interaction_blocked() && !editor.document.visit.source.pending()
+            });
             app.enter(|editor, cx| editor.load(first, cx));
-            app.run_until(Duration::from_secs(20), |editor| !editor.busy);
+            app.run_until(Duration::from_secs(20), |editor| {
+                !editor.interaction_blocked() && !editor.document.visit.source.pending()
+            });
             provisional_then_physical(app);
         });
     }

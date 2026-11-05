@@ -260,15 +260,22 @@ fn workload(
                     let (_, ui, total) = paint.frame(app, device, queue, pointer(point, false))?;
                     all_ui.push(ui);
                     all_frame.push(total);
-                    if app.read(|e| e.document.selected != selected || !e.busy) {
+                    if app.read(|e| {
+                        e.document.selected != selected
+                            || e.document.visit.current_source
+                                != e.document.project.order.get(selected).copied()
+                            || e.interaction_blocked()
+                    }) {
                         return Err("actual source-card input did not start selection".into());
                     }
                 }
                 let mut ready = None;
-                let mut blocked_probe = false;
+                let mut pending_probe = false;
                 let mut per_ui = Vec::new();
                 let mut per_frame = Vec::new();
-                while app.read(|e| e.busy || !e.document.visit.working_view.idle()) {
+                while app.read(|e| {
+                    e.document.visit.source.pending() || !e.document.visit.working_view.idle()
+                }) {
                     monitor.check()?;
                     if start.elapsed() > Duration::from_secs(90) {
                         return Err("bounded switching exercise deadline".into());
@@ -278,7 +285,10 @@ fn workload(
                     per_frame.push(total);
                     all_ui.push(ui);
                     all_frame.push(total);
-                    if step == 0 && app.read(|e| e.busy) && !blocked_probe {
+                    if step == 0
+                        && app.read(|e| e.document.visit.source.pending())
+                        && !pending_probe
+                    {
                         let (point, disabled) = Paint::card(
                             &output,
                             if selected == 0 {
@@ -317,16 +327,19 @@ fn workload(
                             return Err("latest selection did not replace pending work".into());
                         }
                         println!(
-                            "switch_busy_input step={step} disabled=false request_before={request} replaced={replaced} returned={} native_developments={}",
+                            "switch_pending_input step={step} disabled=false request_before={request} replaced={replaced} returned={} native_developments={}",
                             app.read(|e| e.id),
                             count.load(Ordering::Relaxed)
                         );
-                        blocked_probe = true;
+                        pending_probe = true;
                     }
-                    if app.read(|e| !e.busy) && ready.is_none() {
+                    if app.read(|e| e.document.visit.canvas.ready.is_some()) && ready.is_none() {
                         ready = Some(selection_start.elapsed().as_secs_f64());
                     }
-                    if app.read(|e| e.document.visit.canvas.ready.is_none() && !e.busy) {
+                    if app.read(|e| {
+                        e.document.visit.canvas.ready.is_none()
+                            && !e.document.visit.source.pending()
+                    }) {
                         return Err(
                             app.read(|e| format!("source preparation failed: {}", e.status))
                         );
@@ -338,6 +351,9 @@ fn workload(
                         return Err(app.read(|e| format!("refinement failed: {}", e.status)));
                     }
                     std::thread::sleep(Duration::from_millis(8));
+                }
+                if step == 0 && !pending_probe {
+                    return Err("pending replacement input was not exercised".into());
                 }
                 println!(
                     "switch_step step={step} selected={selected} ready_seconds={:.6} accepted_view_seconds={:.6} native_before={native_before} native_after={} ui_max_ms={:.6} draw_wait_max_ms={:.6} cpu_optional={} gpu_cached_images={}",

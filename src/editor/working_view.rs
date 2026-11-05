@@ -1115,7 +1115,11 @@ impl Editor {
             return Ok(None);
         }
 
-        if self.busy && self.document_pending.is_none() && !image.is_sample() && !self.cropping() {
+        if self.interaction_blocked()
+            && self.document_pending.is_none()
+            && !image.is_sample()
+            && !self.cropping()
+        {
             let mut mailbox = self.document.visit.working_view.mailbox.0.lock().unwrap();
             mailbox.demand = None;
             drop(mailbox);

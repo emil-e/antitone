@@ -19,7 +19,9 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
         .collect();
     editor_harness_with_thumbnails(true, |mut h, _capture| {
         h.enter(|editor, cx| editor.add_raws(paths, cx));
-        wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         h.update(|e| {
             assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
@@ -116,7 +118,9 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>, tempfile::TempDir) -> R) -> R
                 cx,
             )
         });
-        wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         h.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
         test(h, directory)
     })
@@ -340,7 +344,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             h.step();
             h.step();
             wait_for(&mut h, |e| {
-                !e.busy && e.document.visit.canvas.ready.is_some()
+                !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
             });
             h.read(|editor| {
                 assert_eq!(
@@ -361,7 +365,7 @@ fn unavailable_outlines_have_compact_tool_and_thumbnail_cues_at_both_layouts() {
             h.get_by_label("crop-2.dng").click();
             h.step();
             wait_for(&mut h, |e| {
-                !e.busy && e.document.visit.canvas.ready.is_some()
+                !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
             });
             overlay::wait_context(&mut h);
             assert!(h.query_by_label("Tool warning").is_none());

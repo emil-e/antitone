@@ -153,7 +153,7 @@ fn list_actions_keep_identity_and_reject_candidates_without_mutating_accepted_re
             3,
         ));
         assert_eq!(editor.document.state.project, before);
-        editor.busy = true;
+        editor.set_test_busy(true);
         editor.apply_adjustment_layer_action(Action::Select(Target::None));
         editor.apply_adjustment_layer_action(Action::Enable(order[0], true));
         assert_eq!(editor.document.state.project, before);

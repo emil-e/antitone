@@ -8,7 +8,7 @@ struct Probe {
     actions: Rc<Cell<usize>>,
     first_config: Rc<Cell<Option<usize>>>,
     reset: Option<bool>,
-    activity: Option<TaskRequest>,
+    activity: Option<Activity>,
 }
 impl Probe {
     fn new(dropped: &Rc<Cell<usize>>, actions: &Rc<Cell<usize>>) -> Self {
@@ -80,9 +80,7 @@ impl Tool for Probe {
             },
         );
     }
-    fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
-        self.activity
-    }
+
     fn action(&mut self, _action: Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         self.actions.set(self.actions.get() + 1);
         editor.end_tool();
@@ -325,56 +323,44 @@ fn document_and_photo_slots_follow_their_scopes_without_synthetic_actions() {
 }
 
 #[test]
-fn photo_departure_retires_only_its_hosted_activity_while_document_activity_survives() {
+fn photo_departure_retires_only_its_owned_activity_while_document_work_survives() {
     for placement in [Placement::Document, Placement::Photo] {
         for executing in [false, true] {
-            for matching_activity in [false, true] {
+            for overlapping in [false, true] {
                 let mut editor = Editor::state();
                 let dropped = Rc::new(Cell::new(0));
                 let actions = Rc::new(Cell::new(0));
-                let task = Task::Regions(73);
+
                 let mut probe = Probe::new(&dropped, &actions);
-                probe.activity = Some(task.request());
-                assert!(editor.activate_tool(placement, Box::new(probe)));
-                let foreground = if matching_activity {
-                    task
-                } else {
-                    Task::Save(73)
-                };
-                editor.tasks.begin(foreground);
-                editor.busy = true;
-                assert!(editor.tasks.is_current(foreground.request()));
+                let activity = editor.activities.start(ActivityOptions::new("Tool work"));
+                let observer = activity.reporter();
+                probe.activity = Some(activity);
+                editor.document.set_hosted_tool(placement, Box::new(probe));
+                let independent = overlapping.then(|| {
+                    editor
+                        .activities
+                        .start(ActivityOptions::new("Independent work").modal())
+                });
                 let document_owned = matches!(placement, Placement::Document);
-                let activity_survives = document_owned || !matching_activity;
-                let depart = |editor: &mut Editor| {
-                    editor.replace_photo_scope(1);
-                    assert_eq!(
-                        editor.tasks.is_current(foreground.request()),
-                        activity_survives
-                    );
-                    assert_eq!(editor.busy, activity_survives);
-                };
+
                 if executing {
                     editor
-                        .with_current_tool(|_, editor| depart(editor))
+                        .with_current_tool(|_, editor| editor.replace_photo_scope(1))
                         .unwrap();
                 } else {
-                    depart(&mut editor);
+                    editor.replace_photo_scope(1);
                 }
+                assert_eq!(observer.view().is_some(), document_owned);
+                assert_eq!(editor.interaction_blocked(), overlapping);
                 assert_eq!(editor.has_hosted_tool(), document_owned);
                 assert_eq!(dropped.get(), usize::from(!document_owned));
-                assert_eq!(
-                    actions.get(),
-                    0,
-                    "scope departure must not synthesize an action"
-                );
+                assert_eq!(actions.get(), 0, "departure must not synthesize an action");
                 editor.end_tool();
                 assert_eq!(dropped.get(), 1);
-                assert_eq!(
-                    editor.tasks.is_current(foreground.request()),
-                    !matching_activity
-                );
-                assert_eq!(editor.busy, !matching_activity);
+                assert!(observer.view().is_none());
+                assert_eq!(editor.interaction_blocked(), overlapping);
+                drop(independent);
+                assert!(!editor.interaction_blocked());
             }
         }
     }
@@ -416,13 +402,13 @@ fn rejected_admission_drops_candidate_without_configuring_or_replacing_the_owner
     ));
     let candidate = Probe::new(&dropped, &actions);
     let configured = candidate.first_config.clone();
-    editor.busy = true;
+    editor.set_test_busy(true);
     assert!(!editor.activate_tool(Placement::Photo, Box::new(candidate)));
     assert_eq!(dropped.get(), 1);
     assert_eq!(configured.get(), None);
     assert!(editor.current_tool().is_some());
     assert_eq!(actions.get(), 0);
-    editor.busy = false;
+    editor.set_test_busy(false);
     editor.hosted_action(Action::Dismiss);
     assert_eq!(dropped.get(), 2);
     assert_eq!(actions.get(), 1);

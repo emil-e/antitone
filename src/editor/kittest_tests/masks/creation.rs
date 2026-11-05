@@ -262,7 +262,7 @@ fn creation_release_is_one_undoable_layer_and_replacement_does_not_publish_a_hel
             h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
             h.step();
             wait_for(&mut h, |editor| {
-                !editor.busy && editor.document_pending.is_none()
+                !editor.interaction_blocked() && editor.document_pending.is_none()
             });
             h.read(|editor| assert_eq!(editor.document.state.project, before));
             h.key_press_modifiers(
@@ -271,7 +271,7 @@ fn creation_release_is_one_undoable_layer_and_replacement_does_not_publish_a_hel
             );
             h.step();
             wait_for(&mut h, |editor| {
-                !editor.busy && editor.document_pending.is_none()
+                !editor.interaction_blocked() && editor.document_pending.is_none()
             });
             h.read(|editor| assert_eq!(editor.document.state.project, accepted));
 

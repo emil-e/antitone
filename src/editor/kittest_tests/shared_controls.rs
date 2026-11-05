@@ -139,7 +139,7 @@ fn digital_texture_controls_wait_for_photo_tools_and_resume_after_retirement() {
         });
         h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document.visit.canvas.ready.is_some()
+            !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
         });
         for (name, size, width) in [
             ("normal", egui::vec2(1100., 800.), 315.),
@@ -261,7 +261,7 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
                 }
                 _ => click(&mut h, tool),
             }
-            wait_for(&mut h, |editor| !editor.busy);
+            wait_for(&mut h, |editor| !editor.interaction_blocked());
             h.read(|editor| assert!(editor.has_hosted_tool(), "{tool}: {}", editor.status));
             control_state(&mut h, true);
             stage(&mut h, "Roll");
@@ -313,7 +313,7 @@ fn tools_exclude_shared_grading_and_contextual_artwork_but_keep_their_own_contro
                     "Cancel"
                 },
             );
-            wait_for(&mut h, |editor| !editor.busy);
+            wait_for(&mut h, |editor| !editor.interaction_blocked());
             h.read(|editor| {
                 assert!(!editor.tool_interacting(), "{tool}");
                 assert_eq!(editor.document.project, before, "{tool}");

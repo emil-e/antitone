@@ -113,18 +113,24 @@ fn dismissing_while_joining_shared_regions_retires_work_and_reports_cancellation
     let (_reply, receive) = futures_channel::oneshot::channel();
     editor.document.spatial_reply = Some(receive);
     with_application(editor, |app| {
-        let request = app.enter(|editor, cx| {
+        app.enter(|editor, cx| {
             editor.request_analysis(cx);
-            let request = editor.document.spatial_preparing.as_ref().unwrap().id;
-            assert!(editor.tasks.is_current(TaskRequest::Regions(request)) && editor.busy);
-            request
+            assert!(
+                editor
+                    .document
+                    .spatial_preparing
+                    .as_ref()
+                    .unwrap()
+                    .visible()
+                    && editor.interaction_blocked()
+            );
         });
         app.pump();
         app.update(|editor| editor.hosted_action(tool::Action::Dismiss));
         app.pump();
         app.read(|editor| {
             assert!(editor.current_tool().is_none() && editor.document.spatial_preparing.is_none());
-            assert!(!editor.busy && !editor.tasks.is_current(TaskRequest::Regions(request)));
+            assert!(!editor.interaction_blocked() && editor.activities.view().is_none());
             assert!(editor.status.contains("cancelled"), "{}", editor.status);
             assert_eq!(editor.document.project, before);
             assert!(editor.history_label(Direction::Undo).is_none());

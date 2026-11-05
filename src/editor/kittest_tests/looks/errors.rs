@@ -88,7 +88,7 @@ fn look_errors_follow_the_painted_request_not_the_retained_photograph_or_active_
         let id = asset.lut().id();
         h.update(|editor| editor.look.loaded.push(asset));
         choose(&mut h, &label);
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
         reject_displayed(&mut h, &rejection, id);
         let failed = h.read(|editor| {
             let view = editor.canvas_frame.displayed.as_ref().unwrap().view.clone();
@@ -100,7 +100,7 @@ fn look_errors_follow_the_painted_request_not_the_retained_photograph_or_active_
 
         h.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
         h.step();
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
         paint_until(&mut h, |editor| {
             editor
                 .canvas_frame

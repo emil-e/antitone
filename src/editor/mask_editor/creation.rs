@@ -124,7 +124,7 @@ impl tool::Tool for CreationTool {
                     )
                 });
                 let active = editor.tab == 1 && !editor.document.source;
-                let allowed = active && canvas.ui.is_enabled() && !editor.busy;
+                let allowed = active && canvas.ui.is_enabled() && !editor.interaction_blocked();
                 let captured = tool.edit.borrow().dragging();
                 let rect = canvas.response.rect;
                 let composition = canvas.composition;

@@ -56,7 +56,7 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
         editor_harness_with_gpu(true, |mut h, _, _, _| {
             h.enter(|e, cx| e.add_raws(vec![fixture("roll-0.dng")], cx));
             wait_for(&mut h, |e| {
-                !e.busy && e.document.visit.canvas.ready.is_some()
+                !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
             });
             stage(&mut h, "Rendering");
             assert!(
@@ -65,7 +65,8 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             );
             h.enter(|e, cx| e.apply_input(crate::processing::InputSettings::Digital, cx));
             wait_for(&mut h, |e| {
-                !e.busy && e.document.input == crate::processing::InputSettings::Digital
+                !e.interaction_blocked()
+                    && e.document.input == crate::processing::InputSettings::Digital
             });
             let directory = tempfile::tempdir().unwrap();
             h.input_mut()
@@ -173,15 +174,21 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             let path = directory.path().join(format!("film-{scale}.antitone"));
             h.update(|e| e.document.path = Some(path.clone()));
             native_file_action(&mut h, crate::platform::menu::Action::Save);
-            wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+            wait_for(&mut h, |e| {
+                !e.interaction_blocked() && e.document_pending.is_none()
+            });
             h.read(|e| assert!(!e.document.dirty(), "{}", e.status));
             let saved = crate::project::Project::load(&path).unwrap();
             assert_eq!((saved.output.grain, saved.output.halation), saved_values);
             native_file_action(&mut h, crate::platform::menu::Action::New);
-            wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+            wait_for(&mut h, |e| {
+                !e.interaction_blocked() && e.document_pending.is_none()
+            });
             open_project(&mut h, path);
             wait_for(&mut h, |e| {
-                !e.busy && e.document_pending.is_none() && e.document.visit.canvas.ready.is_some()
+                !e.interaction_blocked()
+                    && e.document_pending.is_none()
+                    && e.document.visit.canvas.ready.is_some()
             });
             stage(&mut h, "Rendering");
             h.run();
@@ -225,12 +232,12 @@ fn fixed_scale_presets_preserve_enablement_edits_and_history_without_saving_pres
             let previous = h.read(|e| (e.document.grain, e.document.halation));
             select_preset(&mut h, "35mm");
             h.enter(|e, cx| e.restore_history(super::super::history::Direction::Undo, cx));
-            wait_for(&mut h, |e| !e.busy);
+            wait_for(&mut h, |e| !e.interaction_blocked());
             h.read(|e| {
                 assert_eq!((e.document.grain, e.document.halation), previous);
             });
             h.enter(|e, cx| e.restore_history(super::super::history::Direction::Redo, cx));
-            wait_for(&mut h, |e| !e.busy);
+            wait_for(&mut h, |e| !e.interaction_blocked());
             h.read(|e| {
                 assert!(e.document.grain.enabled && e.document.halation.enabled);
                 assert!(GrainPreset::ThirtyFiveMm.matches(e.document.grain, e.document.halation));

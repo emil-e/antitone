@@ -80,7 +80,8 @@ pub(super) struct MaterialSwitch {
 }
 
 pub(super) struct Operation {
-    pub activity: u64,
+    #[cfg(test)]
+    pub activity: ActivityReporter,
     pub selection: Option<MaterialSelection>,
     task: Option<async_executor::Task<()>>,
 }
@@ -243,7 +244,7 @@ impl Editor {
     }
     fn look_request_allowed(&self, slot: Slot) -> bool {
         !self.document.confirming()
-            && (!self.busy
+            && (!self.interaction_blocked()
                 || self
                     .document
                     .look
@@ -312,24 +313,39 @@ impl Editor {
             return;
         }
         self.retire_look_selection();
-        let activity = self.request_id();
+        let cancelled = crate::cancellation::Cancellation::default();
+        let activity = self
+            .activities
+            .start(ActivityOptions::new("Preparing look…").cancellable(
+                "Cancel look preparation",
+                "Cancelling look preparation…",
+                cancelled,
+            ));
         let selection = match &source {
             Source::Photochemical(s) => Some(*s),
             _ => None,
         };
         self.document.look = Some(Operation {
-            activity,
+            #[cfg(test)]
+            activity: activity.reporter(),
             selection,
             task: None,
         });
-        self.busy = true;
-        self.tasks.begin(Task::Look(activity));
+
         let services = self.look.services.clone();
         let task = cx.spawn(move |cx| async move {
-            let result = match services {
-                Some(services) => services.prepare(source).await,
-                None => Err("LUT services unavailable".into()),
+            let work = async {
+                match services {
+                    Some(services) => services.prepare(source).await,
+                    None => Err("LUT services unavailable".into()),
+                }
             };
+            let cancel = async {
+                activity.cancelled().await;
+                Ok(None)
+            };
+            let result = futures_lite::future::or(cancel, work).await;
+            drop(activity);
             cx.update(|editor| {
                 editor.retire_look_selection();
                 match result {
@@ -354,16 +370,9 @@ impl Editor {
             self.report_failure(FailureKind::Look, "Application stopped".into());
         }
     }
-    pub(super) fn cancel_look_selection(&mut self) {
-        self.retire_look_selection();
-        self.status = "LUT preparation cancelled".into();
-    }
+
     pub(super) fn retire_look_selection(&mut self) {
-        if let Some(pending) = self.document.look.take()
-            && self.tasks.finish(TaskRequest::Look(pending.activity))
-        {
-            self.busy = false;
-        }
+        self.document.look = None;
     }
     fn clear_slot(&mut self, slot: Slot) {
         if self.document.confirming() {

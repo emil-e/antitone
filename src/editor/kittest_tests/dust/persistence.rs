@@ -82,11 +82,11 @@ fn leaving_the_photo_discards_pending_artwork_and_returning_can_apply_a_fresh_st
     tools::calibrated_harness_with_thumbnails(true, |mut h| {
         h.enter(|editor, cx| editor.add_raws(vec![other], cx));
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document_pending.is_none()
+            !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         h.get_by_label("patches.dng").click();
         h.step();
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| !editor.interaction_blocked());
         stage(&mut h, "Photo");
         h.get_by_role_and_label(egui::accesskit::Role::Button, "Dust repair")
             .click();
@@ -111,12 +111,12 @@ fn leaving_the_photo_discards_pending_artwork_and_returning_can_apply_a_fresh_st
         });
         drop(admission);
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document.visit.working_view.idle()
+            !editor.interaction_blocked() && editor.document.visit.working_view.idle()
         });
         h.get_by_label("patches.dng").click();
         h.step();
         wait_for(&mut h, |editor| {
-            !editor.busy && editor.document.visit.working_view.idle()
+            !editor.interaction_blocked() && editor.document.visit.working_view.idle()
         });
         h.read(|editor| {
             assert_eq!(editor.document.visit.current_source, Some(source));
@@ -442,10 +442,14 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         });
 
         native_file_action(&mut h, crate::platform::menu::Action::New);
-        wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         h.read(|editor| assert!(editor.document.state.project.sources.is_empty()));
         open_project(&mut h, path.clone());
-        wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         h.read(|editor| assert_eq!(editor.document.state.project, expected));
         h.read(|editor| assert!(!editor.document.dirty()));
         h.read(|editor| assert_eq!(editor.selected_dust_repair(), None));
@@ -616,7 +620,9 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
             });
         }
         drop(hold);
-        wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         h.read(|editor| assert_eq!(editor.document.state.project, expected));
         h.read(|editor| {
             assert!(Arc::ptr_eq(
@@ -661,9 +667,13 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         h.get_by_label("Done").click();
         h.step();
         native_file_action(&mut h, crate::platform::menu::Action::New);
-        wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         open_project(&mut h, path);
-        wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         ready(&mut h, 2);
         for (before, after) in
             h.read(|editor| evaluated.iter().zip(editor.dust_evaluations(signature)))

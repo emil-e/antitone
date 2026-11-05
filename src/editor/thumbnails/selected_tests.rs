@@ -98,8 +98,9 @@ fn add_source(editor: &mut Editor, path: PathBuf) -> SourceId {
 }
 
 fn frame(
-    editor: &mut impl crate::editor::tests::UiFixture,
+    editor: &mut Editor,
     context: &egui::Context,
+    cx: &UiContext<'_, Editor>,
 ) -> egui::FullOutput {
     context.run_ui(
         egui::RawInput {
@@ -109,7 +110,7 @@ fn frame(
             )),
             ..Default::default()
         },
-        |ui| editor.ui(ui),
+        |ui| editor.draw_ui(ui, cx),
     )
 }
 
@@ -168,7 +169,7 @@ fn draw(
 }
 
 #[test]
-fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_operations() {
+fn pending_preview_paints_current_composition_and_geometry_tools_use_metadata_not_preview_pixels() {
     pollster::block_on(async {
         let (device, queue) = gpu().await;
         let directory = tempfile::tempdir().unwrap();
@@ -215,26 +216,18 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                 assert!(editor.document.visit.source.pending());
                 assert!(editor.document.visit.canvas.ready.is_none());
                 assert!(editor.document.visit.pending_preview.is_some());
-                assert!(editor.busy);
+                assert!(!editor.interaction_blocked());
                 assert!(editor.scope_input().is_err());
 
-                editor.begin_pick(Pick::Gamma, cx);
                 editor.begin_crop();
-                editor.export(
-                    "unused.tiff".into(),
-                    OutputFormat::Tiff(OutputTarget::Srgb),
-                    Overwrite::Refuse,
-                    &UiContext::render_only(),
-                );
-                assert!(editor.test_pick().is_none());
-                assert!(editor.document.crop_edit().is_none());
-                assert!(editor.document.export.operation.is_none());
                 assert!(
-                    !editor.document.visit.canvas.original.refining()
-                        && editor.document.visit.canvas.original.task.is_none()
-                        && !editor.measurement_pending()
-                        && editor.document.export.operation.is_none()
+                    editor.cropping(),
+                    "accepted source geometry is available before its full pixels"
                 );
+                assert!(editor.document.visit.canvas.ready.is_none());
+                editor.end_tool();
+                assert!(!editor.measurement_pending());
+                assert!(editor.document.export.operation.is_none());
 
                 let context = egui::Context::default();
                 let mut renderer = egui_wgpu::Renderer::new(
@@ -247,7 +240,7 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                     for source in [false, true] {
                         editor.document.source = source;
                         editor.source_exposure = 2.;
-                        let output = frame(editor, &context);
+                        let output = frame(editor, &context, cx);
                         let cached_caption = output.shapes.iter().any(|shape| match &shape.shape {
                             egui::Shape::Text(text) => {
                                 text.galley.job.text.contains(" · Cached preview")
@@ -398,12 +391,12 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                 let second = editor.id;
                 editor.source_result(first, Err("obsolete".into()));
                 assert_eq!(editor.document.visit.current_source, Some(b_id));
-                assert!(editor.busy);
+                assert!(!editor.interaction_blocked());
                 assert!(editor.document.visit.pending_preview.is_some());
                 assert!(editor.document.visit.canvas.ready.is_none());
 
                 editor.source_result(second, Err("current load failed".into()));
-                assert!(!editor.busy);
+                assert!(!editor.interaction_blocked());
                 assert!(editor.document.visit.pending_preview.is_none());
                 assert!(editor.document.visit.canvas.selection_timing.is_none());
                 assert_eq!(editor.status, "current load failed");
@@ -416,7 +409,7 @@ fn pending_replacements_ignore_old_ready_and_clear_on_failure_or_document_work()
                     editor.document.visit.pending_preview.is_none()
                         && editor.document.visit.canvas.selection_timing.is_none()
                 );
-                assert!(editor.busy && editor.document_pending.is_some());
+                assert!(editor.interaction_blocked() && editor.document_pending.is_some());
             });
         });
     });
@@ -438,7 +431,7 @@ fn incompatible_cached_sources_keep_the_loading_placeholder() {
                 editor.load(path.clone(), cx);
                 assert!(editor.document.visit.pending_preview.is_some());
                 assert!(editor.document.visit.canvas.ready.is_none());
-                assert!(editor.busy);
+                assert!(!editor.interaction_blocked());
                 editor.document.thumbnails.seed(
                     editor.document.state.project.source(id).unwrap(),
                     editor.document.file_key(&path),
@@ -525,7 +518,7 @@ fn project_correction_changes_preserve_pending_camera_samples() {
                             .proxy
                     )
                 );
-                assert!(editor.busy);
+                assert!(!editor.interaction_blocked());
                 assert!(editor.document.visit.canvas.ready.is_none());
                 assert!(editor.document.visit.source.pending());
             });
@@ -585,7 +578,7 @@ fn authoritative_ready_keeps_pending_until_the_working_view_is_displayed() {
                 editor.source_result(editor.id, Ok(Box::new(ready)));
                 assert!(editor.document.visit.canvas.ready.is_some());
                 assert!(editor.document.visit.pending_preview.is_some());
-                assert!(!editor.busy);
+                assert!(!editor.interaction_blocked());
                 assert!(editor.selected_view().unwrap().2);
                 editor.document.source = false;
                 editor
@@ -686,7 +679,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                 editor.load(path.clone(), cx);
                 assert!(editor.document.visit.source.pending());
                 assert!(editor.document.visit.pending_preview.is_some());
-                assert!(editor.busy);
+                assert!(!editor.interaction_blocked());
                 assert!(editor.document.visit.canvas.ready.is_none());
                 let captured = editor
                     .positive_processing(
@@ -719,7 +712,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                             &queue,
                             &context,
                             &mut renderer,
-                            frame(editor, &context),
+                            frame(editor, &context, cx),
                         );
                         let positive = editor
                             .thumbnail_parameters(editor.document.state.project.source(id).unwrap())
@@ -765,7 +758,7 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                         &queue,
                         &context,
                         &mut renderer,
-                        frame(editor, &context),
+                        frame(editor, &context, cx),
                     );
                     let edited = editor
                         .thumbnail_parameters(editor.document.state.project.source(id).unwrap())

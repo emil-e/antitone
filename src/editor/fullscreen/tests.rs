@@ -433,7 +433,7 @@ fn completed_new_cannot_reuse_the_departed_photos_fullscreen_evidence_before_a_p
             editor.document_pending.is_none()
         });
         app.update(|editor| {
-            assert!(!editor.busy && editor.document.project.order.is_empty());
+            assert!(!editor.interaction_blocked() && editor.document.project.order.is_empty());
             assert!(editor.selected_view().is_none());
             assert!(!editor.fullscreen_available());
             editor.toggle_fullscreen(&context);

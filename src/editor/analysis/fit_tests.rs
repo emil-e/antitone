@@ -63,14 +63,14 @@ fn reviewed_fit_keeps_the_browsed_photo_and_undoes_support_and_grade_together() 
         app.enter(|e, access| {
             e.select_roll_photo(1, egui::Modifiers::NONE, access);
         });
-        app.run_until(LIMIT, |e| !e.busy);
+        app.run_until(LIMIT, |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.visit.current_source, Some(other));
             assert_eq!(e.document.state.project, before);
         });
         app.update(|e| e.select_active_photo_only());
         confirm(app);
-        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.busy);
+        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.interaction_blocked());
         app.read(|e| {
             assert!(e.status.starts_with("Analyzed 2"), "{}", e.status);
             assert_eq!(e.document.visit.current_source, Some(other));
@@ -89,7 +89,7 @@ fn reviewed_fit_keeps_the_browsed_photo_and_undoes_support_and_grade_together() 
         app.enter(|e, access| {
             e.restore_history(Direction::Undo, access);
         });
-        app.run_until(LIMIT, |e| !e.busy);
+        app.run_until(LIMIT, |e| !e.interaction_blocked());
         app.read(|e| assert_eq!(e.document.state.project, before));
     });
     scheduler.close_and_wait().unwrap();
@@ -122,7 +122,7 @@ fn cancelling_review_keeps_the_browsed_photo_and_its_layer_selection() {
     with_application(editor, |app| {
         review(app);
         app.enter(|editor, cx| editor.select_roll_photo(1, egui::Modifiers::NONE, cx));
-        app.run_until(LIMIT, |editor| !editor.busy);
+        app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         let selected = app.read(|editor| editor.adjustment_layer_target());
         app.enter(|editor, cx| {
             editor.tab = 1;
@@ -159,7 +159,7 @@ fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibra
     with_application(editor, |app| {
         review(app);
         confirm(app);
-        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.busy);
+        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.interaction_blocked());
         app.read(|e| {
             assert!(e.status.starts_with("Analyzed 2"), "{}", e.status);
             let calibration = e
@@ -180,7 +180,7 @@ fn fresh_negative_analysis_measures_both_anchors_and_undo_restores_the_uncalibra
             assert_eq!(e.document.state.project.analysis_regions.len(), 2);
         });
         app.enter(|e, access| e.restore_history(Direction::Undo, access));
-        app.run_until(LIMIT, |e| !e.busy);
+        app.run_until(LIMIT, |e| !e.interaction_blocked());
         app.read(|e| assert_eq!(e.document.state.project, before));
     });
     scheduler.close_and_wait().unwrap();
@@ -199,11 +199,11 @@ fn native_fit_cancellation_preserves_accepted_data_without_blocking_unrelated_cp
         confirm(app);
         await_native(app, &starts);
         app.update(Editor::cancel_analysis);
-        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.busy);
+        app.run_until(LIMIT, |e| !e.analysis_fitting() && !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
             assert!(e.document.analysis_review().is_none());
-            assert!(e.tasks.view().is_none());
+            assert!(e.activities.view().is_none());
             assert!(e.history_label(Direction::Undo).is_none());
         });
         assert_eq!(scheduler.waiter_count(), 0);
@@ -299,7 +299,7 @@ fn cached_fit_cancellation_waits_for_worker_cleanup_without_blocking_other_cpu_j
         }
         app.update(Editor::cancel_analysis);
         assert!(app.read(|e| {
-            e.busy
+            e.interaction_blocked()
                 && e.document
                     .analysis_operation()
                     .unwrap()
@@ -318,7 +318,7 @@ fn cached_fit_cancellation_waits_for_worker_cleanup_without_blocking_other_cpu_j
         app.run_until(LIMIT, |_| observed.try_recv().is_ok());
         release.send(()).unwrap();
         app.run_until(LIMIT, |e| {
-            !e.busy && e.document.analysis_operation().is_none()
+            !e.interaction_blocked() && e.document.analysis_operation().is_none()
         });
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
@@ -347,7 +347,7 @@ fn new_document_supersedes_a_queued_fit_without_consuming_its_areas_or_history()
             assert!(e.document_pending.is_some());
         });
         drop(admission);
-        app.run_until(LIMIT, |e| !e.busy);
+        app.run_until(LIMIT, |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(e.document.state.project.order.is_empty());
             assert!(e.document.state.project.analysis_regions.is_empty());

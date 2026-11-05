@@ -1,5 +1,6 @@
 use super::*;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 #[cfg(feature = "ocio-reference")]
 mod rebase_exposure;
 use crate::{
@@ -139,7 +140,7 @@ fn new_work_admission_withdraws_queued_feature_acceptance_after_the_picker_finis
                 });
                 if import {
                     app.run_until(Duration::from_secs(15), |editor| {
-                        !editor.busy && editor.document_pending.is_none()
+                        !editor.interaction_blocked() && editor.document_pending.is_none()
                     });
                 } else if publish {
                     app.run_until(Duration::from_secs(5), |_| published.get());
@@ -157,7 +158,7 @@ fn new_work_admission_withdraws_queued_feature_acceptance_after_the_picker_finis
                     assert_eq!(actual, if publish { value } else { before });
                     if !import && !publish {
                         assert_eq!(editor.test_pick(), Some(replacement.display()));
-                        assert!(!editor.busy);
+                        assert!(!editor.interaction_blocked());
                     }
                     assert_eq!(
                         editor.document.project.order.len(),
@@ -186,12 +187,12 @@ fn accepted_open_seeds_a_fresh_scope_cache_from_the_prepared_source() {
     let project = directory.path().join("opened.antitone");
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         let (snapshot, previous) =
             app.read(|e| (e.document.capture(), Arc::downgrade(&e.document.cache)));
         snapshot.save(&project, crate::project::Save::New).unwrap();
         app.enter(|e, cx| e.start_document(Preparation::Open(project), cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(previous.upgrade().is_none());
             assert!(!previous.ptr_eq(&Arc::downgrade(&e.document.cache)));
@@ -228,7 +229,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.enter(|e, access| {
             e.add_raws(vec![path("patches.dng")], access);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         let (accepted, selected, visit) = app.read(|e| {
             assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             assert_eq!(e.document.state.project.order.len(), 1);
@@ -245,7 +246,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
                 access,
             );
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
             assert_eq!(e.document.visit.view, visit);
@@ -253,7 +254,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.enter(|e, access| {
             e.restore_history(crate::editor::history::Direction::Undo, access);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(
                 e.document.state.project.order.is_empty(),
@@ -266,7 +267,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.enter(|e, access| {
             e.restore_history(crate::editor::history::Direction::Redo, access);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
             assert!(e.document.visit.canvas.ready.is_some());
@@ -275,7 +276,7 @@ fn import_history_correction_and_new_run_without_backend_or_painting() {
         app.enter(|e, access| {
             e.start_document(Preparation::New, access);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.state.project, crate::project::Project::default());
             assert!(!e.document.dirty());
@@ -332,20 +333,20 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
     let scheduler = source_loading::SourceLoader::new();
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng"), red.clone()], cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(e.document.input.is_negative(), "{}", e.status);
             assert_eq!(e.document.state.project.sources.len(), 2);
             assert_stage_development(e, false);
         });
         app.enter(|e, cx| e.request_input(InputSettings::Digital, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.input, InputSettings::Digital, "{}", e.status);
             assert_stage_development(e, true);
         });
         app.enter(|e, cx| e.request_input(e.negative_input(), cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(e.document.input.is_negative(), "{}", e.status);
             assert_stage_development(e, false);
@@ -357,13 +358,13 @@ fn input_stage_switch_redevelops_every_source_for_the_target_stage() {
             );
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.input, InputSettings::Digital, "{}", e.status);
             assert_stage_development(e, true);
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(e.document.input.is_negative(), "{}", e.status);
             assert_stage_development(e, false);
@@ -380,7 +381,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
 
     with_application(editor(scheduler.clone()), |app| {
         app.enter(|e, cx| e.add_raws(vec![path("patches.dng")], cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.enter(|e, cx| {
             assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status);
             e.set_dmin(Some(glam::DVec3::splat(0.6)));
@@ -407,7 +408,7 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
                 cx,
             );
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         let (negative, scan, expected_pixels) = app.read(|e| {
             assert!(e.document.correction.is_some(), "{}", e.status);
             let services = e.source_services.as_ref().unwrap();
@@ -452,13 +453,13 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             assert_eq!(e.document.input, negative);
             assert_eq!(e.document.input_switch.take(), Some(InputSettings::Digital));
             e.apply_input(InputSettings::Digital, cx);
-            assert!(e.busy && e.document.correction.is_some());
+            assert!(e.interaction_blocked() && e.document.correction.is_some());
             assert_eq!(
                 e.document.input, negative,
                 "old interpretation stays accepted until preparation completes"
             );
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.input, InputSettings::Digital, "{}", e.status);
             assert!(e.document.correction.is_none() && !e.document.source);
@@ -491,20 +492,20 @@ fn input_switch_clears_live_correction_atomically_and_history_restores_activatio
             }
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.input, negative, "{}", e.status);
             assert!(e.document.correction.is_some() && !e.document.source);
             assert_eq!(e.document.state.project.scan, scan);
         });
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.enter(|e, cx| {
             assert_eq!(e.document.input, InputSettings::Digital, "{}", e.status);
             assert!(e.document.correction.is_none());
             e.request_input(e.negative_input(), cx);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(
                 e.document.input.is_negative()
@@ -583,7 +584,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
         app.enter(|e, access| {
             e.start_document(Preparation::Open(destination.clone()), access);
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         let (snapshot, visit, native, store) = app.update(|e| {
             let before = e.history_snapshot();
             e.document.roll.exposure = 0.25;
@@ -608,7 +609,7 @@ fn open_prepares_first_source_before_promotion_and_failed_open_preserves_owner_h
                 access,
             );
         });
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.state.project, snapshot);
             assert_eq!(e.document.visit.view, visit);
@@ -643,16 +644,15 @@ fn queued_supersession_retires_old_continuation_and_stale_progress_cannot_touch_
         let current = app.read(|e| e.document_pending.unwrap());
         app.pump();
         app.update(|e| {
-            e.document_progress(old, 5, 10);
             e.document_prepared(old, Err("stale".into()));
         });
         app.read(|e| {
             assert_eq!(e.document_pending, Some(current));
-            assert!(e.tasks.view().unwrap().measured.is_none());
-            assert!(e.busy);
+            assert!(e.activities.view().unwrap().measured.is_none());
+            assert!(e.interaction_blocked());
         });
         drop(hold);
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(e.document.state.project.sources.is_empty());
             assert!(e.document.visit.canvas.ready.is_none());
@@ -691,16 +691,16 @@ fn pending_native_candidate_keeps_accepted_state_and_admission_after_logical_ret
         starts.recv_timeout(Duration::from_secs(10)).unwrap();
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
-            assert!(e.document.visit.canvas.ready.is_none() && e.busy);
+            assert!(e.document.visit.canvas.ready.is_none() && e.interaction_blocked());
         });
         app.enter(|e, access| {
             e.start_document(Preparation::New, access);
         });
         app.pump();
         assert_eq!(scheduler.waiter_count(), 0);
-        assert!(app.read(|e| e.busy));
+        assert!(app.read(|e| e.interaction_blocked()));
         release.send(()).unwrap();
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         assert_eq!(count.load(Ordering::Relaxed), 1);
         app.read(|e| {
             assert!(

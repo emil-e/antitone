@@ -74,17 +74,17 @@ fn unsupported_material_requests_preserve_pending_and_accepted_choices_until_con
         let paper = monochrome::Paper::default();
         app.enter(|e, cx| {
             e.select_paper(Some(material::Paper::Monochrome(paper)), cx);
-            let pending = e.document.look.as_ref().unwrap().activity;
+            let pending = e.document.look.as_ref().unwrap().activity.clone();
             assert_eq!(
                 e.material_selection(),
                 Some(MaterialSelection::Monochrome(paper.into()))
             );
             assert_eq!(e.photochemical_selection(), None);
             e.select_negative(Negative::from_id("kodak_portra_400").map(Into::into), cx);
-            assert_eq!(e.document.look.as_ref().unwrap().activity, pending);
+            assert_eq!(e.document.look.as_ref().unwrap().activity.clone(), pending);
             assert!(e.document.material_switch.is_some());
             e.resolve_material_switch(false, cx);
-            assert_eq!(e.document.look.as_ref().unwrap().activity, pending);
+            assert_eq!(e.document.look.as_ref().unwrap().activity.clone(), pending);
         });
         app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
         let accepted = app.read(|e| e.document.project.clone());

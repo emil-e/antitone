@@ -6,7 +6,7 @@ fn branded_header_preserves_menu_availability_and_processing_state() {
         for width in [720., 1100.] {
             for busy in [false, true] {
                 let mut editor = fixture();
-                editor.busy = busy;
+                editor.set_test_busy(busy);
                 let before = (
                     editor.document.roll,
                     editor.document.visit.adjustment_layer_settings,
@@ -184,7 +184,7 @@ fn successful_new_from_photo_or_rendering_selects_roll_and_opens_calibration_onl
                 editor.start_document(Preparation::New, cx);
                 let id = editor.document_pending.unwrap();
                 assert_eq!(editor.tab, tab);
-                assert!(editor.busy && editor.document_pending.is_some());
+                assert!(editor.interaction_blocked() && editor.document_pending.is_some());
                 editor.document_prepared(id + 1, Err("stale".into()));
                 assert_eq!(editor.tab, tab);
                 assert_eq!(editor.document_pending, Some(id));

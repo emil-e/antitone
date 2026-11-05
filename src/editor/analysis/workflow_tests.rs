@@ -43,7 +43,7 @@ pub(in crate::editor) fn fixture(scheduler: source_loading::SourceLoader) -> Edi
     {
         let mut app = TestApplication::new(&owner, || {});
         app.enter(|e, cx| e.load(paths[0].clone(), cx));
-        app.run_until(LIMIT, |e| !e.busy);
+        app.run_until(LIMIT, |e| !e.document.visit.source.pending());
         app.read(|e| assert!(e.document.visit.canvas.ready.is_some(), "{}", e.status));
         app.close_execution();
     }
@@ -121,8 +121,8 @@ fn areas_open_review_without_backend_or_painting_and_remain_drafts() {
             assert!(e.current_tool().unwrap().is::<crate::editor::AnalyzeTool>());
             assert!(e.document.visit.picker.display().is_none());
             assert!(e.test_pick_region().is_some());
-            assert!(!e.busy);
-            assert!(e.tasks.view().is_none());
+            assert!(!e.interaction_blocked());
+            assert!(e.activities.view().is_none());
             assert_eq!(e.document.cache.charges().retained, 0);
         });
     });
@@ -142,9 +142,9 @@ fn queued_user_cancel_acknowledges_without_starting_native_work() {
         drop(admission);
         app.run_until(LIMIT, |e| !preparing(e));
         app.read(|e| {
-            assert!(!e.busy && e.document.analysis_review().is_none());
+            assert!(!e.interaction_blocked() && e.document.analysis_review().is_none());
             assert_eq!(e.document.state.project, before);
-            assert!(e.tasks.view().is_none());
+            assert!(e.activities.view().is_none());
         });
         assert_eq!(scheduler.waiter_count(), 0);
     });
@@ -162,7 +162,7 @@ fn native_demand_cancellation_acknowledges_without_blocking_unrelated_cpu_work()
         app.update(Editor::cancel_analysis);
         app.run_until(LIMIT, |e| !preparing(e));
         app.read(|e| {
-            assert!(!e.busy && e.document.analysis_review().is_none());
+            assert!(!e.interaction_blocked() && e.document.analysis_review().is_none());
             assert_eq!(e.document.state.project, before);
         });
         assert_eq!(scheduler.waiter_count(), 0);
@@ -231,7 +231,7 @@ fn document_transition_retires_areas_and_waits_for_native_work_before_promotion(
             assert!(e.document.state.project.order.is_empty());
             assert!(e.document.analysis_review().is_none());
             assert!(!e.analysis_preparing());
-            assert!(!e.busy);
+            assert!(!e.interaction_blocked());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -245,14 +245,14 @@ fn unavailable_services_finish_the_activity_without_opening_review() {
     editor.source_services = None;
     with_application(editor, |app| {
         start(app);
-        assert!(app.read(|e| preparing(e) && e.busy));
+        assert!(app.read(|e| preparing(e) && e.interaction_blocked()));
         app.run_until(LIMIT, |e| !preparing(e));
         app.read(|e| {
             assert!(!e.analysis_preparing());
             assert!(e.document.analysis_review().is_none());
             assert_eq!(e.document.state.project, before);
-            assert!(!e.busy);
-            assert!(e.tasks.view().is_none());
+            assert!(!e.interaction_blocked());
+            assert!(e.activities.view().is_none());
             assert!(e.status.contains("unavailable"));
         });
     });

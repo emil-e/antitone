@@ -910,15 +910,8 @@ impl Editor {
             return;
         }
         if self.document.visit.dust.brush_source != self.document.visit.current_source
-            && let (Some(source), Some(active)) = (
-                self.document.visit.current_source,
-                self.document
-                    .visit
-                    .canvas
-                    .ready
-                    .as_ref()
-                    .map(|ready| ready.area),
-            )
+            && let (Some(source), Some(active)) =
+                (self.document.visit.current_source, self.selected_area())
         {
             self.document.visit.dust.brush_size = initial_brush_size(active);
             self.document.visit.dust.brush_source = Some(source);
@@ -1161,8 +1154,7 @@ impl Editor {
     }
 
     pub(super) fn schedule_dust(&mut self, signature: Signature, cx: &UiContext<'_, Self>) {
-        if self.busy
-            || self.document_pending.is_some()
+        if self.document_pending.is_some()
             || self.source_epoch.load(std::sync::atomic::Ordering::Relaxed) != self.id
         {
             return;
@@ -1318,8 +1310,8 @@ impl tool::Tool for DustTool {
             .dust_repairs(source)
             .map_or(0, |set| set.repairs().len());
         let searching = !self.interaction.searches.borrow().is_empty();
-        let reset_enabled = !editor.busy
-            && editor.document.visit.canvas.ready.is_some()
+        let reset_enabled = !editor.interaction_blocked()
+            && editor.selected_area().is_some()
             && self.donor().is_none()
             && (repair_count > 0 || searching);
         presentation::ToolIdentity {
@@ -1461,7 +1453,7 @@ impl tool::Tool for DustTool {
 
     fn shortcuts(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
         if ui.is_enabled()
-            && !editor.busy
+            && !editor.interaction_blocked()
             && ui.input_mut(|input| {
                 let delete = input.consume_key(egui::Modifiers::NONE, egui::Key::Delete);
                 let backspace = input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace);
@@ -1473,7 +1465,7 @@ impl tool::Tool for DustTool {
     }
 
     fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
-        if matches!(action, tool::Action::Dismiss) && !editor.busy {
+        if matches!(action, tool::Action::Dismiss) && !editor.interaction_blocked() {
             if !self.interaction.searches.borrow().is_empty() {
                 editor.status = "Unfinished Dust strokes discarded".into();
             }
@@ -1553,8 +1545,9 @@ impl DustTool {
                 })
                 .unwrap_or(input.modifiers)
         });
-        let allowed =
-            !editor.busy && ui.is_enabled() && !ui.input(|i| i.key_down(egui::Key::Space));
+        let allowed = !editor.interaction_blocked()
+            && ui.is_enabled()
+            && !ui.input(|i| i.key_down(egui::Key::Space));
         if allowed {
             let started = response.drag_started_by(egui::PointerButton::Primary);
             let clicked = response.clicked_by(egui::PointerButton::Primary);
@@ -1764,7 +1757,7 @@ impl DustTool {
             .composition
             .frame_to_source(geometry.frame_point(point))
             .0;
-        let active = editor.document.visit.canvas.ready.as_ref()?.area;
+        let active = editor.selected_area()?;
         (source[0] >= f64::from(active.x)
             && source[1] >= f64::from(active.y)
             && source[0] < f64::from(active.x + active.width)
@@ -1806,7 +1799,7 @@ impl DustTool {
             .map(|repair| repair.support.clone())
             .chain(editor.dust_pending_supports(source))
             .collect::<Vec<_>>();
-        let active = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+        let active = editor.selected_area().expect("selected photo geometry");
         let erase = temporary_erase;
         let brush_size = editor.document.visit.dust.brush_size;
         let result = brush_stroke(
@@ -1859,7 +1852,7 @@ impl DustTool {
         geometry: crate::viewport::CanvasLayout,
         point: egui::Pos2,
     ) -> Option<RepairId> {
-        if editor.busy
+        if editor.interaction_blocked()
             || editor.tab != 1
             || editor.document.source
             || !self.interaction.edit.borrow().show_masks
@@ -1948,7 +1941,7 @@ impl DustTool {
             return None;
         }
         let effective = editor.effective_dust_repair(source, repair_id)?;
-        let active = editor.document.visit.canvas.ready.as_ref()?.area;
+        let active = editor.selected_area()?;
         let target = donor_target(&effective.support, active).ok()?;
         let donor = SourceRegion {
             x: u32::try_from(i64::from(target.x) + i64::from(effective.offset[0])).ok()?,
@@ -2048,14 +2041,7 @@ impl DustTool {
         let Some(position) = self.dust_source_position(editor, geometry, point) else {
             return;
         };
-        let Some(active) = editor
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .map(|ready| ready.area)
-        else {
+        let Some(active) = editor.selected_area() else {
             return;
         };
         let Some(support) = editor
@@ -2132,12 +2118,7 @@ impl DustTool {
         }
         let before = editor.history_snapshot();
         let result = editor
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .map(|ready| ready.area)
+            .selected_area()
             .ok_or(Error::InvalidParameter("manual donor unavailable"))
             .and_then(|active| validate_dust_offset(draft.offset, &support, active))
             .and_then(|()| {
@@ -2528,18 +2509,20 @@ impl DustTool {
             support: support.clone(),
             select: Cell::new(true),
         });
-        let input = SearchInput {
-            support,
-            previous_offset: previous.as_ref().map(|repair| repair.offset),
-            input: editor.input(),
-            context: editor
-                .source_context()
-                .expect("released stroke has a ready source"),
-            services: editor.source_services.clone(),
-            #[cfg(test)]
-            worker: editor.document.dust.search_worker.clone(),
+        let source_context = match editor.capture_source_context() {
+            Ok(input) => input,
+            Err(error) => {
+                editor.status = error;
+                return;
+            }
         };
-        let active = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+        let captured_input = editor.input();
+        let services = editor.source_services.clone();
+        #[cfg(test)]
+        let worker = editor.document.dust.search_worker.clone();
+        let active = editor
+            .selected_area()
+            .expect("released stroke has source geometry");
         if previous.is_none() {
             editor.document.dust.selected.remove(&source);
         }
@@ -2550,7 +2533,27 @@ impl DustTool {
         }
         let model = stroke.clone();
         let editing = self.interaction.edit.clone();
-        match cx.spawn(move |cx| apply_stroke(input, stroke, active, editing, cx)) {
+        match cx.spawn(move |cx| async move {
+            let context = match source_context.await {
+                Ok(context) => context,
+                Err(error) => {
+                    cx.update(|editor| {
+                        editor.status = format!("Dust stroke not accepted: {error}");
+                    });
+                    return Err(error);
+                }
+            };
+            let input = SearchInput {
+                support,
+                previous_offset: previous.as_ref().map(|repair| repair.offset),
+                input: captured_input,
+                context,
+                services,
+                #[cfg(test)]
+                worker,
+            };
+            apply_stroke(input, stroke, active, editing, cx).await
+        }) {
             Some(task) => self
                 .interaction
                 .searches

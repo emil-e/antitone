@@ -21,7 +21,8 @@ pub(super) struct State {
 
 /// The action retains cancellation feedback until its continuation acknowledges.
 pub(super) struct Operation {
-    pub activity: u64,
+    #[cfg(test)]
+    pub activity: ActivityReporter,
     pub cancelled: Cancellation,
     task: Option<async_executor::Task<()>>,
 }
@@ -368,20 +369,25 @@ async fn resolve_destination(
 
 impl Editor {
     pub(super) fn export_photos(&mut self, request: Request, cx: &UiContext<'_, Self>) {
-        let activity = self.request_id();
         let cancelled = Cancellation::default();
+        let activity =
+            self.activities
+                .start(ActivityOptions::new("Exporting…").modal().cancellable(
+                    "Cancel export",
+                    "Cancelling export…",
+                    cancelled.clone(),
+                ));
         self.document.export.operation = Some(Operation {
-            activity,
+            #[cfg(test)]
+            activity: activity.reporter(),
             cancelled: cancelled.clone(),
             task: None,
         });
         self.document.thumbnails.cancel();
-        self.busy = true;
         self.status = "Exporting…".into();
         self.document.export.summary = None;
-        self.tasks.begin(Task::Export(activity));
         let total = request.photos.len();
-        log::info!(request = activity, total; "export_started");
+        log::info!(total; "export_started");
 
         let services = self.export_services.clone();
         let retire = cancelled.cancel_on_drop();
@@ -391,12 +397,7 @@ impl Editor {
                 Some(services) => {
                     services
                         .export_batch(request, cancelled, |completed, total| {
-                            cx.update(|editor| {
-                                editor.tasks.report(
-                                    TaskRequest::Export(activity),
-                                    TaskProgress::Counted { completed, total },
-                                )
-                            });
+                            activity.progress(completed, total);
                         })
                         .await
                 }
@@ -409,9 +410,9 @@ impl Editor {
                     }],
                 },
             };
+            drop(activity);
             cx.update(|editor| {
                 log::info!(
-                    request = activity,
                     total = summary.total,
                     exported = summary.exported(),
                     failed = summary.failed(),
@@ -422,14 +423,13 @@ impl Editor {
                 for outcome in &summary.outcomes {
                     if let Outcome::Failed { error, .. } = outcome {
                         log::warn!(
-                            request = activity,
                             error = error.as_str();
                             "export_photo_failed"
                         );
                     }
                 }
                 editor.document.export.operation = None;
-                if !editor.tasks.finish(TaskRequest::Export(activity)) {
+                if editor.interaction_blocked() {
                     // A captured batch cannot finish a newer foreground operation.
                     if summary.failed() > 0
                         && editor.failure.is_none()
@@ -439,7 +439,6 @@ impl Editor {
                     }
                     return;
                 }
-                editor.busy = false;
                 if summary.total == 1 && summary.exported() == 1 {
                     if let Outcome::Exported(path) = &summary.outcomes[0] {
                         editor.status = format!("Exported {}", path.display());
@@ -460,22 +459,10 @@ impl Editor {
             });
         }) else {
             self.document.export.operation = None;
-            self.tasks.finish(TaskRequest::Export(activity));
-            self.busy = false;
             self.status = "Export cancelled".into();
             return;
         };
         self.document.export.operation.as_mut().unwrap().task = Some(task);
-    }
-
-    pub(super) fn cancel_export(&mut self) {
-        let Some(operation) = &self.document.export.operation else {
-            return;
-        };
-        operation.cancelled.cancel();
-        log::info!(request = operation.activity; "export_cancellation_requested");
-        self.tasks
-            .cancelling(TaskRequest::Export(operation.activity));
     }
 }
 

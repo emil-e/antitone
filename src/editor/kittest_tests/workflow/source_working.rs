@@ -13,7 +13,7 @@ fn digital_source_scale_import_save_open_and_inspection_keep_zero_exposure_contr
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
-            !e.busy
+            !e.interaction_blocked()
                 && e.document_pending.is_none()
                 && e.document.visit.working_view.support_ready()
                 && e.document
@@ -100,7 +100,7 @@ fn negative_viewing_white_and_exposure_update_canvas_and_source_card_without_red
     editor_harness_with_thumbnails(true, |mut h, capture| {
         h.enter(|editor, cx| editor.add_raws(vec![path], cx));
         wait_for(&mut h, |e| {
-            !e.busy
+            !e.interaction_blocked()
                 && e.document_pending.is_none()
                 && e.document.visit.working_view.support_ready()
                 && e.document
@@ -257,12 +257,16 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
             .as_ref()
             .map_or_else(|| fixture("roll-1.dng"), |file| file.path().to_owned());
         harness.enter(|editor, cx| editor.add_raws(vec![first, second.clone()], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         if film {
             harness.enter(|editor, cx| {
                 editor.apply_input(crate::processing::InputSettings::Digital, cx)
             });
-            wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+            wait_for(&mut harness, |e| {
+                !e.interaction_blocked() && e.document_pending.is_none()
+            });
         }
         harness.update(|editor| {
             if film {
@@ -281,7 +285,9 @@ fn selecting_and_zooming_with_blocked_acquisition(film: bool) {
         let previous = harness.read(|editor| editor.document.visit.current_source.unwrap());
         harness.enter(|editor, cx| editor.load(second, cx));
         // Deliver source readiness without painting or starting physical-view acquisition.
-        harness.run_until(Duration::from_secs(15), |e| !e.busy);
+        harness.run_until(Duration::from_secs(15), |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         harness.read(|editor| {
             assert_ne!(editor.document.visit.current_source.unwrap(), previous);
             assert!(editor.document.visit.canvas.ready.is_some());
@@ -446,7 +452,9 @@ fn sony_source_inspection_and_positive_share_automatic_development() {
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().into()], cx));
         wait_for(&mut h, |e| {
-            !e.busy && e.document_pending.is_none() && e.document.visit.working_view.support_ready()
+            !e.interaction_blocked()
+                && e.document_pending.is_none()
+                && e.document.visit.working_view.support_ready()
         });
         h.read(|editor| assert!(editor.document.source));
         h.render().unwrap();
@@ -550,7 +558,9 @@ fn physical_view_uncalibrated_source_keeps_detail_and_underlay_through_inspectio
         });
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |e| {
-            !e.busy && e.document_pending.is_none() && e.document.visit.working_view.support_ready()
+            !e.interaction_blocked()
+                && e.document_pending.is_none()
+                && e.document.visit.working_view.support_ready()
         });
         harness.read(|editor| assert!(editor.document.source));
         harness.read(|editor| assert!(editor.calibration().is_none()));

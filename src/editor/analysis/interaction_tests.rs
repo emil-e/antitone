@@ -49,14 +49,16 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
             let reference = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/raw/bare-light.dng");
             editor.begin_flat_edit(reference, None, cx);
-            assert!(editor.current_tool().unwrap().is::<flat::FlatTool>());
-            assert!(editor.document.visit.masks.gesture().is_none());
-            editor.begin_crop();
-            assert!(editor.document.crop_edit().is_some());
+            assert!(
+                editor.current_tool().unwrap().is::<AnalyzeTool>(),
+                "working modal rejects replacement"
+            );
+            editor.cancel_analysis();
             assert_eq!(editor.document.project, before);
             assert!(editor.history_label(history::Direction::Undo).is_none());
         });
-        app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
+        app.pump();
+        app.update(Editor::begin_crop);
         app.read(|editor| {
             assert!(editor.document.crop_edit().is_some());
             assert_eq!(editor.document.project, before);
@@ -91,7 +93,7 @@ fn changing_input_from_review_retires_its_projection_on_success_and_failure() {
                 assert!(editor.test_pick().is_none());
                 assert!(editor.scopes.visible);
             });
-            app.run_until(LIMIT, |editor| !editor.busy);
+            app.run_until(LIMIT, |editor| !editor.interaction_blocked());
             app.read(|editor| {
                 assert!(editor.test_pick().is_none());
                 assert!(editor.scopes.visible && editor.preferences.scopes_visible);
@@ -161,7 +163,7 @@ fn held_work<T: Send + 'static>(
 }
 
 #[test]
-fn replacement_retires_running_preparation_and_fitting_while_their_physical_inputs_survive_cleanup()
+fn owner_retirement_releases_running_preparation_and_fitting_while_physical_inputs_survive_cleanup()
 {
     for fitting in [false, true] {
         for replace in [false, true] {
@@ -232,11 +234,12 @@ fn replacement_retires_running_preparation_and_fitting_while_their_physical_inpu
                 let pixels = pixels.into_inner().unwrap();
                 assert!(!probe.retired.get() && !probe.continued.get());
                 if replace {
-                    app.update(Editor::begin_crop);
+                    app.update(Editor::end_tool);
                     app.pump();
+                    app.update(Editor::begin_crop);
                     app.read(|editor| {
                         assert!(editor.document.crop_edit().is_some());
-                        assert!(!editor.busy);
+                        assert!(!editor.interaction_blocked());
                         assert_eq!(editor.document.project, before);
                     });
                     assert!(

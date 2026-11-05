@@ -208,7 +208,7 @@ fn scrolled_thumbnail_edges_match_crops_of_the_unclipped_gpu_image() {
                         editor.set_dmin(None);
                         editor.set_dmax(None);
                     }
-                    editor.busy = true;
+                    editor.set_test_busy(true);
                     editor.preferences.filmstrip_height = height;
                     let before = editor.document.state.project.clone();
                     for id in editor.document.state.project.order.clone() {

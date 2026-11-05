@@ -681,7 +681,7 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
             e.start_document(Preparation::New, cx);
             assert!(!e.document.auto_crop.reviewing());
             assert_eq!(e.document.state.project, before);
-            assert!(e.busy && e.document_pending.is_some());
+            assert!(e.interaction_blocked() && e.document_pending.is_some());
         });
     });
 }
@@ -782,7 +782,7 @@ fn batch_entry_respects_document_operations_and_removal() {
         let (mut e, _directory) = fixture();
         let before = e.document.state.project.clone();
         match case {
-            0 => e.busy = true,
+            0 => e.set_test_busy(true),
             4 => e.document_pending = Some(99),
             5 => e.document.removal_pending = Some(vec![e.document.visit.current_source.unwrap()]),
             _ => unreachable!(),

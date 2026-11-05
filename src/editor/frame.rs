@@ -85,7 +85,7 @@ impl Editor {
         if !self.menus.pending.is_empty() || deferred_ready && text_input_pending {
             ui.ctx().request_repaint();
         }
-        if self.busy {
+        if self.interaction_blocked() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
         if menu.is_some_and(|action| !self.menu_targets_text(action)) {
@@ -128,11 +128,8 @@ impl Editor {
         text_was_focused: bool,
         dialog_escape_available: bool,
     ) {
-        if self
-            .document
-            .spatial_preparing
-            .as_ref()
-            .is_some_and(|work| self.tasks.is_current(TaskRequest::Regions(work.id)))
+        if self.document.spatial_preparing.is_some()
+            && self.document_pending.is_none()
             && self.failure.is_none()
             && dialog_escape_available
             && !text_was_focused
@@ -168,7 +165,7 @@ impl Editor {
         fullscreen_was_active: bool,
         text_was_focused: bool,
     ) {
-        if !self.busy
+        if !self.interaction_blocked()
             && self.menus.panel.is_none()
             && self.fullscreen.is_none()
             && !fullscreen_was_active
@@ -268,10 +265,10 @@ impl Editor {
 
     pub(super) fn disable_blocked_workspace(&self, ui: &mut egui::Ui) {
         if self.menus.panel.is_some()
-            || self.tasks.blocks_workspace() && self.tool_activity().is_none()
+            || self.activities.blocks_workspace()
             || self.failure.is_some()
             || self.export_modal()
-            || self.document_pending.is_some() && self.tool_activity().is_none()
+            || self.document_pending.is_some()
             || self.transition.is_some()
             || self.project_overwrite.is_some()
             || self.document.confirming()
@@ -304,13 +301,8 @@ impl Editor {
         egui::Panel::bottom("status")
             .exact_size(presentation::ACTIVITY_BAR_HEIGHT)
             .show(ui, |ui| {
-                if let Some(mut view) = self.tasks.view() {
-                    if self.tool_activity().is_some() {
-                        view.modal = false;
-                    }
-                    if let Some(request) = view.compact(ui) {
-                        self.cancel_task(request);
-                    }
+                if let Some(view) = self.activities.view() {
+                    view.compact(ui);
                 } else {
                     ui.add(egui::Label::new(&self.status).truncate())
                         .on_hover_text(&self.status);
@@ -503,14 +495,9 @@ impl Editor {
         self.material_switch_dialog(ui.ctx(), dialog_escape_available, cx);
         self.adjustment_layer_dialog(ui.ctx(), dialog_escape_available);
         self.export_dialogs(ui.ctx(), dialog_escape_available, cx);
-        if self.failure.is_none()
-            && !self.document.confirming()
-            && self.tool_activity().is_none()
-            && let Some(request) = self
-                .tasks
-                .modal(ui.ctx(), egui::Id::new("working-document"))
-        {
-            self.cancel_task(request);
+        if self.failure.is_none() && !self.document.confirming() {
+            self.activities
+                .modal(ui.ctx(), egui::Id::new("working-document"));
         }
         if self.failure.is_some() {
             // A decision action can fail after this frame's feedback check.

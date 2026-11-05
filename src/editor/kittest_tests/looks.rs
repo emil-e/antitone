@@ -46,7 +46,7 @@ fn paint_until(harness: &mut Harness<'_, Editor>, done: impl Fn(&Editor) -> bool
     harness.step();
 }
 fn positive_ready(editor: &Editor) -> bool {
-    !editor.busy
+    !editor.interaction_blocked()
         && editor
             .document
             .visit
@@ -87,7 +87,7 @@ fn fixture_editor_gpu<R>(
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
         wait_for(&mut harness, |editor| {
-            !editor.busy && editor.document.visit.canvas.ready.is_some()
+            !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
         });
         harness.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
@@ -270,13 +270,15 @@ fn cancel_preparation_retires_feedback_and_keeps_the_dropdown_usable_before_clea
         harness
             .enter(|editor, cx| editor.select_look(look::Source::Loaded(constant_asset(0.6)), cx));
         harness.step();
-        harness.read(|editor| assert!(editor.busy && editor.document.look.is_some()));
+        harness
+            .read(|editor| assert!(editor.interaction_blocked() && editor.document.look.is_some()));
         harness.get_by_label("Cancel look preparation").click();
         harness.step();
+        wait_for(&mut harness, |editor| editor.document.look.is_none());
         harness.read(|editor| {
-            assert!(!editor.busy);
+            assert!(!editor.interaction_blocked());
             assert!(editor.document.look.is_none());
-            assert!(editor.tasks.view().is_none());
+            assert!(editor.activities.view().is_none());
             assert_eq!(
                 editor
                     .document
@@ -464,7 +466,7 @@ fn rendering_widgets_share_film_and_paper_with_views_scopes_and_other_photos_wit
         });
         harness.get_by_label("roll-1.dng").click();
         harness.step();
-        wait_for(&mut harness, |editor| !editor.busy);
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         paint_until(&mut harness, positive_ready);
         harness.read(|editor| {
             assert_eq!(
@@ -875,14 +877,14 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             editor.save_project(path.clone(), crate::project::Save::New, None, cx)
         });
         wait_for(&mut harness, |editor| {
-            !editor.busy && editor.document_pending.is_none()
+            !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         harness.read(|editor| assert!(!editor.document.dirty()));
         editor_harness_with_thumbnails(true, |mut reopened, _| {
             reopened.run();
             open_project(&mut reopened, path.clone());
             wait_for(&mut reopened, |editor| {
-                !editor.busy
+                !editor.interaction_blocked()
                     && editor.document_pending.is_none()
                     && editor.document.visit.canvas.ready.is_some()
             });
@@ -893,7 +895,7 @@ fn loaded_luts_can_be_compared_after_deleting_files_without_persisting_the_sessi
             reopened.read(|editor| assert!(!editor.document.dirty()));
             open_project(&mut harness, path);
             wait_for(&mut harness, |editor| {
-                !editor.busy
+                !editor.interaction_blocked()
                     && editor.document_pending.is_none()
                     && editor.document.visit.canvas.ready.is_some()
             });
@@ -966,13 +968,13 @@ fn worker_save_reopen_embeds_both_sources_and_export_retains_its_accepted_snapsh
                     editor.save_project(path.clone(), crate::project::Save::New, None, cx)
                 });
                 wait_for(&mut harness, |editor| {
-                    !editor.busy && editor.document_pending.is_none()
+                    !editor.interaction_blocked() && editor.document_pending.is_none()
                 });
                 harness.read(|editor| assert!(editor.failure.is_none()));
                 harness.read(|editor| assert!(!editor.document.dirty()));
                 open_project(&mut reopened, path);
                 wait_for(&mut reopened, |editor| {
-                    !editor.busy
+                    !editor.interaction_blocked()
                         && editor.document_pending.is_none()
                         && editor.document.visit.canvas.ready.is_some()
                 });
@@ -1038,7 +1040,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
         }
         std::fs::write(&path, cube).unwrap();
         harness.enter(|editor, cx| editor.select_look(look::Source::Imported(path.clone()), cx));
-        wait_for(&mut harness, |editor| !editor.busy);
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         std::fs::remove_file(path).unwrap();
         let accepted = harness.read(|editor| {
             editor

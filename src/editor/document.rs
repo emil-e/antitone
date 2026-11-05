@@ -1,7 +1,7 @@
 //! Document snapshots, candidate preparation and transactional editor installation.
 use super::{
-    AdjustmentLayerEditor, Correction, Editor, FailureKind, OutputTarget, Ready, RollSelection,
-    Task, TaskProgress, TaskRequest, dust, history, source,
+    ActivityOptions, AdjustmentLayerEditor, Correction, Editor, FailureKind, OutputTarget, Ready,
+    RollSelection, dust, history, source,
 };
 use crate::{
     Error,
@@ -9,9 +9,10 @@ use crate::{
     project::{Project, Save, Source, SourceId},
     raw::Metadata,
 };
+
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 pub(super) use crate::source::{
@@ -986,19 +987,6 @@ pub(super) struct State {
     task: Option<async_executor::Task<()>>,
 }
 
-#[derive(Default)]
-struct Progress {
-    latest: Mutex<Option<(usize, usize)>>,
-    changed: event_listener::Event,
-}
-
-impl Progress {
-    fn report(&self, completed: usize, total: usize) {
-        *self.latest.lock().unwrap() = Some((completed, total));
-        self.changed.notify(usize::MAX);
-    }
-}
-
 impl Editor {
     pub(super) fn start_document(
         &mut self,
@@ -1037,14 +1025,17 @@ impl Editor {
         self.document.visit.masks.cancel();
         let id =
             self.begin_document_operation(matches!(&work, Preparation::New | Preparation::Open(_)));
-        self.tasks.begin(match &work {
-            Preparation::Import(..) => Task::Import(id),
-            Preparation::Open(_) => Task::Open(id),
-            Preparation::New => Task::New(id),
-            Preparation::Correction(..) => Task::Correction(id),
-            Preparation::Input(..) => Task::Input(id),
-            Preparation::History(..) => Task::History(id),
-        });
+        let activity = self.activities.start(
+            ActivityOptions::new(match &work {
+                Preparation::Import(..) => "Importing RAWs…",
+                Preparation::Open(_) => "Opening project…",
+                Preparation::New => "Creating project…",
+                Preparation::Correction(..) => "Applying correction…",
+                Preparation::Input(..) => "Switching input stage…",
+                Preparation::History(..) => "Restoring edit…",
+            })
+            .modal(),
+        );
         self.document_failure =
             matches!(&work, Preparation::Correction(..)).then_some(FailureKind::FlatCorrection);
         self.new_project_pending = matches!(work, Preparation::New);
@@ -1071,33 +1062,21 @@ impl Editor {
             correction: self.document.correction.clone(),
         };
         let source = self.source_services.clone();
-        let progress = Arc::new(Progress::default());
-        let produced = progress.clone();
+        let progress = activity.reporter();
         let cancelled = crate::cancellation::Cancellation::default();
         let retire = cancelled.cancel_on_drop();
         let Some(task) = cx.spawn(move |cx| async move {
             let _retire = retire;
-            let preparation = async {
+            let result = async {
                 let source = source.ok_or_else(|| "Document services unavailable".to_owned())?;
                 PreparationServices(source)
                     .prepare(request, cancelled, move |done, total| {
-                        produced.report(done, total)
+                        progress.progress(done, total)
                     })
                     .await
             };
-            let reports = async {
-                loop {
-                    let changed = progress.changed.listen();
-                    let latest = progress.latest.lock().unwrap().take();
-                    if let Some((done, total)) = latest {
-                        cx.update(|editor| editor.document_progress(id, done, total));
-                    }
-                    changed.await;
-                }
-            };
-            let result = futures_lite::future::or(preparation, reports)
-                .await
-                .map(Box::new);
+            let result = result.await.map(Box::new);
+            drop(activity);
             cx.update(|editor| {
                 editor.document_prepared(id, result);
                 editor.acquire_working(&cx);
@@ -1108,15 +1087,6 @@ impl Editor {
         };
         self.candidate_operation.task = Some(task);
     }
-
-    pub(super) fn document_progress(&mut self, id: u64, completed: usize, total: usize) {
-        if self.document_pending == Some(id) {
-            self.tasks.report(
-                TaskRequest::Document(id),
-                TaskProgress::Counted { completed, total },
-            );
-        }
-    }
 }
 
 impl Editor {
@@ -1125,12 +1095,12 @@ impl Editor {
             return;
         }
         self.candidate_operation = State::default();
-        self.tasks.finish(TaskRequest::Document(id));
+
         let new_project = std::mem::take(&mut self.new_project_pending);
         let failure_kind = self.document_failure.take();
         let pending_history = self.history_pending.take();
         self.document_pending = None;
-        self.busy = false;
+
         match result {
             Ok(prepared) => {
                 let input_changed = self.document.input.is_negative()

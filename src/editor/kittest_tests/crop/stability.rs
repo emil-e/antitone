@@ -45,7 +45,7 @@ fn moving_crop_keeps_the_painted_frame_fixed_on_motion_hold_and_release_passes()
             });
             h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
             wait_for(&mut h, |editor| {
-                !editor.busy && editor.document.visit.canvas.ready.is_some()
+                !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
             });
             h.update(|editor| {
                 editor.document.source = false;

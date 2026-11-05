@@ -62,21 +62,21 @@ fn user_cancel_waits_for_running_cpu_acknowledgement_in_preparation_and_fitting(
             start_cpu(app, fitting, entered, resume, returned, continued.clone());
             app.pump();
             starts.recv_timeout(LIMIT).unwrap();
-            app.read(|e| assert!(e.tasks.view().unwrap().cancel.is_some()));
+            app.read(|e| assert!(e.activities.view().unwrap().cancel.is_some()));
             app.update(Editor::cancel_analysis);
             app.pump();
             app.read(|e| {
-                assert!(e.busy && !e.file_available());
-                let activity = e.tasks.view().unwrap();
+                assert!(e.interaction_blocked() && !e.file_available());
+                let activity = e.activities.view().unwrap();
                 assert!(activity.cancel.is_none() && activity.measured.is_none());
                 assert!(e.analysis_preparing() || e.analysis_fitting());
             });
             assert!(!continued.get());
             assert!(matches!(returns.try_recv(), Err(mpsc::TryRecvError::Empty)));
             release.send(()).unwrap();
-            app.run_until(LIMIT, |e| !e.busy);
+            app.run_until(LIMIT, |e| !e.interaction_blocked());
             app.read(|e| {
-                assert!(e.tasks.view().is_none());
+                assert!(e.activities.view().is_none());
                 assert!(!e.analysis_preparing() && !e.analysis_fitting());
                 assert!(e.status.contains("cancelled"), "{}", e.status);
             });
@@ -127,12 +127,12 @@ fn cancellation_before_first_poll_acknowledges_without_starting_a_cpu_stage() {
             Rc::new(Cell::new(false)),
         );
         app.update(Editor::cancel_analysis);
-        app.run_until(LIMIT, |e| !e.busy);
+        app.run_until(LIMIT, |e| !e.interaction_blocked());
         assert!(matches!(
             starts.try_recv(),
             Err(mpsc::TryRecvError::Disconnected)
         ));
-        app.read(|e| assert!(!e.analysis_preparing() && e.tasks.view().is_none()));
+        app.read(|e| assert!(!e.analysis_preparing() && e.activities.view().is_none()));
     });
     scheduler.close_and_wait().unwrap();
 }

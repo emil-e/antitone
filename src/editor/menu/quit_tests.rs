@@ -141,7 +141,7 @@ fn blocked_system_quit_never_accepts_a_tool_or_replaces_an_existing_decision() {
     for gate in 0..4 {
         let (mut editor, context) = initialized();
         match gate {
-            0 => editor.busy = true,
+            0 => editor.set_test_busy(true),
             1 => {
                 super::super::tests::add_ready_fixture(&mut editor);
                 editor.begin_crop();

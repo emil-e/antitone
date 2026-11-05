@@ -38,7 +38,7 @@ fn regions_ready_before_a_write_completes_resume_either_original_consumer_after_
             drop(write);
             app.run_until(LIMIT, |editor| {
                 editor.document_pending.is_none()
-                    && !editor.busy
+                    && !editor.interaction_blocked()
                     && if analyze {
                         editor.document.analysis_review().is_some()
                     } else {

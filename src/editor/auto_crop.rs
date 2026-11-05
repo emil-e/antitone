@@ -141,7 +141,7 @@ fn reason(error: Error) -> String {
 impl Editor {
     pub(super) fn auto_crop_entry_available(&self) -> bool {
         self.tool_start_available()
-            && self.document.visit.canvas.ready.is_some()
+            && self.selected_area().is_some()
             && !self.document.project.order.is_empty()
     }
 
@@ -149,7 +149,7 @@ impl Editor {
         if self.document.visit.current_source != Some(id) {
             return true;
         }
-        self.document.visit.canvas.ready.as_ref().is_some_and(|r| {
+        self.document.visit.canvas.ready.as_ref().is_none_or(|r| {
             self.document.state.project.source(id).is_ok_and(|s| {
                 r.record.development == s.development
                     && r.area == Rect::from(s.development.active_area)
@@ -230,7 +230,7 @@ impl Editor {
 
     #[cfg(test)]
     fn auto_crop_photo(&mut self, photo: SourceId) {
-        if self.busy
+        if self.interaction_blocked()
             || self.fullscreen.is_some()
             || !self.cropping()
             || self.document.visit.current_source != Some(photo)
@@ -597,7 +597,9 @@ impl tool::Tool for AutoCropTool {
 
     fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         match action {
-            tool::Action::Primary if !editor.busy && editor.fullscreen.is_none() => {
+            tool::Action::Primary
+                if !editor.interaction_blocked() && editor.fullscreen.is_none() =>
+            {
                 let Some(snapshot) = self.review.borrow().clone() else {
                     return;
                 };
@@ -626,23 +628,11 @@ impl tool::Tool for AutoCropTool {
             _ => {}
         }
     }
-
-    fn activity(&self, editor: &Editor) -> Option<TaskRequest> {
-        if self.review.borrow().is_some() {
-            None
-        } else {
-            editor
-                .document
-                .spatial_preparing
-                .as_ref()
-                .map(|work| TaskRequest::Regions(work.id))
-        }
-    }
 }
 
 impl Draft {
     fn editable(&self, editor: &Editor) -> bool {
-        !editor.busy && editor.fullscreen.is_none() && self.valid(editor)
+        !editor.interaction_blocked() && editor.fullscreen.is_none() && self.valid(editor)
     }
 
     fn warning(&self, editor: &Editor) -> Option<&'static str> {
@@ -665,7 +655,7 @@ impl Draft {
             if !entry.current(editor) {
                 return Some("Crop proposal is out of date".into());
             }
-            if !editor.busy
+            if !editor.interaction_blocked()
                 && editor.document.visit.current_source == Some(id)
                 && !editor.loaded_crop_source_current(id, &entry.file)
             {
@@ -776,8 +766,8 @@ pub(super) fn propose_photo_crop(
     state: std::rc::Rc<std::cell::RefCell<CropEdit>>,
     cx: &UiContext<'_, Editor>,
 ) -> Option<async_executor::Task<()>> {
-    if editor.busy
-        || editor.document.visit.canvas.ready.is_none()
+    if editor.interaction_blocked()
+        || editor.selected_area().is_none()
         || editor.document.visit.current_source != Some(photo)
     {
         return None;

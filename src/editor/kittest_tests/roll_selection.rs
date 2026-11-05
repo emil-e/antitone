@@ -24,12 +24,18 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         .collect();
     editor_harness_with_thumbnails(true, |mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(paths.clone(), cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         harness.get_by_label("Apply").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
         let ids = harness.read(|editor| editor.document.state.project.order.clone());
         let project_path = directory.path().join("roll.antitone.json");
@@ -59,7 +65,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         let saved_bytes = std::fs::read(&project_path).unwrap();
         harness.get_by_label("photo-2.dng").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         harness
             .get_by_label("photo-0.dng")
             .click_modifiers(egui::Modifiers::COMMAND);
@@ -68,7 +76,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         for (name, active) in [("photo-0.dng", ids[0]), ("photo-2.dng", ids[2])] {
             harness.get_by_label(name).click();
             harness.step();
-            wait_for(&mut harness, |e| !e.busy);
+            wait_for(&mut harness, |e| {
+                !e.interaction_blocked() && !e.document.visit.source.pending()
+            });
             harness.read(|editor| assert_eq!(editor.document.visit.current_source, Some(active)));
             for selected in ["photo-0.dng", "photo-2.dng"] {
                 assert_eq!(
@@ -159,7 +169,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         request_removal(&mut harness, "photo-2.dng");
         harness.get_by_label("Remove photos").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         let mut expected = before.clone();
         expected.order = vec![ids[1], ids[3], ids[4]];
         expected
@@ -176,7 +188,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         save_existing_project(&mut harness);
         harness.get_by_label("photo-1.dng").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         harness
             .get_by_label("photo-4.dng")
             .click_modifiers(egui::Modifiers::SHIFT);
@@ -221,9 +235,13 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
         save_capture(&harness.render().unwrap(), "roll-empty-offscreen");
         save_existing_project(&mut harness);
         native_file_action(&mut harness, crate::platform::menu::Action::New);
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         open_project(&mut harness, project_path);
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         harness.read(|editor| assert_eq!(editor.document.state.project, expected));
         harness.read(|editor| assert!(editor.document.correction.is_some()));
         harness.read(|editor| {
@@ -233,7 +251,9 @@ fn roll_selection_removal_empty_reopen_and_reimport_preserve_accepted_state() {
             )
         });
         harness.enter(|editor, cx| editor.add_raws(vec![paths[0].clone()], cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         let new_id = harness.read(|editor| editor.document.visit.current_source.unwrap());
         assert_ne!(new_id, ids[0]);
         harness.read(|editor| {
@@ -277,7 +297,9 @@ fn removal_keyboard_and_context_menu_respect_text_popups_and_drafts() {
     std::fs::copy(fixture("patches.dng"), &other).unwrap();
     editor_harness(|mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng"), other], cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         harness
             .get_by_label("other.dng")
             .click_modifiers(egui::Modifiers::COMMAND);
@@ -438,7 +460,9 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
         .collect();
     editor_harness_with_thumbnails(true, |mut h, _| {
         h.enter(|editor, cx| editor.add_raws(paths, cx));
-        wait_for(&mut h, |e| !e.busy);
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         let first = h.read(|e| e.document.visit.current_source.unwrap());
         let crop = crate::crop::Crop::from_region(crate::raw::Rect {
             x: 88,
@@ -465,7 +489,9 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
         h.step();
         h.get_by_label("roll-1.dng").click();
         h.step();
-        wait_for(&mut h, |e| !e.busy);
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         h.get_by_label("roll-0.dng").click();
         h.step();
         h.read(|e| {
@@ -486,7 +512,9 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
                 crop
             );
         });
-        wait_for(&mut h, |e| !e.busy);
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         h.read(|e| {
             assert_eq!(
                 e.document

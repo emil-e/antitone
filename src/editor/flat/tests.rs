@@ -80,8 +80,10 @@ fn reference_rejection_and_cancel_preserve_document_and_working_context() {
     let roll = editor.document.roll;
     with_application(editor, |app| {
         app.enter(|e, cx| e.begin_flat_edit("light.ARW".into(), None, cx));
-        assert!(app.read(|e| e.busy && e.document.flat_edit().unwrap().task.is_some()));
-        app.run_until(Duration::from_secs(5), |e| !e.busy);
+        assert!(
+            app.read(|e| e.interaction_blocked() && e.document.flat_edit().unwrap().task.is_some())
+        );
+        app.run_until(Duration::from_secs(5), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(
                 !e.document.source && e.test_pick().is_none() && e.document.flat_edit().is_none()
@@ -95,7 +97,7 @@ fn reference_rejection_and_cancel_preserve_document_and_working_context() {
         });
         app.enter(|e, cx| {
             e.begin_flat_edit("other.ARW".into(), None, cx);
-            assert!(e.busy);
+            assert!(e.interaction_blocked());
             assert_eq!(
                 e.failure.as_ref().unwrap().details,
                 "Reference services unavailable"
@@ -130,7 +132,7 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/bare-light.dng");
     with_application(editor, |app| {
         app.enter(|e, cx| e.begin_flat_edit(reference, None, cx));
-        app.run_until(Duration::from_secs(10), |e| !e.busy);
+        app.run_until(Duration::from_secs(10), |e| !e.interaction_blocked());
         app.enter(|e, cx| {
             let area = e.document.visit.canvas.ready.as_ref().unwrap().area;
             e.set_test_pick_region(Some(Coverage::rectangle(Rect {
@@ -142,7 +144,7 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
             e.apply_flat_edit(cx);
             assert!(e.document_pending.is_some());
         });
-        app.run_until(Duration::from_secs(10), |e| !e.busy);
+        app.run_until(Duration::from_secs(10), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(e.document.flat_edit().is_none() && e.test_pick().is_none());
             assert_eq!(e.document.state.project, original);
@@ -281,7 +283,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
         editor.document.visit.crop.unwrap().coverage().unwrap(),
     ));
     editor.apply_flat_edit(&UiContext::render_only());
-    assert!(!editor.busy && editor.document_pending.is_none());
+    assert!(!editor.interaction_blocked() && editor.document_pending.is_none());
     assert_eq!(editor.document.state.project, original);
     editor.set_test_pick_region(Some(Coverage::rectangle(region)));
     assert_eq!(
@@ -333,7 +335,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             (Thumbnails::default()).with_sources(editor.document.cache.clone());
         with_application(editor, |app| {
             app.enter(|e, cx| e.add_raws(vec![root.join("illuminated-patches.dng")], cx));
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             assert!(app.read(|e| e.document.visit.canvas.ready.is_some()));
             let selected = app.read(|e| e.document.visit.current_source);
             let mut scan = Scan::open(&root.join("illuminated-patches.dng"), None).unwrap();
@@ -398,7 +400,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 );
                 assert_eq!(e.document.state.project, original);
             });
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.update(|e| {
                 e.sync_document();
                 assert_eq!(e.document.state.project, original);
@@ -413,9 +415,9 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 );
             });
             app.enter(|e, cx| e.begin_flat_edit(root.join("bare-light.dng"), None, cx));
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.enter(|e, cx| e.apply_flat_edit(cx));
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             let settings = app.read(|e| {
                 assert!(e.document.correction.is_some(), "{}", e.status);
                 assert_eq!(
@@ -451,13 +453,13 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             let directory = tempfile::tempdir().unwrap();
             let accepted = app.read(|e| e.document.state.project.clone());
             app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.read(|e| {
                 assert_eq!(e.document.state.project, original, "{}", e.status);
                 assert!(e.document.correction.is_none());
             });
             app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.read(|e| {
                 assert_eq!(e.document.state.project, accepted, "{}", e.status);
                 assert_eq!(
@@ -466,8 +468,10 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
                 );
             });
             app.enter(|e, cx| e.begin_flat_edit(directory.path().join("missing.dng"), None, cx));
-            assert!(app.read(|e| e.busy && e.document.flat_edit().unwrap().task.is_some()));
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            assert!(app.read(
+                |e| e.interaction_blocked() && e.document.flat_edit().unwrap().task.is_some()
+            ));
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.read(|e| {
                 assert!(e.status.contains("open"), "{}", e.status);
                 assert!(
@@ -481,10 +485,10 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             });
             let path = directory.path().join("authored-correction.antitone.json");
             app.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             assert!(!app.read(|e| e.document.dirty()));
             app.enter(|e, cx| e.start_document(Preparation::Open(path), cx));
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.read(|e| {
                 assert_eq!(e.document.state.project, accepted);
                 assert_eq!(
@@ -498,7 +502,7 @@ fn authored_reference_worker_cancels_applies_and_restores_without_reference_rere
             let path = directory.path().join("missing-reference.antitone.json");
             missing.save(&path, crate::project::Save::New).unwrap();
             app.enter(|e, cx| e.start_document(Preparation::Open(path), cx));
-            app.run_until(Duration::from_secs(60), |e| !e.busy);
+            app.run_until(Duration::from_secs(60), |e| !e.interaction_blocked());
             app.read(|e| {
                 assert_eq!(e.document.state.project, missing);
                 assert_eq!(

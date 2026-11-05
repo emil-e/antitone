@@ -33,13 +33,13 @@ impl RollSelection {
 
 impl Editor {
     pub(super) fn roll_edit_available(&self) -> bool {
-        !self.busy && !self.document.gamma_pivot.pending() && self.roll_navigation_available()
+        !self.interaction_blocked()
+            && !self.document.gamma_pivot.pending()
+            && self.roll_navigation_available()
     }
 
     pub(super) fn roll_navigation_available(&self) -> bool {
-        (!self.busy
-            || self.document.visit.canvas.ready.is_none()
-                && self.document.visit.canvas.selection_timing.is_some())
+        !self.interaction_blocked()
             && self.fullscreen.is_none()
             && !self.picking()
             && !self.cropping()

@@ -1,13 +1,9 @@
 use super::*;
 
-fn held_activity(editor: &mut Editor, task: Task) {
-    editor.tasks.begin(task);
-    editor.tasks.elapse(Duration::from_secs(1));
-    editor.document_pending = match task.request() {
-        TaskRequest::Document(id) => Some(id),
-        _ => None,
-    };
-    editor.busy = true;
+fn held_activity(editor: &mut Editor, options: ActivityOptions) -> Activity {
+    let activity = editor.activities.start(options);
+    editor.activities.elapse(Duration::from_secs(1));
+    activity
 }
 
 fn render_case(harness: &mut Harness<'_, Editor>, name: &str) {
@@ -31,7 +27,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
     editor_harness(|mut harness, _capture| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
         wait_for(&mut harness, |editor| {
-            !editor.busy && editor.document_pending.is_none()
+            !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         harness.read(|editor| assert!(editor.document.visit.canvas.ready.is_some()));
         harness.update(|editor| editor.sync_document());
@@ -41,26 +37,18 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             ("narrow", egui::vec2(800., 600.)),
         ] {
             harness.set_size(size);
-            let id = harness.read(|editor| editor.id);
-            for (name, task) in [
-                ("import", Task::Import(id)),
-                ("open", Task::Open(id)),
-                ("import-preparing", Task::Import(id)),
-                ("open-preparing", Task::Open(id)),
-                ("save", Task::Save(id)),
-                ("correction", Task::Correction(id)),
+            for (name, title) in [
+                ("import", "Importing RAWs…"),
+                ("open", "Opening project…"),
+                ("import-preparing", "Importing RAWs…"),
+                ("open-preparing", "Opening project…"),
+                ("save", "Saving project…"),
+                ("correction", "Applying correction…"),
             ] {
-                harness.update(|editor| held_activity(editor, task));
+                let activity = harness
+                    .update(|editor| held_activity(editor, ActivityOptions::new(title).modal()));
                 if name == "import" || name == "open" {
-                    harness.update(|editor| {
-                        editor.tasks.report(
-                            task.request(),
-                            TaskProgress::Counted {
-                                completed: 3,
-                                total: 12,
-                            },
-                        )
-                    });
+                    activity.progress(3, 12);
                 }
                 render_case(&mut harness, &format!("{name}-{layout}"));
                 assert!(
@@ -69,27 +57,26 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                         .accesskit_node()
                         .is_disabled()
                 );
-                let title = harness.read(|editor| editor.tasks.view().unwrap().title);
-                harness.event(egui::Event::Key {
-                    key: egui::Key::Escape,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                });
+                harness.key_press(egui::Key::Escape);
                 harness.step();
-                harness.read(|editor| assert_eq!(editor.tasks.view().unwrap().title, title));
-                harness.update(|editor| editor.tasks.finish(task.request()));
-                harness.update(|editor| editor.document_pending = None);
-                harness.update(|editor| editor.busy = false);
+                harness.read(|editor| assert_eq!(editor.activities.view().unwrap().title, title));
+                drop(activity);
                 harness.step();
             }
             {
-                harness.update(|editor| held_activity(editor, Task::Export(id)));
+                let activity = harness.update(|editor| {
+                    held_activity(
+                        editor,
+                        ActivityOptions::new("Exporting…").modal().cancellable(
+                            "Cancel export",
+                            "Cancelling export…",
+                            crate::cancellation::Cancellation::default(),
+                        ),
+                    )
+                });
                 render_case(&mut harness, &format!("export-{layout}"));
-                let title = harness.read(|editor| editor.tasks.view().unwrap().title);
                 let progress = harness
-                    .get_by_role_and_label(egui::accesskit::Role::ProgressIndicator, &title)
+                    .get_by_role_and_label(egui::accesskit::Role::ProgressIndicator, "Exporting…")
                     .rect();
                 assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(progress));
                 assert!(
@@ -126,32 +113,42 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                 harness.read(|editor| assert_eq!(editor.document.visit.canvas.viewport, old_view));
                 harness.key_press(egui::Key::Escape);
                 harness.step();
-                harness.read(|editor| assert!(editor.tasks.blocks_workspace()));
-                harness.update(|editor| editor.tasks.finish(TaskRequest::Export(id)));
-                harness.update(|editor| editor.busy = false);
+                harness.read(|editor| assert!(editor.activities.blocks_workspace()));
+                drop(activity);
                 harness.step();
                 stage(&mut harness, "Roll");
             }
-            for (name, task) in [
-                ("raw", Task::Photo(id)),
-                ("reference", Task::Reference(id)),
-                ("measurement", Task::Measurement(id, "Dmin")),
+            for (name, title) in [
+                ("raw", "Loading photo…"),
+                ("reference", "Preparing reference…"),
+                ("measurement", "Measuring Dmin…"),
             ] {
-                harness.update(|editor| {
-                    if name != "raw" {
-                        if name == "reference" {
-                            editor.document.set_flat_edit(Some(flat::FlatEdit {
-                                services: None,
-                                view: Default::default(),
-                                region: None,
-                                task: None,
-                                activity: Some(task.request()),
-                            }));
-                        } else {
-                            super::super::picking::preview(editor, Pick::Dmin.display());
-                        }
+                let activity = harness.update(|editor| {
+                    if name == "reference" {
+                        editor.document.set_flat_edit(Some(flat::FlatEdit {
+                            services: None,
+                            view: Default::default(),
+                            region: None,
+                            task: None,
+                        }));
+                    } else if name == "measurement" {
+                        super::super::picking::preview(editor, Pick::Dmin.display());
                     }
-                    held_activity(editor, task);
+                    let options = ActivityOptions::new(title);
+                    held_activity(
+                        editor,
+                        if name == "raw" {
+                            options
+                        } else if name == "measurement" {
+                            options.modal().cancellable(
+                                "Cancel measurement",
+                                "Cancelling measurement…",
+                                crate::cancellation::Cancellation::default(),
+                            )
+                        } else {
+                            options.modal()
+                        },
+                    )
                 });
                 if name == "measurement" {
                     harness.update(|editor| {
@@ -173,43 +170,39 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                     harness.update(|editor| editor.document.visit.canvas.ready = Some(ready));
                 }
                 harness.update(|editor| editor.end_tool());
-                harness.update(|editor| editor.tasks.finish(task.request()));
-                harness.update(|editor| editor.busy = false);
+                drop(activity);
                 harness.step();
             }
             let admission = crate::background::testing::pause();
             harness.enter(|editor, cx| editor.request_analysis(cx));
-            harness.update(|editor| editor.tasks.elapse(Duration::from_secs(1)));
+            harness.update(|editor| editor.activities.elapse(Duration::from_secs(1)));
             render_case(&mut harness, &format!("regions-modal-{layout}"));
             harness.get_by_label("Cancel region preparation").click();
             harness.step();
             wait_for(&mut harness, |editor| {
-                editor.document.spatial_preparing.is_none() && !editor.busy
+                editor.document.spatial_preparing.is_none() && !editor.interaction_blocked()
             });
             drop(admission);
-            // Presentation fixture; worker acknowledgement is exercised through the
-            // real feature continuation in analysis::acknowledgement_tests.
-            harness.update(|editor| {
-                editor.document.set_analysis_operation(Some(
-                    super::super::analysis::Operation::new(
-                        super::super::analysis::Phase::Preparing(9000),
-                    ),
-                ));
+            // Presentation fixture; real worker acknowledgement has separate composed tests.
+            let activity = harness.update(|editor| {
+                let mut operation = super::super::analysis::Operation::new(
+                    super::super::analysis::Phase::Preparing,
+                );
+                let activity = held_activity(
+                    editor,
+                    ActivityOptions::new("Preparing analysis areas…")
+                        .modal()
+                        .cancellable(
+                            "Cancel analysis",
+                            "Cancelling analysis…",
+                            operation.cancelled.clone(),
+                        ),
+                );
+                operation.activity = Some(activity.reporter());
+                editor.document.set_analysis_operation(Some(operation));
+                activity
             });
-            harness.update(|editor| {
-                editor.tasks.begin(Task::AnalysisAreas(9000));
-                editor.tasks.elapse(Duration::from_secs(1));
-            });
-            harness.update(|editor| {
-                editor.tasks.report(
-                    TaskRequest::Analyze(9000),
-                    TaskProgress::Counted {
-                        completed: 3,
-                        total: 12,
-                    },
-                )
-            });
-            harness.update(|editor| editor.busy = true);
+            activity.progress(3, 12);
             render_case(&mut harness, &format!("analysis-sampling-{layout}"));
             harness
                 .get_by_role_and_label(egui::accesskit::Role::Tab, "Photo")
@@ -217,8 +210,8 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             harness.step();
             harness.read(|editor| {
                 assert_eq!(
-                    editor.tab, 1,
-                    "running tool work keeps stage navigation available for replacement"
+                    editor.tab, 0,
+                    "analysis work blocks unrelated stage navigation"
                 )
             });
             render_case(&mut harness, &format!("analysis-modal-background-{layout}"));
@@ -230,17 +223,10 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
             );
             harness.update(|editor| {
                 editor.document.analysis_operation_mut().unwrap().phase =
-                    super::super::analysis::Phase::Fitting(9000);
-                editor.tasks.begin(Task::Analyze(9000));
-                editor.tasks.elapse(Duration::from_secs(1));
-                editor.tasks.report(
-                    TaskRequest::Analyze(9000),
-                    TaskProgress::Counted {
-                        completed: 12,
-                        total: 12,
-                    },
-                );
+                    super::super::analysis::Phase::Fitting
             });
+            activity.status("Analyzing roll…");
+            activity.progress(12, 12);
             render_case(&mut harness, &format!("analysis-fitting-{layout}"));
             harness.get_by_label("Cancel analysis").click();
             harness.step();
@@ -256,17 +242,16 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                         .is_cancelled()
                 );
                 editor.document.set_analysis_operation(None);
-                editor.tasks.finish(TaskRequest::Analyze(9000));
-                editor.busy = false;
                 editor.status = "Analysis cancelled".into();
             });
+            drop(activity);
             render_case(&mut harness, &format!("analysis-cancelled-{layout}"));
-            harness.read(|editor| assert!(editor.tasks.view().is_none()));
+            harness.read(|editor| assert!(editor.activities.view().is_none()));
             harness.read(|editor| assert_eq!(editor.status, "Analysis cancelled"));
             stage(&mut harness, "Roll");
             render_case(&mut harness, &format!("background-{layout}"));
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
-            harness.read(|editor| assert!(editor.tasks.view().is_none()));
+            harness.read(|editor| assert!(editor.activities.view().is_none()));
         }
     });
 }

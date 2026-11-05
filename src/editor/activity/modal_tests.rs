@@ -2,86 +2,103 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{
-        presentation::tests::{key, pointer},
+        Editor,
+        presentation::tests::pointer,
         tests::{add_ready_fixture, app_frame, fixture, with_document_services},
     },
 };
 
 #[test]
-fn escape_targets_the_replacement_not_hidden_region_work() {
-    for measuring in [false, true] {
-        let mut editor = with_document_services(fixture());
-        add_ready_fixture(&mut editor);
-        editor.sync_document();
-        let (reply, receive) = futures_channel::oneshot::channel();
-        editor.document.spatial_reply = Some(receive);
-        let metadata = editor.document.capture().ready_spatial_metadata();
-        let hold = crate::background::testing::pause();
-        with_application(editor, |app| {
-            app.enter(|editor, cx| editor.request_analysis(cx));
-            app.pump();
-            app.enter(|editor, cx| {
-                if measuring {
-                    editor.begin_pick(super::super::Pick::Dmin, cx);
-                } else {
-                    editor.begin_crop();
-                }
-            });
-            app.pump();
-            if measuring {
-                app.update(|editor| {
-                    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-                    editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
-                        crate::raw::Rect {
-                            width: 16,
-                            height: 16,
-                            ..area
-                        },
-                    )));
-                    assert!(editor.submit_test_picker());
-                });
-                app.pump();
-            }
-            let context = egui::Context::default();
-            app_frame(app, &context, vec![]);
-            app_frame(app, &context, key(egui::Key::Escape));
-            app.read(|editor| {
-                assert!(
-                    editor.document.spatial_preparing.is_some(),
-                    "hidden useful work must not consume Escape"
-                );
-                if measuring {
-                    assert!(
-                        editor.busy && editor.measurement_pending(),
-                        "hidden work cannot unblock a running measurement"
-                    );
-                } else {
-                    assert!(
-                        editor.document.crop_edit().is_none(),
-                        "Escape must reach the visible Crop draft"
-                    );
-                }
-            });
-            // Retiring hidden work from another lifecycle path must also preserve
-            // the replacement's foreground activity and busy state.
-            app.update(Editor::cancel_spatial);
-            if measuring {
-                app.read(|editor| assert!(editor.busy && editor.measurement_pending()));
-            }
-            drop(hold);
-            app.run_until(std::time::Duration::from_secs(10), |editor| !editor.busy);
-            let _ = reply.send(Ok(Some(metadata)));
+fn slow_measurement_exposes_modal_cancel_without_accepting_a_late_worker_result() {
+    let mut editor = with_document_services(fixture());
+    add_ready_fixture(&mut editor);
+    editor.sync_document();
+    let before = editor.document.project.clone();
+    let gate = crate::editor::picking::testing::Gate::install(&mut editor);
+    with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.begin_pick(crate::editor::Pick::Dmin, cx);
+            editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
+                crate::raw::Rect {
+                    x: 40,
+                    y: 40,
+                    width: 16,
+                    height: 16,
+                },
+            )));
+            assert!(editor.submit_test_picker());
+            editor.activities.elapse(Duration::from_secs(1));
         });
-    }
+        let worker = gate.next(app);
+        let context = egui::Context::default();
+        app_frame(app, &context, vec![]);
+        let labels = app_frame(app, &context, vec![]);
+        let cancel = labels
+            .iter()
+            .find(|(label, _)| label == "Cancel measurement")
+            .unwrap()
+            .1
+            .center();
+        for pressed in [true, false] {
+            app_frame(app, &context, pointer(cancel, pressed));
+        }
+        app.run_until(Duration::from_secs(10), |editor| !editor.picking());
+        assert!(worker.cancelled.is_cancelled());
+        app.read(|editor| {
+            assert!(editor.activities.view().is_none());
+            assert_eq!(editor.document.project, before);
+        });
+        worker.run();
+        app.pump();
+        app.read(|editor| assert_eq!(editor.document.project, before));
+    });
 }
 
 #[test]
-fn running_regions_sampling_and_fitting_leave_tool_switching_reachable() {
+fn regions_preparation_owns_modal_feedback_even_after_its_requesting_tool_retires() {
+    let mut editor = with_document_services(fixture());
+    add_ready_fixture(&mut editor);
+    editor.sync_document();
+    let (reply, receive) = futures_channel::oneshot::channel();
+    editor.document.spatial_reply = Some(receive);
+    let metadata = editor.document.capture().ready_spatial_metadata();
+    with_application(editor, |app| {
+        app.enter(|editor, cx| editor.request_analysis(cx));
+        app.pump();
+        app.update(Editor::end_tool);
+        app.pump();
+        app.update(|editor| {
+            assert!(editor.document.spatial_preparing.is_some());
+            assert!(editor.activities.blocks_workspace());
+            assert!(editor.interaction_blocked());
+            editor.begin_crop();
+            assert!(
+                !editor.cropping(),
+                "the still-running producer owns the modal interaction"
+            );
+        });
+        reply.send(Ok(Some(metadata))).unwrap();
+        app.run_until(Duration::from_secs(10), |editor| {
+            editor.document.spatial_preparing.is_none()
+        });
+        app.update(|editor| {
+            assert!(!editor.interaction_blocked());
+            editor.begin_crop();
+            assert!(
+                editor.cropping(),
+                "completion restores normal tool admission"
+            );
+        });
+    });
+}
+
+#[test]
+fn regions_sampling_and_fitting_block_unrelated_controls_but_expose_cancellation() {
     for phase in 0..3 {
         let mut editor = with_document_services(fixture());
         add_ready_fixture(&mut editor);
         editor.sync_document();
-        let before = editor.document.state.project.clone();
+        let before = editor.document.project.clone();
         let admission = crate::background::testing::pause();
         with_application(editor, |app| {
             app.enter(|editor, cx| {
@@ -93,7 +110,7 @@ fn running_regions_sampling_and_fitting_leave_tool_switching_reachable() {
                     }
                     _ => editor.begin_analysis(cx),
                 }
-                editor.tasks.elapse(Duration::from_secs(1));
+                editor.activities.elapse(Duration::from_secs(1));
             });
             app.pump();
             let context = egui::Context::default();
@@ -102,7 +119,7 @@ fn running_regions_sampling_and_fitting_leave_tool_switching_reachable() {
             assert!(
                 context
                     .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
-                    .is_none()
+                    .is_some()
             );
             let tab = labels
                 .iter()
@@ -113,36 +130,32 @@ fn running_regions_sampling_and_fitting_leave_tool_switching_reachable() {
             for pressed in [true, false] {
                 app_frame(app, &context, pointer(tab, pressed));
             }
-            assert_eq!(app.read(|editor| editor.tab), 1);
+            app.read(|editor| {
+                assert_eq!(editor.tab, 0);
+                assert!(editor.interaction_blocked());
+                assert!(!editor.tool_start_available());
+                assert_eq!(editor.document.project, before);
+            });
             let labels = app_frame(app, &context, vec![]);
-            let crop = labels
+            let label = if phase == 0 {
+                "Cancel region preparation"
+            } else {
+                "Cancel analysis"
+            };
+            let cancel = labels
                 .iter()
-                .find(|(text, _)| text == "Crop & straighten")
+                .find(|(text, _)| text == label)
                 .unwrap()
                 .1
                 .center();
             for pressed in [true, false] {
-                app_frame(app, &context, pointer(crop, pressed));
+                app_frame(app, &context, pointer(cancel, pressed));
             }
-            app.read(|editor| {
-                assert!(
-                    editor.document.crop_edit().is_some(),
-                    "phase {phase}: {}",
-                    editor.status
-                );
-                assert!(editor.document.analysis_operation().is_none());
-                assert!(!editor.busy);
-                assert_eq!(editor.document.project, before);
-            });
             drop(admission);
             app.run_until(Duration::from_secs(10), |editor| {
-                editor.document.spatial_preparing.is_none()
+                !editor.interaction_blocked()
             });
-            app.read(|editor| {
-                assert!(editor.document.crop_edit().is_some());
-                assert!(editor.tasks.view().is_none());
-                assert_eq!(editor.document.project, before);
-            });
+            app.read(|editor| assert_eq!(editor.document.project, before));
         });
     }
 }

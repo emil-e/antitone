@@ -1,11 +1,13 @@
 //! Document-owned region preparation, awaited independently by feature actions.
-use super::{Document, Editor, Task, TaskProgress, TaskRequest, UiContext, document};
+#[cfg(test)]
+use super::ActivityReporter;
+use super::{ActivityOptions, Document, Editor, UiContext, document};
 use crate::{
     cancellation::Cancellation,
     spatial_metadata::{Metadata, Request},
 };
 use futures_channel::oneshot;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub(super) mod preparation;
 
@@ -13,22 +15,24 @@ pub(super) mod preparation;
 mod tests;
 
 pub(super) struct Pending {
-    pub id: u64,
+    #[cfg(test)]
+    pub activity: ActivityReporter,
     cancelled: Cancellation,
     completion: Vec<oneshot::Sender<Option<Arc<Metadata>>>>,
     task: Option<async_executor::Task<()>>,
+}
+
+#[cfg(test)]
+impl Pending {
+    pub fn visible(&self) -> bool {
+        self.activity.view().is_some()
+    }
 }
 
 impl Drop for Pending {
     fn drop(&mut self) {
         self.cancelled.cancel();
     }
-}
-
-#[derive(Default)]
-struct Progress {
-    latest: Mutex<Option<(usize, usize)>>,
-    changed: event_listener::Event,
 }
 
 impl Editor {
@@ -51,7 +55,7 @@ impl Editor {
         cx: &UiContext<'scope, Self>,
         sampling: bool,
     ) -> Option<impl Future<Output = Option<Arc<Metadata>>> + use<'scope>> {
-        if self.busy && self.document.spatial_preparing.is_none() {
+        if self.interaction_blocked() && self.document.spatial_preparing.is_none() {
             return None;
         }
         self.sync_document();
@@ -74,24 +78,32 @@ impl Editor {
                         .is_some()
                 })
             });
+
         if self.document.spatial_preparing.is_none() && complete && pixels_ready {
             let _ = send.send(Some(Arc::new(ready)));
         } else if let Some(pending) = &mut self.document.spatial_preparing {
             pending.completion.push(send);
-            self.tasks.begin(Task::Regions(pending.id));
-            self.busy = true;
         } else {
             let request = self.document.spatial.begin()?;
-            let id = self.request_id();
             let cancelled = Cancellation::default();
+            let activity = self.activities.start(
+                ActivityOptions::new("Preparing film and picture regions…")
+                    .modal()
+                    .cancellable(
+                        "Cancel region preparation",
+                        "Cancelling region preparation…",
+                        cancelled.clone(),
+                    ),
+            );
+            let progress = activity.reporter();
             self.document.spatial_preparing = Some(Pending {
-                id,
+                #[cfg(test)]
+                activity: activity.reporter(),
                 cancelled: cancelled.clone(),
                 completion: vec![send],
                 task: None,
             });
-            self.tasks.begin(Task::Regions(id));
-            self.busy = true;
+
             self.status = "Preparing film and picture regions…".into();
             let device = self
                 .source_services
@@ -100,8 +112,7 @@ impl Editor {
             let sources = self.source_provider();
             let sampling_inputs = self.document.sampling_inputs.clone();
             let exposures = self.document.exposures.clone();
-            let progress = Arc::new(Progress::default());
-            let produced = progress.clone();
+
             let retire = cancelled.cancel_on_drop();
             let captured = document.clone();
             #[cfg(test)]
@@ -130,39 +141,23 @@ impl Editor {
                         sources,
                         sampling_inputs,
                         exposures,
-                        cancelled,
-                        move |done, total| {
-                            *produced.latest.lock().unwrap() = Some((done, total));
-                            produced.changed.notify(usize::MAX);
-                        },
+                        cancelled.clone(),
+                        move |done, total| progress.progress(done, total),
                     )
                     .await
                     .map_err(|error| error.to_string())
                 };
-                let reports = async {
-                    loop {
-                        let changed = progress.changed.listen();
-                        let latest = progress.latest.lock().unwrap().take();
-                        if let Some((completed, total)) = latest {
-                            cx.update(|editor| {
-                                if editor
-                                    .document
-                                    .spatial_preparing
-                                    .as_ref()
-                                    .is_some_and(|p| p.id == id)
-                                {
-                                    editor.tasks.report(
-                                        TaskRequest::Regions(id),
-                                        TaskProgress::Counted { completed, total },
-                                    );
-                                }
-                            });
-                        }
-                        changed.await;
-                    }
+                let stop = async {
+                    cancelled.wait().await;
+                    None
                 };
-                let result = futures_lite::future::or(work, reports).await;
-                cx.update(|editor| editor.regions_prepared(id, document, request, result));
+                let result = futures_lite::future::or(async { Some(work.await) }, stop).await;
+
+                drop(activity);
+                cx.update(|editor| match result {
+                    Some(result) => editor.regions_prepared(document, request, result),
+                    None => editor.cancel_spatial(),
+                });
             });
             if let Some(task) = task {
                 self.document.spatial_preparing.as_mut().unwrap().task = Some(task);
@@ -176,11 +171,10 @@ impl Editor {
         let cx = cx.clone();
         Some(async move {
             let metadata = receive.await.ok().flatten()?;
+
             loop {
                 let changed = resumed.listen();
-                if cx.read(|editor| {
-                    editor.busy || editor.document_pending.is_some() || editor.failure.is_some()
-                }) {
+                if cx.read(|editor| editor.document_pending.is_some() || editor.failure.is_some()) {
                     changed.await;
                     continue;
                 }
@@ -199,10 +193,9 @@ impl Editor {
     }
 
     pub(super) fn cancel_spatial(&mut self) {
-        if let Some(pending) = self.document.spatial_preparing.take() {
+        if self.document.spatial_preparing.take().is_some() {
             self.document.spatial.cancel();
-            if self.tasks.finish(TaskRequest::Regions(pending.id)) {
-                self.busy = self.document_pending.is_some();
+            if self.document_pending.is_none() {
                 self.status = "Region preparation cancelled; accepted edits unchanged".into();
             }
         }
@@ -210,31 +203,22 @@ impl Editor {
 
     fn regions_prepared(
         &mut self,
-        id: u64,
+
         document: Arc<Document>,
         request: Request,
         result: Result<Option<preparation::Prepared>, String>,
     ) {
-        if !self
-            .document
-            .spatial_preparing
-            .as_ref()
-            .is_some_and(|p| p.id == id)
-        {
+        let Some(mut pending) = self.document.spatial_preparing.take() else {
             return;
-        }
-        let mut pending = self.document.spatial_preparing.take().unwrap();
-        let foreground = self.tasks.finish(TaskRequest::Regions(id));
-        if foreground {
-            self.busy = self.document_pending.is_some();
-        }
+        };
+        let foreground = self.document_pending.is_none();
         let result = result
             .and_then(|metadata| metadata.ok_or_else(|| "Region preparation cancelled".to_owned()));
         let metadata = match result {
             Ok(metadata) => metadata,
             Err(error) => {
                 self.document.spatial.cancel();
-                if foreground && !self.busy {
+                if foreground {
                     self.status = format!("Regions unavailable: {error}; accepted edits unchanged");
                 }
                 return;
@@ -263,7 +247,7 @@ impl Editor {
                 .publish(request, metadata, &scope.state.project, &current)
                 .unwrap_or(false);
         if !publish {
-            if foreground && !self.busy {
+            if foreground {
                 self.status = "Regions discarded: source inputs changed".into();
             }
             return;

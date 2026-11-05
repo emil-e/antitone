@@ -10,7 +10,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             });
             h.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
             wait_for(&mut h, |editor| {
-                !editor.busy && editor.document.visit.canvas.ready.is_some()
+                !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
             });
             stage(&mut h, "Photo");
             workflow::enter_numeric(&mut h, "Exposure", "0.75");
@@ -73,7 +73,9 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             assert!(!action.accesskit_node().is_disabled());
             action.click();
             h.step();
-            wait_for(&mut h, |editor| !editor.busy && !editor.cropping());
+            wait_for(&mut h, |editor| {
+                !editor.interaction_blocked() && !editor.cropping()
+            });
             h.read(|editor| {
                 assert_eq!(editor.document.state.project, expected);
                 assert_eq!(
@@ -105,7 +107,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
                 h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
                 h.step();
                 wait_for(&mut h, |editor| {
-                    !editor.busy && editor.document_pending.is_none()
+                    !editor.interaction_blocked() && editor.document_pending.is_none()
                 });
                 h.read(|editor| {
                     assert!(editor.document.visit.crop.is_none());
@@ -124,7 +126,7 @@ fn accepted_grading_survives_crop_apply_cancel_and_tool_replacement() {
             h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
             h.step();
             wait_for(&mut h, |editor| {
-                !editor.busy && editor.document_pending.is_none()
+                !editor.interaction_blocked() && editor.document_pending.is_none()
             });
             h.read(|editor| {
                 assert_eq!(editor.document.visit.adjustment_layer_settings.exposure, 0.)

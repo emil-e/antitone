@@ -8,7 +8,7 @@ use crate::{
 fn open(app: &mut TestApplication<'_, Editor>) {
     app.enter(|editor, cx| editor.request_analysis(cx));
     app.run_until(LIMIT, |editor| {
-        editor.document.analysis_review().is_some() && !editor.busy
+        editor.document.analysis_review().is_some() && !editor.interaction_blocked()
     });
 }
 
@@ -76,7 +76,7 @@ fn cancelling_the_waiting_review_allows_an_immediate_new_action_and_one_complete
             editor.request_analysis(cx);
         });
         app.run_until(LIMIT, |editor| {
-            editor.document.analysis_review().is_some() && !editor.busy
+            editor.document.analysis_review().is_some() && !editor.interaction_blocked()
         });
         let reviewed = app.enter(|editor, cx| {
             let reviewed = editor
@@ -98,17 +98,17 @@ fn cancelling_the_waiting_review_allows_an_immediate_new_action_and_one_complete
             reviewed
         });
         app.run_until(LIMIT, |editor| {
-            editor.document.analysis_operation().is_none() && !editor.busy
+            editor.document.analysis_operation().is_none() && !editor.interaction_blocked()
         });
         app.read(|editor| {
             assert!(editor.document.analysis_review().is_none());
-            assert!(editor.tasks.view().is_none());
+            assert!(editor.activities.view().is_none());
             assert_eq!(editor.document.project.analysis_regions, reviewed);
             assert_ne!(editor.document.project.dmin(), before.dmin());
             assert_eq!(editor.history_label(Direction::Undo), Some("Analyze roll"));
         });
         app.enter(|editor, cx| editor.restore_history(Direction::Undo, cx));
-        app.run_until(LIMIT, |editor| !editor.busy);
+        app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         app.read(|editor| {
             assert_eq!(editor.document.project, before);
             assert!(editor.history_label(Direction::Undo).is_none());
@@ -142,7 +142,7 @@ fn incomplete_confirmation_keeps_the_review_available_for_a_valid_retry() {
                 .picture = None;
             editor.confirm_analysis_review(cx);
             assert!(!editor.analysis_fitting());
-            assert!(editor.document.analysis_review().is_some() && !editor.busy);
+            assert!(editor.document.analysis_review().is_some() && !editor.interaction_blocked());
             assert_eq!(editor.document.project, before);
             assert!(editor.history_label(Direction::Undo).is_none());
             editor
@@ -156,7 +156,7 @@ fn incomplete_confirmation_keeps_the_review_available_for_a_valid_retry() {
             reviewed
         });
         app.run_until(LIMIT, |editor| {
-            editor.document.analysis_operation().is_none() && !editor.busy
+            editor.document.analysis_operation().is_none() && !editor.interaction_blocked()
         });
         app.read(|editor| {
             assert_eq!(editor.document.project.analysis_regions, reviewed);
@@ -186,7 +186,7 @@ fn document_replacement_retires_a_waiting_review_without_restoring_its_retired_p
             assert!(editor.document.analysis_operation().is_none());
             assert!(editor.document.analysis_review().is_none());
         });
-        app.run_until(LIMIT, |editor| !editor.busy);
+        app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         app.read(|editor| {
             assert!(editor.document.project.order.is_empty());
             assert!(editor.document.visit.current_source.is_none());

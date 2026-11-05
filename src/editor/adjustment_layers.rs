@@ -212,7 +212,7 @@ impl Editor {
     }
 
     fn adjustment_layer_actions_available(&self) -> bool {
-        !self.busy
+        !self.interaction_blocked()
             && self.document.input.ready()
             && !self.tool_interacting()
             && !self.document.visit.adjustment_layers.confirming()
@@ -446,7 +446,7 @@ impl Editor {
                     || self.tab != 1
                     || self.fullscreen.is_some()
                     || !(self.tab == 1)
-                    || self.busy
+                    || self.interaction_blocked()
                     || !egui::DragAndDrop::has_payload_of_type::<OrderKey>(ctx)
             })
         {
