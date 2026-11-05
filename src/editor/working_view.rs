@@ -66,7 +66,7 @@ impl Demand {
             .correction
             .as_ref()
             .map(|field| field.gpu.clone());
-        if let PhotographRequest::Recipe(recipe) = &self.capture {
+        if let Some(recipe) = self.capture.recipe() {
             let (photo, plan) = crate::gpu::photograph::PhotographGraph::preview(
                 &limits,
                 &scan,
@@ -827,7 +827,7 @@ pub(super) async fn acquire_images(
                     )
                 };
             let (calculations, native_requests) = match &demand.capture {
-                PhotographRequest::Recipe(recipe) => specs
+                PhotographRequest::Recipe(recipe) | PhotographRequest::BeforeLooks(recipe) => specs
                     .iter()
                     .map(|spec| {
                         let (photograph, plan) = crate::gpu::photograph::PhotographGraph::preview(
@@ -1066,15 +1066,8 @@ impl Editor {
             return false;
         }
 
-        let reservation = if self.document.visit.canvas.grade.original.refining()
-            || self
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .settled()
-                .is_none()
+        let reservation = if self.document.visit.canvas.original.refining()
+            || self.document.visit.canvas.original.settled().is_none()
         {
             pixels.saturating_mul(2).saturating_add(3 << 20)
         } else {
@@ -1083,15 +1076,7 @@ impl Editor {
         let allowed = if self.comparing_original() {
             self.document.thumbnails.reserve_view(0);
             true
-        } else if self
-            .document
-            .visit
-            .canvas
-            .grade
-            .original
-            .settled()
-            .is_some()
-        {
+        } else if self.document.visit.canvas.original.settled().is_some() {
             self.document.thumbnails.reserve_view(reservation)
         } else {
             self.document.thumbnails.reserve_view(0);

@@ -93,38 +93,18 @@ impl GpuImage {
             .processing
             .as_ref()
             .ok_or_else(|| Error::Gpu("rendered image has no source buffer".into()))?;
-        let expected = DMat3::from_cols_array_2d(&recipe.neutral.source_development.camera_to_ap1);
-        if processing.source.camera_matrix() != expected {
-            return Err(Error::Gpu(
-                "recipe differs from resident camera basis".into(),
-            ));
-        }
-        if field.as_ref().map(|field| field.field()) != recipe.neutral.correction.as_ref() {
-            return Err(Error::Gpu(
-                "recipe and GPU flat-field resources differ".into(),
-            ));
-        }
-        let program = InputTransform::from_recipe(&recipe.neutral)?;
-        let stages = recipe.pixel_pipeline()?;
-        let raster = PhotographGraph::resident_raster(
+        let raster = crate::gpu::photograph::RecipeGraph::sampled_raster(
             &processing.source,
-            &stages,
+            recipe,
             [self.presentation.size[0], self.presentation.size[1]],
         )?;
-        Ok(PhotographGraph::resident_photograph(
-            &self.device_limits,
+        Ok(crate::gpu::photograph::RecipeGraph::sampled_camera(
             processing.camera(raster)?,
-            CameraInput::resident(&processing.source, program, field),
-            program,
-            Grading::new(
-                &self.device_limits,
-                recipe.roll,
-                recipe.grade.clone(),
-                recipe.neutral.source_development.active_area.into(),
-            )?,
-            Default::default(),
-            &stages,
+            &processing.source,
+            field,
+            recipe,
         )?
+        .photograph(&self.device_limits)?
         .processed)
     }
 

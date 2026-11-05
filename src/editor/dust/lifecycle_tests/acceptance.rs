@@ -796,7 +796,7 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
                     .is_none()
             );
             (
-                e.document.visit.canvas.grade.original.continuation(),
+                e.document.visit.canvas.original.continuation(),
                 e.document
                     .flat_edit()
                     .unwrap()
@@ -822,7 +822,7 @@ fn repair_evaluation_chain_keeps_photo_pixels_and_correction_while_reference_vie
                 reference_revision
             );
             assert_ne!(
-                e.document.visit.canvas.grade.original.continuation(),
+                e.document.visit.canvas.original.continuation(),
                 working_revision
             );
         });

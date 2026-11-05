@@ -72,7 +72,7 @@ impl PixelStage {
         self.value.view_pitch()
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn integrates_footprint(&self) -> bool {
         self.value.integrates_footprint()
     }
@@ -167,7 +167,7 @@ impl PixelPipeline {
         if let Some(parameters) = halation.parameters(frame_size)? {
             stages.push(PixelStage::new(parameters));
         }
-        if let Some(parameters) = film.filter(|p| p.amplitude > 0.) {
+        if let Some(parameters) = film.filter(|parameters| parameters.amplitude > 0.) {
             stages.push(PixelStage::new(Grain {
                 parameters: parameters.grain(),
                 seed,
@@ -187,7 +187,7 @@ impl PixelPipeline {
             })
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn footprint_suffix(&self) -> usize {
         self.stages
             .iter()

@@ -46,14 +46,7 @@ pub(crate) fn write(
     let mut scan = prepared.scan();
     scan.set_flat_field(job.scan.flat_field().cloned())?;
     job.recipe.neutral.require_scan(&scan)?;
-    let stages = job.recipe.pixel_pipeline()?;
-    let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
-        output: FrameRaster::full(job.recipe.composition)?,
-        stages: &stages,
-        sampling: crate::acquisition::Sampling::Originals {
-            reconstruction: crate::acquisition::SourceSupport([0; 2]),
-        },
-    })?;
+    let plan = crate::image_recipe::quality::original_plan(job.recipe)?;
     let repairs = timed!(
         SourcePrepare,
         crate::gpu::repair_source::resolve_plan(

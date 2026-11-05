@@ -1,4 +1,4 @@
-use super::{Ready, Viewport, grade_scope::GradeScope};
+use super::{Ready, Viewport, original_view::OriginalView};
 use std::sync::Arc;
 
 pub(super) type Preview = (
@@ -22,7 +22,7 @@ pub(super) struct CanvasView {
     pub last_layout: Option<(crate::viewport::CanvasLayout, f32)>,
     pub preview_rendered: Option<Preview>,
     pub selection_timing: Option<Arc<super::SelectionTiming>>,
-    pub grade: GradeScope,
+    pub original: OriginalView,
 }
 
 impl super::Editor {

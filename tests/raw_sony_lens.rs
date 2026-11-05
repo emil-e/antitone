@@ -483,9 +483,9 @@ fn save_open_retains_lens_identity_and_flat_references_reject_different_maps_at_
     assert_eq!(recipe, project.image_recipe(id).unwrap());
     recipe.neutral.require_scan(&scan).unwrap();
     assert!(recipe.neutral.require_scan(&other).is_err());
-    let mut missing = recipe.clone();
-    missing.neutral.source_development.lens_correction = None;
-    assert!(missing.neutral.require_scan(&scan).is_err());
+    let mut missing = recipe.neutral.clone();
+    missing.source_development.lens_correction = None;
+    assert!(missing.require_scan(&scan).is_err());
     let mut old = reopened;
     old.set_flat_field(None);
     old.sources[0].development.decode.contract =

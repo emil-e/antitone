@@ -950,30 +950,44 @@ impl Editor {
     }
 
     fn effective_dust_repairs(&self, source: SourceId) -> Vec<Repair> {
-        let session = self.dust_session();
-        let edit = session.as_ref().map(|session| session.edit.borrow());
-        let mask = edit.as_ref().and_then(|edit| edit.mask_draft.as_ref());
+        let Ok(source) = self.document.project.source(source) else {
+            return Vec::new();
+        };
+        self.dust_recipe_repairs(source)
+            .unwrap_or_else(|| source.repairs.repairs().to_vec())
+    }
+
+    pub(super) fn dust_recipe_repairs(&self, source: &Source) -> Option<Vec<Repair>> {
+        if self.document.visit.current_source != Some(source.id) {
+            return None;
+        }
+        let session = self.dust_session()?;
+        let edit = session.edit.borrow();
+        let mask = edit.mask_draft.as_ref();
         let target = mask
             .filter(|draft| !draft.rejected)
             .and_then(|draft| draft.target);
         let support = mask
             .filter(|draft| draft.target.is_some() && !draft.rejected)
             .and_then(|draft| draft.support().ok());
-        let donor = edit.as_ref().and_then(|edit| edit.donor_draft);
-        self.dust_repairs(source)
-            .into_iter()
-            .flat_map(RepairSet::repairs)
-            .filter_map(|repair| {
-                let mut repair = repair.clone();
-                if Some(repair.id) == target {
-                    repair.support = support.clone()?;
-                }
-                if let Some(donor) = donor.filter(|donor| donor.repair == repair.id) {
-                    repair.offset = donor.offset;
-                }
-                Some(repair)
-            })
-            .collect()
+        let donor = edit.donor_draft;
+        Some(
+            source
+                .repairs
+                .repairs()
+                .iter()
+                .filter_map(|repair| {
+                    let mut repair = repair.clone();
+                    if Some(repair.id) == target {
+                        repair.support = support.clone()?;
+                    }
+                    if let Some(donor) = donor.filter(|donor| donor.repair == repair.id) {
+                        repair.offset = donor.offset;
+                    }
+                    Some(repair)
+                })
+                .collect(),
+        )
     }
 
     fn effective_dust_repair(&self, source: SourceId, id: RepairId) -> Option<Repair> {

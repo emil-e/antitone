@@ -459,7 +459,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
             editor.dmax(),
             editor.document.state.project.clone(),
         );
-        let generation = editor.document.visit.canvas.grade.original.continuation();
+        let generation = editor.document.visit.canvas.original.continuation();
         assert!(
             editor
                 .validate_processing(
@@ -495,7 +495,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
             before
         );
         assert_eq!(
-            editor.document.visit.canvas.grade.original.continuation(),
+            editor.document.visit.canvas.original.continuation(),
             generation
         );
         assert_eq!(accepted.clone(), positive(&editor).clone());
@@ -528,16 +528,9 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         let accepted = positive(&editor);
         let (_, scope, _) = editor.scope_input().unwrap();
         assert_eq!(scope.clone(), accepted.clone());
-        editor.document.visit.canvas.grade.original.last_edit =
+        editor.document.visit.canvas.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
-        let request = editor
-            .document
-            .visit
-            .canvas
-            .grade
-            .original
-            .request()
-            .unwrap();
+        let request = editor.document.visit.canvas.original.request().unwrap();
         let retired = request.begin().unwrap();
         assert_eq!(request.demand.target, editor.document.target);
         assert!(matches!(
@@ -567,7 +560,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
         frame(&mut editor, &context);
         assert_ne!(positive(&editor).clone(), captured.clone());
         assert_ne!(
-            editor.document.visit.canvas.grade.original.continuation(),
+            editor.document.visit.canvas.original.continuation(),
             retired
         );
         let (_, scope, _) = editor.scope_input().unwrap();
@@ -584,17 +577,8 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
                 .image(editor.document.target)
                 .unwrap(),
         )));
-        assert!(
-            editor
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .settled()
-                .is_none()
-        );
-        assert!(!editor.document.visit.canvas.grade.original.refining());
+        assert!(editor.document.visit.canvas.original.settled().is_none());
+        assert!(!editor.document.visit.canvas.original.refining());
         assert_eq!(
             captured.clone(),
             accepted.clone(),
@@ -612,7 +596,7 @@ fn original_comparison_and_scopes_capture_the_same_immutable_stack_and_reject_st
             "the source repaint supplies source scopes"
         );
         assert!(
-            editor.document.visit.canvas.grade.original.wanted.is_none(),
+            editor.document.visit.canvas.original.wanted.is_none(),
             "source inspection never requests photographic comparison"
         );
         assert!(view.area.width > 0);
@@ -724,7 +708,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
                     editor.document.visit.adjustment_layer_settings,
                 )
                 .unwrap();
-            editor.document.visit.canvas.grade.original.observe(
+            editor.document.visit.canvas.original.observe(
                 OriginalPurpose::Reference,
                 original_view::Demand {
                     capture: PhotographRequest::Recipe(Arc::new(recipe)),
@@ -739,7 +723,7 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
                     source: editor.source_context().unwrap(),
                 },
             );
-            editor.document.visit.canvas.grade.original.last_edit =
+            editor.document.visit.canvas.original.last_edit =
                 Instant::now() - Duration::from_secs(1);
         };
         let track_recipe = |request: &original_view::Request| -> Weak<ImageRecipe> {
@@ -756,27 +740,13 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
         };
         observe(&mut editor);
         // Keep a consumer independently of current demand; workflow tests exercise actual jobs.
-        let held = editor
-            .document
-            .visit
-            .canvas
-            .grade
-            .original
-            .request()
-            .unwrap();
+        let held = editor.document.visit.canvas.original.request().unwrap();
         let held_recipe = track_recipe(&held);
         let mut requested = vec![held_recipe.clone()];
         for i in 1..=40 {
             editor.document.visit.adjustment_layer_settings.exposure = f64::from(i) / 100.;
             observe(&mut editor);
-            let latest = editor
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .request()
-                .unwrap();
+            let latest = editor.document.visit.canvas.original.request().unwrap();
             let latest_recipe = track_recipe(&latest);
             let expected = editor
                 .positive_recipe(
@@ -804,31 +774,15 @@ fn captured_calculations_and_recipes_follow_active_consumers_not_ui_history() {
                 "only held work and current demand retain recipe captures"
             );
         }
-        let newest = editor
-            .document
-            .visit
-            .canvas
-            .grade
-            .original
-            .request()
-            .unwrap();
+        let newest = editor.document.visit.canvas.original.request().unwrap();
         assert_ne!(newest.completion(), held.completion());
         assert!(held.completion().receive(Ok(None)).is_none());
-        assert!(
-            editor
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .settled()
-                .is_none()
-        );
+        assert!(editor.document.visit.canvas.original.settled().is_none());
         drop(held);
         assert!(held_recipe.upgrade().is_none());
 
-        editor.document.visit.canvas.grade.original.wanted = None;
-        editor.document.visit.canvas.grade = Default::default();
+        editor.document.visit.canvas.original.wanted = None;
+        editor.document.visit.canvas.original = Default::default();
         assert_eq!(
             live_recipes(&requested),
             1,

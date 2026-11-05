@@ -51,6 +51,96 @@ fn editor() -> Editor {
     editor
 }
 
+#[test]
+fn viewer_recipes_freeze_effective_dust_drafts_without_changing_accepted_or_other_photo_intent() {
+    let mut e = editor();
+    let source = e.document.visit.current_source.unwrap();
+    let mut other = e.document.project.source(source).unwrap().clone();
+    other.path = "other-dust-photo.dng".into();
+    let other = e.document.project.add_source(other).unwrap();
+    let before = e.document.project.clone();
+    let capture = |e: &Editor| {
+        e.positive_recipe(
+            e.input(),
+            e.document.roll,
+            e.document.visit.adjustment_layer_settings,
+        )
+        .unwrap()
+    };
+    e.begin_dust_cleanup();
+    let accepted = capture(&e);
+    {
+        let session = e.dust_session().unwrap();
+        session.edit.borrow_mut().donor_draft = Some(DonorDraft {
+            repair: RepairId(1),
+            offset: [64, 0],
+            drag: None,
+        });
+    }
+    let donor = capture(&e);
+    assert_eq!(donor.repairs[0].offset, [64, 0]);
+    assert_eq!(accepted.repairs[0].offset, [30, 0]);
+    assert_ne!(
+        accepted, donor,
+        "effective repair changes are photographic intent changes"
+    );
+    let other_recipe = e
+        .positive_recipe_for_source(
+            e.input(),
+            e.document.roll,
+            e.document.project.source(other).unwrap(),
+            e.document.visit.adjustment_layer_settings,
+        )
+        .unwrap();
+    assert_eq!(
+        other_recipe.repairs[0].offset,
+        [30, 0],
+        "a current-photo draft cannot leak to another source"
+    );
+
+    {
+        let session = e.dust_session().unwrap();
+        session
+            .edit
+            .borrow_mut()
+            .donor_draft
+            .as_mut()
+            .unwrap()
+            .offset = [0, 0];
+    }
+    let unfinished = capture(&e);
+    assert_eq!(
+        unfinished.repairs[0].offset,
+        [0, 0],
+        "capture and repair evaluation readiness are distinct"
+    );
+    e.finish_dust_cleanup();
+    assert_eq!(capture(&e), accepted);
+
+    e.begin_dust_mask(Some(RepairId(1)));
+    e.document
+        .dust_mask_draft_mut()
+        .unwrap()
+        .pixels
+        .insert([54, 50]);
+    let mask = capture(&e);
+    assert!(mask.repairs[0].support.contains([54, 50]));
+    assert!(!accepted.repairs[0].support.contains([54, 50]));
+    assert_eq!(
+        donor.repairs[0].offset,
+        [64, 0],
+        "later drafts cannot rewrite a frozen snapshot"
+    );
+    assert_eq!(
+        e.document.state.image_recipe(source).unwrap().repairs,
+        accepted.repairs
+    );
+    assert_eq!(e.document.project, before);
+    e.cancel_dust_mask();
+    e.finish_dust_cleanup();
+    assert_eq!(capture(&e), accepted);
+}
+
 fn captured_request(e: &Editor) -> Request {
     e.document
         .visit

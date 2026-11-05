@@ -62,14 +62,7 @@ pub fn resolve_output(
     scan: &Scan,
     recipe: &crate::image_recipe::ImageRecipe,
 ) -> Result<Vec<std::sync::Arc<EvaluatedRepair>>, Error> {
-    let stages = recipe.pixel_pipeline()?;
-    let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
-        output: crate::frame_raster::FrameRaster::full(recipe.composition)?,
-        stages: &stages,
-        sampling: crate::acquisition::Sampling::Originals {
-            reconstruction: crate::acquisition::SourceSupport([0; 2]),
-        },
-    })?;
+    let plan = crate::image_recipe::quality::original_plan(recipe)?;
     resolve_plan_with(scan, recipe, &plan, &mut Execution::default())
         .map(|result| result.expect("uncancelled output repair resolution"))
 }
@@ -151,7 +144,7 @@ fn resolve_selected(
     mut evaluate: impl FnMut(&Repair, &mut Execution<'_>) -> Result<Option<EvaluatedRepair>, Error>,
 ) -> Result<Option<Vec<std::sync::Arc<EvaluatedRepair>>>, Error> {
     let mut evaluated = Vec::new();
-    for repair in recipe.repairs() {
+    for repair in &recipe.repairs {
         if !applicable(repair)? {
             continue;
         }

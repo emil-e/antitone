@@ -33,7 +33,6 @@ fn show_confirmation(harness: &mut Harness<'_, Editor>) {
             .document
             .visit
             .canvas
-            .grade
             .original
             .wanted
             .as_ref()
@@ -712,8 +711,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
                 .source_epoch
                 .load(std::sync::atomic::Ordering::Relaxed)
         });
-        let original =
-            harness.read(|editor| editor.document.visit.canvas.grade.original.continuation());
+        let original = harness.read(|editor| editor.document.visit.canvas.original.continuation());
         harness.get_by_label("roll-1.dng").click();
         harness.step();
         wait_for(&mut harness, |e| !e.busy);
@@ -728,7 +726,7 @@ fn roll_area_review_supports_normal_and_narrow_layouts_and_exception_browsing() 
         });
         harness.read(|editor| {
             assert_ne!(
-                editor.document.visit.canvas.grade.original.continuation(),
+                editor.document.visit.canvas.original.continuation(),
                 original
             );
         });

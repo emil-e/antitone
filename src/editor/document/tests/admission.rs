@@ -348,7 +348,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
         let epoch = editor
             .source_epoch
             .load(std::sync::atomic::Ordering::Relaxed);
-        let revision = editor.document.visit.canvas.grade.original.continuation();
+        let revision = editor.document.visit.canvas.original.continuation();
         let viewport = editor.document.visit.canvas.viewport;
         let path = editor
             .document
@@ -382,7 +382,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
         );
         assert_eq!(editor.document.visit.canvas.viewport, viewport);
         assert_eq!(
-            editor.document.visit.canvas.grade.original.continuation(),
+            editor.document.visit.canvas.original.continuation(),
             revision
         );
         assert_eq!(editor.document.state.project, before);

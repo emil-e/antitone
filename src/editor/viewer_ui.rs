@@ -167,9 +167,7 @@ impl Editor {
                         " · Look unavailable"
                     } else if self.document.visit.working_view.error.is_some() {
                         " · View unavailable"
-                    } else if self.comparing_original()
-                        && self.active_canvas().grade.original.failed()
-                    {
+                    } else if self.comparing_original() && self.active_canvas().original.failed() {
                         " · Reference unavailable"
                     } else if self.comparing_original()
                         && self.document.visit.working_view.reference_ready()
@@ -182,9 +180,9 @@ impl Editor {
                     } else {
                         ""
                     }
-                } else if self.active_canvas().grade.original.refining() {
+                } else if self.active_canvas().original.refining() {
                     " · Refining"
-                } else if self.active_canvas().grade.original.settled().is_none() {
+                } else if self.active_canvas().original.settled().is_none() {
                     " · Approximate"
                 } else {
                     ""

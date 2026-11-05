@@ -255,7 +255,7 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
             frame: None,
         };
         let input = AuthoredPhotograph::from(ProcessingParameters::source());
-        editor.document.visit.canvas.grade.original.observe(
+        editor.document.visit.canvas.original.observe(
             OriginalPurpose::Tool,
             original_view::Demand::fixture(
                 input.clone(),
@@ -265,17 +265,10 @@ fn refinement_worker_uses_the_submission_gate_supplied_to_the_host() {
                 editor.source_context().unwrap(),
             ),
         );
-        editor.document.visit.canvas.grade.original.last_edit =
+        editor.document.visit.canvas.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
         let submissions = host::App::submission_gate(&editor).clone();
-        let request = editor
-            .document
-            .visit
-            .canvas
-            .grade
-            .original
-            .request()
-            .unwrap();
+        let request = editor.document.visit.canvas.original.request().unwrap();
         let services = editor.source_services.clone().unwrap();
         let gate = submissions.clone();
         let (completed, result) = mpsc::channel();
@@ -1312,7 +1305,7 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             editor.document.target,
         );
         let viewport = editor.document.visit.canvas.viewport;
-        let signature = editor.document.visit.canvas.grade.original.wanted.clone();
+        let signature = editor.document.visit.canvas.original.wanted.clone();
         let draft = editor.document.crop_edit().map(|edit| edit.draft);
         let image = if editing {
             editor.document.crop_edit().unwrap().layout.unwrap().image
@@ -1361,7 +1354,7 @@ fn tab_clicks_show_only_the_selected_scope_without_changing_view_or_crop_draft()
             );
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
             assert!(
-                editor.document.visit.canvas.grade.original.wanted == signature,
+                editor.document.visit.canvas.original.wanted == signature,
                 "rejected publication preserves the actual original request"
             );
             assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
@@ -1417,15 +1410,15 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
         );
     }
     for _ in 0..3 {
-        editor.document.visit.canvas.grade.original.last_edit =
+        editor.document.visit.canvas.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
         app_frame(&mut editor, &context, vec![]);
     }
     let explicit = editor.document.crop_edit().unwrap().layout.unwrap();
     assert!(!explicit.image.intersects(explicit.canvas));
     assert_eq!(explicit.scale * context.pixels_per_point(), 1.);
-    assert!(!editor.document.visit.canvas.grade.original.refining());
-    assert!(editor.document.visit.canvas.grade.original.task.is_none());
+    assert!(!editor.document.visit.canvas.original.refining());
+    assert!(editor.document.visit.canvas.original.task.is_none());
     let text = app_frame(&mut editor, &context, vec![]);
     let fit = text
         .iter()

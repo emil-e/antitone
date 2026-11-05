@@ -185,13 +185,13 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             wait_for(&mut h, |e| e.test_pick().is_some());
             h.read(|e| assert_eq!(e.test_pick(), Some(kind.display())));
             wait_for(&mut h, |e| {
-                e.document.visit.canvas.grade.original.settled().is_some()
+                e.document.visit.canvas.original.settled().is_some()
             });
             h.event(egui::Event::PointerGone);
             h.step();
             h.render().unwrap();
             let (layout, target, matrix, pipeline) = h.read(|e| {
-                let (view, _) = e.document.visit.canvas.grade.original.settled().unwrap();
+                let (view, _) = e.document.visit.canvas.original.settled().unwrap();
                 assert_eq!(view.frame.is_some(), angle != 0.);
                 let matrix = e
                     .document
@@ -260,7 +260,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
             h.step();
             h.read(|e| {
                 assert!(
-                    e.document.visit.canvas.grade.original.settled().is_none(),
+                    e.document.visit.canvas.original.settled().is_none(),
                     "departed tool must not retain its image"
                 )
             });

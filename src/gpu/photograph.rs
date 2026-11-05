@@ -28,6 +28,9 @@ pub mod neutral_readout;
 pub(crate) mod operations;
 #[cfg(feature = "project")]
 mod recipe;
+#[cfg(feature = "project")]
+#[cfg(feature = "project")]
+pub(crate) use recipe::RecipeGraph;
 #[cfg(feature = "editor")]
 pub(crate) mod request;
 #[cfg(all(feature = "ui", feature = "render"))]
@@ -41,27 +44,50 @@ mod prewarm;
 #[cfg(test)]
 pub mod test_support;
 
-use self::Endpoint as Boundary;
 use assembly::Assembly;
 
-/// A photographic calculation endpoint, including the pre-inversion source-view branch.
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum Endpoint {
-    Codes,
-    Camera,
-    Native,
-    Unrepaired,
-    Neutral,
-    Roll,
-    Graded,
-    Processed,
-    Inspection(crate::gpu::interpretation::InspectionView),
+/// Corrected camera light is available independently of positive calibration or grading.
+pub(crate) struct CameraGraph {
+    pub codes: Arc<ImageNode>,
+    pub camera: Arc<ImageNode>,
+    input: CameraInput,
+}
+
+impl CameraGraph {
+    fn new(codes: Arc<ImageNode>, input: CameraInput) -> Result<Self, Error> {
+        if codes.domain().meaning != Meaning::CameraCodes {
+            return Err(Error::InvalidParameter(
+                "camera graph requires camera codes",
+            ));
+        }
+        let capture = Captured::new(input.clone(), Interpretation::Unavailable)?;
+        let camera = Assembly::captured(capture).camera(codes.clone());
+        Ok(Self {
+            codes,
+            camera,
+            input,
+        })
+    }
+
+    fn inspection(
+        &self,
+        view: crate::gpu::interpretation::InspectionView,
+    ) -> Result<Arc<ImageNode>, Error> {
+        Ok(Assembly::captured(Captured::new(
+            self.input.clone(),
+            Interpretation::Packed(view.parameters()?),
+        )?)
+        .interpret_camera(self.codes.clone(), self.camera.clone())?
+        .unrepaired)
+    }
 }
 
 /// Captured camera, neutral and photographic image boundaries.
 /// Each boundary is calculated by its captured operations.
 pub struct PhotographGraph {
     pub codes: Arc<ImageNode>,
+    pub camera: Arc<ImageNode>,
+    pub camera_positive: Arc<ImageNode>,
     pub unrepaired: Arc<ImageNode>,
     pub neutral: Arc<ImageNode>,
     pub roll: Arc<ImageNode>,
@@ -102,7 +128,7 @@ impl PhotographGraph {
         let mut assembly = Assembly::captured(capture);
         assembly.encoded = encoding.exposure != 0.;
 
-        assembly.prefix(source, Boundary::Codes, Boundary::Unrepaired)
+        assembly.unrepaired(source)
     }
 
     #[cfg(feature = "editor")]
@@ -111,7 +137,7 @@ impl PhotographGraph {
         program: crate::gpu::interpretation::InputTransform,
         encoding: crate::processing::RollSettings,
     ) -> Result<Arc<ImageNode>, Error> {
-        Assembly::native(program, encoding).prefix(camera, Boundary::Camera, Boundary::Native)
+        Assembly::native(program, encoding).interpret(camera)
     }
 
     #[cfg(feature = "editor")]
@@ -153,7 +179,7 @@ impl PhotographGraph {
         Assembly::input_transform(image)
     }
 
-    #[cfg(feature = "editor")]
+    #[cfg(all(test, feature = "editor"))]
     pub(crate) fn filtered(
         grading: &Grading,
         neutral: Arc<ImageNode>,
@@ -271,7 +297,7 @@ impl PhotographGraph {
             Interpretation::Unavailable,
         )?;
 
-        Assembly::captured(captured).prefix(source, Boundary::Codes, Boundary::Camera)
+        Ok(Assembly::captured(captured).camera(source))
     }
 
     #[cfg(feature = "editor")]
@@ -351,16 +377,16 @@ impl PhotographGraph {
                 "inspection requires original camera cells",
             ));
         }
-        Assembly::captured(Captured::new(
+        CameraGraph::new(
+            source,
             CameraInput {
                 matrix,
                 field,
                 continuous: true,
                 mapping: Mapping::Originals,
             },
-            Interpretation::Packed(view.parameters()?),
-        )?)
-        .prefix(source, Boundary::Codes, Boundary::Unrepaired)
+        )?
+        .inspection(view)
     }
 
     #[cfg(test)]
@@ -384,39 +410,6 @@ impl PhotographGraph {
         stages: &crate::pixel_pipeline::PixelPipeline,
     ) -> Result<Self, Error> {
         Self::original_assembly(limits, &source, field, input, matrix)?.photograph(source, stages)
-    }
-
-    #[cfg(feature = "editor")]
-    pub(crate) fn preview(
-        limits: &wgpu::Limits,
-        scan: &crate::scan::Scan,
-        field: Option<Arc<GpuFlatField>>,
-        recipe: &crate::image_recipe::ImageRecipe,
-        repairs: &crate::gpu::repairs::Snapshot,
-        frame: crate::frame_raster::FrameRaster,
-        native_grid: Option<crate::frame_raster::FrameRaster>,
-    ) -> Result<(Self, crate::acquisition::Plan), Error> {
-        let program = crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)?;
-        if !program.matches_native(scan)?
-            || scan.flat_field() != recipe.neutral.correction.as_ref()
-            || recipe.neutral.correction.as_ref() != field.as_ref().map(|field| field.field())
-        {
-            return Err(Error::Gpu(
-                "physical-view source authority differs from originals".into(),
-            ));
-        }
-        let source = crate::gpu::evaluation::camera_source(scan)?;
-        if frame.composition.area() != source.domain().finite()?.source()? {
-            return Err(Error::InvalidParameter(
-                "frame belongs to a different source grid",
-            ));
-        }
-        Self::recipe_assembly(limits, &source, field, recipe, repairs)?.preview(
-            source,
-            &recipe.pixel_pipeline()?,
-            frame,
-            native_grid,
-        )
     }
 
     #[cfg(all(test, feature = "editor"))]
@@ -511,6 +504,7 @@ impl PhotographGraph {
             None,
             ResidentCamera {
                 domain,
+                identity: Arc::downgrade(&source.identity),
                 pixels: source.input.clone(),
                 continuous: source.continuous,
             },
@@ -620,25 +614,6 @@ impl NeutralInput {
             .collect()
     }
 
-    pub fn resident_view(
-        &self,
-        source: &ProcessingSource,
-    ) -> Result<Arc<crate::gpu::evaluation::ImageNode>, Error> {
-        let geometry = source
-            .geometry()
-            .ok_or(Error::InvalidParameter("neutral source requires geometry"))?;
-        let raster = crate::gpu::raster::Raster::region(geometry.region(), geometry.size());
-        let root = self.resident(source, raster)?;
-        let output_domain = crate::gpu::evaluation::Domain {
-            grid: crate::gpu::evaluation::Grid {
-                coverage: 8,
-                ..root.domain().grid
-            },
-            ..root.domain()
-        };
-        crate::gpu::evaluation::reconstruct(root, output_domain)
-    }
-
     pub fn originals(&self, source: Arc<ImageNode>) -> Result<Arc<ImageNode>, Error> {
         if source.domain().meaning != Meaning::CameraCodes
             || source.domain().grid != Grid::axis_aligned([0.; 2], [1.; 2])
@@ -685,6 +660,7 @@ impl NeutralInput {
             None,
             ResidentCamera {
                 domain,
+                identity: Arc::downgrade(&source.identity),
                 pixels: source.input.clone(),
                 continuous: source.continuous,
             },
@@ -750,6 +726,6 @@ impl NeutralInput {
         let mut assembly = Assembly::captured(captured);
         assembly.repairs = self.repairs.clone();
 
-        assembly.prefix(source, Boundary::Codes, Boundary::Neutral)
+        assembly.neutral(source)
     }
 }

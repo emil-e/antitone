@@ -1,4 +1,4 @@
-//! Immutable photographic choices, independent of execution, calibration readiness and output target.
+//! Captured photographic intent, independent of execution quality and output target.
 use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
@@ -10,8 +10,9 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// Source identity and upstream interpretation. File freshness is supplied by each source owner.
-#[derive(Clone, Debug)]
+pub(crate) mod quality;
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct NeutralRecipe {
     pub source: SourceId,
     pub source_development: SourceDevelopment,
@@ -20,21 +21,9 @@ pub struct NeutralRecipe {
     pub correction: Option<Arc<FlatField>>,
 }
 
-impl PartialEq for NeutralRecipe {
-    fn eq(&self, other: &Self) -> bool {
-        self.source == other.source
-            && self.source_development == other.source_development
-            && self.input == other.input
-            && self.correction == other.correction
-            // Estimator diagnostics are persisted, but only the gain affects pixels.
-            && (self.input.is_negative()
-                || self.reference.as_ref().map(|value| value.ev())
-                    == other.reference.as_ref().map(|value| value.ev()))
-    }
-}
-
-/// Accepted state only: drafts, cache readiness and consumer format do not belong here.
-#[derive(Clone, Debug)]
+/// Complete photographic intent. Owners construct a value before sharing its snapshot;
+/// graph operations capture their arguments rather than following subsequent edits.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ImageRecipe {
     pub neutral: NeutralRecipe,
     pub roll: RollSettings,
@@ -43,20 +32,7 @@ pub struct ImageRecipe {
     pub grain: crate::grain::GrainSettings,
     pub halation: crate::halation::HalationSettings,
     pub luts: crate::looks::LutChain,
-    repairs: Vec<Repair>,
-}
-
-impl PartialEq for ImageRecipe {
-    fn eq(&self, other: &Self) -> bool {
-        self.roll == other.roll
-            && self.grade == other.grade
-            && self.composition == other.composition
-            && self.grain == other.grain
-            && self.halation.active().then_some(self.halation)
-                == other.halation.active().then_some(other.halation)
-            && self.luts == other.luts
-            && self.same_neutral_content(other)
-    }
+    pub repairs: Vec<Repair>,
 }
 
 impl NeutralRecipe {
@@ -105,101 +81,29 @@ impl ImageRecipe {
                 })
                 .sum::<usize>()
     }
-
-    /// Effective photograph before the creative look and consumer framing.
-    #[cfg(feature = "editor")]
-    pub(crate) fn same_photographic(&self, other: &Self) -> bool {
-        self.roll == other.roll
-            && self.grade == other.grade
-            && self.same_neutral_content(other)
-            && matches!((self.pixel_pipeline(), other.pixel_pipeline()),
-                (Ok(a), Ok(b)) if a == b)
-    }
-
-    fn same_neutral_content(&self, other: &Self) -> bool {
-        self.neutral == other.neutral
-            && self.repairs.len() == other.repairs.len()
-            && self
-                .repairs
-                .iter()
-                .zip(&other.repairs)
-                .all(|(a, b)| a.support == b.support && a.offset == b.offset)
-    }
-
-    pub fn pixel_pipeline(&self) -> Result<crate::pixel_pipeline::PixelPipeline, Error> {
-        crate::pixel_pipeline::PixelPipeline::emulation(
-            self.grain,
-            self.halation,
-            self.composition.crop().size,
-            self.neutral.source.0,
-        )
-    }
-
-    pub fn repairs(&self) -> &[Repair] {
-        &self.repairs
-    }
-}
-
-enum RepairCapture {
-    Accepted,
-    #[cfg(feature = "editor")]
-    Omit,
 }
 
 impl Project {
-    /// Capture one source's accepted photograph without acquiring pixels or resolving repairs.
+    /// Capture accepted intent without acquiring pixels or resolving repairs.
     pub fn image_recipe(&self, id: SourceId) -> Result<ImageRecipe, Error> {
-        let source = self.source(id)?;
-        self.image_recipe_for_source(source, &self.input, self.roll)
+        self.capture_image(self.source(id)?, |_| {})
     }
 
-    /// Navigation thumbnails capture grading and geometry without retaining or evaluating dust.
-    #[cfg(feature = "editor")]
-    pub(crate) fn thumbnail_recipe(&self, id: SourceId) -> Result<ImageRecipe, Error> {
-        let source = self.source(id)?;
-        if !self.input.ready() {
-            return Err(Error::Project(
-                "positive recipe requires calibration".into(),
-            ));
-        }
-        self.capture_recipe(source, &self.input, self.roll, RepairCapture::Omit)
-    }
-
-    /// Explicit viewer/candidate overlays reuse recipe construction without changing accepted records.
-    pub(crate) fn image_recipe_for_source(
+    /// The owning entry point supplies effective edits inside capture. Only the completed
+    /// value leaves this operation; publication uses ordinary shared ownership.
+    pub(crate) fn capture_image(
         &self,
         source: &Source,
-        input: &InputSettings,
-        roll: RollSettings,
+        effective: impl FnOnce(&mut ImageRecipe),
     ) -> Result<ImageRecipe, Error> {
-        self.capture_recipe(source, input, roll, RepairCapture::Accepted)
-    }
-
-    fn capture_recipe(
-        &self,
-        source: &Source,
-        input: &InputSettings,
-        roll: RollSettings,
-
-        repairs: RepairCapture,
-    ) -> Result<ImageRecipe, Error> {
-        let include_repairs = matches!(repairs, RepairCapture::Accepted);
-        if include_repairs {
-            source
-                .repairs
-                .validate(source.development.active_area.into())?;
-        }
-        let composition = Composition::with_crop(
-            source.development.active_area.into(),
-            self.orientation,
-            source.orientation,
-            source.crop,
-        )?;
-        Ok(ImageRecipe {
+        source
+            .repairs
+            .validate(source.development.active_area.into())?;
+        let mut recipe = ImageRecipe {
             neutral: NeutralRecipe {
                 source: source.id,
                 source_development: source.development.clone(),
-                input: *input,
+                input: self.input,
                 reference: self
                     .exposure_metadata
                     .as_ref()
@@ -213,23 +117,28 @@ impl Project {
                     .map(|entry| entry.reference.clone()),
                 correction: self.active_flat_field().map(|field| field.map.clone()),
             },
-            roll,
+            roll: self.roll,
             grade: source.grade_snapshot()?,
-            composition,
+            composition: Composition::with_crop(
+                source.development.active_area.into(),
+                self.orientation,
+                source.orientation,
+                source.crop,
+            )?,
             grain: self.output.grain,
             halation: self.output.halation,
             luts: self.output.luts(),
-            repairs: if include_repairs {
-                source
-                    .repairs
-                    .repairs()
-                    .iter()
-                    .filter(|repair| repair.enabled)
-                    .cloned()
-                    .collect()
-            } else {
-                Vec::new()
-            },
-        })
+            repairs: source
+                .repairs
+                .repairs()
+                .iter()
+                .filter(|repair| repair.enabled)
+                .cloned()
+                .collect(),
+        };
+        // Effective instructions can still await a valid donor or evaluated pixels.
+        // Their accepted source records remain validated and unchanged.
+        effective(&mut recipe);
+        Ok(recipe)
     }
 }

@@ -31,19 +31,10 @@ impl PartialEq for SourceRequest {
 }
 
 impl SourceRequest {
-    pub fn for_recipe(
-        frame: FrameRaster,
-        recipe: &crate::image_recipe::ImageRecipe,
-    ) -> Result<Self, Error> {
-        let program = crate::gpu::interpretation::InputTransform::from_recipe(&recipe.neutral)?;
-        program.neutral_parameters()?;
-        let request = Self::for_frame(frame)?;
-        #[cfg(test)]
-        let request = Self {
-            fixture: Some(SourceInterpretation::Photograph(program)),
-            ..request
-        };
-        request.with_pipeline(recipe.pixel_pipeline()?)
+    #[cfg(test)]
+    pub(crate) fn with_program_fixture(mut self, program: InputTransform) -> Self {
+        self.fixture = Some(SourceInterpretation::Photograph(program));
+        self
     }
 
     #[cfg(test)]

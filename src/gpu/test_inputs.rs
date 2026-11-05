@@ -241,7 +241,7 @@ impl AuthoredPhotograph {
             recipe.neutral.source_development.active_area.into(),
         )?
         .with_luts(recipe.luts.clone())
-        .with_pixel_pipeline(recipe.pixel_pipeline()?))
+        .with_pixel_pipeline(crate::image_recipe::quality::sampling_stages(recipe)?))
     }
 
     pub fn with_flat_field(mut self, field: Option<Arc<super::flat::GpuFlatField>>) -> Self {
@@ -499,7 +499,10 @@ mod tests {
         assert_eq!(captured.luts().id(), recipe.luts.id());
         let override_view = captured.clone().with_pixel_pipeline(Default::default());
         assert!(override_view.pixel_pipeline().is_empty());
-        assert_eq!(recipe.pixel_pipeline().unwrap(), pipeline);
+        assert_eq!(
+            crate::image_recipe::quality::sampling_stages(&recipe).unwrap(),
+            pipeline
+        );
         assert_ne!(override_view.clone(), captured.clone());
         project.output.grain.enabled = false;
         project.output.lut = None;

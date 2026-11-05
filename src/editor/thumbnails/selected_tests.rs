@@ -230,8 +230,8 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                 assert!(editor.document.crop_edit().is_none());
                 assert!(editor.document.export.operation.is_none());
                 assert!(
-                    !editor.document.visit.canvas.grade.original.refining()
-                        && editor.document.visit.canvas.grade.original.task.is_none()
+                    !editor.document.visit.canvas.original.refining()
+                        && editor.document.visit.canvas.original.task.is_none()
                         && !editor.measurement_pending()
                         && editor.document.export.operation.is_none()
                 );
@@ -301,8 +301,8 @@ fn pending_preview_paints_current_composition_but_cannot_supply_authoritative_op
                                     && pixel[3] > 0.)
                         );
                         assert!(
-                            !editor.document.visit.canvas.grade.original.refining()
-                                && editor.document.visit.canvas.grade.original.task.is_none()
+                            !editor.document.visit.canvas.original.refining()
+                                && editor.document.visit.canvas.original.task.is_none()
                                 && !editor.measurement_pending()
                                 && editor.document.export.operation.is_none(),
                             "pending preview scheduled authoritative work"
@@ -742,8 +742,8 @@ fn local_snapshots_reach_pending_previews_without_rebuilding_camera_sources() {
                             positive_pixels = Some(actual);
                         }
                         assert!(
-                            !editor.document.visit.canvas.grade.original.refining()
-                                && editor.document.visit.canvas.grade.original.task.is_none(),
+                            !editor.document.visit.canvas.original.refining()
+                                && editor.document.visit.canvas.original.task.is_none(),
                             "cached preview must not schedule full-source work"
                         );
                     }

@@ -1,10 +1,11 @@
 //! One bounded original-sample engine for TIFF and scene-linear EXR.
 use crate::export_timing::timed;
+#[cfg(test)]
+use crate::frame_raster::FrameRaster;
 use crate::{
     Error,
     adjustment_layers::AdjustmentLayerSnapshot,
     export::{self, ExrPrecision, ImageSize, Overwrite},
-    frame_raster::FrameRaster,
     geometry::Composition,
     gpu::{flat::GpuFlatField, submission::SubmissionGate},
     processing::{InputSettings, RollSettings},

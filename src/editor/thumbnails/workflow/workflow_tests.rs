@@ -47,7 +47,7 @@ fn editor(
                 cpu_bytes: 0,
                 gpu_bytes: 0,
             });
-        editor.document.visit.canvas.grade.original.last_edit =
+        editor.document.visit.canvas.original.last_edit =
             std::time::Instant::now() - Duration::from_secs(1);
         editor.developments = Some(scheduler);
         editor

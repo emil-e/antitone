@@ -91,8 +91,11 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
         *gamma = 0.1;
     }
     project.roll.exposure = 0.5;
-    let mut recipe = project.image_recipe(id).unwrap();
-    recipe.neutral.correction = scan.flat_field().cloned();
+    let recipe = project
+        .capture_image(project.source(id).unwrap(), |recipe| {
+            recipe.neutral.correction = scan.flat_field().cloned();
+        })
+        .unwrap();
     let input = recipe.neutral.processing_input().unwrap();
     let matrix = scan.positive_matrix(&input).unwrap();
     assert!(
@@ -132,7 +135,7 @@ fn repair_free_resolution_does_not_prepare_an_irrelevant_neutral_image() {
         assert!((f64::from(local[0][channel]) / actual_local[channel] - 1.).abs() < 2e-5);
     }
 
-    let stages = recipe.pixel_pipeline().unwrap();
+    let stages = crate::image_recipe::quality::sampling_stages(&recipe).unwrap();
     let plan = crate::acquisition::Plan::new(crate::acquisition::Request {
         output: FrameRaster::full(recipe.composition).unwrap(),
         stages: &stages,
@@ -193,12 +196,12 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
         )
         .unwrap();
     let recipe = project.image_recipe(id).unwrap();
-    assert_eq!(recipe.repairs().len(), 2);
+    assert_eq!(recipe.repairs.len(), 2);
     assert!(
         crate::repair_source::evaluate(
             &crate::scan::ImageSource::new(&scan, recipe.neutral.processing_input().unwrap())
                 .unwrap(),
-            &recipe.repairs()[1]
+            &recipe.repairs[1]
         )
         .is_err(),
         "an irrelevant source-edge repair would actually fail if prepared"
@@ -287,8 +290,13 @@ fn immutable_worker_job_resolves_cold_repairs_skips_irrelevant_failures_and_hono
         assert_eq!(std::fs::read(&path).unwrap(), b"keep existing output");
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     }
-    let mut stale = recipe.clone();
-    stale.neutral.source_development.input_floor *= 2.;
+    let mut stale_project = project.clone();
+    stale_project
+        .source_mut(id)
+        .unwrap()
+        .development
+        .input_floor *= 2.;
+    let stale = stale_project.image_recipe(id).unwrap();
     assert!(
         write(
             &renderer,

@@ -67,7 +67,7 @@ fn digital_source_scale_reaches_neutral_repairs_and_scene_linear_exports_at_zero
         let recipe = project.image_recipe(id).unwrap();
         let healed = crate::repair_source::evaluate(
             &crate::scan::ImageSource::new(&scan, InputSettings::Digital).unwrap(),
-            &recipe.repairs()[0],
+            &recipe.repairs[0],
         )
         .unwrap();
         assert_eq!(healed.pixels().count(), 9);

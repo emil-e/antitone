@@ -36,8 +36,8 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
                     .unwrap()
                     .image
                     .clone(),
-                canvas.grade.original.settled().unwrap().1,
-                canvas.grade.original.continuation(),
+                canvas.original.settled().unwrap().1,
+                canvas.original.continuation(),
                 e.document.visit.view,
             )
         });
@@ -66,9 +66,9 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
             ));
             assert!(Arc::ptr_eq(
                 &original,
-                &canvas.grade.original.settled().unwrap().1
+                &canvas.original.settled().unwrap().1
             ));
-            assert_eq!(canvas.grade.original.continuation(), revision);
+            assert_eq!(canvas.original.continuation(), revision);
         };
         harness.update(|e| {
             normal_unchanged(e);

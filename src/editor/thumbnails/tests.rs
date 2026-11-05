@@ -156,7 +156,7 @@ pub(super) fn key(document: &Document, id: SourceId) -> ImageKey {
         projection: None,
         recipe: if document.project.input.ready() {
             document
-                .thumbnail_recipe(id)
+                .image_recipe(id)
                 .map(|recipe| Some(Arc::new(recipe)))
                 .map_err(|error| error.to_string())
         } else {
@@ -928,7 +928,6 @@ fn visible_jobs_do_not_wait_for_refinement_or_grading_idle() {
         .document
         .visit
         .canvas
-        .grade
         .original
         .start_fixture(crate::refinement::ViewRequest {
             area: [0, 0, 1, 1].into(),
@@ -1112,7 +1111,7 @@ fn idle_prefetch_fixture() -> (Editor, mpsc::Receiver<workflow::Submission>) {
     }
     let (commands, requests) = mpsc::channel();
     editor.document.thumbnails.services = Some(Services::Controlled(commands));
-    editor.document.visit.canvas.grade.original.last_edit =
+    editor.document.visit.canvas.original.last_edit =
         std::time::Instant::now() - Duration::from_secs(1);
     (editor, requests)
 }
@@ -1230,7 +1229,7 @@ fn offscreen_positive_demand_stays_cpu_only_without_space_for_its_neutral_and_gr
 fn idle_prefetch_renders_an_offscreen_card_after_its_cpu_only_pass_finished() {
     let (mut editor, requests) = idle_prefetch_fixture();
     let last = *editor.document.state.project.order.last().unwrap();
-    editor.document.visit.canvas.grade.original.last_edit = std::time::Instant::now();
+    editor.document.visit.canvas.original.last_edit = std::time::Instant::now();
     let context = egui::Context::default();
     let budgets = memory::CacheBudgets::for_memory(48 << 30, memory::Pressure::Normal);
     crate::application::test_support::with_application(editor, |app| {
@@ -1241,7 +1240,7 @@ fn idle_prefetch_renders_an_offscreen_card_after_its_cpu_only_pass_finished() {
         finish_submission(cpu, Ok(None), true);
         app.pump();
         app.enter(|e, cx| {
-            e.document.visit.canvas.grade.original.last_edit =
+            e.document.visit.canvas.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             e.advance_thumbnail_demand(cx);
         });
@@ -1266,7 +1265,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         assert_eq!(old.job.key.source.id, last);
         assert!(old.job.render);
         app.enter(|e, cx| {
-            e.document.visit.canvas.grade.original.last_edit = std::time::Instant::now();
+            e.document.visit.canvas.original.last_edit = std::time::Instant::now();
             filmstrip_frame(e, &context, budgets, cx);
         });
         let cpu_only = take_submission(app, &requests);
@@ -1285,7 +1284,7 @@ fn idle_roll_prefetch_reaches_unshown_photos_after_visible_work() {
         finish_submission(cpu_only, Ok(None), false);
         app.pump();
         app.enter(|e, cx| {
-            e.document.visit.canvas.grade.original.last_edit =
+            e.document.visit.canvas.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             filmstrip_frame(e, &context, budgets, cx);
         });
@@ -1462,7 +1461,7 @@ fn crop_draft_cancels_offscreen_prefetch_and_suspends_idle_admission() {
         app.enter(|e, cx| {
             e.begin_crop();
             assert!(e.document.crop_edit().is_some());
-            e.document.visit.canvas.grade.original.last_edit =
+            e.document.visit.canvas.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             filmstrip_frame(e, &context, e.document.thumbnails.budgets, cx);
             assert!(e.document.thumbnails.pending.is_none());

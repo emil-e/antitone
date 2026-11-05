@@ -52,15 +52,14 @@ fn competing_destination_at_gpu_submission_is_preserved_for_skip_and_keep_both()
 }
 
 #[test]
-fn a_photo_specific_gpu_rejection_does_not_abort_later_exports() {
+fn a_photo_specific_numerical_rejection_does_not_abort_later_exports() {
     let mut editor = fixture();
     let directory = tempfile::tempdir().unwrap();
     let mut request = editor.capture_export(&draft(directory.path())).unwrap();
-    let mut mismatched_area = request.photos[0].recipe.composition.area();
-    mismatched_area.width -= 1;
-    request.photos[0].recipe.composition =
-        crate::geometry::Composition::new(mismatched_area, Default::default(), Default::default())
-            .unwrap();
+    let mut invalid = editor.document.project.clone();
+    invalid.roll.exposure = f64::MAX;
+    let source = request.photos[0].recipe.neutral.source;
+    request.photos[0].recipe = invalid.image_recipe(source).unwrap();
     let services = editor.export_services.take().unwrap();
     drop(editor);
     let summary =

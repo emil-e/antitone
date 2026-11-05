@@ -68,15 +68,15 @@ fn ordinary_views_never_become_original_tool_requests() {
     for source in [false, true] {
         editor.document.source = source;
         for _ in 0..3 {
-            editor.document.visit.canvas.grade.original.last_edit =
+            editor.document.visit.canvas.original.last_edit =
                 std::time::Instant::now() - Duration::from_secs(1);
             super::super::tests::app_frame(&mut editor, &context, vec![]);
         }
         assert!(
-            editor.document.visit.canvas.grade.original.wanted.is_none()
-                && !editor.document.visit.canvas.grade.original.refining()
+            editor.document.visit.canvas.original.wanted.is_none()
+                && !editor.document.visit.canvas.original.refining()
         );
-        assert!(editor.document.visit.canvas.grade.original.task.is_none());
+        assert!(editor.document.visit.canvas.original.task.is_none());
     }
 }
 

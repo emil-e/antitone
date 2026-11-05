@@ -372,7 +372,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         output: [32, 24],
         frame: None,
     };
-    editor.document.visit.canvas.grade.original.observe(
+    editor.document.visit.canvas.original.observe(
         OriginalPurpose::Reference,
         super::super::original_view::Demand::fixture(
             input.clone(),
@@ -386,14 +386,8 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
             },
         ),
     );
-    let original_revision = editor.document.visit.canvas.grade.original.continuation();
-    editor
-        .document
-        .visit
-        .canvas
-        .grade
-        .original
-        .start_fixture(view);
+    let original_revision = editor.document.visit.canvas.original.continuation();
+    editor.document.visit.canvas.original.start_fixture(view);
     let request = capture_request(&editor);
     let result = outcome(&request);
     let expected = result.document.project.clone();
@@ -477,32 +471,18 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
     assert!(editor.document.visit.working_view.revision().is_none());
     assert!(editor.document.visit.working_view.displayed.is_none());
     assert!(
-        editor.document.visit.canvas.grade.original.wanted.is_none()
-            && editor
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .settled()
-                .is_none()
+        editor.document.visit.canvas.original.wanted.is_none()
+            && editor.document.visit.canvas.original.settled().is_none()
     );
     assert_ne!(
-        editor.document.visit.canvas.grade.original.continuation(),
+        editor.document.visit.canvas.original.continuation(),
         original_revision
     );
-    assert!(!editor.document.visit.canvas.grade.original.refining());
+    assert!(!editor.document.visit.canvas.original.refining());
     assert!(original_revision.receive(Ok(None)).is_none());
     assert!(
-        !editor.document.visit.canvas.grade.original.refining()
-            && editor
-                .document
-                .visit
-                .canvas
-                .grade
-                .original
-                .settled()
-                .is_none()
+        !editor.document.visit.canvas.original.refining()
+            && editor.document.visit.canvas.original.settled().is_none()
     );
     assert!(editor.document.dirty());
     editor.document.roll.exposure = 0.;
@@ -607,21 +587,15 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         output.textures_delta.clear();
                     };
                     frame(editor);
-                    editor.document.visit.canvas.grade.original.last_edit =
+                    editor.document.visit.canvas.original.last_edit =
                         std::time::Instant::now() - Duration::from_secs(1);
                     frame(editor);
                     // Use a policy-only completion after retiring real reconstruction.
                     editor.cancel_original_pending();
-                    let revision = editor.document.visit.canvas.grade.original.continuation();
-                    let signature = editor.document.visit.canvas.grade.original.wanted.clone();
+                    let revision = editor.document.visit.canvas.original.continuation();
+                    let signature = editor.document.visit.canvas.original.wanted.clone();
                     let view = signature.as_ref().unwrap().view.unwrap();
-                    editor
-                        .document
-                        .visit
-                        .canvas
-                        .grade
-                        .original
-                        .start_fixture(view);
+                    editor.document.visit.canvas.original.start_fixture(view);
                     let image = editor
                         .document
                         .visit
@@ -632,7 +606,7 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         .proxy
                         .image(OutputTarget::Srgb)
                         .unwrap();
-                    assert!(editor.document.visit.canvas.grade.original.refining());
+                    assert!(editor.document.visit.canvas.original.refining());
                     if settled {
                         revision.receive(Ok(Some(image.clone())));
                     }
@@ -640,18 +614,11 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                     let reply = analysis::testing::fitting(editor);
                     editor.begin_analysis(cx);
                     assert!(
-                        editor.document.visit.canvas.grade.original.wanted == signature,
+                        editor.document.visit.canvas.original.wanted == signature,
                         "rejected analysis preserves the actual original request"
                     );
                     assert_eq!(
-                        editor
-                            .document
-                            .visit
-                            .canvas
-                            .grade
-                            .original
-                            .settled()
-                            .is_some(),
+                        editor.document.visit.canvas.original.settled().is_some(),
                         settled
                     );
                     if outstanding {
@@ -659,19 +626,12 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                         assert!(revision.receive(Ok(Some(image.clone()))).is_none());
                     } else {
                         assert_eq!(
-                            editor.document.visit.canvas.grade.original.continuation(),
+                            editor.document.visit.canvas.original.continuation(),
                             revision
                         );
                     }
                     assert_eq!(
-                        editor
-                            .document
-                            .visit
-                            .canvas
-                            .grade
-                            .original
-                            .settled()
-                            .is_some(),
+                        editor.document.visit.canvas.original.settled().is_some(),
                         settled
                     );
                     if cancel {
@@ -706,21 +666,15 @@ fn failed_or_cancelled_analysis_preserves_original_comparison_or_restarts_reques
                     );
                     output.textures_delta.clear();
                     if settled {
-                        let (current_view, retained) = editor
-                            .document
-                            .visit
-                            .canvas
-                            .grade
-                            .original
-                            .settled()
-                            .unwrap();
+                        let (current_view, retained) =
+                            editor.document.visit.canvas.original.settled().unwrap();
                         assert_eq!(current_view, view);
                         assert!(Arc::ptr_eq(&retained, &image));
-                        assert!(!editor.document.visit.canvas.grade.original.refining());
-                        assert!(editor.document.visit.canvas.grade.original.task.is_none());
+                        assert!(!editor.document.visit.canvas.original.refining());
+                        assert!(editor.document.visit.canvas.original.task.is_none());
                     } else {
-                        assert!(editor.document.visit.canvas.grade.original.refining());
-                        assert!(editor.document.visit.canvas.grade.original.task.is_some());
+                        assert!(editor.document.visit.canvas.original.refining());
+                        assert!(editor.document.visit.canvas.original.task.is_some());
                     }
                 });
             });
@@ -1052,8 +1006,8 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             for _ in 0..4 {
                 super::super::tests::app_frame(editor, &ctx, vec![]);
             }
-            let signature = editor.document.visit.canvas.grade.original.wanted.clone();
-            let revision = editor.document.visit.canvas.grade.original.continuation();
+            let signature = editor.document.visit.canvas.original.wanted.clone();
+            let revision = editor.document.visit.canvas.original.continuation();
             let view = signature.as_ref().unwrap().view.unwrap();
             let image = editor
                 .document
@@ -1069,7 +1023,6 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
                 .document
                 .visit
                 .canvas
-                .grade
                 .original
                 .settle_fixture(view, image.clone());
             editor.request_analysis(cx);
@@ -1094,11 +1047,11 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             assert!(editor.tasks.view().is_none());
             assert_eq!(editor.document.state.project, before);
             assert!(
-                editor.document.visit.canvas.grade.original.wanted == signature,
+                editor.document.visit.canvas.original.wanted == signature,
                 "rejected analysis preserves the actual original request"
             );
             assert_eq!(
-                editor.document.visit.canvas.grade.original.continuation(),
+                editor.document.visit.canvas.original.continuation(),
                 revision
             );
             assert!(Arc::ptr_eq(
@@ -1106,7 +1059,6 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
                     .document
                     .visit
                     .canvas
-                    .grade
                     .original
                     .settled()
                     .as_ref()
