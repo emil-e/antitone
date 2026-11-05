@@ -19,8 +19,9 @@ pub(super) struct PhotoScope {
     pub photo_orientation: super::PhotoOrientation,
     pub crop: Option<super::Crop>,
     pub picker: super::picking::State,
-    pub calibration_action: Option<async_executor::Task<()>>,
-    pub white_balance_action: Option<async_executor::Task<()>>,
+    #[cfg(test)]
+    pub measurement_gate: Option<super::measurement::testing::Gate>,
+    pub interaction_action: Option<async_executor::Task<()>>,
     pub current_source: Option<super::SourceId>,
     pub source: super::source::State,
     pub working: super::working_view::State,

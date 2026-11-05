@@ -9,7 +9,7 @@ fn pick_patch(harness: &mut Harness<'_, Editor>, action: &str, area: Rect) {
     draw_region(harness, area);
     harness.get_by_label("Apply").click();
     harness.step();
-    wait_for(harness, |e| !e.interaction_blocked());
+    wait_interaction(harness);
     harness.read(|editor| assert!(editor.test_pick().is_none(), "{}", editor.status));
 }
 
@@ -433,7 +433,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
         wait_for(&mut harness, |editor| editor.test_pick().is_some());
-        harness.read(|editor| assert_eq!(editor.test_pick(), Some(Pick::Dmin.display())));
+        harness.read(|editor| assert_eq!(editor.test_pick(), Some(PickerCase::Dmin.display())));
         harness.step();
         assert!(
             harness

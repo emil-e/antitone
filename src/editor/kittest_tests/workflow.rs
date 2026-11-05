@@ -100,7 +100,12 @@ pub(super) fn calibrated_workflow<R>(
             harness.get_by_label("Apply").click();
             harness.step();
             wait_for(&mut harness, |e| {
-                !e.interaction_blocked() && !e.document.visit.source.pending()
+                let measured = if expected == 3000. {
+                    e.dmin()
+                } else {
+                    e.dmax()
+                };
+                measured.is_some() && !e.interaction_blocked() && !e.document.visit.source.pending()
             });
             harness.read(|editor| assert!(editor.test_pick().is_none()));
             let measured = harness.read(|editor| {
@@ -505,7 +510,7 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         harness.get_by_label("Pick Dmin (film base)").click();
         harness.step();
         wait_for(&mut harness, |editor| editor.test_pick().is_some());
-        harness.read(|editor| assert_eq!(editor.test_pick(), Some(Pick::Dmin.display())));
+        harness.read(|editor| assert_eq!(editor.test_pick(), Some(PickerCase::Dmin.display())));
         harness.read(|editor| assert!(editor.test_pick_region().is_none()));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());

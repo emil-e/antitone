@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{Pick, history::Direction},
+    editor::{PickerCase, history::Direction},
     processing::Calibration,
     raw::Rect,
 };
@@ -33,13 +33,13 @@ fn patch(editor: &Editor) -> crate::coverage::Coverage {
 }
 
 fn measured_reference(editor: &Editor, region: crate::coverage::Coverage) -> DVec3 {
-    let reference = picking::capture_scan(editor)
+    let reference = measurement::capture_scan(editor)
         .unwrap()
         .reference_coverage(region)
         .unwrap();
     let actual = query::reference(
         editor.source_services.as_ref().unwrap(),
-        &mut picking::capture_scan(editor).unwrap(),
+        &mut measurement::capture_scan(editor).unwrap(),
         region,
         &|| false,
     )
@@ -51,14 +51,14 @@ fn measured_reference(editor: &Editor, region: crate::coverage::Coverage) -> DVe
 #[test]
 fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_its_endpoint() {
     let file = crate::raw::fixture::bayer_dng_with_rgb([350, 600, 450]);
-    for kind in [Pick::Dmin, Pick::Dmax] {
+    for kind in [PickerCase::Dmin, PickerCase::Dmax] {
         let editor = setup(file.path().to_str().unwrap());
         let region = patch(&editor);
         let expected = measured_reference(&editor, region);
         assert!(expected.min_element() > 0.005 && expected.max_element() < 0.2);
         let before = editor.document.state.project.clone();
         with_application(editor, |app| {
-            app.enter(|editor, cx| editor.begin_pick(kind, cx));
+            app.enter(|editor, cx| editor.begin_test_picker(kind, cx));
             app.pump();
             app.read(|editor| {
                 assert_eq!(editor.document.state.project, before);
@@ -75,7 +75,7 @@ fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_it
                 let calibration = editor.document.input.calibration().unwrap();
                 assert_eq!(
                     calibration.dmin,
-                    if kind == Pick::Dmin {
+                    if kind == PickerCase::Dmin {
                         expected
                     } else {
                         DVec3::splat(0.2)
@@ -83,7 +83,7 @@ fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_it
                 );
                 assert_eq!(
                     calibration.dmax,
-                    if kind == Pick::Dmax {
+                    if kind == PickerCase::Dmax {
                         expected
                     } else {
                         DVec3::splat(0.005)
@@ -105,7 +105,7 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/raw/illuminated-patches.dng");
     let mut editor = setup(path.to_str().unwrap());
-    let mut image = picking::capture_scan(&editor).unwrap();
+    let mut image = measurement::capture_scan(&editor).unwrap();
     let patch_at = |x| Rect {
         x,
         y: 16,
@@ -131,13 +131,13 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
     editor.sync_document();
     let region = crate::coverage::Coverage::rectangle(patch_at(144));
     let input = editor.input();
-    let reference = picking::capture_scan(&editor)
+    let reference = measurement::capture_scan(&editor)
         .unwrap()
         .roll_neutral_coverage(region, &input)
         .unwrap();
     let expected = query::gamma(
         editor.source_services.as_ref().unwrap(),
-        &mut picking::capture_scan(&editor).unwrap(),
+        &mut measurement::capture_scan(&editor).unwrap(),
         region,
         input,
         &|| false,
@@ -151,7 +151,7 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
     );
     assert_ne!(expected, editor.balance());
     with_application(editor, |app| {
-        app.enter(|editor, cx| editor.begin_pick(Pick::Gamma, cx));
+        app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Gamma, cx));
         app.pump();
         app.enter(|editor, cx| {
             editor.set_test_pick_region(Some(region));
@@ -204,7 +204,7 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
     let before = editor.document.state.project.clone();
     let undo = editor.history_label(Direction::Undo).map(str::to_owned);
     with_application(editor, |app| {
-        app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+        app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Dmin, cx));
         app.pump();
         app.enter(|editor, cx| {
             editor.set_test_pick_region(Some(region));
@@ -221,7 +221,7 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
         app.enter(|editor, cx| {
             editor.set_dmax(Some(DVec3::splat(0.005)));
             editor.sync_document();
-            editor.begin_pick(Pick::Dmin, cx);
+            editor.begin_test_picker(PickerCase::Dmin, cx);
         });
         app.pump();
         app.enter(|editor, cx| {

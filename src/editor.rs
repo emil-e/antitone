@@ -101,6 +101,7 @@ mod export;
 mod frame;
 #[cfg(all(test, feature = "ui-tests"))]
 mod kittest_tests;
+mod measurement;
 mod memory;
 mod navigation;
 mod photo_scope;
@@ -115,15 +116,8 @@ mod tests;
 mod viewer_ui;
 use roll_selection::RollSelection;
 
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Pick {
-    Dmin,
-    Dmax,
-    Gamma,
-    GammaPivot,
-    RollWb,
-    Wb,
-}
+#[cfg(test)]
+use tests::PickerCase;
 
 #[derive(Clone)]
 struct Ready {
@@ -875,6 +869,7 @@ impl Editor {
     }
 
     pub(super) fn begin_document_operation(&mut self, replacement: bool) -> u64 {
+        self.document.visit.interaction_action = None;
         self.document.write = save::State::default();
         self.candidate_operation = document::State::default();
         self.retire_look_selection();
@@ -963,7 +958,7 @@ impl Editor {
             && !gamma_pending
             && self.document.input.ready();
         let can_pick = self.tool_start_available() && self.selected_area().is_some();
-        let mut start_pick = None;
+        let mut start_pick: Option<editing::Interaction> = None;
         let mut gamma_edited = false;
 
         egui::ScrollArea::vertical()
@@ -1052,7 +1047,8 @@ impl Editor {
                                         can_pick,
                                         "Measure an unexposed area of film base.",
                                     ) {
-                                        start_pick = Some(Pick::Dmin);
+                                        start_pick =
+                                            Some(|cx| Box::pin(calibration::pick_dmin(cx)));
                                     }
                                     if controls::calibration(
                                         ui,
@@ -1062,7 +1058,8 @@ impl Editor {
                                         can_pick,
                                         "Measure the densest film reference.",
                                     ) {
-                                        start_pick = Some(Pick::Dmax);
+                                        start_pick =
+                                            Some(|cx| Box::pin(calibration::pick_dmax(cx)));
                                     }
                                 },
                             );
@@ -1117,7 +1114,7 @@ impl Editor {
                                     },
                                 );
                                 if reset.tool {
-                                    start_pick = Some(Pick::Gamma);
+                                    start_pick = Some(|cx| Box::pin(calibration::pick_gamma(cx)));
                                 }
                                 if reset.secondary_tool {
                                     self.control_command(editing::Command::GammaPivot, cx);
@@ -1174,7 +1171,7 @@ impl Editor {
                                 editable,
                                 can_pick,
                             ) {
-                                start_pick = Some(Pick::RollWb);
+                                start_pick = Some(|cx| Box::pin(white_balance::pick_roll(cx)));
                             }
                             let (_, action) = presentation::section(
                                 ui,
@@ -1213,7 +1210,7 @@ impl Editor {
                     }
                 } else if self.tab == 1 {
                     if self.adjustment_layer_controls(ui, cx, editable, can_pick) {
-                        start_pick = Some(Pick::Wb);
+                        start_pick = Some(|cx| Box::pin(white_balance::pick_layer(cx)));
                     }
                 } else {
                     if self.document.input.capabilities().grain {

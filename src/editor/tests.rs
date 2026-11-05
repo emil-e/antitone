@@ -1,4 +1,46 @@
 use super::*;
+
+// Test scenarios select real feature entry points; production has no picker catalogue.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum PickerCase {
+    Dmin,
+    Dmax,
+    Gamma,
+    GammaPivot,
+    RollWb,
+    Wb,
+}
+
+impl PickerCase {
+    pub(super) fn display(self) -> picking::Display {
+        match self {
+            Self::Dmin => calibration::DMIN,
+            Self::Dmax => calibration::DMAX,
+            Self::Gamma => calibration::GAMMA,
+            Self::GammaPivot => gamma_pivot::DISPLAY,
+            Self::RollWb => white_balance::ROLL,
+            Self::Wb => white_balance::LAYER,
+        }
+    }
+    fn action(self) -> editing::Interaction {
+        match self {
+            Self::Dmin => |cx| Box::pin(calibration::pick_dmin(cx)),
+            Self::Dmax => |cx| Box::pin(calibration::pick_dmax(cx)),
+            Self::Gamma => |cx| Box::pin(calibration::pick_gamma(cx)),
+            Self::GammaPivot => |cx| Box::pin(gamma_pivot::pick(cx)),
+            Self::RollWb => |cx| Box::pin(white_balance::pick_roll(cx)),
+            Self::Wb => |cx| Box::pin(white_balance::pick_layer(cx)),
+        }
+    }
+}
+impl Editor {
+    pub(super) fn begin_test_picker(&mut self, case: PickerCase, cx: &UiContext<'_, Self>) {
+        if let Err(error) = self.start_interaction(cx, case.action()) {
+            self.status = error;
+        }
+    }
+}
+
 use crate::gpu::parameters::ProcessingParameters;
 use crate::gpu::test_inputs::AuthoredPhotograph;
 use crate::project::Development;
@@ -540,7 +582,7 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
     let expected_dmax = editor.dmax();
     let expected_roll = editor.document.roll;
     let expected_photo = editor.document.visit.adjustment_layer_settings;
-    let baseline = picking::capture_scan(&editor)
+    let baseline = measurement::capture_scan(&editor)
         .unwrap()
         .reference_coverage(patch())
         .unwrap();
@@ -551,9 +593,9 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
     editor.sync_document();
     assert_eq!(editor.document.state.project, project);
 
-    editor.preview_picker(Pick::Dmin);
+    editor.preview_picker(PickerCase::Dmin);
     editor.set_test_pick_region(Some(patch()));
-    let actual = picking::capture_scan(&editor)
+    let actual = measurement::capture_scan(&editor)
         .unwrap()
         .reference_coverage(patch())
         .unwrap();
@@ -621,7 +663,12 @@ fn every_picker_preserves_precise_edge_navigation_and_orientation_on_entry() {
         editor.document.roll,
         editor.document.visit.adjustment_layer_settings,
     );
-    for kind in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb] {
+    for kind in [
+        PickerCase::Dmin,
+        PickerCase::Dmax,
+        PickerCase::Gamma,
+        PickerCase::Wb,
+    ] {
         editor.preview_picker(kind);
         assert_eq!(editor.document.visit.canvas.viewport, precise);
         assert_eq!(
@@ -653,14 +700,14 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
         editor.document.roll,
         editor.document.visit.adjustment_layer_settings,
     );
-    for (kind, invalid) in [(Pick::Dmin, 0.001), (Pick::Dmax, 1.)] {
+    for (kind, invalid) in [(PickerCase::Dmin, 0.001), (PickerCase::Dmax, 1.)] {
         editor.preview_picker(kind);
         assert!(editor.canvas_inspection());
         editor.set_test_pick_region(Some(patch()));
         assert!(
             (match kind {
-                Pick::Dmin => calibration::set_dmin(&mut editor, DVec3::splat(invalid)),
-                Pick::Dmax => calibration::set_dmax(&mut editor, DVec3::splat(invalid)),
+                PickerCase::Dmin => calibration::set_dmin(&mut editor, DVec3::splat(invalid)),
+                PickerCase::Dmax => calibration::set_dmax(&mut editor, DVec3::splat(invalid)),
                 _ => unreachable!("reference proposal"),
             })
             .is_err()
@@ -694,14 +741,17 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
         );
     }
     editor.document.source = true;
-    editor.preview_picker(Pick::Dmax);
+    editor.preview_picker(PickerCase::Dmax);
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert!(editor.document.source);
 }
 
 #[test]
 fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explicit_inspection() {
-    for order in [[Pick::Dmin, Pick::Dmax], [Pick::Dmax, Pick::Dmin]] {
+    for order in [
+        [PickerCase::Dmin, PickerCase::Dmax],
+        [PickerCase::Dmax, PickerCase::Dmin],
+    ] {
         for initial_source in [None, Some(false), Some(true)] {
             let mut editor = fixture();
             with_camera_basis(&mut editor);
@@ -718,10 +768,10 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
                 editor.preview_picker(kind);
                 assert!(editor.canvas_inspection());
                 editor.set_test_pick_region(Some(patch()));
-                let value = DVec3::splat(if kind == Pick::Dmin { 0.2 } else { 0.005 });
+                let value = DVec3::splat(if kind == PickerCase::Dmin { 0.2 } else { 0.005 });
                 (match kind {
-                    Pick::Dmin => calibration::set_dmin(&mut editor, value),
-                    Pick::Dmax => calibration::set_dmax(&mut editor, value),
+                    PickerCase::Dmin => calibration::set_dmin(&mut editor, value),
+                    PickerCase::Dmax => calibration::set_dmax(&mut editor, value),
                     _ => unreachable!("reference proposal"),
                 })
                 .unwrap();
@@ -756,9 +806,9 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
 
 #[test]
 fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_calibration() {
-    for kind in [Pick::Dmin, Pick::Dmax] {
+    for kind in [PickerCase::Dmin, PickerCase::Dmax] {
         let mut editor = fixture();
-        if kind == Pick::Dmin {
+        if kind == PickerCase::Dmin {
             editor.set_dmin(None);
         } else {
             editor.set_dmax(None);
@@ -779,13 +829,21 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
             editor.set_test_pick_region(Some(patch()));
             assert!(
                 (match kind {
-                    Pick::Dmin => calibration::set_dmin(
+                    PickerCase::Dmin => calibration::set_dmin(
                         &mut editor,
-                        DVec3::splat(if kind == Pick::Dmin { 0.0001 } else { 0.4 },)
+                        DVec3::splat(if kind == PickerCase::Dmin {
+                            0.0001
+                        } else {
+                            0.4
+                        },)
                     ),
-                    Pick::Dmax => calibration::set_dmax(
+                    PickerCase::Dmax => calibration::set_dmax(
                         &mut editor,
-                        DVec3::splat(if kind == Pick::Dmin { 0.0001 } else { 0.4 },)
+                        DVec3::splat(if kind == PickerCase::Dmin {
+                            0.0001
+                        } else {
+                            0.4
+                        },)
                     ),
                     _ => unreachable!("reference proposal"),
                 })
@@ -863,14 +921,14 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
         warmth: 0.1,
         tint: -0.1,
     };
-    editor.preview_picker(Pick::Gamma);
+    editor.preview_picker(PickerCase::Gamma);
     (calibration::set_gamma_balance(&mut editor, balance)).unwrap();
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.balance(), balance);
     assert_eq!(editor.gamma(), gamma);
     assert_eq!(editor.document.roll.exposure, exposure);
     assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
-    editor.preview_picker(Pick::RollWb);
+    editor.preview_picker(PickerCase::RollWb);
     (white_balance::set_roll(&mut editor, balance)).unwrap();
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.roll.wb, balance);
@@ -879,7 +937,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     assert_eq!(editor.document.roll.exposure, exposure);
     assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
     let roll = editor.document.roll;
-    editor.preview_picker(Pick::Wb);
+    editor.preview_picker(PickerCase::Wb);
     let target = (
         editor.document.visit.current_source.unwrap(),
         editor.adjustment_layer_target(),
@@ -896,7 +954,7 @@ fn neutral_proposals_have_independent_scopes_and_reject_invalid_gpu_settings() {
     );
     editor.set_gamma(0.1);
     let old = editor.balance();
-    editor.preview_picker(Pick::Gamma);
+    editor.preview_picker(PickerCase::Gamma);
     assert!(
         (calibration::set_gamma_balance(
             &mut editor,
@@ -919,7 +977,7 @@ fn closed_application_does_not_leave_a_pick_busy() {
     editor.document.source = false;
     crate::application::test_support::with_application(editor, |app| {
         app.close_execution();
-        app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
+        app.enter(|editor, access| editor.begin_test_picker(PickerCase::Dmin, access));
         app.pump();
         app.enter(|editor, access| {
             editor.set_test_pick_region(Some(patch()));
@@ -934,7 +992,7 @@ fn closed_application_does_not_leave_a_pick_busy() {
 // Geometry/presentation fixtures use authored native ownership but synthetic display geometry.
 // Numerical measurement checks instead load coherent authored sources through production paths.
 impl Editor {
-    pub(super) fn preview_picker(&mut self, kind: Pick) {
+    pub(super) fn preview_picker(&mut self, kind: PickerCase) {
         if self.prepare_tool() {
             picking::preview(self, kind.display());
         }
@@ -1572,7 +1630,12 @@ fn picker_toolbar_layout_does_not_rescale_a_fitted_composition() {
     editor.started = true;
     editor.document.source = false;
     let context = egui::Context::default();
-    for kind in [Pick::Gamma, Pick::Wb, Pick::Dmin, Pick::Dmax] {
+    for kind in [
+        PickerCase::Gamma,
+        PickerCase::Wb,
+        PickerCase::Dmin,
+        PickerCase::Dmax,
+    ] {
         for _ in 0..3 {
             app_frame(&mut editor, &context, vec![]);
         }
@@ -1612,7 +1675,7 @@ fn neutral_picker_exit_preserves_deliberate_navigation_not_its_initial_fit() {
     add_ready_fixture(&mut editor);
     editor.started = true;
     let context = egui::Context::default();
-    for kind in [Pick::Gamma, Pick::Wb] {
+    for kind in [PickerCase::Gamma, PickerCase::Wb] {
         editor.document.visit.canvas.viewport.fit();
         for _ in 0..3 {
             app_frame(&mut editor, &context, vec![]);
@@ -1781,7 +1844,7 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     editor.document.visit.canvas.last_layout = Some((layout, 2.));
     let viewport = editor.document.visit.canvas.viewport;
     let anchor = layout.source_point(canvas.center());
-    editor.preview_picker(Pick::Dmin);
+    editor.preview_picker(PickerCase::Dmin);
     let full = Composition::new(
         area,
         editor.document.roll_orientation,
@@ -1795,7 +1858,7 @@ fn straightened_drafts_and_picks_are_transactional_and_measure_canvas_coverage()
     editor.finish_pick(&crate::application::UiContext::render_only());
     assert_eq!(editor.document.visit.canvas.viewport, viewport);
     editor.document.visit.canvas.last_layout = Some((layout, 2.));
-    editor.preview_picker(Pick::Wb);
+    editor.preview_picker(PickerCase::Wb);
     let coverage = layout.pick_patch(canvas.center(), 32);
     let screen = layout.screen_coverage(coverage);
     assert!((screen.width() - 32. * layout.scale).abs() < 0.001);
@@ -1853,10 +1916,15 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
         editor.dmin(),
         editor.dmax(),
     );
-    for kind in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb] {
+    for kind in [
+        PickerCase::Dmin,
+        PickerCase::Dmax,
+        PickerCase::Gamma,
+        PickerCase::Wb,
+    ] {
         editor.document.visit.canvas.last_layout = Some((original, 2.));
         editor.preview_picker(kind);
-        let measuring = if matches!(kind, Pick::Dmin | Pick::Dmax) {
+        let measuring = if matches!(kind, PickerCase::Dmin | PickerCase::Dmax) {
             Composition::new(
                 area,
                 editor.document.roll_orientation,
@@ -1870,7 +1938,7 @@ fn cropped_picker_views_preserve_source_anchor_and_restore_exact_working_view() 
             .with_tool_viewport(|viewport| viewport.layout_composition(canvas, measuring, 2.));
         assert_eq!(layout.scale, original.scale);
         assert!((layout.source_point(canvas.center()) - source_anchor).length() < 0.002);
-        if matches!(kind, Pick::Gamma | Pick::Wb) {
+        if matches!(kind, PickerCase::Gamma | PickerCase::Wb) {
             assert_eq!(layout.image, original.image);
             assert!(!editor.canvas_inspection());
         } else {
@@ -1969,7 +2037,7 @@ fn local_reference_pick_restores_working_orientation_and_precise_viewport() {
             let viewport = editor.document.visit.canvas.viewport;
             let photo_orientation = editor.document.visit.photo_orientation;
             let source_id = editor.document.visit.current_source;
-            editor.preview_picker(Pick::Dmin);
+            editor.preview_picker(PickerCase::Dmin);
             assert_eq!(editor.document.visit.canvas.viewport, viewport);
             editor.with_tool_viewport(|viewport| viewport.zoom = Some(0.25));
             editor.finish_pick(cx);
@@ -2239,7 +2307,7 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
                 expected
             );
             editor.set_test_busy(false);
-            editor.preview_picker(Pick::Wb);
+            editor.preview_picker(PickerCase::Wb);
             click_section_button(&mut editor, &context, section, label);
             assert_eq!(
                 (
@@ -2353,7 +2421,7 @@ fn roll_turn_controls_preserve_photo_crop_and_grade_and_are_disabled_during_pick
         ),
         unchanged
     );
-    editor.preview_picker(Pick::Wb);
+    editor.preview_picker(PickerCase::Wb);
     for pressed in [true, false] {
         app_frame(
             &mut editor,
@@ -2560,7 +2628,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     editor.document.visit.current_source =
         Some(editor.document.state.project.order[editor.document.selected]);
     editor.set_test_pick_region(Some(patch()));
-    editor.preview_picker(Pick::Dmin);
+    editor.preview_picker(PickerCase::Dmin);
     assert_eq!(editor.document.selected, 1);
     assert!(editor.test_pick_region().is_none());
     assert!(!editor.measurement_pending());
@@ -2570,7 +2638,7 @@ fn repicking_uses_current_selection_and_starts_without_a_rectangle() {
     assert_eq!(editor.dmin(), Some(value));
     editor.document.state.project.order.clear();
     assert!(editor.calibration().is_some());
-    editor.preview_picker(Pick::Dmax);
+    editor.preview_picker(PickerCase::Dmax);
     assert!(editor.test_pick_region().is_none());
     assert!(!editor.measurement_pending());
 }

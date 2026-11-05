@@ -1,6 +1,7 @@
 use super::{
     AdjustmentLayerSettings, Balance, Editor, InputSettings, RollSettings, SourceId, UiContext,
     adjustment_layers::Target,
+    measurement,
     picking::{self, Display, View},
 };
 use crate::{
@@ -9,7 +10,6 @@ use crate::{
     coverage::Coverage,
     scan::Scan,
 };
-use async_executor::Task;
 
 mod query;
 
@@ -104,80 +104,88 @@ impl LayerInput {
     }
 }
 
-pub(super) fn pick_roll<'scope>(
-    editor: &mut Editor,
-    cx: &UiContext<'scope, Editor>,
-) -> Result<Task<()>, String> {
-    let image = picking::capture_input(editor)?;
-    let services = editor.source_services.clone();
-    let input = RollInput::capture(editor);
-    let reading = picking::pick_prepared(
-        editor,
-        ROLL,
-        async move {
-            let mut image = image.await?;
-            Ok(
-                move |region, cancelled: crate::cancellation::Cancellation| {
-                    let services = picking::query_services(services.as_ref())?;
-                    input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
-                },
-            )
-        },
-        cx.clone(),
-    );
-    cx.spawn(move |cx| async move {
-        let Some(value) = reading.await else {
+pub(super) async fn pick_roll(cx: UiContext<'_, Editor>) {
+    let captured = cx.read(|editor| {
+        Ok::<_, String>((
+            measurement::capture_input(editor)?,
+            editor.source_services.clone(),
+            RollInput::capture(editor),
+        ))
+    });
+    let (image, services, input) = match captured {
+        Ok(input) => input,
+        Err(error) => {
+            cx.update(|editor| editor.status = error);
             return;
-        };
-        cx.update(|editor| {
-            if let Err(error) = set_roll(editor, value) {
-                editor.status = error;
-            }
-        });
+        }
+    };
+    let worker_cx = cx.clone();
+    let Some(region) = picking::pick(&cx, ROLL).await else {
+        return;
+    };
+    let Some(value) = measurement::run(&cx, ROLL.label, async move {
+        let mut image = image.await?;
+        measurement::query(&worker_cx, move |cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+        })
+        .await
     })
-    .ok_or_else(|| "Application stopped".into())
+    .await
+    else {
+        return;
+    };
+    cx.update(|editor| {
+        if let Err(error) = set_roll(editor, value) {
+            editor.status = error;
+        }
+    });
 }
 
-pub(super) fn pick_layer<'scope>(
-    editor: &mut Editor,
-    cx: &UiContext<'scope, Editor>,
-) -> Result<Task<()>, String> {
-    let image = picking::capture_input(editor)?;
-    let services = editor.source_services.clone();
-    let input = LayerInput::capture(editor)?;
-    let target = (
-        editor
-            .document
-            .visit
-            .current_source
-            .expect("captured WB source"),
-        editor.adjustment_layer_target(),
-    );
-    let reading = picking::pick_prepared(
-        editor,
-        LAYER,
-        async move {
-            let mut image = image.await?;
-            Ok(
-                move |region, cancelled: crate::cancellation::Cancellation| {
-                    let services = picking::query_services(services.as_ref())?;
-                    input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
-                },
-            )
-        },
-        cx.clone(),
-    );
-    cx.spawn(move |cx| async move {
-        let Some(value) = reading.await else {
+pub(super) async fn pick_layer(cx: UiContext<'_, Editor>) {
+    let captured = cx.read(|editor| {
+        Ok::<_, String>((
+            measurement::capture_input(editor)?,
+            editor.source_services.clone(),
+            LayerInput::capture(editor)?,
+            (
+                editor
+                    .document
+                    .visit
+                    .current_source
+                    .ok_or("No selected source")?,
+                editor.adjustment_layer_target(),
+            ),
+        ))
+    });
+    let (image, services, input, target) = match captured {
+        Ok(input) => input,
+        Err(error) => {
+            cx.update(|editor| editor.status = error);
             return;
-        };
-        cx.update(|editor| {
-            if let Err(error) = set_layer(editor, value, target) {
-                editor.status = error;
-            }
-        });
+        }
+    };
+    let worker_cx = cx.clone();
+    let Some(region) = picking::pick(&cx, LAYER).await else {
+        return;
+    };
+    let Some(value) = measurement::run(&cx, LAYER.label, async move {
+        let mut image = image.await?;
+        measurement::query(&worker_cx, move |cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
+        })
+        .await
     })
-    .ok_or_else(|| "Application stopped".into())
+    .await
+    else {
+        return;
+    };
+    cx.update(|editor| {
+        if let Err(error) = set_layer(editor, value, target) {
+            editor.status = error;
+        }
+    });
 }
 
 pub(super) fn set_roll(editor: &mut Editor, value: Balance) -> Result<(), String> {

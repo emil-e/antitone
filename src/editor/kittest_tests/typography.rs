@@ -47,7 +47,7 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
                     harness.step();
                     harness.update(|editor| editor.document.source = scene == "photo");
                     if scene == "picker" {
-                        harness.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+                        harness.enter(|editor, cx| editor.begin_test_picker(PickerCase::Dmin, cx));
                     }
                     harness.step();
                     harness.try_run_realtime().unwrap();

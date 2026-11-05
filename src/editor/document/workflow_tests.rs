@@ -46,9 +46,10 @@ fn editor(scheduler: source_loading::SourceLoader) -> Editor {
 }
 
 #[test]
-fn new_work_admission_withdraws_queued_feature_acceptance_after_the_picker_finishes() {
+fn replacing_the_owner_withdraws_acceptance_even_after_measurement_has_finished() {
     use crate::editor::{Balance, adjustment_layers::Target, calibration, picking, white_balance};
     use std::{cell::Cell, rc::Rc};
+
     #[derive(Clone, Copy)]
     enum Admission {
         Publish,
@@ -64,9 +65,9 @@ fn new_work_admission_withdraws_queued_feature_acceptance_after_the_picker_finis
             let import = matches!(admission, Admission::Import);
             let publish = matches!(admission, Admission::Publish);
             let replacement = if layer_pick {
-                crate::editor::Pick::Gamma
+                crate::editor::PickerCase::Gamma
             } else {
-                crate::editor::Pick::Wb
+                crate::editor::PickerCase::Wb
             };
             let directory = tempfile::tempdir().unwrap();
             let added = directory.path().join("added.dng");
@@ -92,52 +93,63 @@ fn new_work_admission_withdraws_queued_feature_acceptance_after_the_picker_finis
             };
             assert_ne!(value, before);
             let published = Rc::new(Cell::new(false));
+            let measured = Rc::new(Cell::new(false));
             with_application(editor, |app| {
-                let reading = app.enter(|editor, cx| {
+                let (release, resume) = futures_channel::oneshot::channel::<()>();
+                let completed = measured.clone();
+                let resumed = published.clone();
+                app.enter(|editor, cx| {
                     let display = if layer_pick {
                         white_balance::LAYER
                     } else {
                         calibration::GAMMA
                     };
-                    let reading = picking::pick(editor, display, move |_, _| Ok(value), cx.clone());
-                    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
-                    editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(area)));
-                    editor.hosted_action(crate::editor::tool::Action::Primary);
-                    reading
-                });
-                app.run_until(Duration::from_secs(5), |editor| {
-                    !editor.test_picker_active()
-                });
-                let resumed = published.clone();
-                app.enter(|editor, cx| {
-                    // The real picker has completed; deliberately defer its feature's consumption.
-                    let action = cx
-                        .spawn(move |cx| async move {
-                            let Some(value) = reading.await else {
+                    editor
+                        .start_interaction(cx, move |cx| async move {
+                            let Some(_region) = picking::pick(&cx, display).await else {
                                 return;
                             };
-                            resumed.set(true);
+                            completed.set(true);
+                            if resume.await.is_err() {
+                                return;
+                            }
                             cx.update(|editor| {
                                 if layer_pick {
                                     white_balance::set_layer(editor, value, target).unwrap();
                                 } else {
                                     calibration::set_gamma_balance(editor, value).unwrap();
                                 }
+                                resumed.set(true);
                             });
                         })
                         .unwrap();
-                    if layer_pick {
-                        editor.document.visit.white_balance_action = Some(action);
-                    } else {
-                        editor.document.visit.calibration_action = Some(action);
-                    }
+                });
+                app.pump();
+                app.enter(|editor, cx| {
+                    let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+                    editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(area)));
+                    editor.apply_pick(cx);
+                });
+                app.run_until(Duration::from_secs(5), |editor| {
+                    measured.get() && !editor.picking()
+                });
+                app.read(|editor| {
+                    assert!(
+                        !editor.test_picker_active(),
+                        "the caller's acceptance outlives its picker"
+                    );
+                    assert!(!editor.measurement_pending());
+                    assert!(!published.get());
+                });
+
+                app.enter(|editor, cx| {
                     if import {
                         editor.add_raws(vec![added], cx);
-                        assert!(editor.document_pending.is_some());
                     } else if !publish {
-                        editor.begin_pick(replacement, cx);
+                        editor.begin_test_picker(replacement, cx);
                     }
                 });
+                let _ = release.send(());
                 if import {
                     app.run_until(Duration::from_secs(15), |editor| {
                         !editor.interaction_blocked() && editor.document_pending.is_none()

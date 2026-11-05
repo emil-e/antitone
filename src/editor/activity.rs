@@ -162,6 +162,15 @@ impl Activities {
         selected
     }
 
+    #[cfg(test)]
+    pub fn any(&self, mut matches: impl FnMut(&View) -> bool) -> bool {
+        self.0.entries.lock().unwrap().iter().any(|entry| {
+            Reporter(entry.clone())
+                .view()
+                .is_some_and(|view| matches(&view))
+        })
+    }
+
     pub fn blocks_workspace(&self) -> bool {
         self.0
             .entries

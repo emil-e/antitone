@@ -80,7 +80,7 @@ impl Gate {
 
     pub fn install(editor: &mut Editor) -> Self {
         let gate = Self::default();
-        editor.document.visit.picker.measurement_gate = Some(gate.clone());
+        editor.document.visit.measurement_gate = Some(gate.clone());
         gate
     }
 

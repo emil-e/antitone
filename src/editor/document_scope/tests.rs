@@ -80,7 +80,10 @@ fn document_retirement_drops_child_continuations_and_cache_despite_captured_snap
             })
             .unwrap();
         app.update(|scope| {
-            scope.visit.calibration_action = Some(task);
+            scope.set_hosted_tool(
+                super::super::tool::Placement::Photo,
+                Box::new(OwnedInteraction { _task: task }),
+            );
         });
         app.pump();
         app.update(|scope| *scope = Document::default().into());

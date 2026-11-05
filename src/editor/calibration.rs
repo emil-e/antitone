@@ -1,8 +1,7 @@
 use super::{
-    Balance, DVec3, Editor, InputSettings, UiContext,
+    Balance, DVec3, Editor, InputSettings, UiContext, measurement,
     picking::{self, Display, View},
 };
-use async_executor::Task;
 
 mod query;
 
@@ -13,106 +12,118 @@ pub(super) const DMIN: Display = Display::sample("Dmin", View::Source);
 pub(super) const DMAX: Display = Display::sample("Dmax", View::Source);
 pub(super) const GAMMA: Display = Display::sample("Gamma neutral", View::Working);
 
-pub(super) fn pick_dmin<'scope>(
-    editor: &mut Editor,
-    cx: &UiContext<'scope, Editor>,
-) -> Result<Task<()>, String> {
-    let image = picking::capture_input(editor)?;
-    let services = editor.source_services.clone();
-    let reading = picking::pick_prepared(
-        editor,
-        DMIN,
-        async move {
-            let mut image = image.await?;
-            Ok(
-                move |region, cancelled: crate::cancellation::Cancellation| {
-                    let services = picking::query_services(services.as_ref())?;
-                    query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
-                },
-            )
-        },
-        cx.clone(),
-    );
-    cx.spawn(move |cx| async move {
-        let Some(value) = reading.await else {
+pub(super) async fn pick_dmin(cx: UiContext<'_, Editor>) {
+    let captured = cx.read(|editor| {
+        Ok::<_, String>((
+            measurement::capture_input(editor)?,
+            editor.source_services.clone(),
+        ))
+    });
+    let (image, services) = match captured {
+        Ok(input) => input,
+        Err(error) => {
+            cx.update(|editor| editor.status = error);
             return;
-        };
-        cx.update(|editor| {
-            if let Err(error) = set_dmin(editor, value) {
-                editor.status = error;
-            }
-        });
+        }
+    };
+    let worker_cx = cx.clone();
+    let Some(region) = picking::pick(&cx, DMIN).await else {
+        return;
+    };
+    let Some(value) = measurement::run(&cx, DMIN.label, async move {
+        let mut image = image.await?;
+        measurement::query(&worker_cx, move |cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+        })
+        .await
     })
-    .ok_or_else(|| "Application stopped".into())
+    .await
+    else {
+        return;
+    };
+    cx.update(|editor| {
+        if let Err(error) = set_dmin(editor, value) {
+            editor.status = error;
+        }
+    });
 }
 
-pub(super) fn pick_dmax<'scope>(
-    editor: &mut Editor,
-    cx: &UiContext<'scope, Editor>,
-) -> Result<Task<()>, String> {
-    let image = picking::capture_input(editor)?;
-    let services = editor.source_services.clone();
-    let reading = picking::pick_prepared(
-        editor,
-        DMAX,
-        async move {
-            let mut image = image.await?;
-            Ok(
-                move |region, cancelled: crate::cancellation::Cancellation| {
-                    let services = picking::query_services(services.as_ref())?;
-                    query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
-                },
-            )
-        },
-        cx.clone(),
-    );
-    cx.spawn(move |cx| async move {
-        let Some(value) = reading.await else {
+pub(super) async fn pick_dmax(cx: UiContext<'_, Editor>) {
+    let captured = cx.read(|editor| {
+        Ok::<_, String>((
+            measurement::capture_input(editor)?,
+            editor.source_services.clone(),
+        ))
+    });
+    let (image, services) = match captured {
+        Ok(input) => input,
+        Err(error) => {
+            cx.update(|editor| editor.status = error);
             return;
-        };
-        cx.update(|editor| {
-            if let Err(error) = set_dmax(editor, value) {
-                editor.status = error;
-            }
-        });
+        }
+    };
+    let worker_cx = cx.clone();
+    let Some(region) = picking::pick(&cx, DMAX).await else {
+        return;
+    };
+    let Some(value) = measurement::run(&cx, DMAX.label, async move {
+        let mut image = image.await?;
+        measurement::query(&worker_cx, move |cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
+        })
+        .await
     })
-    .ok_or_else(|| "Application stopped".into())
+    .await
+    else {
+        return;
+    };
+    cx.update(|editor| {
+        if let Err(error) = set_dmax(editor, value) {
+            editor.status = error;
+        }
+    });
 }
 
-pub(super) fn pick_gamma<'scope>(
-    editor: &mut Editor,
-    cx: &UiContext<'scope, Editor>,
-) -> Result<Task<()>, String> {
-    let image = picking::capture_input(editor)?;
-    let services = editor.source_services.clone();
-    let input = editor.input();
-    let reading = picking::pick_prepared(
-        editor,
-        GAMMA,
-        async move {
-            let mut image = image.await?;
-            Ok(
-                move |region, cancelled: crate::cancellation::Cancellation| {
-                    let services = picking::query_services(services.as_ref())?;
-                    query::gamma(services, &mut image, region, input, &|| {
-                        cancelled.is_cancelled()
-                    })
-                },
-            )
-        },
-        cx.clone(),
-    );
-    cx.spawn(move |cx| async move {
-        let Some(value) = reading.await else {
+pub(super) async fn pick_gamma(cx: UiContext<'_, Editor>) {
+    let captured = cx.read(|editor| {
+        Ok::<_, String>((
+            measurement::capture_input(editor)?,
+            editor.source_services.clone(),
+            editor.input(),
+        ))
+    });
+    let (image, services, input) = match captured {
+        Ok(input) => input,
+        Err(error) => {
+            cx.update(|editor| editor.status = error);
             return;
-        };
-        cx.update(|editor| {
-            if let Err(error) = set_gamma_balance(editor, value) {
-                editor.status = error;
-            }
-        });
+        }
+    };
+    let worker_cx = cx.clone();
+    let Some(region) = picking::pick(&cx, GAMMA).await else {
+        return;
+    };
+    let Some(value) = measurement::run(&cx, GAMMA.label, async move {
+        let mut image = image.await?;
+        measurement::query(&worker_cx, move |cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            query::gamma(services, &mut image, region, input, &|| {
+                cancelled.is_cancelled()
+            })
+        })
+        .await
     })
-    .ok_or_else(|| "Application stopped".into())
+    .await
+    else {
+        return;
+    };
+    cx.update(|editor| {
+        if let Err(error) = set_gamma_balance(editor, value) {
+            editor.status = error;
+        }
+    });
 }
 
 pub(super) fn set_dmin(editor: &mut Editor, value: DVec3) -> Result<(), String> {

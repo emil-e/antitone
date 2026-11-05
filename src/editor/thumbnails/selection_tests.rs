@@ -267,7 +267,7 @@ fn filmstrip_availability_blocks_mouse_and_keyboard_and_releases_existing_focus(
                 match state {
                     "busy" => editor.set_test_busy(true),
                     "crop" => editor.begin_crop(),
-                    "pick" => picking::preview(editor, Pick::Gamma.display()),
+                    "pick" => picking::preview(editor, PickerCase::Gamma.display()),
                     "flat" => editor
                         .document
                         .set_flat_edit(Some(crate::editor::flat::FlatEdit {
@@ -431,7 +431,13 @@ fn disabled_cards_keep_actionable_error_tooltips() {
 
 #[test]
 fn ordinary_pickers_keep_the_current_photo_until_the_interaction_ends() {
-    for pick in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::RollWb, Pick::Wb] {
+    for pick in [
+        PickerCase::Dmin,
+        PickerCase::Dmax,
+        PickerCase::Gamma,
+        PickerCase::RollWb,
+        PickerCase::Wb,
+    ] {
         let editor = crate::editor::tests::fixture();
         crate::application::test_support::with_application(editor, |app| {
             let (before, working, viewport) = app.update(|editor| {
@@ -446,7 +452,7 @@ fn ordinary_pickers_keep_the_current_photo_until_the_interaction_ends() {
                     editor.document.visit.canvas.viewport,
                 )
             });
-            app.enter(|editor, cx| editor.begin_pick(pick, cx));
+            app.enter(|editor, cx| editor.begin_test_picker(pick, cx));
             app.pump();
             app.enter(|editor, cx| {
                 let context = egui::Context::default();

@@ -31,7 +31,7 @@ fn weight_images_preserve_original_coordinates_for_identity_controls_and_disable
         angle: 0.3,
         feather: 1.,
     };
-    let mut scan = picking::capture_scan(&editor).unwrap();
+    let mut scan = measurement::capture_scan(&editor).unwrap();
     let samples = Samples::new(services, &mut scan, Coverage::rectangle(patch), &|| false).unwrap();
 
     for (mask, invert, strength, enabled) in [
@@ -112,7 +112,7 @@ fn layer_queries_reject_zero_effective_coverage_and_cancel_without_poisoning_lat
             ..AdjustmentLayer::global(AdjustmentLayerSettings::default())
         },
     };
-    let mut scan = picking::capture_scan(&editor).unwrap();
+    let mut scan = measurement::capture_scan(&editor).unwrap();
     for (enabled, invert, strength) in [(false, false, 1.), (true, false, 0.), (true, true, 1.)] {
         assert!(matches!(
             layer(
@@ -177,7 +177,7 @@ fn white_balance_queries_keep_signed_working_light_and_recorded_hdr_exposure() {
     });
 
     for ev in [0., 8.] {
-        let mut scan = picking::capture_scan(&editor).unwrap();
+        let mut scan = measurement::capture_scan(&editor).unwrap();
         scan.reference_exposure = Some(crate::exposure_reference::ReferenceExposure::Matched(
             crate::exposure_reference::StartingExposure {
                 ev,

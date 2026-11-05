@@ -1,19 +1,26 @@
-#[cfg(test)]
-use super::picking::Display;
 use super::*;
 use crate::processing::InputSettings;
+use std::{future::Future, pin::Pin};
 
-#[cfg(test)]
-impl Pick {
-    pub(super) fn display(self) -> Display {
-        match self {
-            Self::Dmin => calibration::DMIN,
-            Self::Dmax => calibration::DMAX,
-            Self::Gamma => calibration::GAMMA,
-            Self::GammaPivot => gamma_pivot::DISPLAY,
-            Self::RollWb => white_balance::ROLL,
-            Self::Wb => white_balance::LAYER,
+pub(super) type Interaction =
+    for<'scope> fn(UiContext<'scope, Editor>) -> Pin<Box<dyn Future<Output = ()> + 'scope>>;
+
+impl Editor {
+    /// Retain an otherwise-unowned interactive action until it finishes or its context retires.
+    pub(super) fn start_interaction<'scope, F, Fut>(
+        &mut self,
+        cx: &UiContext<'scope, Self>,
+        work: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce(UiContext<'scope, Editor>) -> Fut + 'scope,
+        Fut: Future<Output = ()> + 'scope,
+    {
+        if !self.prepare_tool() {
+            return Ok(());
         }
+        self.document.visit.interaction_action = Some(cx.spawn(work).ok_or("Application stopped")?);
+        Ok(())
     }
 }
 
@@ -24,39 +31,6 @@ impl Editor {
             self.end_analysis_review(cx);
         } else if self.document.visit.picker.display().is_some() {
             self.end_tool();
-        }
-    }
-
-    pub(super) fn retire_pick_actions(&mut self) {
-        if self.document.visit.picker.display().is_some() {
-            self.end_tool();
-        }
-        self.document.visit.calibration_action = None;
-        self.document.visit.white_balance_action = None;
-    }
-
-    pub(super) fn begin_pick(&mut self, kind: Pick, cx: &UiContext<'_, Self>) {
-        if !self.prepare_tool() {
-            return;
-        }
-        let result = match kind {
-            Pick::Dmin => calibration::pick_dmin(self, cx),
-            Pick::Dmax => calibration::pick_dmax(self, cx),
-            Pick::Gamma => calibration::pick_gamma(self, cx),
-            Pick::GammaPivot => gamma_pivot::pick(self, cx),
-            Pick::RollWb => white_balance::pick_roll(self, cx),
-            Pick::Wb => white_balance::pick_layer(self, cx),
-        };
-        match result {
-            Ok(task) => match kind {
-                Pick::Dmin | Pick::Dmax | Pick::Gamma | Pick::GammaPivot => {
-                    self.document.visit.calibration_action = Some(task)
-                }
-                Pick::RollWb | Pick::Wb => self.document.visit.white_balance_action = Some(task),
-            },
-            Err(error) => {
-                self.status = error;
-            }
         }
     }
 
@@ -204,7 +178,7 @@ pub(super) enum Command {
     Adjustment(adjustment_layers::Action),
 
     CreateMask(bool),
-    Pick(Pick),
+    Pick(Interaction),
     GammaPivot,
     Analyze,
     Input(InputSettings),
@@ -466,7 +440,11 @@ impl Editor {
                     self.begin_linear_mask(None);
                 }
             }
-            Command::Pick(kind) => self.begin_pick(kind, cx),
+            Command::Pick(start) => {
+                if let Err(error) = self.start_interaction(cx, start) {
+                    self.status = error;
+                }
+            }
             Command::ResetRepairs(source) => self.reset_dust_repairs(source),
             Command::Correction(enabled) => {
                 let mut candidate = self.document.capture();

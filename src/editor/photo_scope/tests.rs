@@ -2,8 +2,8 @@ use super::*;
 use crate::{
     application::test_support::with_application,
     editor::{
-        Coverage, Pick,
-        picking::testing,
+        Coverage, PickerCase,
+        measurement::testing,
         tests::{add_ready_fixture, fixture},
         tool,
     },
@@ -89,7 +89,7 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
     add_ready_fixture(&mut editor);
     let hold = crate::background::testing::pause();
     with_application(editor, |app| {
-        app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
+        app.enter(|editor, access| editor.begin_test_picker(PickerCase::Dmin, access));
         app.pump();
         app.enter(|editor, access| {
             editor.set_test_pick_region(Some(Coverage::rectangle(
@@ -166,7 +166,7 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
     editor.source_services.as_mut().unwrap().developments = loader.clone();
     let hold = crate::background::testing::pause();
     with_application(editor, |app| {
-        app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
+        app.enter(|editor, access| editor.begin_test_picker(PickerCase::Dmin, access));
         app.pump();
         app.enter(|editor, access| {
             editor.set_test_pick_region(Some(Coverage::rectangle(
@@ -241,7 +241,7 @@ fn successful_source_revisit_cannot_restore_departed_measurement_results() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
     let hold = crate::background::testing::pause();
     with_application(editor, |app| {
-        app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
+        app.enter(|editor, access| editor.begin_test_picker(PickerCase::Dmin, access));
         app.pump();
         app.enter(|editor, access| {
             editor.set_test_pick_region(Some(Coverage::rectangle(
@@ -339,7 +339,7 @@ fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs
     let directory = tempfile::tempdir().unwrap();
     let next_path = directory.path().join("missing.dng");
     with_application(editor, |app| {
-        app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+        app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Dmin, cx));
         app.pump();
         app.enter(|editor, cx| {
             editor.set_test_pick_region(Some(Coverage::rectangle(

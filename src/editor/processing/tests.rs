@@ -472,7 +472,7 @@ fn offscreen_local_stack_blocks_roll_and_calibration_candidates_without_replacin
                 )
                 .is_err()
         );
-        picking::preview(&mut editor, Pick::Gamma.display());
+        picking::preview(&mut editor, PickerCase::Gamma.display());
         assert!(
             (calibration::set_gamma_balance(
                 &mut editor,

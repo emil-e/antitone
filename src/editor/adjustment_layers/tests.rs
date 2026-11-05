@@ -408,8 +408,8 @@ fn cancelling_layer_interaction_during_a_roll_pick_preserves_its_selected_target
         let (mut editor, _, _) = processing::tests::fixture().await;
         let id = ids(&editor)[0];
         editor.select_adjustment_layer(Target::Layer(id));
-        editor.preview_picker(Pick::Dmin);
-        assert_eq!(editor.test_pick(), Some(Pick::Dmin.display()));
+        editor.preview_picker(PickerCase::Dmin);
+        assert_eq!(editor.test_pick(), Some(PickerCase::Dmin.display()));
         let before = editor.document.state.project.clone();
         editor.finish_adjustment_layer_interaction();
         editor.finish_pick(&crate::application::UiContext::render_only());
@@ -434,10 +434,10 @@ fn source_calibration_picking_does_not_lock_unrelated_layer_selection() {
     assert_ne!(first, second);
     editor.select_adjustment_layer(Target::Layer(first));
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+        app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Dmin, cx));
         app.pump();
         app.update(|editor| {
-            assert_eq!(editor.test_pick(), Some(Pick::Dmin.display()));
+            assert_eq!(editor.test_pick(), Some(PickerCase::Dmin.display()));
             editor.select_adjustment_layer(Target::Layer(second));
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(second));
         });

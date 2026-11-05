@@ -28,7 +28,7 @@ fn selected_patch(h: &mut Harness<'_, Editor>) {
 }
 
 fn held_roll_colour(h: &Harness<'_, Editor>) -> DVec3 {
-    let mut scan = h.read(|editor| crate::editor::picking::capture_scan(editor).unwrap());
+    let mut scan = h.read(|editor| crate::editor::measurement::capture_scan(editor).unwrap());
     scan_roll_colour(h, &mut scan)
 }
 
@@ -40,7 +40,7 @@ fn scan_roll_colour(h: &Harness<'_, Editor>, scan: &mut Scan) -> DVec3 {
             width: 16,
             height: 16,
         });
-        let samples = crate::editor::picking::query::Samples::new(
+        let samples = crate::editor::measurement::query::Samples::new(
             editor.source_services.as_ref().unwrap(),
             scan,
             coverage,
@@ -102,7 +102,7 @@ fn admitted_save_waits_for_gamma_but_not_independent_cold_source_preparation() {
         h.get_by_label("Apply").click();
         h.step();
         wait_for(&mut h, |editor| {
-            !editor.interaction_blocked() && editor.document.visit.picker.display().is_none()
+            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
         });
         h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
 
@@ -129,7 +129,7 @@ fn admitted_save_waits_for_gamma_but_not_independent_cold_source_preparation() {
             }
             Ok(())
         });
-        let gamma = crate::editor::picking::testing::Gate::default();
+        let gamma = crate::editor::measurement::testing::Gate::default();
         h.update(|editor| {
             editor.document.path = Some(destination.clone());
             editor.document.cache = Arc::new(crate::source::SourceCache::new(0));
@@ -220,12 +220,13 @@ fn a_committed_gamma_solve_survives_browsing_tabs_and_hidden_controls() {
         h.get_by_label("Apply").click();
         h.step();
         wait_for(&mut h, |editor| {
-            !editor.interaction_blocked() && editor.document.visit.picker.display().is_none()
+            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
         });
         h.read(|editor| assert!(editor.document.gamma_pivot.locked()));
-        let mut captured = h.read(|editor| crate::editor::picking::capture_scan(editor).unwrap());
+        let mut captured =
+            h.read(|editor| crate::editor::measurement::capture_scan(editor).unwrap());
         let held = scan_roll_colour(&h, &mut captured);
-        let gate = crate::editor::picking::testing::Gate::default();
+        let gate = crate::editor::measurement::testing::Gate::default();
         h.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
         enter_numeric(&mut h, "Gamma", "0.9");
         let solve = gate.next(&mut h.application);
@@ -326,7 +327,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
         h.get_by_label("Apply").click();
         h.step();
         wait_for(&mut h, |editor| {
-            !editor.interaction_blocked() && editor.document.visit.picker.display().is_none()
+            editor.document.gamma_pivot.locked() && !editor.interaction_blocked()
         });
         h.read(|editor| {
             assert!(editor.document.gamma_pivot.locked(), "{}", editor.status);
@@ -341,7 +342,7 @@ fn gamma_pivot_pin_apply_cancel_numeric_wheel_reset_history_and_reopen() {
         );
 
         let path = directory.path().join("pivot.antitone");
-        let gate = crate::editor::picking::testing::Gate::default();
+        let gate = crate::editor::measurement::testing::Gate::default();
         h.update(|editor| {
             editor.document.path = Some(path.clone());
             editor.document.gamma_pivot.edit_gate = Some(gate.clone());

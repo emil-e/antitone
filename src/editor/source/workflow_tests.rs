@@ -95,9 +95,12 @@ fn a_picker_opened_during_photo_preparation_waits_for_its_captured_precise_input
     with_application(editor, |app| {
         start(app);
         await_native(app, &starts);
-        let previous = app.enter(|editor, cx| {
+        app.enter(|editor, cx| {
             assert!(!editor.interaction_blocked());
-            editor.begin_pick(crate::editor::Pick::Dmin, cx);
+            editor.begin_test_picker(crate::editor::PickerCase::Dmin, cx);
+        });
+        app.pump();
+        let previous = app.enter(|editor, _| {
             assert!(editor.picking());
             editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
                 crate::raw::Rect {
@@ -108,21 +111,18 @@ fn a_picker_opened_during_photo_preparation_waits_for_its_captured_precise_input
                 },
             )));
             assert!(editor.submit_test_picker());
-            assert!(
-                editor.interaction_blocked(),
-                "measurement owns its modal; photo loading does not"
-            );
+            assert!(!editor.picking());
             editor.dmin()
         });
         app.pump();
         app.read(|editor| {
-            assert!(editor.measurement_pending());
+            assert!(editor.measurement_pending() && editor.interaction_blocked());
             assert_eq!(editor.dmin(), previous);
             assert!(editor.document.visit.source.pending());
         });
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |editor| {
-            !editor.picking() && !editor.document.visit.source.pending()
+            !editor.measurement_pending() && !editor.document.visit.source.pending()
         });
         app.read(|editor| {
             let actual = editor.dmin().unwrap();
@@ -133,6 +133,60 @@ fn a_picker_opened_during_photo_preparation_waits_for_its_captured_precise_input
                     < 1e-5
             );
             assert!(!editor.interaction_blocked());
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn cancelling_measurement_waiting_for_source_withdraws_only_its_acquisition() {
+    let (scheduler, starts, release) = paused();
+    let mut editor = editor(scheduler.clone());
+    editor.load_input(InputSettings::negative(crate::processing::Calibration {
+        dmin: glam::DVec3::splat(0.7),
+        dmax: glam::DVec3::splat(0.01),
+        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+    }));
+    editor.sync_document();
+    with_application(editor, |app| {
+        start(app);
+        await_native(app, &starts);
+        let before = app.read(|editor| editor.document.project.clone());
+        app.enter(|editor, cx| {
+            editor
+                .start_interaction(cx, crate::editor::calibration::pick_dmin)
+                .unwrap();
+        });
+        app.pump();
+        app.enter(|editor, cx| {
+            editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
+                crate::raw::Rect {
+                    x: 24,
+                    y: 24,
+                    width: 16,
+                    height: 16,
+                },
+            )));
+            editor.apply_pick(cx);
+        });
+        // No paint/thumbnail demand runs in this fixture: these are the selected source
+        // and the picker joining the same held native acquisition.
+        app.run_until(Duration::from_secs(5), |_| scheduler.waiter_count() == 2);
+        app.update(|editor| editor.activities.view().unwrap().request_cancel());
+        app.run_until(Duration::from_secs(5), |_| scheduler.waiter_count() == 1);
+        app.read(|editor| {
+            assert!(!editor.picking() && !editor.interaction_blocked());
+            assert!(editor.document.visit.source.pending());
+            assert_eq!(editor.document.project, before);
+        });
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.document.visit.source.pending()
+        });
+        app.read(|editor| {
+            assert!(editor.document.visit.canvas.ready.is_some());
+            assert!(!editor.interaction_blocked());
+            assert_eq!(editor.document.project, before);
         });
     });
     scheduler.close_and_wait().unwrap();

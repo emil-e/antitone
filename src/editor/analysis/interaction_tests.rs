@@ -36,12 +36,15 @@ fn tool_entry_replaces_the_owned_interaction_without_accepting_its_draft() {
                     .is::<mask_editor::CreationTool>()
             );
             assert!(editor.document.visit.masks.gesture().is_none());
-            editor.begin_pick(Pick::Dmin, cx);
+            editor.begin_test_picker(PickerCase::Dmin, cx);
+        });
+        app.pump();
+        app.read(|editor| {
             assert!(editor.test_picker_active());
             assert!(editor.document.visit.masks.gesture().is_none());
         });
         app.pump();
-        app.read(|editor| assert_eq!(editor.test_pick(), Some(Pick::Dmin.display())));
+        app.read(|editor| assert_eq!(editor.test_pick(), Some(PickerCase::Dmin.display())));
         app.enter(|editor, cx| {
             editor.request_analysis(cx);
             assert!(editor.current_tool().unwrap().is::<AnalyzeTool>());
