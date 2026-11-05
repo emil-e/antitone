@@ -42,7 +42,7 @@ fn documented_states_render() {
         harness.step();
         harness.enter(|editor, cx| editor.add_raws(scans, cx));
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document_pending.is_none()
+            !e.interaction_blocked() && e.document_pending.is_none()
         });
         harness.read(|editor| {
             assert!(
@@ -58,7 +58,7 @@ fn documented_states_render() {
             .get_by_role_and_label(egui::accesskit::Role::Button, "Flip vertical")
             .click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
 
         // Analyze's sampling-area review, entered immediately after loading like
         // the analysis tests do; interaction before it can change tool
@@ -73,7 +73,7 @@ fn documented_states_render() {
         harness.step();
         harness.step();
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            e.document.analysis_review().is_some() || !e.busy
+            e.document.analysis_review().is_some() || !e.interaction_blocked()
         });
         harness.read(|editor| {
             assert!(
@@ -97,7 +97,7 @@ fn documented_states_render() {
         drop(buttons);
         harness.step();
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document.analysis_review().is_none()
+            !e.interaction_blocked() && e.document.analysis_review().is_none()
         });
         harness.read(|editor| assert!(editor.dmin().is_some(), "{}", editor.status));
 
@@ -108,10 +108,10 @@ fn documented_states_render() {
         // the documented grade.
         harness.get_by_label(&second_label).click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         tab(&mut harness, "Photo");
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document.visit.canvas.ready.is_some()
+            !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
         });
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
             e.document
@@ -150,7 +150,7 @@ fn documented_states_render() {
         harness.get_by_label(&first_label).click();
         harness.step();
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document.visit.canvas.ready.is_some()
+            !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
         });
         tab(&mut harness, "Roll");
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {

@@ -82,7 +82,7 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
             app.update(|editor| {
                 editor.set_test_pick_region(Some(region));
                 editor.apply_pick(&tasks);
-                assert!(editor.measurement_pending() && editor.busy);
+                assert!(editor.measurement_pending() && editor.interaction_blocked());
                 editor.document.visit.canvas.ready = None;
             });
             std::fs::write(&path, b"replaced after the operation captured its input").unwrap();
@@ -94,7 +94,9 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
                 0
             );
             drop(hold);
-            app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+            app.run_until(Duration::from_secs(5), |editor| {
+                !editor.interaction_blocked()
+            });
             app.read(|editor| {
                 let actual = editor.dmin().expect("captured camera measurement");
                 assert!(
@@ -141,7 +143,7 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(&tasks);
-            assert!(editor.busy && editor.measurement_pending());
+            assert!(editor.interaction_blocked() && editor.measurement_pending());
         });
         app.enter(|editor, cx| {
             editor.finish_pick(cx);
@@ -149,7 +151,7 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
         });
         app.pump();
         app.read(|editor| {
-            assert!(!editor.measurement_pending() && !editor.busy);
+            assert!(!editor.measurement_pending() && !editor.interaction_blocked());
             assert_eq!(editor.document.state.project, before);
         });
         assert!(source.upgrade().is_none());
@@ -195,13 +197,15 @@ fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
         app.update(|editor| {
             editor.set_test_pick_region(Some(region));
             editor.apply_pick(&tasks);
-            assert!(editor.busy && editor.measurement_pending());
+            assert!(editor.interaction_blocked() && editor.measurement_pending());
         });
-        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.interaction_blocked()
+        });
         app.read(|editor| {
             assert_eq!(editor.status, expected_error);
             assert!(editor.test_pick().is_none() && !editor.measurement_pending());
-            assert!(editor.tasks.view().is_none());
+            assert!(editor.activities.view().is_none());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),
@@ -255,7 +259,7 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
                 assert!(editor.measurement_pending());
             });
             app.pump();
-            let (status, activity) = app.enter(|editor, cx| {
+            app.enter(|editor, cx| {
                 if replace {
                     editor.load(fixture("patches.dng"), cx);
                     assert!(editor.document.visit.source.pending());
@@ -264,10 +268,13 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
                     editor.document.visit.canvas.ready = None;
                 }
                 assert!(!editor.measurement_pending());
-                assert_eq!(editor.busy, replace);
+                assert!(editor.document_pending.is_none());
+            });
+            app.pump();
+            let (status, activity) = app.read(|editor| {
                 (
                     editor.status.clone(),
-                    editor.tasks.view().map(|view| view.title),
+                    editor.activities.view().map(|view| view.title),
                 )
             });
             drop(hold);
@@ -281,13 +288,15 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
                 std::thread::sleep(Duration::from_millis(1));
             }
             app.read(|editor| {
-                assert_eq!(editor.busy, replace);
+                assert!(editor.document_pending.is_none());
                 assert_eq!(editor.status, status);
-                assert_eq!(editor.tasks.view().map(|view| view.title), activity);
+                assert_eq!(editor.activities.view().map(|view| view.title), activity);
             });
             if replace {
                 release_next.send(()).unwrap();
-                app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+                app.run_until(Duration::from_secs(5), |editor| {
+                    !editor.interaction_blocked()
+                });
             }
         });
         scheduler.close_and_wait().unwrap();
@@ -331,7 +340,7 @@ fn cancelling_a_running_measurement_retains_its_source_until_physical_cleanup() 
             "the physical worker still owns its captured source"
         );
         app.read(|editor| {
-            assert!(!editor.measurement_pending() && !editor.busy);
+            assert!(!editor.measurement_pending() && !editor.interaction_blocked());
             assert!(editor.test_pick().is_none());
             assert_eq!(editor.document.state.project, before);
         });
@@ -347,7 +356,7 @@ fn cancelling_a_running_measurement_retains_its_source_until_physical_cleanup() 
         }
         app.read(|editor| {
             assert_eq!(editor.document.state.project, before);
-            assert!(!editor.measurement_pending() && !editor.busy);
+            assert!(!editor.measurement_pending() && !editor.interaction_blocked());
         });
     });
 }

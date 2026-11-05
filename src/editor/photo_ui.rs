@@ -8,9 +8,9 @@ impl Editor {
         let cropping = self.cropping();
         let dusting = self.dusting();
         let tool_active = self.tool_interacting();
-        let ready = !self.busy && self.document.visit.canvas.ready.is_some();
+        let ready = !self.interaction_blocked() && self.selected_area().is_some();
         let commands_enabled = ready && !tool_active && !self.picking();
-        let tool_ready = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
+        let tool_ready = self.tool_start_available() && self.selected_area().is_some();
         let crop_enabled = cropping || tool_ready;
         let dust_enabled = dusting || tool_ready && self.document.input.ready();
         let repairs_changed = self

@@ -340,8 +340,8 @@ impl Editor {
             && !self.has_hosted_tool()
             && !self.document.visit.adjustment_layers.dragging()
             && self.tab == 1
-            && !self.busy
-            && self.document.visit.canvas.ready.is_some()
+            && !self.interaction_blocked()
+            && self.selected_area().is_some()
             && self.document.input.ready()
             && !self.document.source
             && !self.picking()
@@ -369,7 +369,7 @@ impl Editor {
     fn begin_mask(&mut self, kind: Kind, id: Option<AdjustmentLayerId>) {
         if !self.tool_start_available()
             || id.is_some() && self.has_hosted_tool()
-            || self.document.visit.canvas.ready.is_none()
+            || self.selected_area().is_none()
             || !self.document.input.ready()
             || self.fullscreen.is_some()
         {
@@ -553,7 +553,12 @@ impl Editor {
                 input.pointer.interact_pos(),
             )
         });
-        if !allowed || !ui.is_enabled() || self.busy || self.fullscreen.is_some() || self.tab != 1 {
+        if !allowed
+            || !ui.is_enabled()
+            || self.interaction_blocked()
+            || self.fullscreen.is_some()
+            || self.tab != 1
+        {
             if released && self.document.visit.masks.dragging() {
                 self.finish_mask(false);
             }

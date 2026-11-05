@@ -58,7 +58,9 @@ pub(super) fn capture_demo(harness: &mut Harness<'_, Editor>, directory: &Path, 
                 cx,
             ),
         });
-        wait_for_with_timeout(harness, Duration::from_secs(600), |e| !e.busy);
+        wait_for_with_timeout(harness, Duration::from_secs(600), |e| {
+            !e.interaction_blocked()
+        });
         settle_view(harness);
         wait_for_with_timeout(harness, Duration::from_secs(600), |e| {
             e.document
@@ -90,7 +92,7 @@ pub(super) fn capture_demo(harness: &mut Harness<'_, Editor>, directory: &Path, 
         let path = directory.join(format!("{name}.antitone"));
         harness.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
         wait_for_with_timeout(harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document_pending.is_none()
+            !e.interaction_blocked() && e.document_pending.is_none()
         });
         let project = harness.read(|e| {
             assert!(e.failure.is_none());
@@ -119,7 +121,9 @@ fn supplied_project_renders_and_saves_the_paper_routes_without_reanalysis() {
         harness.step();
         open_project(&mut harness, source);
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document_pending.is_none() && e.document.visit.canvas.ready.is_some()
+            !e.interaction_blocked()
+                && e.document_pending.is_none()
+                && e.document.visit.canvas.ready.is_some()
         });
         harness.read(|e| assert!(e.failure.is_none()));
         settle_view(&mut harness);
@@ -140,10 +144,12 @@ fn supplied_digital_photograph_renders_and_saves_the_same_component_routes() {
         harness.update(host::App::native_menu_installed);
         harness.step();
         harness.enter(|e, cx| e.apply_input(crate::processing::InputSettings::Digital, cx));
-        wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| !e.busy);
+        wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
+            !e.interaction_blocked()
+        });
         harness.enter(|e, cx| e.add_raws(vec![source], cx));
         wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
-            !e.busy && e.document.visit.canvas.ready.is_some()
+            !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
         });
         settle_view(&mut harness);
         capture_demo(&mut harness, &output, "digital");
@@ -157,7 +163,9 @@ fn supplied_digital_photograph_renders_and_saves_the_same_component_routes() {
                 cx,
             )
         });
-        wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| !e.busy);
+        wait_for_with_timeout(&mut harness, Duration::from_secs(600), |e| {
+            !e.interaction_blocked()
+        });
         settle_view(&mut harness);
         harness.read(|e| {
             assert!(e.failure.is_none());

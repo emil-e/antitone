@@ -88,18 +88,12 @@ pub(super) trait Tool: Any {
     }
     fn shortcuts(&mut self, _ui: &mut egui::Ui, _editor: &mut Editor) {}
     fn action(&mut self, action: Action, editor: &mut Editor, cx: &UiContext<'_, Editor>);
-    // Compatibility with the existing foreground activity owner; the operation
-    // remains responsible for its task and cancellation semantics.
-    fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
-        None
-    }
 }
 
 #[derive(Clone)]
 pub(super) struct Info {
     kind: TypeId,
     presentation: Presentation,
-    pub activity: Option<TaskRequest>,
 }
 impl Info {
     pub fn presentation(&self) -> Presentation {
@@ -121,13 +115,7 @@ impl Slot {
     pub(super) fn occupied(&self) -> bool {
         !matches!(self, Self::Empty)
     }
-    pub(super) fn activity(&self, editor: &Editor) -> Option<TaskRequest> {
-        match self {
-            Self::Empty => None,
-            Self::Executing(info) => info.activity,
-            Self::Installed(tool) => tool.activity(editor),
-        }
-    }
+
     #[cfg(test)]
     pub(super) fn installed(&self) -> Option<&dyn Tool> {
         match self {
@@ -149,7 +137,6 @@ impl Slot {
             Self::Installed(tool) => Some(Info {
                 kind: tool.as_ref().type_id(),
                 presentation: tool.presentation(editor),
-                activity: tool.activity(editor),
             }),
         }
     }
@@ -186,16 +173,12 @@ impl DocumentScope {
 }
 
 impl Editor {
-    pub(super) fn tool_activity(&self) -> Option<TaskRequest> {
-        self.hosted_tool_activity()
-    }
-
     pub(super) fn tool_interacting(&self) -> bool {
         self.has_hosted_tool()
     }
 
     pub(super) fn tool_start_available(&self) -> bool {
-        (!self.busy || self.tool_activity().is_some())
+        !self.interaction_blocked()
             && !self.document.gamma_pivot.pending()
             && self.document_pending.is_none()
             && !self.export_modal()
@@ -229,12 +212,7 @@ impl Editor {
     pub(super) fn has_hosted_tool(&self) -> bool {
         self.document.hosted_tool.occupied() || self.document.visit.hosted_tool.occupied()
     }
-    pub(super) fn hosted_tool_activity(&self) -> Option<TaskRequest> {
-        self.document
-            .hosted_tool
-            .activity(self)
-            .or_else(|| self.document.visit.hosted_tool.activity(self))
-    }
+
     pub(super) fn cropping(&self) -> bool {
         self.document.hosted_tool.is::<crop_editor::CropTool>()
             || self
@@ -244,16 +222,10 @@ impl Editor {
                 .is::<crop_editor::CropTool>()
     }
     pub(super) fn retire_hosted_tool(&mut self) {
-        let activity = self.hosted_tool_activity();
         self.retire_fullscreen();
         self.document.clear_hosted_tools();
         self.canvas_frame = Default::default();
         self.document.visit.canvas.last_layout = None;
-        if let Some(activity) = activity
-            && self.tasks.finish(activity)
-        {
-            self.busy = self.document_pending.is_some();
-        }
     }
     pub(super) fn end_tool(&mut self) {
         self.cancel_active_tool();

@@ -357,7 +357,7 @@ pub(super) fn pick<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let image = picking::capture_scan(editor)?;
+    let image = picking::capture_input(editor)?;
     let source = editor
         .document
         .visit
@@ -368,26 +368,32 @@ pub(super) fn pick<'scope>(
         .map_err(|error| error.to_string())?;
     let services = editor.source_services.clone();
     let captured = recipe.clone();
-    let reading = picking::pick(
+    let reading = picking::pick_prepared(
         editor,
         DISPLAY,
-        move |region, cancelled| {
-            let services = picking::query_services(services.as_ref())?;
-            let evidence =
-                query::Evidence::capture(services, &image, region, &|| cancelled.is_cancelled())?;
-            let negative = captured
-                .processing_input()?
-                .negative_input()
-                .ok_or(Error::UnusableSample("gamma pivot basis changed"))?;
-            evidence.compensate(
-                services,
-                negative,
-                negative,
-                image.camera_to_ap1,
-                Balance::default(),
-                &|| cancelled.is_cancelled(),
-            )?;
-            Ok(evidence)
+        async move {
+            let image = image.await?;
+            Ok(
+                move |region, cancelled: crate::cancellation::Cancellation| {
+                    let services = picking::query_services(services.as_ref())?;
+                    let evidence = query::Evidence::capture(services, &image, region, &|| {
+                        cancelled.is_cancelled()
+                    })?;
+                    let negative = captured
+                        .processing_input()?
+                        .negative_input()
+                        .ok_or(Error::UnusableSample("gamma pivot basis changed"))?;
+                    evidence.compensate(
+                        services,
+                        negative,
+                        negative,
+                        image.camera_to_ap1,
+                        Balance::default(),
+                        &|| cancelled.is_cancelled(),
+                    )?;
+                    Ok(evidence)
+                },
+            )
         },
         cx.clone(),
     );

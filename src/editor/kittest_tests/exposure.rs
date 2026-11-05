@@ -23,7 +23,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         });
         h.enter(|editor, cx| editor.add_raws(vec![file.path().to_owned()], cx));
         wait_for(&mut h, |editor| {
-            !editor.busy
+            !editor.interaction_blocked()
                 && editor.document_pending.is_none()
                 && editor.document.visit.working_view.support_ready()
                 && editor
@@ -188,7 +188,7 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
     editor_harness(|mut h, _| {
         h.enter(|editor, cx| editor.add_raws(vec![first.path().to_owned()], cx));
         wait_for(&mut h, |editor| {
-            !editor.busy
+            !editor.interaction_blocked()
                 && editor.document_pending.is_none()
                 && editor.document.visit.working_view.support_ready()
         });
@@ -204,7 +204,7 @@ fn automatic_digital_import_prepares_reused_negative_pixels_before_ready() {
         });
         h.enter(|editor, cx| editor.add_raws(vec![second], cx));
         wait_for(&mut h, |editor| {
-            !editor.busy
+            !editor.interaction_blocked()
                 && editor.document_pending.is_none()
                 && editor.document.visit.working_view.support_ready()
         });
@@ -300,7 +300,7 @@ fn opening_same_source_with_different_normalization_replaces_navigation_pixels_a
                 });
             }
             wait_for(&mut h, |editor| {
-                !editor.busy
+                !editor.interaction_blocked()
                     && editor.document_pending.is_none()
                     && editor.document.visit.working_view.support_ready()
                     && editor

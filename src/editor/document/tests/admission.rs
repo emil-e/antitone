@@ -403,7 +403,7 @@ fn unsupported_offscreen_grade_blocks_source_and_export_before_retiring_accepted
             "{}",
             editor.status
         );
-        assert!(!editor.busy);
+        assert!(!editor.interaction_blocked());
         assert!(editor.document.export.operation.is_none());
         assert!(
             !editor.document.visit.source.pending() && editor.document.export.operation.is_none()

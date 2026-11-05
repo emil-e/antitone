@@ -62,13 +62,15 @@ fn each_reference_feature_awaits_the_same_camera_measurement_and_changes_only_it
             app.pump();
             app.read(|editor| {
                 assert_eq!(editor.document.state.project, before);
-                assert!(!editor.busy);
+                assert!(!editor.interaction_blocked());
             });
             app.enter(|editor, cx| {
                 editor.set_test_pick_region(Some(region));
                 editor.apply_pick(cx);
             });
-            app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+            app.run_until(Duration::from_secs(5), |editor| {
+                !editor.interaction_blocked()
+            });
             app.read(|editor| {
                 let calibration = editor.document.input.calibration().unwrap();
                 assert_eq!(
@@ -155,7 +157,9 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
             editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
-        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.interaction_blocked()
+        });
         app.read(|editor| {
             assert_eq!(editor.balance(), expected);
             assert_eq!(
@@ -206,7 +210,9 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
             editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
-        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.interaction_blocked()
+        });
         app.read(|editor| {
             assert!(editor.test_pick().is_none());
             assert_eq!(editor.document.state.project, before);
@@ -222,7 +228,9 @@ fn a_measured_reference_can_be_rejected_by_its_caller_without_history_and_the_ne
             editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
-        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.interaction_blocked()
+        });
         app.read(|editor| {
             assert_eq!(editor.dmin(), Some(expected));
             assert_eq!(

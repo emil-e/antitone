@@ -6,7 +6,7 @@ fn setup<R>(test: impl FnOnce(Harness<'_, Editor>) -> R) -> R {
         h.enter(|editor, cx| {
             editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
         });
-        wait_for(&mut h, |e| !e.busy);
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -35,13 +35,13 @@ fn shortcut(h: &mut Harness<'_, Editor>, redo: bool) {
         egui::Key::Z,
     );
     h.step();
-    wait_for(h, |e| !e.busy);
+    wait_for(h, |e| !e.interaction_blocked());
 }
 
 fn native_action(h: &mut Harness<'_, Editor>, action: crate::platform::menu::Action) {
     h.update(|editor| host::App::menu_action(editor, action));
     h.step();
-    wait_for(h, |editor| !editor.busy);
+    wait_for(h, |editor| !editor.interaction_blocked());
 }
 
 #[test]
@@ -208,7 +208,7 @@ fn native_history_restores_accepted_creative_looks_and_shares_the_numeric_lut() 
         );
         let original = h.read(|editor| editor.document.state.project.clone());
         h.enter(|editor, cx| editor.select_look(look::Source::Loaded(chosen.clone()), cx));
-        wait_for(&mut h, |e| !e.busy);
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|editor| assert!(editor.failure.is_none(), "{}", editor.status));
         let accepted = h.read(|editor| editor.document.state.project.clone());
         assert!(Arc::ptr_eq(
@@ -484,13 +484,13 @@ fn history_confirmed_multi_removal_can_restore_an_empty_roll_without_resetting_i
         h.get_by_label("roll-1.dng")
             .click_modifiers(egui::Modifiers::COMMAND);
         h.step();
-        wait_for(&mut h, |e| !e.busy);
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.key_press(egui::Key::Delete);
         h.step();
         h.read(|editor| assert!(editor.document.removal_pending.is_some()));
         h.get_by_label("Remove photos").click();
         h.step();
-        wait_for(&mut h, |e| !e.busy);
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|editor| assert!(editor.document.state.project.order.is_empty()));
         h.read(|editor| assert!(editor.document.state.project.sources.is_empty()));
         h.read(|editor| assert_eq!(editor.document.state.project.development(), None));
@@ -519,7 +519,7 @@ fn history_numeric_commit_navigation_menu_and_crop_draft_respect_input_ownership
         let accepted = h.read(|editor| editor.document.state.project.clone());
         h.get_by_label("roll-1.dng").click();
         h.step();
-        wait_for(&mut h, |e| !e.busy);
+        wait_for(&mut h, |e| !e.interaction_blocked());
         h.read(|editor| assert_ne!(editor.document.visit.current_source, edited_photo));
         h.read(|editor| {
             assert_eq!(

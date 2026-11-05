@@ -14,7 +14,7 @@ fn standalone_reference_supplies_the_painted_canvas_and_scopes_at_both_layouts()
         });
         let before = harness.read(|editor| editor.document.project.clone());
         harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
-        wait_for(&mut harness, |editor| !editor.busy);
+        wait_for(&mut harness, |editor| !editor.interaction_blocked());
         for (name, size, width) in [
             ("normal", egui::vec2(1100., 800.), 315.),
             ("narrow", egui::vec2(800., 600.), 270.),

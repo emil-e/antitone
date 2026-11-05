@@ -61,7 +61,6 @@ pub(super) struct FlatEdit {
     pub view: super::canvas::SourceView,
     pub region: Option<Coverage>,
     pub task: Option<async_executor::Task<()>>,
-    pub activity: Option<TaskRequest>,
 }
 
 pub(super) struct FlatPreview {
@@ -89,7 +88,7 @@ impl Editor {
             presentation::SectionHeader {
                 summary,
                 changed: configured,
-                reset: Some(configured && !self.busy && !self.tool_interacting()),
+                reset: Some(configured && !self.interaction_blocked() && !self.tool_interacting()),
                 tool: None,
                 default_open: if editing { None } else { Some(false) },
             },
@@ -154,31 +153,31 @@ impl FlatTool {
         }
         editor.sync_document();
         editor.document.thumbnails.cancel();
-        let id = editor.request_id();
+        let activity = editor
+            .activities
+            .start(ActivityOptions::new("Preparing reference…").modal());
         let context = FlatEdit {
             services: editor.source_services.clone(),
             view: Default::default(),
             region: region.map(Coverage::rectangle),
             task: None,
-            activity: Some(TaskRequest::Reference(id)),
         };
         let tool = Self::new(context);
-        editor.busy = true;
+
         editor.status = "Preparing uncorrected flat-field reference…".into();
-        editor.tasks.begin(Task::Reference(id));
+
         let request = Self::preview_input(editor, path);
         let task = setup(
             request,
             editor.source_services.clone(),
             std::rc::Rc::downgrade(&tool.state),
+            activity,
             cx,
         );
         if let Some(task) = task {
             tool.state.borrow_mut().task = Some(task);
             tool.install(editor);
         } else {
-            editor.tasks.finish(TaskRequest::Reference(id));
-            editor.busy = false;
             editor.status = "Application stopped".into();
             editor.report_failure(FailureKind::FlatReference, editor.status.clone());
         }
@@ -240,7 +239,9 @@ impl tool::Tool for FlatTool {
             },
             primary: Some(tool::Primary {
                 label: "Apply",
-                enabled: state.view.ready.is_some() && state.region.is_some() && !editor.busy,
+                enabled: state.view.ready.is_some()
+                    && state.region.is_some()
+                    && !editor.interaction_blocked(),
             }),
             dismiss: "Cancel",
             warning: None,
@@ -323,7 +324,7 @@ impl tool::Tool for FlatTool {
                     cx,
                 );
                 let selecting = editor.fullscreen.is_none()
-                    && !editor.busy
+                    && !editor.interaction_blocked()
                     && canvas.ui.is_enabled()
                     && !panning
                     && !canvas.ui.input(|input| input.key_down(egui::Key::Space));
@@ -383,7 +384,9 @@ impl tool::Tool for FlatTool {
 
     fn action(&mut self, action: tool::Action, editor: &mut Editor, cx: &UiContext<'_, Editor>) {
         match action {
-            tool::Action::Primary if !editor.busy && editor.document_pending.is_none() => {
+            tool::Action::Primary
+                if !editor.interaction_blocked() && editor.document_pending.is_none() =>
+            {
                 editor.sync_document();
                 let state = self.state.borrow();
                 let Some(reference) = &state.view.ready else {
@@ -421,16 +424,13 @@ impl tool::Tool for FlatTool {
             _ => {}
         }
     }
-
-    fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
-        self.state.borrow().activity
-    }
 }
 
 fn setup<'scope>(
     request: source::Request,
     services: Option<source::Services>,
     owner: std::rc::Weak<std::cell::RefCell<FlatEdit>>,
+    activity: Activity,
     cx: &UiContext<'scope, Editor>,
 ) -> Option<async_executor::Task<()>> {
     let cancelled = Cancellation::default();
@@ -444,6 +444,7 @@ fn setup<'scope>(
             preview(services.clone(), request, cancelled.clone()).await
         }
         .await;
+        drop(activity);
         let Some(owner) = owner.upgrade() else { return };
         let reference = match reference {
             Ok(reference) => reference,
@@ -456,12 +457,7 @@ fn setup<'scope>(
             let mut edit = owner.borrow_mut();
             edit.region = edit.region.or(reference.region.map(Coverage::rectangle));
             edit.view.ready = Some(reference.ready.clone());
-            let activity = edit.activity.take();
-            if let Some(activity) = activity
-                && editor.tasks.finish(activity)
-            {
-                editor.busy = false;
-            }
+
             editor.resolve_failure(FailureKind::FlatReference);
             editor.status = if edit.region.is_some() {
                 "Proposed illuminated rectangle: adjust edges, then Apply."
@@ -487,7 +483,9 @@ fn correct(editor: &mut Editor, input: CorrectionInput, cx: &UiContext<'_, Edito
         photo: None,
     });
     editor.document_failure = Some(FailureKind::FlatCorrection);
-    editor.tasks.begin(crate::editor::Task::Correction(id));
+    let activity = editor
+        .activities
+        .start(ActivityOptions::new("Applying correction…").modal());
     let services = input.services.clone();
     let cancelled = Cancellation::default();
     let retire = cancelled.cancel_on_drop();
@@ -501,6 +499,7 @@ fn correct(editor: &mut Editor, input: CorrectionInput, cx: &UiContext<'_, Edito
                 .await
         }
         .await;
+        drop(activity);
         cx.update(|editor| {
             if editor.document_pending == Some(id) {
                 editor.document.flat_correction = None;

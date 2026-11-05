@@ -57,7 +57,7 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
             e.save_project(path.clone(), crate::project::Save::New, None, access);
         });
         app.pump();
-        assert!(app.read(|e| e.busy && e.document_pending.is_some()));
+        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
         app.update(|e| {
             let before = e.history_snapshot();
             e.document.roll.exposure = 0.5;
@@ -84,7 +84,9 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
                     .unwrap(),
                 locator
             );
-            assert!(!e.busy && e.tasks.view().is_none() && e.failure.is_none());
+            assert!(
+                !e.interaction_blocked() && e.activities.view().is_none() && e.failure.is_none()
+            );
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -114,7 +116,7 @@ fn failed_live_save_preserves_destination_dirty_state_and_guarded_transition() {
             assert_eq!(e.transition, Some(crate::editor::Transition::Close));
             assert!(e.document_pending.is_none() && !e.allow_close);
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Save);
-            assert!(!e.busy && e.tasks.view().is_none());
+            assert!(!e.interaction_blocked() && e.activities.view().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -140,7 +142,7 @@ fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operatio
         app.enter(|e, cx| e.save_result(retired, Err("stale write failure".into()), cx));
         app.read(|e| {
             assert_eq!(e.document_pending, Some(current));
-            assert!(e.busy && e.tasks.view().is_some());
+            assert!(e.interaction_blocked() && e.activities.view().is_some());
             assert!(e.failure.is_none());
         });
         assert!(!path.exists());
@@ -205,13 +207,15 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
                 e.document.state.project.clone()
             });
             app.run_until(Duration::from_secs(15), |e| {
-                !e.busy && e.document_pending.is_none()
+                !e.interaction_blocked() && e.document_pending.is_none()
             });
             assert_eq!(crate::project::Project::load(&written).unwrap(), captured);
             app.read(|e| {
                 assert!(e.failure.is_none(), "{}", e.status);
                 assert!(
-                    e.after_save.is_none() && e.transition.is_none() && e.tasks.view().is_none()
+                    e.after_save.is_none()
+                        && e.transition.is_none()
+                        && e.activities.view().is_none()
                 );
                 match &transition {
                     Transition::New => {
@@ -263,7 +267,7 @@ fn failed_open_after_successful_save_keeps_the_written_document_without_a_ui_pas
             e.document.state.project.clone()
         });
         app.run_until(Duration::from_secs(15), |e| {
-            !e.busy && e.document_pending.is_none()
+            !e.interaction_blocked() && e.document_pending.is_none()
         });
         app.read(|e| {
             assert_eq!(e.document.path.as_ref(), Some(&written));

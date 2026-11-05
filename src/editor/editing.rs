@@ -293,13 +293,8 @@ impl Editor {
 
     pub(super) fn accept_crop(&mut self, draft: Crop) -> Result<(), Error> {
         let area = self
-            .document
-            .visit
-            .canvas
-            .ready
-            .as_ref()
-            .ok_or(Error::InvalidParameter("Crop source is unavailable"))?
-            .area;
+            .selected_area()
+            .ok_or(Error::InvalidParameter("Crop source is unavailable"))?;
         self.edit_photo_geometry("Crop", |_, crop| {
             *crop = (draft != Crop::from_region(area)).then_some(draft);
             Ok(())

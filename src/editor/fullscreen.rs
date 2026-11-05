@@ -16,7 +16,7 @@ pub(super) struct FullscreenView {
 impl Editor {
     fn fullscreen_blocked(&self) -> bool {
         self.menus.panel.is_some()
-            || self.tasks.blocks_workspace()
+            || self.activities.blocks_workspace()
             || self.failure.is_some()
             || self.document_pending.is_some()
             || self.transition.is_some()
@@ -30,7 +30,7 @@ impl Editor {
         !self.fullscreen_blocked()
             && (self.fullscreen.is_some()
                 || (self.canvas_frame.layout.is_some() || self.selected_view().is_some())
-                    && !(self.busy && self.picking()))
+                    && !(self.interaction_blocked() && self.picking()))
     }
 
     pub(super) fn toggle_fullscreen(&mut self, context: &egui::Context) {

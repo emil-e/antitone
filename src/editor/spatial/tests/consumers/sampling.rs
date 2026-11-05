@@ -59,7 +59,7 @@ fn film_edge_exclusion_survives_authored_review_and_failure_preserves_the_accept
             );
         });
         app.enter(|editor, cx| editor.confirm_analysis_review(cx));
-        app.run_until(LIMIT, |editor| !editor.busy);
+        app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         app.read(|editor| {
             assert!(
                 editor.status.contains("only 40 of 40 picture samples are eligible; need 512"),
@@ -154,7 +154,7 @@ fn nominal_crop_applies_across_missing_film_and_analyze_keeps_that_framing() {
             editor.document.spatial_preparing.is_none() && !editor.analysis_preparing()
         });
         app.enter(|editor, cx| editor.confirm_analysis_review(cx));
-        app.run_until(LIMIT, |editor| !editor.busy);
+        app.run_until(LIMIT, |editor| !editor.interaction_blocked());
         app.read(|editor| {
             assert!(editor.status.contains("Analyzed"), "{}", editor.status);
             assert!(editor.document.state.project.dmin().is_some());

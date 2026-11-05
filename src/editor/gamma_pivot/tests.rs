@@ -10,7 +10,7 @@ fn lock(app: &mut App<'_>) {
     app.enter(|editor, cx| editor.begin_pick(super::super::Pick::GammaPivot, cx));
     app.pump();
     app.enter(|editor, cx| {
-        let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+        let area = editor.selected_area().unwrap();
         editor
             .document
             .visit
@@ -18,7 +18,9 @@ fn lock(app: &mut App<'_>) {
             .set_region(Some(Coverage::rectangle(area)));
         editor.apply_pick(cx);
     });
-    app.run_until(Duration::from_secs(10), |editor| !editor.busy);
+    app.run_until(Duration::from_secs(10), |editor| {
+        !editor.interaction_blocked()
+    });
     app.read(|editor| {
         assert!(
             editor.document.gamma_pivot.anchor.is_some(),
@@ -71,7 +73,7 @@ fn capture_waits_for_apply_and_manual_gamma_accepts_one_compensated_transaction(
         });
         app.pump();
         app.enter(|editor, _| {
-            let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
+            let area = editor.selected_area().unwrap();
             editor
                 .document
                 .visit
@@ -81,7 +83,9 @@ fn capture_waits_for_apply_and_manual_gamma_accepts_one_compensated_transaction(
             assert_eq!(editor.history_snapshot(), before);
         });
         app.enter(|editor, cx| editor.apply_pick(cx));
-        app.run_until(Duration::from_secs(10), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.interaction_blocked()
+        });
         app.enter(|editor, cx| {
             assert!(
                 editor.document.gamma_pivot.anchor.is_some(),
@@ -112,7 +116,9 @@ fn capture_waits_for_apply_and_manual_gamma_accepts_one_compensated_transaction(
             );
             editor.restore_history(super::super::history::Direction::Undo, cx);
         });
-        app.run_until(Duration::from_secs(10), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.interaction_blocked()
+        });
         app.enter(|editor, _| {
             assert_eq!(editor.history_snapshot(), before);
             assert!(editor.document.gamma_pivot.anchor.is_some());
@@ -196,14 +202,14 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
                 .document
                 .visit
                 .picker
-                .set_region(Some(Coverage::rectangle(
-                    editor.document.visit.canvas.ready.as_ref().unwrap().area,
-                )));
+                .set_region(Some(Coverage::rectangle(editor.selected_area().unwrap())));
             editor.apply_pick(cx);
         });
         let failed = gate.next(app);
         failed.panic();
-        app.run_until(Duration::from_secs(10), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.interaction_blocked()
+        });
         app.read(|editor| {
             assert!(Arc::ptr_eq(
                 editor.document.gamma_pivot.anchor.as_ref().unwrap(),
@@ -222,9 +228,7 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
                     .document
                     .visit
                     .picker
-                    .set_region(Some(Coverage::rectangle(
-                        editor.document.visit.canvas.ready.as_ref().unwrap().area,
-                    )));
+                    .set_region(Some(Coverage::rectangle(editor.selected_area().unwrap())));
                 editor.apply_pick(cx);
             });
             let stale = gate.next(app);
@@ -254,7 +258,9 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
                 let path =
                     app.read(|editor| editor.document.source_path(anchor.recipe.source).unwrap());
                 app.enter(|editor, cx| editor.load(path, cx));
-                app.run_until(Duration::from_secs(10), |editor| !editor.busy);
+                app.run_until(Duration::from_secs(10), |editor| {
+                    !editor.interaction_blocked()
+                });
                 app.update(|editor| {
                     editor.document.visit.picker.measurement_gate = Some(gate.clone());
                 });
@@ -355,7 +361,9 @@ fn a_no_net_gamma_gesture_preserves_redo_and_replay_restores_the_exact_pair() {
             editor.restore_history(super::super::history::Direction::Undo, cx);
             after
         });
-        app.run_until(Duration::from_secs(10), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.interaction_blocked()
+        });
         let group = Some(egui::Id::new("redo-preserving gesture"));
         propose(app, 0.9, group);
         settle(app);
@@ -370,7 +378,9 @@ fn a_no_net_gamma_gesture_preserves_redo_and_replay_restores_the_exact_pair() {
             );
             editor.restore_history(super::super::history::Direction::Redo, cx);
         });
-        app.run_until(Duration::from_secs(10), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.interaction_blocked()
+        });
         app.enter(|editor, _| assert_eq!(editor.history_snapshot(), after));
     });
 }

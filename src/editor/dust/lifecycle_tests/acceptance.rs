@@ -864,12 +864,12 @@ fn pending_search_blocks_undo_then_one_completed_stroke_round_trips_without_a_pr
         assert_ne!(before, after);
         app.enter(|e, cx| e.restore_history(history::Direction::Undo, cx));
         app.run_until(Duration::from_secs(30), |e| {
-            !e.busy && e.document_pending.is_none()
+            !e.interaction_blocked() && e.document_pending.is_none()
         });
         app.read(|e| assert_eq!(e.document.state.project, before));
         app.enter(|e, cx| e.restore_history(history::Direction::Redo, cx));
         app.run_until(Duration::from_secs(30), |e| {
-            !e.busy && e.document_pending.is_none()
+            !e.interaction_blocked() && e.document_pending.is_none()
         });
         app.read(|e| assert_eq!(e.document.state.project, after));
     });
@@ -906,7 +906,9 @@ fn navigation_discards_the_unfinished_stroke_and_returning_can_start_a_new_one()
             assert!(e.pending_dust_strokes().is_empty());
         });
         app.run_until(Duration::from_secs(30), |e| {
-            !e.busy && call.cancelled.is_cancelled()
+            !e.interaction_blocked()
+                && !e.document.visit.source.pending()
+                && call.cancelled.is_cancelled()
         });
         call.complete(Ok(SearchOutcome::Candidate([30, 0])));
         app.pump();
@@ -927,7 +929,9 @@ fn navigation_discards_the_unfinished_stroke_and_returning_can_start_a_new_one()
                 .unwrap()
         });
         app.enter(|e, cx| e.select_roll_photo(index, egui::Modifiers::NONE, cx));
-        app.run_until(Duration::from_secs(30), |e| !e.busy);
+        app.run_until(Duration::from_secs(30), |e| {
+            !e.document.visit.source.pending()
+        });
         let stroke = app.enter(|e, cx| queue(e, [50, 50], cx));
         gate.next(app)
             .complete(Ok(SearchOutcome::Candidate([30, 0])));

@@ -39,7 +39,7 @@ fn history(h: &mut Harness<'_, Editor>, redo: bool) {
         egui::Key::Z,
     );
     h.step();
-    wait_for(h, |editor| !editor.busy);
+    wait_for(h, |editor| !editor.interaction_blocked());
 }
 
 #[test]
@@ -205,7 +205,9 @@ fn departing_photo_and_tool_replacement_cannot_publish_a_held_refinement() {
         });
         h.enter(|editor, cx| editor.load(next, cx));
         pointer(&mut h, end, false);
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| {
+            !editor.document.visit.source.pending() && editor.active_canvas().last_layout.is_some()
+        });
         h.read(|editor| {
             assert_ne!(editor.document.visit.current_source, Some(first));
             assert!(!editor.document.visit.masks.editing());
@@ -218,7 +220,9 @@ fn departing_photo_and_tool_replacement_cannot_publish_a_held_refinement() {
         });
         h.get_by_label("working-photo.dng").click();
         h.step();
-        wait_for(&mut h, |editor| !editor.busy);
+        wait_for(&mut h, |editor| {
+            !editor.document.visit.source.pending() && editor.active_canvas().last_layout.is_some()
+        });
         let start = h.read(handle);
         let end = start + egui::vec2(20., 15.);
         hold_drag(&mut h, start, end);

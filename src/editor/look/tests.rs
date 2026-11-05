@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{FailureKind, Preparation, TaskRequest, document::Document, tests::fixture},
+    editor::{FailureKind, Preparation, document::Document, tests::fixture},
     looks::Lut3D,
 };
 use std::{sync::Mutex, time::Duration};
@@ -80,7 +80,7 @@ fn captured_choice_accepts_without_paint_and_records_only_accepted_content() {
                 e.history_label(crate::editor::history::Direction::Undo),
                 Some("LUT")
             );
-            assert!(!e.busy && e.tasks.view().is_none());
+            assert!(!e.interaction_blocked() && e.activities.view().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -113,7 +113,7 @@ fn awaited_choices_keep_a_unique_session_list_and_one_undoable_accepted_selectio
             assert_loaded_assets(e, &list);
         });
         app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.state.project.output.lut, Some(renamed));
             assert_loaded_assets(e, &list);
@@ -147,17 +147,18 @@ fn cancelling_a_prepared_value_retires_its_continuation_instead_of_accepting_it(
         with_application(e, |app| {
             let activity = app.enter(|e, cx| {
                 e.select_look(Source::Loaded(selected.clone()), cx);
-                e.document.look.as_ref().unwrap().activity
+                e.document.look.as_ref().unwrap().activity.clone()
             });
             app.pump();
             let (valid, stop) = ready.recv_timeout(Duration::from_secs(15)).unwrap();
             assert!(valid && !stop.is_cancelled());
             if cancelled {
-                app.update(|e| e.cancel_task(TaskRequest::Look(activity)));
+                app.update(|_| activity.request_cancel());
+                app.pump();
             }
             app.read(|e| {
                 assert_eq!(e.document.look.is_none(), cancelled);
-                assert_eq!(e.busy, !cancelled);
+                assert_eq!(e.interaction_blocked(), !cancelled);
                 assert_eq!(e.document.state.project, before);
             });
             if cancelled {
@@ -168,7 +169,7 @@ fn cancelling_a_prepared_value_retires_its_continuation_instead_of_accepting_it(
             done.recv_timeout(Duration::from_secs(15)).unwrap();
             app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
             app.read(|e| {
-                assert!(!e.busy && e.tasks.view().is_none());
+                assert!(!e.interaction_blocked() && e.activities.view().is_none());
                 if cancelled {
                     assert_eq!(e.document.state.project, before);
                     assert_eq!(e.look.loaded, vec![accepted]);
@@ -315,12 +316,17 @@ fn user_cancel_retires_queued_work_without_changing_the_accepted_look() {
     with_application(e, |app| {
         let activity = app.enter(|e, cx| {
             e.select_look(Source::Loaded(asset(0.7)), cx);
-            e.document.look.as_ref().unwrap().activity
+            e.document.look.as_ref().unwrap().activity.clone()
         });
         app.pump();
-        app.update(|e| e.cancel_task(TaskRequest::Look(activity)));
+        app.update(|_| activity.request_cancel());
+        app.pump();
         app.read(|e| {
-            assert!(!e.busy && e.document.look.is_none() && e.tasks.view().is_none());
+            assert!(
+                !e.interaction_blocked()
+                    && e.document.look.is_none()
+                    && e.activities.view().is_none()
+            );
             assert_eq!(e.document.state.project, before);
             assert!(e.look.loaded.is_empty());
         });
@@ -349,7 +355,7 @@ fn superseded_look_drops_queued_input_but_the_current_operation_survives_photo_r
         });
         app.pump();
         assert!(weak.upgrade().is_none());
-        app.read(|e| assert!(e.busy && e.document.look.is_some()));
+        app.read(|e| assert!(e.interaction_blocked() && e.document.look.is_some()));
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| e.document.look.is_none());
         app.read(|e| {
@@ -377,11 +383,11 @@ fn document_transition_retires_look_but_keeps_session_comparison_assets() {
         let operation = app.read(|e| e.document_pending);
         app.read(|e| {
             assert_eq!(e.document_pending, operation);
-            assert!(e.busy);
+            assert!(e.interaction_blocked());
             assert_eq!(e.document.state.project.output.lut, Some(previous.clone()));
         });
         drop(hold);
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| !e.interaction_blocked());
         app.read(|e| {
             assert!(e.document.state.project.output.lut.is_none());
             assert_eq!(e.look.loaded, vec![previous]);
@@ -484,12 +490,12 @@ fn unavailable_look_service_restores_idle_feedback_without_changing_the_project(
     with_application(e, |app| {
         app.enter(|e, access| {
             e.select_look(Source::Loaded(asset(0.4)), access);
-            assert!(e.busy && e.document.look.as_ref().unwrap().task.is_some());
+            assert!(e.interaction_blocked() && e.document.look.as_ref().unwrap().task.is_some());
         });
-        app.run_until(Duration::from_secs(5), |e| !e.busy);
+        app.run_until(Duration::from_secs(5), |e| !e.interaction_blocked());
         app.read(|e| {
             assert_eq!(e.document.state.project, before);
-            assert!(!e.busy && e.tasks.view().is_none());
+            assert!(!e.interaction_blocked() && e.activities.view().is_none());
             assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Look);
         });
     });
@@ -545,7 +551,7 @@ fn opening_either_oversized_colour_slot_preserves_the_current_document() {
         with_application(e, |app| {
             app.enter(|e, cx| e.start_document(Preparation::Open(path), cx));
             app.run_until(Duration::from_secs(15), |e| {
-                !e.busy && e.document_pending.is_none()
+                !e.interaction_blocked() && e.document_pending.is_none()
             });
             app.read(|e| {
                 assert_eq!(e.document.state.project, before);

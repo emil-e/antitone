@@ -159,10 +159,12 @@ fn authored_gpu_export_worker_preserves_snapshots_files_and_operation_identity_w
             let path = directory.path().join(name);
             editor = wait(editor, |editor, cx| {
                 editor.export(path.clone(), format, Overwrite::Refuse, cx);
-                assert!(editor.busy && editor.document.export.operation.is_some());
+                assert!(editor.interaction_blocked() && editor.document.export.operation.is_some());
             });
             assert!(editor.failure.is_none(), "{}", editor.status);
-            assert!(editor.document.export.operation.is_none() && editor.tasks.view().is_none());
+            assert!(
+                editor.document.export.operation.is_none() && editor.activities.view().is_none()
+            );
             match format {
                 OutputFormat::Tiff(target) => {
                     let mut decoder = Decoder::new(std::fs::File::open(&path).unwrap()).unwrap();

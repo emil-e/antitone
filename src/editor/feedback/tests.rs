@@ -15,7 +15,7 @@ fn save_failure_survives_status_updates_and_acknowledgement_preserves_the_pendin
                 Some(Transition::Close),
                 cx,
             );
-            assert!(editor.busy && editor.document_pending.is_some());
+            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
             let id = editor.document_pending.unwrap();
             editor.save_result(id, Err("permission denied".into()), cx);
             assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Save);
@@ -83,7 +83,7 @@ fn unavailable_export_services_report_failure_and_keep_accepted_state() {
                 "Export services unavailable"
             );
             assert!(
-                !editor.busy
+                !editor.interaction_blocked()
                     && editor.document_pending.is_none()
                     && editor.document_failure.is_none()
             );
@@ -123,7 +123,11 @@ fn unavailable_reference_preparation_restores_working_context_and_preserves_fail
         editor.failure.as_ref().unwrap().kind,
         FailureKind::FlatReference
     );
-    assert!(!editor.busy && editor.document_pending.is_none() && editor.document_failure.is_none());
+    assert!(
+        !editor.interaction_blocked()
+            && editor.document_pending.is_none()
+            && editor.document_failure.is_none()
+    );
     assert!(editor.document.flat_edit().is_none() && editor.test_pick().is_none());
     assert_eq!(editor.document.visit.view, visit);
     assert_eq!(
@@ -151,7 +155,7 @@ fn matching_save_success_resolves_the_failure_but_starting_a_retry_does_not() {
                 Some(Transition::Close),
                 cx,
             );
-            assert!(editor.busy && editor.document_pending.is_some());
+            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
             assert!(editor.failure.is_some());
             let id = editor.document_pending.unwrap();
             editor.save_result(id, Ok(Box::new(editor.document.capture())), cx);
@@ -175,17 +179,17 @@ fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
                 ),
                 cx,
             );
-            assert!(editor.busy && editor.document_pending.is_some());
+            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
             let id = editor.document_pending.unwrap();
             editor.document_prepared(id + 1, Err("stale correction".into()));
-            assert!(editor.failure.is_none() && editor.busy);
+            assert!(editor.failure.is_none() && editor.interaction_blocked());
             editor.document_prepared(id, Err("unsupported GPU range".into()));
             assert_eq!(
                 editor.failure.as_ref().unwrap().kind,
                 FailureKind::FlatCorrection
             );
             assert_eq!(editor.document.state.project, before);
-            assert!(!editor.busy);
+            assert!(editor.document_pending.is_none());
             editor.resolve_failure(FailureKind::Export);
             assert_eq!(
                 editor.failure.as_ref().unwrap().details,
@@ -198,7 +202,7 @@ fn stale_and_unrelated_results_do_not_retire_classified_correction_failures() {
                 ),
                 cx,
             );
-            assert!(editor.busy && editor.document_pending.is_some());
+            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
             let id = editor.document_pending.unwrap();
             editor.document_prepared(
                 id,
@@ -239,7 +243,7 @@ fn rejected_support_preserves_region_and_grade_until_matching_resolution() {
     assert_eq!(failure.presentation().severity, Severity::Warning);
     assert_eq!(editor.test_pick_region(), region);
     assert_eq!(editor.document.state.project, before);
-    assert!(!editor.busy && editor.document_pending.is_none());
+    assert!(!editor.interaction_blocked() && editor.document_pending.is_none());
     assert!(
         editor.document.flat_edit().unwrap().task.is_none() && editor.document_pending.is_none()
     );

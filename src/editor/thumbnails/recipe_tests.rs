@@ -348,7 +348,7 @@ fn grading_keeps_the_previous_card_visible_and_replacement_does_not_accumulate_v
     editor.load_input(editor.document.state.project.input);
     editor.document.visit.current_source = Some(id);
     // Hold asynchronous replacement so the composed filmstrip must use existing pixels.
-    editor.busy = true;
+    editor.set_test_busy(true);
     let context = egui::Context::default();
     context.enable_accesskit();
     let frame = |editor: &mut Editor| {

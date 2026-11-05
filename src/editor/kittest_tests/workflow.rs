@@ -31,7 +31,9 @@ pub(super) fn calibrated_workflow<R>(
     std::fs::copy(fixture("roll-0.dng"), &photo).unwrap();
     editor_harness(|mut harness, capture| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng"), dmax, photo], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -51,7 +53,7 @@ pub(super) fn calibrated_workflow<R>(
         ] {
             harness.get_by_label(name).click();
             harness.step();
-            wait_for(&mut harness, |e| !e.busy);
+            wait_for(&mut harness, |e| !e.document.visit.source.pending());
             harness.read(|editor| {
                 assert_eq!(
                     editor
@@ -97,7 +99,9 @@ pub(super) fn calibrated_workflow<R>(
             harness.step();
             harness.get_by_label("Apply").click();
             harness.step();
-            wait_for(&mut harness, |e| !e.busy);
+            wait_for(&mut harness, |e| {
+                !e.interaction_blocked() && !e.document.visit.source.pending()
+            });
             harness.read(|editor| assert!(editor.test_pick().is_none()));
             let measured = harness.read(|editor| {
                 if expected == 3000. {
@@ -119,7 +123,7 @@ pub(super) fn calibrated_workflow<R>(
         harness.read(|editor| assert!(editor.calibration().is_some()));
         harness.get_by_label("working-photo.dng").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.document.visit.source.pending());
         harness.read(|editor| {
             assert_eq!(
                 editor
@@ -226,7 +230,9 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
     editor_harness_with_thumbnails(true, |mut harness, capture| {
         let wb = crate::project::UNITY_WB;
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -258,7 +264,9 @@ fn uncalibrated_source_working_view_uses_saved_roll_wb_in_both_targets_without_i
         harness.update(|editor| *editor.document = saved);
         let project = harness.read(|editor| editor.document.state.project.clone());
         open_project(&mut harness, path);
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert_eq!(editor.document.state.project, project));
         harness.read(|editor| assert!(editor.document.source));
         harness.read(|editor| assert!(editor.calibration().is_none()));
@@ -510,7 +518,9 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         );
         harness.get_by_label("Cancel").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.read(|editor| {
             assert_eq!(
@@ -541,7 +551,9 @@ fn calibration_grade_source_inspection_and_native_pixel_picker_exit_use_widgets(
         );
         harness.get_by_label("patches.dng").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && !e.document.visit.source.pending()
+        });
         let reference = harness.read(|editor| {
             let reference = editor.document.find_source(&fixture("patches.dng"));
             assert_eq!(editor.document.visit.current_source, reference);

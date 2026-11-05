@@ -138,10 +138,10 @@ fn reframe_crop(
 
 impl Editor {
     pub(super) fn begin_crop(&mut self) {
-        let Some(ready) = &self.document.visit.canvas.ready else {
+        let Some(area) = self.selected_area() else {
             return;
         };
-        let base = self.normal_canvas_composition(ready.area);
+        let base = self.normal_canvas_composition(area);
         if self.activate_tool(tool::Placement::Photo, Box::new(CropTool::new(base))) {
             self.status = "Crop draft; changes are not applied".into();
         }
@@ -543,16 +543,7 @@ impl tool::Tool for CropTool {
             fit_label: "Fit source",
         }
     }
-    fn activity(&self, editor: &Editor) -> Option<TaskRequest> {
-        self.auto_crop_task
-            .as_ref()
-            .filter(|task| !task.is_finished())?;
-        editor
-            .document
-            .spatial_preparing
-            .as_ref()
-            .map(|work| TaskRequest::Regions(work.id))
-    }
+
     fn composition(&self, base: Composition) -> Composition {
         base.cropped(self.edit.borrow().draft)
             .expect("valid Crop draft")

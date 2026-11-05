@@ -311,7 +311,7 @@ fn unavailable_analysis_device_tears_down_review_and_restore_working_photo() {
                 .clone();
             editor.select_roll_photo(1, egui::Modifiers::NONE, cx);
             let record = editor.document.state.project.source(other).unwrap().clone();
-            editor.document.visit.canvas.ready = Some(Ready {
+            let ready = Ready {
                 reference: None,
                 developed: crate::editor::tests::developed_fixture(),
                 file: thumbnails::FileKey::new(&record.path),
@@ -321,8 +321,8 @@ fn unavailable_analysis_device_tears_down_review_and_restore_working_photo() {
                 analysis_support: None,
                 proxy,
                 record,
-            });
-            editor.busy = false;
+            };
+            editor.source_result(editor.document.visit.view, Ok(Box::new(ready)));
             editor.confirm_analysis_review(cx);
             assert!(editor.analysis_fitting());
             (before, first, other)
@@ -410,7 +410,7 @@ fn preparation_cancellation_and_failed_work_preserve_grade_and_areas() {
                 editor.prepare_analysis_review(request, cx);
                 if !fail {
                     editor.cancel_analysis();
-                    assert!(editor.busy);
+                    assert!(editor.interaction_blocked());
                 }
                 reply
                     .result
@@ -427,7 +427,9 @@ fn preparation_cancellation_and_failed_work_preserve_grade_and_areas() {
                 editor.document.analysis_operation().is_none()
             });
             app.read(|editor| {
-                assert!(editor.document.analysis_review().is_none() && !editor.busy);
+                assert!(
+                    editor.document.analysis_review().is_none() && !editor.interaction_blocked()
+                );
                 assert_eq!(editor.document.state.project, before);
                 assert!(
                     editor

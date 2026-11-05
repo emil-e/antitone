@@ -68,7 +68,9 @@ fn bw_negative_and_paper_select_independently_and_other_families_stay_reachable(
         let path = directory.path().join("bw-negative-and-paper.antitone");
         let selected = h.read(|e| e.document.project.output.film_and_paper.clone().unwrap());
         h.enter(|e, cx| e.save_project(path.clone(), crate::project::Save::New, None, cx));
-        wait_for(&mut h, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut h, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         h.read(|e| assert!(e.failure.is_none() && !e.document.dirty()));
         assert_eq!(
             crate::project::Project::load(&path)

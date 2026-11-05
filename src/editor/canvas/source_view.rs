@@ -86,7 +86,7 @@ impl SourceView {
                 source: self.source().expect("prepared source"),
             },
         );
-        if !editor.busy
+        if !editor.interaction_blocked()
             && let Some(services) = services
         {
             self.original.request_with(

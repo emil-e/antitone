@@ -314,7 +314,8 @@ fn camera_limited_picture_metadata_is_a_usable_visible_crop_without_four_measure
 }
 
 #[test]
-fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_preparation() {
+fn an_internal_captured_write_preserves_the_independent_region_producer_while_ui_save_is_modal_blocked()
+ {
     let (scheduler, starts, release) = paused();
     let mut editor = fixture(scheduler.clone());
     let dir = tempfile::tempdir().unwrap();
@@ -326,7 +327,15 @@ fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_prepara
             editor.review_crop_proposals(editor.document.project.order.clone(), "Whole roll", cx)
         });
         await_native(app, &starts);
-        let request = app.read(|editor| editor.document.spatial_preparing.as_ref().unwrap().id);
+        let request = app.read(|editor| {
+            editor
+                .document
+                .spatial_preparing
+                .as_ref()
+                .unwrap()
+                .activity
+                .clone()
+        });
         app.read(|editor| {
             use crate::platform::menu::Action;
             let state = editor.application_menu_state();
@@ -354,7 +363,7 @@ fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_prepara
                 "retiring the tool leaves the independent producer alive"
             );
             assert!(
-                editor
+                !editor
                     .application_menu_state()
                     .enabled(crate::platform::menu::Action::Save)
             );
@@ -363,22 +372,27 @@ fn a_real_save_captures_only_ready_regions_and_does_not_retire_in_flight_prepara
             })
             .unwrap()
         });
-        app.update(|editor| {
-            crate::platform::host::App::menu_action(editor, crate::platform::menu::Action::Save)
+        app.enter(|editor, cx| {
+            editor.start_save(
+                crate::editor::document::Write {
+                    document: editor.document.capture(),
+                    path: path.clone(),
+                    policy: Save::Replace,
+                },
+                cx,
+            );
+            assert!(editor.document_pending.is_some());
         });
         let context = egui::Context::default();
         crate::editor::tests::app_frame(app, &context, vec![]);
         crate::editor::tests::app_frame(app, &context, vec![]);
-        assert!(
-            app.read(|editor| editor.document_pending.is_some()),
-            "normal Save command must dispatch while regions are preparing"
-        );
+
         assert!(app.read(|editor| {
             editor
                 .document
                 .spatial_preparing
                 .as_ref()
-                .is_some_and(|p| p.id == request)
+                .is_some_and(|p| p.activity == request)
         }));
         release.send(()).unwrap();
         app.run_until(LIMIT, |editor| {

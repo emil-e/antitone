@@ -2,7 +2,7 @@
 mod tests;
 
 use super::{
-    Editor, FailureKind, Task, TaskRequest, UiContext,
+    ActivityOptions, Editor, FailureKind, UiContext,
     document::{Document, Write},
 };
 
@@ -21,7 +21,9 @@ impl Editor {
         self.document.history.finish_group();
         self.history_pending = None;
         let id = self.begin_document_operation(false);
-        self.tasks.begin(Task::Save(id));
+        let activity = self
+            .activities
+            .start(ActivityOptions::new("Saving project…").modal());
         self.document_failure = Some(FailureKind::Save);
         self.new_project_pending = false;
         let device = self
@@ -36,6 +38,7 @@ impl Editor {
                     .and_then(|result| result.map(Box::new).map_err(|error| error.to_string())),
                 None => Err("Document services unavailable".into()),
             };
+            drop(activity);
             cx.update(|editor| {
                 editor.save_result(id, result, &cx);
                 editor.acquire_working(&cx);
@@ -59,10 +62,10 @@ impl Editor {
         self.document.write = State::default();
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
-        self.tasks.finish(TaskRequest::Document(id));
+
         self.document_pending = None;
         self.document_failure = None;
-        self.busy = false;
+
         self.resume_source_after_document();
         match result {
             Ok(document) => {
@@ -80,11 +83,7 @@ impl Editor {
                 self.report_failure(FailureKind::Save, error);
             }
         }
-        if self.document_pending.is_none()
-            && let Some(pending) = self.document.spatial_preparing.as_ref()
-        {
-            self.tasks.begin(Task::Regions(pending.id));
-            self.busy = true;
+        if self.document_pending.is_none() && self.document.spatial_preparing.is_some() {
             self.status = "Preparing film and picture regions…".into();
         } else {
             self.resume_region_actions();

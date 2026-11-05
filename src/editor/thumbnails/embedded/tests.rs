@@ -488,7 +488,7 @@ fn camera_images_and_badges_fit_polished_wells_and_clip_without_squeezing_or_hid
             for width in [700., 1100.] {
                 let mut editor = crate::editor::tests::fixture();
                 *editor.document = fixture();
-                editor.busy = true;
+                editor.set_test_busy(true);
                 editor.preferences.filmstrip_height = height;
                 let before = editor.document.state.project.clone();
                 let context = egui::Context::default();
@@ -687,7 +687,7 @@ fn sufficient_camera_preview_and_developed_card_have_matching_display_size() {
             *editor.document = fixture();
             editor.document.state.project.order.truncate(1);
             editor.preferences.filmstrip_height = height;
-            editor.busy = true;
+            editor.set_test_busy(true);
             let key = key(&editor.document, editor.document.state.project.order[0]);
             let context = egui::Context::default();
             context.set_pixels_per_point(scale);

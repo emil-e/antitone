@@ -5,13 +5,14 @@ fn independent_halation_controls_persist_render_and_undo_at_both_display_scales(
     editor_harness_with_gpu(true, |mut h, _, _, _| {
         h.enter(|editor, cx| editor.add_raws(vec![fixture("roll-0.dng")], cx));
         wait_for(&mut h, |e| {
-            !e.busy && e.document.visit.canvas.ready.is_some()
+            !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
         });
         stage(&mut h, "Rendering");
         assert!(h.query_by_label("Enable halation").is_none());
         h.enter(|e, cx| e.apply_input(crate::processing::InputSettings::Digital, cx));
         wait_for(&mut h, |e| {
-            !e.busy && e.document.input == crate::processing::InputSettings::Digital
+            !e.interaction_blocked()
+                && e.document.input == crate::processing::InputSettings::Digital
         });
         h.update(|e| {
             e.document.source = false;
@@ -104,7 +105,7 @@ fn independent_halation_controls_persist_render_and_undo_at_both_display_scales(
                 assert_eq!(e.document.halation.strength, 0.37);
             });
             h.enter(|e, cx| e.restore_history(super::super::history::Direction::Undo, cx));
-            wait_for(&mut h, |e| !e.busy);
+            wait_for(&mut h, |e| !e.interaction_blocked());
             h.read(|e| {
                 assert!(e.document.halation.enabled);
                 assert_eq!(e.document.halation.size, 0.103);

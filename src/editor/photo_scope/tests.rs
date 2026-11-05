@@ -119,7 +119,7 @@ fn rejected_navigation_keeps_the_current_visit_and_its_measurement() {
         app.read(|editor| {
             assert_eq!(editor.document.visit.view, view);
             assert!(editor.measurement_pending());
-            assert!(editor.busy);
+            assert!(editor.interaction_blocked());
             assert_eq!(editor.id, view);
             assert_eq!(
                 editor.document.visit.canvas.ready.as_ref().unwrap().path,
@@ -217,14 +217,17 @@ fn revisiting_the_same_source_does_not_restore_its_departed_measurement() {
             assert!(!editor.measurement_pending());
             assert!(editor.document.visit.source.pending());
             assert_eq!(editor.document.state.project, project);
-            assert!(editor.busy, "the new visit still owns its source load");
+            assert!(
+                !editor.interaction_blocked(),
+                "source loading does not block the new visit"
+            );
         });
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(5), |editor| {
             !editor.document.visit.source.pending()
         });
         app.read(|editor| {
-            assert!(!editor.busy);
+            assert!(!editor.interaction_blocked());
             assert!(!editor.measurement_pending());
             assert_eq!(editor.document.state.project, project);
         });
@@ -279,7 +282,7 @@ fn successful_source_revisit_cannot_restore_departed_measurement_results() {
             assert!(!editor.measurement_pending());
             assert_eq!(editor.document.state.project, project);
             // A cache hit can finish before the paused measurement pool is released.
-            assert_eq!(editor.busy, editor.document.visit.source.pending());
+            assert!(!editor.interaction_blocked());
             if !editor.document.visit.source.pending() {
                 let ready = editor
                     .document
@@ -363,13 +366,15 @@ fn leaving_a_visit_retires_its_real_measurement_without_releasing_running_inputs
             );
             std::thread::sleep(Duration::from_millis(1));
         }
-        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.interaction_blocked()
+        });
         app.read(|editor| {
             assert!(!editor.measurement_pending());
             assert!(editor.test_pick().is_none());
             assert!(!editor.document.visit.source.pending());
             assert!(editor.document.visit.canvas.ready.is_none());
-            assert!(editor.tasks.view().is_none());
+            assert!(editor.activities.view().is_none());
             assert_eq!(editor.document.state.project, before);
         });
     });

@@ -1036,7 +1036,7 @@ fn visible_jobs_remain_suspended_for_foreground_and_reference_work() {
         let (commands, requests) = mpsc::channel();
         editor.document.thumbnails.services = Some(Services::Controlled(commands));
         match suspension {
-            "busy" => editor.busy = true,
+            "busy" => editor.set_test_busy(true),
             "pick" => picking::preview(&mut editor, super::super::Pick::Dmin.display()),
             "document" => editor.document_pending = Some(0),
             _ => unreachable!(),
@@ -1418,7 +1418,7 @@ fn blocked_new_admission_preserves_the_existing_current_visible_ticket() {
         });
         let submitted = take_submission(app, &requests);
         app.enter(|e, cx| {
-            e.busy = true;
+            e.set_test_busy(true);
             e.advance_thumbnail_demand(cx);
         });
         app.pump();

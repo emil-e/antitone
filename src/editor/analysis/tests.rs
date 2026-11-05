@@ -209,7 +209,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         let incompatible = editor.document.state.project.clone();
         editor = wait_with_limit(editor, Duration::from_secs(60), |e, cx| {
             e.begin_analysis(cx);
-            assert!(e.busy && e.analysis_fitting());
+            assert!(e.interaction_blocked() && e.analysis_fitting());
         });
         assert!(editor.status.contains("failed"), "{}", editor.status);
         assert_eq!(editor.document.state.project, incompatible);
@@ -223,11 +223,11 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         let before_cancel = editor.document.state.project.clone();
         editor = wait_with_limit(editor, Duration::from_secs(60), |e, cx| {
             e.begin_analysis(cx);
-            assert!(e.analysis_fitting() && e.busy);
+            assert!(e.analysis_fitting() && e.interaction_blocked());
             e.cancel_analysis();
         });
         assert!(!editor.analysis_fitting());
-        assert!(!editor.busy);
+        assert!(!editor.interaction_blocked());
         assert_eq!(editor.status, "Analysis cancelled");
         assert_eq!(editor.document.state.project, before_cancel);
         assert!(editor.document.visit.canvas.ready.is_some());
@@ -397,7 +397,7 @@ fn one_complete_reply_reinitializes_all_grades_including_authored_zero_preservin
         false,
         &crate::application::UiContext::render_only(),
     );
-    assert!(!editor.busy && !editor.analysis_fitting());
+    assert!(!editor.interaction_blocked() && !editor.analysis_fitting());
     assert_eq!(editor.dmin().unwrap(), DVec3::new(0.8, 0.4, 0.2));
     assert_eq!(editor.dmax().unwrap(), DVec3::new(0.04, 0.02, 0.01));
     assert_eq!(editor.document.roll.exposure, 2.1);
@@ -539,7 +539,7 @@ fn failure_cancel_and_invalid_gpu_combination_preserve_all_processing_state() {
                 .adjustment
                 .photo
         );
-        assert!(!editor.busy);
+        assert!(!editor.interaction_blocked());
     }
 }
 
@@ -883,7 +883,7 @@ fn click_analyze(editor: Editor, limit: Duration) -> Editor {
         click_label(&mut app, &ctx, "Analyze roll");
         assert!(app.read(|e| e.analysis_fitting()));
         app.run_until(limit, |e| {
-            !e.analysis_fitting() && !e.document.visit.source.pending() && !e.busy
+            !e.analysis_fitting() && !e.document.visit.source.pending() && !e.interaction_blocked()
         });
         app.close_execution();
     }
@@ -1044,7 +1044,7 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
             assert!(!editor.analysis_fitting());
             assert!(editor.document.spatial_preparing.is_none());
             assert!(!editor.analysis_preparing());
-            assert!(editor.tasks.view().is_none());
+
             assert_eq!(editor.document.state.project, before);
             assert!(
                 editor.document.visit.canvas.original.wanted == signature,
@@ -1067,6 +1067,8 @@ fn escape_cancels_preparation_without_invalidating_original_comparison_or_grade(
                 &image
             ));
         });
+        app.pump();
+        app.read(|editor| assert!(editor.activities.view().is_none()));
     });
 }
 

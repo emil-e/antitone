@@ -5,6 +5,15 @@ use crate::project::Development;
 mod viewer;
 mod workspace;
 
+impl Editor {
+    pub(in crate::editor) fn set_test_busy(&mut self, busy: bool) {
+        self.fixture_activity = busy.then(|| {
+            self.activities
+                .start(ActivityOptions::new("Working…").modal())
+        });
+    }
+}
+
 pub(super) fn dng_with_red_as_shot(bytes: &[u8]) -> Vec<u8> {
     let mut changed = bytes.to_vec();
     assert_eq!(&changed[..2], b"II");
@@ -144,7 +153,7 @@ pub(super) fn complete_reference_operation(
         let mut app = crate::application::test_support::TestApplication::new(&owner, || {});
         app.enter(start);
         app.run_until(timeout, |editor| {
-            !editor.busy && editor.document_pending.is_none()
+            !editor.interaction_blocked() && editor.document_pending.is_none()
         });
         app.close_execution();
     }
@@ -178,7 +187,7 @@ pub(super) fn complete_analysis_operation(
                 && !editor.analysis_preparing()
                 && !editor.analysis_fitting()
                 && !editor.document.visit.source.pending()
-                && !editor.busy
+                && !editor.interaction_blocked()
         });
         app.close_execution();
     }
@@ -331,7 +340,6 @@ fn fit_reference_and_picker_actions_stay_inside_the_visible_viewer() {
                         view: Default::default(),
                         region: None,
                         task: None,
-                        activity: None,
                     }));
                 } else {
                     picking::preview(&mut editor, calibration::DMIN);
@@ -659,7 +667,7 @@ fn rejected_reference_and_cancel_restore_view_without_changing_processing() {
         );
         editor.finish_pick(&crate::application::UiContext::render_only());
         assert!(!editor.document.source);
-        assert!(!editor.busy);
+        assert!(!editor.interaction_blocked());
         assert!(editor.test_pick().is_none());
         assert!(editor.test_pick_region().is_none());
         assert_eq!(
@@ -728,10 +736,10 @@ fn completing_initial_calibration_leaves_forced_source_view_but_preserves_explic
                     initial_source.is_some() || index == 1
                 );
                 assert!(
-                    editor.test_pick().is_none() && !editor.busy,
+                    editor.test_pick().is_none() && !editor.interaction_blocked(),
                     "pick={:?} busy={} status={}",
                     editor.test_pick(),
-                    editor.busy,
+                    editor.interaction_blocked(),
                     editor.status
                 );
                 assert_eq!(
@@ -785,7 +793,11 @@ fn rejected_or_cancelled_initial_reference_picks_keep_forced_source_view_and_cal
             );
             editor.finish_pick(&crate::application::UiContext::render_only());
             assert!(editor.document.source);
-            assert!(editor.test_pick().is_none() && !editor.busy && editor.calibration().is_none());
+            assert!(
+                editor.test_pick().is_none()
+                    && !editor.interaction_blocked()
+                    && editor.calibration().is_none()
+            );
             assert_eq!(
                 (
                     editor.dmin(),
@@ -912,7 +924,7 @@ fn closed_application_does_not_leave_a_pick_busy() {
         app.enter(|editor, access| {
             editor.set_test_pick_region(Some(patch()));
             editor.apply_pick(access);
-            assert!(!editor.busy);
+            assert!(!editor.interaction_blocked());
             assert!(editor.status.contains("stopped"));
             assert!(!editor.document.source);
         });
@@ -999,7 +1011,6 @@ pub(super) fn paused_reference_fixture(
         view,
         region: region.map(Coverage::rectangle),
         task: None,
-        activity: None,
     }));
 }
 
@@ -1080,30 +1091,33 @@ pub(super) fn add_ready_fixture(editor: &mut Editor) {
 
 #[test]
 fn startup_typography_preserves_an_already_completed_source_failure() {
-    let mut editor = fixture();
+    let editor = fixture();
     let context = egui::Context::default();
     context.options_mut(|options| options.max_passes = std::num::NonZeroUsize::new(1).unwrap());
-    editor.busy = true;
-    editor.status = "Loading source".into();
-    editor.source_result(editor.id, Err("Source unavailable".into()));
+    crate::application::test_support::with_application(editor, |app| {
+        app.enter(|editor, cx| {
+            editor.load("unavailable.ARW".into(), cx);
+            editor.source_result(editor.id, Err("Source unavailable".into()));
 
-    for initializing in [true, false] {
-        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
-            editor.ui(ui);
+            for initializing in [true, false] {
+                let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                    editor.ui(ui);
+                });
+                output.textures_delta.clear();
+                assert!(editor.started);
+                assert!(!editor.interaction_blocked());
+                assert_eq!(editor.status, "Source unavailable");
+                if initializing {
+                    assert!(
+                        output.viewport_output[&egui::ViewportId::ROOT]
+                            .commands
+                            .iter()
+                            .any(|command| matches!(command, egui::ViewportCommand::InnerSize(_)))
+                    );
+                }
+            }
         });
-        output.textures_delta.clear();
-        assert!(editor.started);
-        assert!(!editor.busy);
-        assert_eq!(editor.status, "Source unavailable");
-        if initializing {
-            assert!(
-                output.viewport_output[&egui::ViewportId::ROOT]
-                    .commands
-                    .iter()
-                    .any(|command| matches!(command, egui::ViewportCommand::InnerSize(_)))
-            );
-        }
-    }
+    });
 }
 
 pub(super) fn app_frame(
@@ -2003,7 +2017,7 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
             }
         )]
     );
-    editor.busy = false;
+    editor.set_test_busy(false);
     let id = editor.document.visit.current_source.unwrap();
     let mut layers = AdjustmentLayers::default();
     for exposure in [-16., 16.] {
@@ -2050,7 +2064,7 @@ fn export_owns_the_accepted_photo_snapshot_and_rejects_unpreviewable_locals() {
         &UiContext::render_only(),
     );
     assert!(editor.document.export.operation.is_none());
-    assert!(!editor.busy);
+    assert!(!editor.interaction_blocked());
     assert!(editor.status.contains(&rejection), "{}", editor.status);
 }
 
@@ -2215,7 +2229,7 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
                 ),
                 expected
             );
-            editor.busy = true;
+            editor.set_test_busy(true);
             click_section_button(&mut editor, &context, section, label);
             assert_eq!(
                 (
@@ -2224,7 +2238,7 @@ fn flip_buttons_are_repeatable_scoped_actions_and_disabled_when_busy_or_picking(
                 ),
                 expected
             );
-            editor.busy = false;
+            editor.set_test_busy(false);
             editor.preview_picker(Pick::Wb);
             click_section_button(&mut editor, &context, section, label);
             assert_eq!(
@@ -3085,10 +3099,10 @@ fn photographic_section_resets_are_scoped_and_disabled_while_busy() {
     let photo = editor.document.visit.adjustment_layer_settings;
     let roll = editor.document.roll;
     let calibration = (editor.dmin(), editor.dmax());
-    editor.busy = true;
+    editor.set_test_busy(true);
     click_section_reset(&mut editor, &context, "Contrast");
     assert_eq!(editor.document.visit.adjustment_layer_settings, photo);
-    editor.busy = false;
+    editor.set_test_busy(false);
     click_section_reset(&mut editor, &context, "Contrast");
     let defaults = AdjustmentLayerSettings::default();
     assert_eq!(

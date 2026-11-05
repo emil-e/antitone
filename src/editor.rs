@@ -52,7 +52,9 @@ use files::{FileAction, Transition};
 mod feedback;
 use feedback::{Failure, FailureKind};
 mod activity;
-use activity::{Task, TaskActivity, TaskProgress, TaskRequest};
+#[cfg(test)]
+use activity::Reporter as ActivityReporter;
+use activity::{Activities, Activity, Options as ActivityOptions};
 mod fullscreen;
 use fullscreen::FullscreenView;
 mod thumbnails;
@@ -71,6 +73,7 @@ use selected_preview::{SelectionPaint, SelectionTiming};
 mod scopes;
 use scopes::{Scopes, Slot as ScopeSlot};
 mod analysis;
+#[cfg(test)]
 use analysis::AnalyzeTool;
 mod dust;
 mod flat;
@@ -233,10 +236,11 @@ pub struct Editor {
     canvas_frame: canvas::Frame,
     // Running physical work outlives logical cancellation.
     id: u64,
-    busy: bool,
     look: look::Session,
     status: String,
-    tasks: TaskActivity,
+    activities: Activities,
+    #[cfg(test)]
+    fixture_activity: Option<Activity>,
     failure: Option<Failure>,
     document_failure: Option<FailureKind>,
 
@@ -268,6 +272,12 @@ pub struct Editor {
 }
 
 impl Editor {
+    fn interaction_blocked(&self) -> bool {
+        self.document_pending.is_some()
+            || self.document.look.is_some()
+            || self.activities.blocks_workspace()
+    }
+
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let submissions = crate::platform::SubmissionGate::default();
         let renderers = Arc::new(crate::renderer::RendererCache::new(submissions.clone()));
@@ -355,10 +365,11 @@ impl Editor {
             started: false,
             menus: menu::Menus::default(),
             id: 0,
-            busy: false,
             look: Default::default(),
             status: "Add scans to begin".into(),
-            tasks: TaskActivity::default(),
+            activities: Activities::default(),
+            #[cfg(test)]
+            fixture_activity: None,
             failure: None,
             document_failure: None,
 
@@ -887,7 +898,6 @@ impl Editor {
             .store(id, std::sync::atomic::Ordering::Relaxed);
         self.invalidate_original();
         self.document_pending = Some(id);
-        self.busy = true;
         self.status = "Preparing project…".into();
         id
     }
@@ -948,9 +958,11 @@ impl Editor {
         }
 
         let gamma_pending = self.document.gamma_pivot.pending();
-        let editable =
-            !self.busy && !self.tool_interacting() && !gamma_pending && self.document.input.ready();
-        let can_pick = self.tool_start_available() && self.document.visit.canvas.ready.is_some();
+        let editable = !self.interaction_blocked()
+            && !self.tool_interacting()
+            && !gamma_pending
+            && self.document.input.ready();
+        let can_pick = self.tool_start_available() && self.selected_area().is_some();
         let mut start_pick = None;
         let mut gamma_edited = false;
 
@@ -960,7 +972,7 @@ impl Editor {
                 if self.document.hosted_tool.occupied() {
                     self.hosted_drawer(ui, cx);
                 } else if self.tab == 1 {
-                    ui.add_enabled_ui(!self.busy, |ui| self.hosted_drawer(ui, cx));
+                    ui.add_enabled_ui(!self.interaction_blocked(), |ui| self.hosted_drawer(ui, cx));
                 }
                 if self.tab == 0 {
                     let displayed_input = self.gamma_pivot_input();
@@ -1091,7 +1103,7 @@ impl Editor {
                                         ui.add_enabled_ui(
                                             editable
                                                 || gamma_pending
-                                                    && !self.busy
+                                                    && !self.interaction_blocked()
                                                     && !self.tool_interacting(),
                                             |ui| {
                                                 controls::parameter(ui, Parameter::Gamma, gamma);
@@ -1205,7 +1217,7 @@ impl Editor {
                     }
                 } else {
                     if self.document.input.capabilities().grain {
-                        let allowed = !self.busy && !self.tool_interacting();
+                        let allowed = !self.interaction_blocked() && !self.tool_interacting();
                         ui.add_enabled_ui(allowed, |ui| {
                             presentation::section(
                                 ui,
@@ -1377,6 +1389,7 @@ impl host::App for Editor {
 
 impl Editor {
     fn draw_ui(&mut self, ui: &mut egui::Ui, cx: &UiContext<'_, Self>) {
+        self.activities.set_context(ui.ctx());
         if self.allow_close {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             return;

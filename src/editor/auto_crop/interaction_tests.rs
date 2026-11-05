@@ -27,12 +27,7 @@ fn retiring_batch_preparation_releases_its_owner_without_retiring_shared_work_or
                 if polled {
                     app.pump();
                 }
-                let successor = app.update(|editor| {
-                    editor.begin_crop();
-                    let state = editor.document.crop_state().unwrap();
-                    state.borrow_mut().draft.size = [17, 19];
-                    state
-                });
+                app.update(Editor::end_tool);
                 app.pump();
                 assert!(
                     old.upgrade().is_none(),
@@ -54,6 +49,12 @@ fn retiring_batch_preparation_releases_its_owner_without_retiring_shared_work_or
                     .unwrap();
                 app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
                 app.pump();
+                let successor = app.update(|editor| {
+                    editor.begin_crop();
+                    let state = editor.document.crop_state().unwrap();
+                    state.borrow_mut().draft.size = [17, 19];
+                    state
+                });
                 app.read(|editor| {
                     assert!(
                         editor.cropping(),
@@ -121,7 +122,7 @@ fn replacing_the_document_retires_a_preparing_batch_and_its_publication_rights()
                 app.pump();
             }
             app.enter(|editor, cx| editor.start_document(Preparation::New, cx));
-            app.run_until(LIMIT, |editor| !editor.busy);
+            app.run_until(LIMIT, |editor| !editor.interaction_blocked());
             assert!(state.upgrade().is_none());
             app.pump();
             assert!(reply.send(Ok(Some(Default::default()))).is_err());

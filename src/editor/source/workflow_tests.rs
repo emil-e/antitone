@@ -1,6 +1,144 @@
 use super::*;
 
 #[test]
+fn selected_photo_preparation_does_not_block_edits_and_publication_preserves_them() {
+    let (scheduler, starts, release) = paused();
+    let mut editor = editor(scheduler.clone());
+    editor.load_input(InputSettings::Digital);
+    editor.sync_document();
+    with_application(editor, |app| {
+        start(app);
+        await_native(app, &starts);
+        let (selected, orientation, crop) = app.enter(|editor, cx| {
+            assert!(editor.document.visit.source.pending());
+            assert!(editor.document.visit.canvas.ready.is_none());
+            assert!(!editor.interaction_blocked());
+            let selected = editor.document.visit.current_source.unwrap();
+            let menu = editor.application_menu_state();
+            for action in [
+                crate::platform::menu::Action::Export,
+                crate::platform::menu::Action::Fit,
+                crate::platform::menu::Action::ActualSize,
+                crate::platform::menu::Action::ZoomIn,
+                crate::platform::menu::Action::ZoomOut,
+            ] {
+                assert!(menu.enabled.contains(&action), "{action:?}");
+            }
+            editor.begin_linear_mask(None);
+            assert!(editor.has_hosted_tool());
+            editor.end_tool();
+            editor.begin_radial_mask(None);
+            assert!(editor.has_hosted_tool());
+            editor.end_tool();
+            editor.begin_dust_cleanup();
+            assert!(editor.dusting());
+            editor.end_tool();
+            let previous = editor.document.visit.photo_orientation;
+            editor.control_command(
+                crate::editor::editing::Command::Photo(
+                    crate::editor::editing::PhotoAction::TurnRight,
+                ),
+                cx,
+            );
+            assert_ne!(editor.document.visit.photo_orientation, previous);
+            let before = editor.history_snapshot();
+            editor.document.visit.adjustment_layer_settings.exposure = 0.75;
+            editor.record_edit(before, "Exposure", Some(selected));
+            editor.begin_crop();
+            let area = editor.selected_area().unwrap();
+            let mut crop = crate::crop::Crop::from_region(area);
+            crop.size[0] -= 8;
+            editor.document.crop_edit_mut().unwrap().draft = crop;
+            editor.dispatch_tool(crate::editor::tool::Action::Primary, cx);
+            assert!(!editor.cropping());
+            assert_eq!(editor.document.visit.crop, Some(crop));
+            (selected, editor.document.visit.photo_orientation, crop)
+        });
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.document.visit.source.pending()
+        });
+        app.read(|editor| {
+            assert!(editor.document.visit.canvas.ready.is_some());
+            assert_eq!(editor.document.visit.current_source, Some(selected));
+            assert_eq!(editor.document.visit.photo_orientation, orientation);
+            assert_eq!(editor.document.visit.crop, Some(crop));
+            assert_eq!(
+                editor.document.visit.adjustment_layer_settings.exposure,
+                0.75
+            );
+            let source = editor.document.project.source(selected).unwrap();
+            assert_eq!(source.orientation, orientation);
+            assert_eq!(source.crop, Some(crop));
+            assert_eq!(
+                source.adjustment_layers.as_ref().unwrap().layers[0]
+                    .adjustment
+                    .photo
+                    .exposure,
+                0.75
+            );
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
+fn a_picker_opened_during_photo_preparation_waits_for_its_captured_precise_input() {
+    let (scheduler, starts, release) = paused();
+    let mut editor = editor(scheduler.clone());
+    editor.load_input(InputSettings::negative(crate::processing::Calibration {
+        dmin: glam::DVec3::splat(0.7),
+        dmax: glam::DVec3::splat(0.01),
+        input_floor: crate::processing::CAMERA_INPUT_FLOOR,
+    }));
+    editor.sync_document();
+    with_application(editor, |app| {
+        start(app);
+        await_native(app, &starts);
+        let previous = app.enter(|editor, cx| {
+            assert!(!editor.interaction_blocked());
+            editor.begin_pick(crate::editor::Pick::Dmin, cx);
+            assert!(editor.picking());
+            editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
+                crate::raw::Rect {
+                    x: 24,
+                    y: 24,
+                    width: 16,
+                    height: 16,
+                },
+            )));
+            assert!(editor.submit_test_picker());
+            assert!(
+                editor.interaction_blocked(),
+                "measurement owns its modal; photo loading does not"
+            );
+            editor.dmin()
+        });
+        app.pump();
+        app.read(|editor| {
+            assert!(editor.measurement_pending());
+            assert_eq!(editor.dmin(), previous);
+            assert!(editor.document.visit.source.pending());
+        });
+        release.send(()).unwrap();
+        app.run_until(Duration::from_secs(15), |editor| {
+            !editor.picking() && !editor.document.visit.source.pending()
+        });
+        app.read(|editor| {
+            let actual = editor.dmin().unwrap();
+            assert!(
+                (actual - glam::DVec3::splat(3000. / 4031.))
+                    .abs()
+                    .max_element()
+                    < 1e-5
+            );
+            assert!(!editor.interaction_blocked());
+        });
+    });
+    scheduler.close_and_wait().unwrap();
+}
+
+#[test]
 fn unregistered_source_requests_defer_file_identity_until_preparation() {
     let editor = Editor::state();
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
@@ -123,12 +261,12 @@ fn retiring_source_ownership_does_not_clear_an_unrelated_document_activity() {
             editor.load("not-opened.dng".into(), cx);
             editor.start_document(Preparation::New, cx);
             let operation = editor.document_pending;
-            let activity = editor.tasks.view().unwrap().title;
+            let activity = editor.activities.view().unwrap().title;
             let view = editor.request_id();
             editor.replace_photo_scope(view);
-            assert!(editor.busy);
+            assert!(editor.interaction_blocked());
             assert_eq!(editor.document_pending, operation);
-            assert_eq!(editor.tasks.view().unwrap().title, activity);
+            assert_eq!(editor.activities.view().unwrap().title, activity);
         });
     });
 }
@@ -139,12 +277,14 @@ fn requested_source_becomes_ready_without_painting_and_preserves_authored_pixels
     let editor = editor(scheduler.clone());
     with_application(editor, |app| {
         start(app);
-        app.run_until(Duration::from_secs(15), |e| !e.busy);
+        app.run_until(Duration::from_secs(15), |e| {
+            !e.document.visit.source.pending()
+        });
         app.read(|e| {
             let ready = e.document.visit.canvas.ready.as_ref().unwrap();
             assert_eq!(ready.path, path());
             assert!(!e.document.visit.source.pending());
-            assert!(e.tasks.view().is_none());
+            assert!(e.activities.view().is_none());
             assert_eq!(e.document.cache.charges().retained, 0);
             let mut scan = crate::scan::Scan::from_source(ready.developed.clone());
             let value = scan
@@ -339,7 +479,9 @@ fn worker_closure_finishes_the_waiter_while_native_cleanup_continues() {
         start(app);
         await_native(app, &starts);
         scheduler.close();
-        app.run_until(Duration::from_secs(10), |e| !e.busy);
+        app.run_until(Duration::from_secs(10), |e| {
+            !e.document.visit.source.pending()
+        });
         assert!(app.read(|e| e.document.visit.canvas.ready.is_none()));
         let (entered, observed) = mpsc::channel();
         let probe = app
@@ -373,16 +515,18 @@ fn failed_candidate_keeps_pending_source_and_defers_its_completion_without_losin
                 cx,
             )
         });
-        assert!(app.read(|e| e.document_pending.is_some() && e.busy));
+        assert!(app.read(|e| e.document_pending.is_some() && e.interaction_blocked()));
         release.send(()).unwrap();
         app.run_until(Duration::from_secs(15), |e| {
-            e.document_pending.is_none() && !e.busy
+            e.document_pending.is_none()
+                && !e.interaction_blocked()
+                && !e.document.visit.source.pending()
         });
         app.read(|e| {
             assert_eq!(e.document.visit.view, view);
             assert!(e.document.visit.canvas.ready.is_some());
             assert_eq!(e.document.state.project, accepted);
-            assert!(e.tasks.view().is_none());
+            assert!(e.activities.view().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -405,19 +549,20 @@ fn typed_candidate_and_source_completions_preserve_the_visit_in_both_orders() {
                 if complete_first {
                     e.source_result(view, Ok(Box::new(ready.clone())));
                     assert!(e.document.visit.source.completion.is_some());
-                    assert!(e.document.visit.canvas.ready.is_none() && e.busy);
+                    assert!(e.document.visit.canvas.ready.is_none() && e.interaction_blocked());
                 }
                 e.document_prepared(operation, Err("candidate rejected".into()));
                 if !complete_first {
-                    assert!(e.busy && e.document.visit.source.pending());
+                    assert!(e.document.visit.source.pending());
                     e.source_result(view, Ok(Box::new(ready)));
                 }
                 assert_eq!(e.document.visit.view, view);
-                assert!(e.document.visit.canvas.ready.is_some() && e.tasks.view().is_none());
+                assert!(e.document.visit.canvas.ready.is_some() && e.document_pending.is_none());
                 assert_eq!(e.document.state.project, accepted);
                 assert!(e.status.contains("candidate rejected"));
             });
             app.pump();
+            app.read(|e| assert!(e.activities.view().is_none()));
         });
     }
 }
@@ -446,20 +591,21 @@ fn save_preserves_pending_visit_and_later_edits_in_both_completion_orders() {
                 if complete_first {
                     e.source_result(view, Ok(Box::new(ready.clone())));
                     assert!(e.document.visit.source.completion.is_some());
-                    assert!(e.document.visit.canvas.ready.is_none() && e.busy);
+                    assert!(e.document.visit.canvas.ready.is_none() && e.interaction_blocked());
                 }
                 e.save_result(operation, Ok(Box::new(saved)), cx);
                 if !complete_first {
-                    assert!(e.busy && e.document.visit.source.pending());
+                    assert!(e.document.visit.source.pending());
                     e.source_result(view, Ok(Box::new(ready)));
                 }
                 assert_eq!(e.document.visit.view, view);
-                assert!(e.document.visit.canvas.ready.is_some() && e.tasks.view().is_none());
+                assert!(e.document.visit.canvas.ready.is_some() && e.document_pending.is_none());
                 assert!(e.document.dirty());
                 assert_eq!(e.document.state.project.roll.exposure, 0.5);
                 assert_eq!(e.document.path.as_deref(), Some(path.as_path()));
             });
             app.pump();
+            app.read(|e| assert!(e.activities.view().is_none()));
         });
     }
 }
@@ -482,13 +628,13 @@ fn a_correction_preparation_retires_the_pending_visit_and_installs_its_product()
             )
         });
         let operation = app.read(|e| e.document_pending.unwrap());
-        assert!(app.read(|e| e.busy && e.document_pending.is_some()));
+        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
         // Release the held acquisition and let the correction's own development run.
         for _ in 0..8 {
             let _ = release.send(());
         }
         app.run_until(Duration::from_secs(30), |e| {
-            !e.busy && e.document_pending.is_none()
+            !e.interaction_blocked() && e.document_pending.is_none()
         });
         app.read(|e| {
             assert_eq!(e.id, operation);
@@ -516,7 +662,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         let store = app.read(|e| Arc::downgrade(&e.document.cache));
         app.enter(|e, cx| e.start_document(Preparation::New, cx));
         let operation = app.read(|e| e.document_pending.unwrap());
-        assert!(app.read(|e| e.busy && e.document_pending.is_some()));
+        assert!(app.read(|e| e.interaction_blocked() && e.document_pending.is_some()));
         app.update(|editor| {
             editor.document_prepared(
                 operation,
@@ -548,7 +694,7 @@ fn replacing_document_retires_pending_source_but_not_its_running_native_call() {
         app.read(|e| {
             assert!(e.document.state.project.sources.is_empty());
             assert!(e.document.visit.canvas.ready.is_none());
-            assert!(!e.busy && e.tasks.view().is_none());
+            assert!(!e.interaction_blocked() && e.activities.view().is_none());
         });
     });
     scheduler.close_and_wait().unwrap();

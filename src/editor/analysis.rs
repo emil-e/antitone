@@ -7,8 +7,9 @@ use crate::{
 };
 use futures_channel::oneshot;
 #[cfg(test)]
+use std::sync::Mutex;
+#[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{future::Future, sync::Mutex};
 
 use crate::roll_analysis::{self, FrameSamples, MAX_SAMPLES_PER_FRAME};
 
@@ -218,8 +219,8 @@ impl Editor {
         let reviewing = self.document.analysis_review().is_some();
         let analyzing = self.document.analysis_operation().is_some();
         let capabilities = self.document.input.capabilities();
-        let commands = !self.busy
-            && self.document.visit.canvas.ready.is_some()
+        let commands = !self.interaction_blocked()
+            && self.selected_area().is_some()
             && !self.tool_interacting()
             && !self.document.confirming();
         let mut analyze = false;
@@ -277,7 +278,7 @@ impl Editor {
                     "Prepare and review sampling areas, then estimate the roll's starting grade.",
                     analyzing,
                 )
-                .enabled(self.tool_start_available() && self.document.visit.canvas.ready.is_some())
+                .enabled(self.tool_start_available() && self.selected_area().is_some())
                 .show(ui)
                 .clicked()
                 {
@@ -317,8 +318,8 @@ impl Editor {
     }
 
     pub(super) fn analysis_request(&mut self) -> Option<Request> {
-        if self.busy
-            || self.document.visit.canvas.ready.is_none()
+        if self.interaction_blocked()
+            || self.selected_area().is_none()
             || self.document.project.order.is_empty()
         {
             return None;
@@ -434,7 +435,7 @@ impl AnalyzeTool {
         }
     }
     pub fn fitting(&self) -> bool {
-        matches!(self.operation.phase, Phase::Fitting(_))
+        matches!(self.operation.phase, Phase::Fitting)
     }
     fn observe_visit(&mut self, editor: &Editor) {
         if self.visit != Some(editor.document.visit.view) {
@@ -484,7 +485,7 @@ impl tool::Tool for AnalyzeTool {
             },
             primary: Some(tool::Primary {
                 label: "Analyze roll",
-                enabled: !editor.busy
+                enabled: !editor.interaction_blocked()
                     && !self.fitting()
                     && self.review.as_ref().is_some_and(|review| {
                         review
@@ -493,7 +494,7 @@ impl tool::Tool for AnalyzeTool {
                             .iter()
                             .all(|entry| entry.areas.ready())
                     })
-                    && editor.document.visit.canvas.ready.is_some(),
+                    && editor.selected_area().is_some(),
             }),
             dismiss: "Cancel",
             warning,
@@ -565,7 +566,7 @@ impl tool::Tool for AnalyzeTool {
                     navigation::navigate_view(viewport, canvas.ui, &response, layout, relayout);
                 if editor.fullscreen.is_none()
                     && canvas.ui.is_enabled()
-                    && !editor.busy
+                    && !editor.interaction_blocked()
                     && !panning
                     && !canvas.ui.input(|input| input.key_down(egui::Key::Space))
                 {
@@ -651,17 +652,6 @@ impl tool::Tool for AnalyzeTool {
             tool::Action::Dismiss => self.cancel(editor),
         }
     }
-    fn activity(&self, editor: &Editor) -> Option<TaskRequest> {
-        match self.operation.phase {
-            Phase::Preparing(id) | Phase::Fitting(id) => Some(TaskRequest::Analyze(id)),
-            Phase::Regions => editor
-                .document
-                .spatial_preparing
-                .as_ref()
-                .map(|pending| TaskRequest::Regions(pending.id)),
-            Phase::Review => None,
-        }
-    }
 }
 
 impl AnalyzeTool {
@@ -709,9 +699,9 @@ impl AnalyzeTool {
                 editor.status = "Analysis review cancelled; areas and grade unchanged".into();
                 editor.end_tool();
             }
-            Phase::Preparing(id) | Phase::Fitting(id) => {
+            Phase::Preparing | Phase::Fitting => {
                 self.operation.cancelled.cancel();
-                editor.tasks.cancelling(TaskRequest::Analyze(id));
+
                 editor.status = "Cancelling analysis…".into();
             }
         }
@@ -1000,7 +990,7 @@ impl AnalyzeTool {
         editor: &mut Editor,
         _cx: &UiContext<'_, Editor>,
     ) {
-        if editor.busy || editor.document.visit.canvas.ready.is_none() || self.fitting() {
+        if editor.interaction_blocked() || editor.selected_area().is_none() || self.fitting() {
             return;
         }
         editor.sync_document();
@@ -1357,14 +1347,17 @@ async fn prepare_review(
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Phase {
     Regions,
-    Preparing(u64),
+    Preparing,
     Review,
-    Fitting(u64),
+    Fitting,
 }
 
 pub(super) struct Operation {
     pub phase: Phase,
+
     pub cancelled: Cancellation,
+    #[cfg(test)]
+    pub activity: Option<ActivityReporter>,
     pub decision: Option<oneshot::Sender<Confirmation>>,
     pub task: Option<async_executor::Task<()>>,
 }
@@ -1373,7 +1366,10 @@ impl Operation {
     pub(super) fn new(phase: Phase) -> Self {
         Self {
             phase,
+
             cancelled: Cancellation::default(),
+            #[cfg(test)]
+            activity: None,
             decision: None,
             task: None,
         }
@@ -1387,8 +1383,8 @@ impl Drop for Operation {
 }
 
 struct FitInput {
-    id: u64,
-    source: source::Context,
+    activity: Activity,
+    source: std::pin::Pin<Box<dyn Future<Output = Result<source::Context, String>>>>,
     sources: Option<Arc<dyn SourceProvider>>,
     sampling_inputs: SamplingInputs,
     exposures: Arc<crate::exposure_metadata::Store>,
@@ -1400,49 +1396,14 @@ pub(super) struct Confirmation {
     fit: FitInput,
 }
 
-#[derive(Default)]
-struct Progress {
-    latest: Mutex<Option<(usize, usize)>>,
-    changed: event_listener::Event,
-}
-
-impl Progress {
-    fn report(&self, done: usize, total: usize) {
-        *self.latest.lock().unwrap() = Some((done, total));
-        self.changed.notify(usize::MAX);
-    }
-}
-
-async fn drive<T>(
-    work: impl Future<Output = Result<Option<T>, Error>>,
-    progress: Arc<Progress>,
-    cx: &UiContext<'_, Editor>,
-    id: u64,
-) -> Result<Option<T>, String> {
-    let reports = async {
-        loop {
-            let changed = progress.changed.listen();
-            let latest = progress.latest.lock().unwrap().take();
-            if let Some((done, total)) = latest {
-                cx.update(|editor| editor.analysis_progress(id, done, total));
-            }
-            changed.await;
-        }
-    };
-    futures_lite::future::or(work, reports)
-        .await
-        .map_err(|error| error.to_string())
-}
-
 async fn sampling_review(
     request: analysis::Request,
-    id: u64,
+    activity: Activity,
     device: Option<wgpu::Device>,
     cancelled: Cancellation,
     cx: UiContext<'_, Editor>,
 ) {
-    let progress = Arc::new(Progress::default());
-    let produced = progress.clone();
+    let produced = activity.reporter();
     let result = async {
         #[cfg(test)]
         if let Some(work) = cx
@@ -1452,24 +1413,19 @@ async fn sampling_review(
             return work(request.clone(), cancelled.clone()).await;
         }
         match device {
-            Some(device) => {
-                drive(
-                    prepare_review(
-                        request.clone(),
-                        device,
-                        cancelled.clone(),
-                        move |done, total| produced.report(done, total),
-                    ),
-                    progress,
-                    &cx,
-                    id,
-                )
-                .await
-            }
+            Some(device) => prepare_review(
+                request.clone(),
+                device,
+                cancelled.clone(),
+                move |done, total| produced.progress(done, total),
+            )
+            .await
+            .map_err(|error| error.to_string()),
             None => Err("GPU device unavailable".into()),
         }
     }
     .await;
+    drop(activity);
     let decision = cx
         .update(|editor| {
             editor.finish_analysis_work();
@@ -1507,14 +1463,13 @@ async fn fit_and_accept(
     cx: &UiContext<'_, Editor>,
 ) {
     let FitInput {
-        id,
+        activity,
         source: input,
         sources,
         sampling_inputs,
         exposures,
     } = fit;
-    let progress = Arc::new(Progress::default());
-    let produced = progress.clone();
+    let produced = activity.reporter();
     let result = async {
         #[cfg(test)]
         if let Some(work) = cx
@@ -1523,6 +1478,17 @@ async fn fit_and_accept(
         {
             return work(request.clone(), cancelled.clone()).await;
         }
+        let Some(input) = futures_lite::future::or(
+            async {
+                cancelled.wait().await;
+                Ok(None)
+            },
+            async { input.await.map(Some) },
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
         let sources = sources.ok_or("Source provider unavailable")?;
         let (device, queue, renderers) = cx
             .read(|editor| {
@@ -1545,22 +1511,20 @@ async fn fit_and_accept(
         let Some(state) = state else {
             return Ok(None);
         };
-        drive(
-            state.run(
+        state
+            .run(
                 sources,
                 sampling_inputs,
                 exposures,
                 cancelled.clone(),
-                move |done, total| produced.report(done, total),
-            ),
-            progress,
-            cx,
-            id,
-        )
-        .await
-        .map(|outcome| outcome.map(Box::new))
+                move |done, total| produced.progress(done, total),
+            )
+            .await
+            .map_err(|error| error.to_string())
+            .map(|outcome| outcome.map(Box::new))
     }
     .await;
+    drop(activity);
     cx.update(|editor| {
         editor.finish_analysis_work();
         editor.accept_analysis(&request, result, cancelled.is_cancelled(), cx);
@@ -1573,31 +1537,37 @@ impl Editor {
     pub(super) fn analysis_preparing(&self) -> bool {
         self.document
             .analysis_operation()
-            .is_some_and(|op| matches!(op.phase, Phase::Preparing(_)))
+            .is_some_and(|op| matches!(op.phase, Phase::Preparing))
     }
 
     pub(super) fn analysis_fitting(&self) -> bool {
         self.document
             .analysis_operation()
-            .is_some_and(|op| matches!(op.phase, Phase::Fitting(_)))
+            .is_some_and(|op| matches!(op.phase, Phase::Fitting))
     }
 
-    pub(super) fn analysis_work_id(&self) -> Option<u64> {
-        match self.document.analysis_operation()?.phase {
-            Phase::Preparing(id) | Phase::Fitting(id) => Some(id),
-            Phase::Regions | Phase::Review => None,
+    fn begin_analysis_preparation(&mut self) -> (Activity, Option<wgpu::Device>) {
+        let cancelled = self
+            .document
+            .analysis_operation()
+            .unwrap()
+            .cancelled
+            .clone();
+        let activity = self.activities.start(
+            ActivityOptions::new("Preparing analysis areas…")
+                .modal()
+                .cancellable("Cancel analysis", "Cancelling analysis…", cancelled),
+        );
+        #[cfg(test)]
+        {
+            self.document.analysis_operation_mut().unwrap().activity = Some(activity.reporter());
         }
-    }
-
-    fn begin_analysis_preparation(&mut self) -> (u64, Option<wgpu::Device>) {
-        let id = self.request_id();
-        self.document.analysis_operation_mut().unwrap().phase = Phase::Preparing(id);
+        self.document.analysis_operation_mut().unwrap().phase = Phase::Preparing;
         self.document.thumbnails.cancel();
-        self.tasks.begin(Task::AnalysisAreas(id));
-        self.busy = true;
+
         self.status = "Preparing per-photo analysis areas…".into();
         (
-            id,
+            activity,
             self.source_services
                 .as_ref()
                 .map(|source| source.device.clone()),
@@ -1605,13 +1575,12 @@ impl Editor {
     }
 
     fn finish_analysis_work(&mut self) {
-        if let Some(id) = self.analysis_work_id()
-            && self.tasks.finish(TaskRequest::Analyze(id))
-        {
-            self.busy = self.document_pending.is_some();
-        }
         if let Some(op) = self.document.analysis_operation_mut() {
             op.phase = Phase::Review;
+            #[cfg(test)]
+            {
+                op.activity = None;
+            }
         }
     }
 
@@ -1622,10 +1591,11 @@ impl Editor {
         let Some(mut request) = self.analysis_request() else {
             return;
         };
+        let operation = Operation::new(Phase::Regions);
         let Some(regions) = self.prepare_analysis_regions(cx) else {
             return;
         };
-        let operation = Operation::new(Phase::Regions);
+
         let cancelled = operation.cancelled.clone();
         let retire = cancelled.cancel_on_drop();
         self.document.set_analysis_operation(Some(operation));
@@ -1646,8 +1616,8 @@ impl Editor {
                     Some(editor.begin_analysis_preparation())
                 })
                 .flatten();
-            if let Some((id, device)) = prepared {
-                sampling_review(request, id, device, cancelled, cx.clone()).await;
+            if let Some((activity, device)) = prepared {
+                sampling_review(request, activity, device, cancelled, cx.clone()).await;
             } else {
                 cx.update(|editor| editor.document.set_analysis_operation(None));
             }
@@ -1669,54 +1639,31 @@ impl Editor {
     pub(super) fn cancel_analysis(&mut self) {
         self.with_analyze_tool(|tool, editor| tool.cancel(editor));
     }
-
-    pub(super) fn analysis_progress(&mut self, id: u64, done: usize, total: usize) {
-        if self.analysis_work_id() != Some(id) {
-            return;
-        }
-        self.tasks.report(
-            TaskRequest::Analyze(id),
-            TaskProgress::Counted {
-                completed: done,
-                total,
-            },
-        );
-        if !self
-            .document
-            .analysis_operation()
-            .unwrap()
-            .cancelled
-            .is_cancelled()
-        {
-            self.status = if done < total {
-                format!("Analyzing frame {} of {total}…", done + 1)
-            } else {
-                "Fitting gamma/WB/exposures and validating proposal…".into()
-            };
-        }
-    }
 }
 
 impl AnalyzeTool {
     fn begin_analysis_fit(&mut self, editor: &mut Editor, total: usize) -> Option<FitInput> {
-        let input = editor.source_context()?;
-        let id = editor.request_id();
-        self.operation.phase = Phase::Fitting(id);
+        let input = editor.capture_source_context().ok()?;
+        let activity =
+            editor
+                .activities
+                .start(ActivityOptions::new("Analyzing roll…").modal().cancellable(
+                    "Cancel analysis",
+                    "Cancelling analysis…",
+                    self.operation.cancelled.clone(),
+                ));
+        #[cfg(test)]
+        {
+            self.operation.activity = Some(activity.reporter());
+        }
+        self.operation.phase = Phase::Fitting;
         editor.document.thumbnails.cancel();
         editor.cancel_original_pending();
-        editor.tasks.begin(Task::Analyze(id));
-        editor.tasks.report(
-            TaskRequest::Analyze(id),
-            TaskProgress::Counted {
-                completed: 0,
-                total,
-            },
-        );
-        editor.busy = true;
+        activity.progress(0, total);
         editor.status = "Analyzing roll…".into();
         Some(FitInput {
-            id,
-            source: input,
+            activity,
+            source: Box::pin(input),
             sources: editor.source_provider(),
             sampling_inputs: editor.document.sampling_inputs.clone(),
             exposures: editor.document.exposures.clone(),

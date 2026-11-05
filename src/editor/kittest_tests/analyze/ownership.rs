@@ -7,7 +7,7 @@ fn calibrated_roll(harness: &mut Harness<'_, Editor>) -> Vec<SourceId> {
         editor.add_raws(vec![fixture("roll-0.dng"), fixture("roll-1.dng")], cx)
     });
     wait_for(harness, |editor| {
-        !editor.busy && editor.document_pending.is_none()
+        !editor.interaction_blocked() && editor.document_pending.is_none()
     });
     harness.update(|editor| {
         editor.set_dmin(Some(DVec3::new(0.2, 0.15, 0.1)));
@@ -62,7 +62,7 @@ fn review_uses_ordinary_selection_without_retargeting_its_roll_wide_drafts() {
             });
             harness.get_by_label("roll-1.dng").click();
             harness.step();
-            wait_for(&mut harness, |editor| !editor.busy);
+            wait_for(&mut harness, |editor| !editor.interaction_blocked());
             harness.read(|editor| {
                 assert_eq!(editor.document.visit.current_source, Some(ids[1]));
                 assert!(!editor.document.roll_selection.contains(ids[0]));
@@ -70,7 +70,7 @@ fn review_uses_ordinary_selection_without_retargeting_its_roll_wide_drafts() {
             });
             harness.key_press(egui::Key::ArrowLeft);
             harness.step();
-            wait_for(&mut harness, |editor| !editor.busy);
+            wait_for(&mut harness, |editor| !editor.interaction_blocked());
             harness.read(|editor| {
                 assert_eq!(editor.document.visit.current_source, Some(ids[0]));
                 assert!(editor.document.roll_selection.contains(ids[0]));
@@ -207,8 +207,9 @@ impl Drop for Release {
 }
 
 #[test]
-fn review_cancel_during_observed_loading_keeps_the_photo_request_and_ordinary_view_preference() {
-    for source in [false, true] {
+fn review_and_fitting_cancel_during_observed_loading_keep_the_photo_request_and_ordinary_view_preference()
+ {
+    for (source, fitting) in [(false, false), (true, false), (false, true), (true, true)] {
         let (entered, starts) = mpsc::channel();
         let (release, resume) = mpsc::channel();
         let release = Release(release);
@@ -224,15 +225,16 @@ fn review_cancel_during_observed_loading_keeps_the_photo_request_and_ordinary_vi
             Ok(())
         });
         let original = editor_harness(|mut harness, _| {
+            let release = release;
             let ids = calibrated_roll(&mut harness);
             harness.update(|editor| editor.document.source = source);
             harness.get_by_label("roll-1.dng").click();
             harness.step();
-            wait_for(&mut harness, |editor| !editor.busy);
+            wait_for(&mut harness, |editor| !editor.interaction_blocked());
             let ordinary_source = harness.read(|editor| editor.document.source);
             harness.get_by_label("roll-0.dng").click();
             harness.step();
-            wait_for(&mut harness, |editor| !editor.busy);
+            wait_for(&mut harness, |editor| !editor.interaction_blocked());
             harness.update(|editor| editor.document.source = source);
             show_confirmation(&mut harness);
             harness.read(|editor| assert_eq!(editor.document.source, source));
@@ -250,7 +252,7 @@ fn review_cancel_during_observed_loading_keeps_the_photo_request_and_ordinary_vi
             harness.step();
             wait_for(&mut harness, |_| starts.try_recv().is_ok());
             let (request, stopped) = harness.read(|editor| {
-                assert!(editor.busy && editor.document.visit.source.pending());
+                assert!(!editor.interaction_blocked() && editor.document.visit.source.pending());
                 assert_eq!(editor.document.visit.current_source, Some(ids[1]));
                 assert_eq!(editor.document.source, ordinary_source);
                 (
@@ -264,10 +266,11 @@ fn review_cancel_during_observed_loading_keeps_the_photo_request_and_ordinary_vi
                 )
             });
             assert!(
-                harness
+                !harness
                     .get_by_label("Analyze roll")
                     .accesskit_node()
-                    .is_disabled()
+                    .is_disabled(),
+                "review confirmation can acquire precise inputs without waiting for the selected display",
             );
             assert!(
                 !harness
@@ -281,23 +284,48 @@ fn review_cancel_during_observed_loading_keeps_the_photo_request_and_ordinary_vi
                     "review browsing remains available during a pending photo request: {photo}"
                 );
             }
+
             save_capture(
                 &harness.render().unwrap(),
                 &format!("analyze-browsing-cancel-source-{source}-offscreen"),
             );
-            harness.get_by_label("Cancel").click();
+
+            if fitting {
+                harness.get_by_label("Analyze roll").click();
+                harness.step();
+
+                harness.update(|editor| editor.activities.elapse(Duration::from_secs(1)));
+                harness.run_steps(3);
+                harness.read(|editor| {
+                    assert!(editor.analysis_fitting() && editor.document.visit.source.pending());
+                    assert!(editor.interaction_blocked());
+                });
+
+                harness.get_by_label("Cancel analysis").click();
+            } else {
+                harness.get_by_label("Cancel").click();
+            }
             harness.step();
+            assert!(
+                stopped.is_cancelled(),
+                "the modal or review Cancel control must receive the click"
+            );
+            wait_for(&mut harness, |editor| {
+                editor.document.analysis_operation().is_none()
+            });
+
             harness.read(|editor| {
                 assert!(stopped.is_cancelled());
                 assert!(editor.current_tool().is_none());
-                assert!(editor.busy && editor.document.visit.source.pending());
-                assert!(editor.tasks.is_current(TaskRequest::Photo(request)));
+                assert!(!editor.interaction_blocked() && editor.document.visit.source.pending());
+                assert_eq!(editor.document.visit.view, request);
+                assert_eq!(editor.activities.view().unwrap().title, "Loading photo…");
                 assert_eq!(editor.document.project, before);
                 assert_eq!(editor.document.source, ordinary_source);
             });
             drop(release);
             wait_for(&mut harness, |editor| {
-                !editor.busy && editor.document.visit.canvas.ready.is_some()
+                !editor.interaction_blocked() && editor.document.visit.canvas.ready.is_some()
             });
             harness.read(|editor| {
                 assert_eq!(editor.document.visit.current_source, Some(ids[1]));

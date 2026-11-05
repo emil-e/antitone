@@ -158,7 +158,6 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
             view: reference,
             region: None,
             task: None,
-            activity: None,
         }));
         warm(&mut editor, &context, size);
         assert_eq!(editor.canvas_frame.layout.unwrap().0.canvas, canvas);
@@ -184,10 +183,10 @@ fn bar_and_canvas_are_stable_across_tools_source_quality_loading_and_errors() {
         warm(&mut editor, &context, size);
         assert_eq!(editor.active_canvas().last_layout.unwrap().0.canvas, canvas);
         let ready = editor.document.visit.canvas.ready.take();
-        editor.busy = true;
+        editor.set_test_busy(true);
         let busy = labels(&mut editor, &context, size, vec![]);
         assert_eq!(busy.iter().find(|(s, _)| s == "Fit").unwrap().1, fit);
-        editor.busy = false;
+        editor.set_test_busy(false);
         let empty = labels(&mut editor, &context, size, vec![]);
         assert_eq!(empty.iter().find(|(s, _)| s == "Fit").unwrap().1, fit);
         editor.document.visit.canvas.ready = ready;
@@ -591,7 +590,7 @@ fn numeric_enter_and_escape_are_handled_before_picker_or_crop_shortcuts() {
         );
         frame(&mut editor, &context, size, key(egui::Key::Enter));
         frame(&mut editor, &context, size, vec![]);
-        assert!(!editor.busy);
+        assert!(!editor.interaction_blocked());
         assert!(editor.document.crop_edit().is_some() || editor.test_pick().is_some());
         if cropping {
             assert!(editor.document.crop_edit().unwrap().draft.angle.abs() > 0.1);
@@ -980,7 +979,7 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
             );
             app.read(|editor| {
                 assert!(
-                    editor.busy,
+                    editor.interaction_blocked(),
                     "{pick:?}: {}; pick={:?}, region={:?}",
                     editor.status,
                     editor.test_pick(),
@@ -1087,7 +1086,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
             }
             feature.0.read(|editor| {
                 assert!(
-                    editor.busy,
+                    editor.interaction_blocked(),
                     "enter={enter}: {}; pick={:?}, region={:?}",
                     editor.status,
                     editor.test_pick(),
@@ -1098,9 +1097,9 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
             });
             // This is a real application's first executor turn after input, not
             // an inert fixture. No other frame or central launch call follows.
-            feature
-                .0
-                .run_until(Duration::from_secs(5), |editor| !editor.busy);
+            feature.0.run_until(Duration::from_secs(5), |editor| {
+                !editor.interaction_blocked()
+            });
             feature.0.read(|editor| {
                 let actual = editor
                     .dmin()
@@ -1152,7 +1151,7 @@ fn geometry_busy_guards_and_crop_apply_use_the_original_transactions() {
             })));
         }
         let draft = editor.document.crop_edit().map(|edit| edit.draft);
-        editor.busy = true;
+        editor.set_test_busy(true);
         let output = frame(&mut editor, &context, size, vec![]);
         for name in ["Cancel", "Apply"] {
             assert!(
@@ -1173,7 +1172,7 @@ fn geometry_busy_guards_and_crop_apply_use_the_original_transactions() {
         assert_eq!(editor.document.crop_edit().map(|edit| edit.draft), draft);
         // Flat Apply is exercised with a live workflow, not a render-only fixture.
         if cropping {
-            editor.busy = false;
+            editor.set_test_busy(false);
             let text = labels(&mut editor, &context, size, vec![]);
             click(
                 &mut editor,
@@ -1341,7 +1340,7 @@ fn pick_apply_is_present_but_disabled_until_selection_and_while_measuring() {
             .1;
         assert!(apply.is_disabled());
         frame(app, &context, size, key(egui::Key::Enter));
-        assert!(!app.read(|editor| editor.busy));
+        assert!(!app.read(|editor| editor.interaction_blocked()));
         app.update(|editor| {
             editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
                 x: 20,
@@ -1352,7 +1351,7 @@ fn pick_apply_is_present_but_disabled_until_selection_and_while_measuring() {
         });
         frame(app, &context, size, key(egui::Key::Enter));
         app.read(|editor| {
-            assert!(editor.busy);
+            assert!(editor.interaction_blocked());
             assert_eq!(editor.test_pick().unwrap(), Pick::Gamma.display());
         });
         let output = frame(app, &context, size, vec![]);

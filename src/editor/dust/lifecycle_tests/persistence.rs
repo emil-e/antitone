@@ -167,7 +167,7 @@ fn saves_during_pending_and_failed_evaluation_keep_instructions_and_compatible_c
                 cx,
             );
             let save_request = e.document_pending.unwrap();
-            assert!(e.busy && e.document_pending.is_some());
+            assert!(e.interaction_blocked() && e.document_pending.is_some());
             let saved = captured.save(&path, crate::project::Save::New).unwrap();
             e.save_result(save_request + 1, Ok(Box::new(saved.clone())), cx);
             assert_eq!(e.document_pending, Some(save_request));
@@ -233,7 +233,7 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
                 cx,
             );
             let request = e.document_pending.unwrap();
-            assert!(e.busy && e.document_pending.is_some());
+            assert!(e.interaction_blocked() && e.document_pending.is_some());
             let saved = captured.save(&path, crate::project::Save::New).unwrap();
             let bytes = std::fs::read(&path).unwrap();
 
@@ -260,7 +260,7 @@ fn save_as_baselines_only_its_snapshot_and_failures_preserve_later_edits_and_exi
                 cx,
             );
             let request = e.document_pending.unwrap();
-            assert!(e.busy && e.document_pending.is_some());
+            assert!(e.interaction_blocked() && e.document_pending.is_some());
             assert!(e.document.save(&path, crate::project::Save::New).is_err());
             e.save_result(request, Err("destination exists".into()), cx);
             assert_eq!(e.document.state.project, before);

@@ -34,7 +34,10 @@ fn round_trip(mut editor: Editor, before: &Project, after: &Project) -> Editor {
         Duration::from_secs(60),
         |e, cx| {
             e.restore_history(Direction::Undo, cx);
-            assert!(e.busy && e.document_pending.is_some(), "undo must start");
+            assert!(
+                e.interaction_blocked() && e.document_pending.is_some(),
+                "undo must start"
+            );
         },
     );
     assert_eq!(&editor.document.state.project, before, "{}", editor.status);
@@ -43,7 +46,10 @@ fn round_trip(mut editor: Editor, before: &Project, after: &Project) -> Editor {
         Duration::from_secs(60),
         |e, cx| {
             e.restore_history(Direction::Redo, cx);
-            assert!(e.busy && e.document_pending.is_some(), "redo must start");
+            assert!(
+                e.interaction_blocked() && e.document_pending.is_some(),
+                "redo must start"
+            );
         },
     );
     assert_eq!(&editor.document.state.project, after, "{}", editor.status);
@@ -422,7 +428,7 @@ fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() 
         Duration::from_secs(60),
         |editor, cx| {
             editor.start_document(Preparation::Open("missing.antitone".into()), cx);
-            assert!(editor.busy && editor.document_pending.is_some());
+            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
         },
     );
     assert_eq!(editor.document.history.undo.len(), 1);
@@ -432,7 +438,7 @@ fn failed_open_keeps_history_and_only_accepted_document_replacement_clears_it() 
         Duration::from_secs(60),
         |editor, cx| {
             editor.start_document(Preparation::New, cx);
-            assert!(editor.busy && editor.document_pending.is_some());
+            assert!(editor.interaction_blocked() && editor.document_pending.is_some());
             assert_eq!(
                 editor.document.history.undo.len(),
                 1,
@@ -578,7 +584,7 @@ fn busy_work_and_decisions_cannot_dispatch_document_history() {
     editor.document.roll.exposure = 1.;
     editor.record_edit(before, "Exposure", None);
     for blocked in 0..3 {
-        editor.busy = blocked == 0;
+        editor.set_test_busy(blocked == 0);
         editor.document.removal_pending =
             (blocked == 1).then_some(vec![editor.document.visit.current_source.unwrap()]);
         editor.transition = (blocked == 2).then_some(Transition::New);
@@ -606,7 +612,7 @@ fn failed_and_stale_restoration_preserve_state_and_history_until_acceptance() {
             assert_eq!(editor.document.state.project, accepted);
             assert_eq!(editor.document.history.undo.len(), 1);
             assert!(editor.document.history.redo.is_empty());
-            assert!(!editor.busy);
+            assert!(editor.document_pending.is_none());
         });
         app.pump();
     });

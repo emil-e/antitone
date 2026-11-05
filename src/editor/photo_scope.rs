@@ -1,4 +1,4 @@
-use super::{Editor, TaskRequest, WorkingView};
+use super::{Editor, WorkingView};
 
 #[cfg(test)]
 mod tests;
@@ -34,19 +34,12 @@ impl PhotoScope {
             ..Self::default()
         }
     }
-
-    fn activity(&self) -> Option<TaskRequest> {
-        self.source
-            .pending()
-            .then_some(TaskRequest::Photo(self.view))
-    }
 }
 
 impl Editor {
     pub(super) fn replace_photo_scope(&mut self, view: u64) {
         self.canvas_frame = Default::default();
-        let hosted_activity = self.document.visit.hosted_tool.activity(self);
-        let activity = self.document.visit.activity();
+
         let layers = self.document.visit.adjustment_layers.selection_only();
         let working_view = self.document.visit.working_view.for_visit();
         // Replacing the owner drops its task handles, images and transient tools.
@@ -64,10 +57,5 @@ impl Editor {
         };
         // Temporary reference views retire gestures, not the selected layer's identity.
         self.document.visit.adjustment_layers = layers;
-        for activity in activity.into_iter().chain(hosted_activity) {
-            if self.tasks.finish(activity) {
-                self.busy = false;
-            }
-        }
     }
 }

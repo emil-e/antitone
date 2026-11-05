@@ -439,7 +439,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
         )
     });
     wait_for(&mut harness, |editor| {
-        !editor.busy && editor.document_pending.is_none()
+        !editor.interaction_blocked() && editor.document_pending.is_none()
     });
     harness.read(|editor| {
         assert!(
@@ -544,7 +544,7 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                         && editor.document.export.draft.is_none()
                 )
             });
-            harness.read(|editor| assert!(!editor.busy));
+            harness.read(|editor| assert!(!editor.interaction_blocked()));
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
             harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         }
@@ -575,7 +575,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
     harness.enter(|editor, cx| editor.add_raws(vec![fixture.clone()], cx));
     wait_for(&mut harness, |editor| {
-        !editor.busy && editor.document_pending.is_none()
+        !editor.interaction_blocked() && editor.document_pending.is_none()
     });
     harness.read(|editor| {
         assert!(
@@ -620,7 +620,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 }),
                 FailureKind::FlatSupport | FailureKind::FlatCorrection => {
                     harness.enter(|editor, cx| editor.begin_flat_edit(fixture.clone(), None, cx));
-                    wait_for(&mut harness, |editor| !editor.busy);
+                    wait_for(&mut harness, |editor| !editor.interaction_blocked());
                     harness.read(|editor| assert!(editor.document.flat_edit().is_some()));
                     let area = harness
                         .read(|editor| editor.document.visit.canvas.ready.as_ref().unwrap().area);
@@ -677,7 +677,7 @@ fn operation_failures_are_acknowledged_without_promoting_failed_candidates() {
                 }
             }
             wait_for(&mut harness, |editor| {
-                !editor.busy && editor.failure.is_some()
+                !editor.interaction_blocked() && editor.failure.is_some()
             });
             harness.read(|editor| assert_eq!(editor.failure.as_ref().unwrap().kind, kind));
             harness.read(|editor| assert_eq!(editor.document.state.project, before));
@@ -840,7 +840,9 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
         harness.enter(|editor, cx| editor.add_raws(vec![fixture.clone()], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -896,9 +898,11 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         assert!(harness.read(|editor| editor.test_pick_region().is_some()));
         harness.get_by_label("Apply").click();
         harness.step();
-        assert!(harness.read(|editor| editor.busy));
+        assert!(harness.read(|editor| editor.interaction_blocked()));
         // This fixture delivers completion without another UI pass.
-        harness.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        harness.run_until(Duration::from_secs(5), |editor| {
+            !editor.interaction_blocked()
+        });
         harness.read(|editor| {
             assert!(editor.test_pick().is_none());
             assert_eq!(editor.status, "Dmin measured");
@@ -1057,7 +1061,9 @@ fn save_existing_project(harness: &mut Harness<'_, Editor>) {
     let request = harness.read(|editor| editor.next_request);
     native_file_action(harness, crate::platform::menu::Action::Save);
     harness.read(|editor| assert!(editor.next_request > request, "Save did not dispatch"));
-    wait_for(harness, |e| !e.busy && e.document_pending.is_none());
+    wait_for(harness, |e| {
+        !e.interaction_blocked() && e.document_pending.is_none()
+    });
     harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
     harness.read(|editor| assert_eq!(editor.document.state.project, project));
     let (accepted, regions) = crate::project::Project::load_with_spatial_metadata(&path).unwrap();
@@ -1108,8 +1114,8 @@ fn save_capture(png: &image::RgbaImage, name: &str) {
 #[should_panic(expected = "Editor wait timed out")]
 fn unfinished_editor_operation_fails_at_wait_deadline() {
     editor_harness(|mut harness, _| {
-        harness.update(|editor| editor.busy = true);
-        wait_for_with_timeout(&mut harness, Duration::ZERO, |e| !e.busy);
+        harness.update(|editor| editor.set_test_busy(true));
+        wait_for_with_timeout(&mut harness, Duration::ZERO, |e| !e.interaction_blocked());
     });
 }
 
@@ -1119,7 +1125,9 @@ fn stage_tabs_preserve_project_and_fit_normal_and_narrow_layouts() {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
         harness.enter(|editor, cx| editor.add_raws(vec![fixture], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),

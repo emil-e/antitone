@@ -34,7 +34,7 @@ fn card_frames_and_captions_fit_compact_and_normal_strips_without_changing_prefe
     crate::editor::tests::add_ready_fixture(&mut editor);
     *editor.document = super::tests::fixture();
     editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
-    editor.busy = true;
+    editor.set_test_busy(true);
     let before = editor.document.state.project.clone();
     for height in [52., 80., 140., 240.] {
         editor.preferences.filmstrip_height = height;
@@ -109,7 +109,7 @@ fn hover_is_neutral_and_distinct_from_selection_without_changing_cell_geometry()
     crate::editor::tests::add_ready_fixture(&mut editor);
     *editor.document = super::tests::fixture();
     editor.document.visit.current_source = Some(editor.document.state.project.order[0]);
-    editor.busy = false;
+    editor.set_test_busy(false);
     let context = egui::Context::default();
     context.enable_accesskit();
     let mut frame = |pointer: Option<egui::Pos2>| {

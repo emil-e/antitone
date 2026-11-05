@@ -10,7 +10,9 @@ pub(super) fn calibrated_harness_with_thumbnails<R>(
 ) -> R {
     editor_harness_with_thumbnails(thumbnails, |mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("patches.dng")], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -134,7 +136,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
         editor_harness(|mut h, capture| {
             h.enter(|e, cx| e.add_raws(vec![fixture("patches.dng")], cx));
             wait_for(&mut h, |e| {
-                !e.busy && e.document.visit.canvas.ready.is_some()
+                !e.interaction_blocked() && e.document.visit.canvas.ready.is_some()
             });
             h.update(|e| {
                 e.set_dmin(Some(DVec3::splat(3000. / 4031.)));
@@ -318,7 +320,7 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
                 harness.get_by_label("Apply").click();
                 harness.step();
-                harness.read(|editor| assert!(!editor.busy));
+                harness.read(|editor| assert!(!editor.interaction_blocked()));
                 harness.read(|editor| assert_eq!(editor.document.state.project, before));
                 click_patch(&mut harness, egui::pos2(96., 32.));
                 capture_tool(&mut harness, &format!("{name}-{layout}-offscreen"), size);
@@ -335,8 +337,8 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 );
                 harness.get_by_label("Apply").click();
                 harness.step();
-                harness.read(|editor| assert!(editor.busy));
-                wait_for(&mut harness, |e| !e.busy);
+                harness.read(|editor| assert!(editor.interaction_blocked()));
+                wait_for(&mut harness, |e| !e.interaction_blocked());
                 harness.read(|editor| assert!(editor.test_pick().is_none(), "{}", editor.status));
                 let mut expected = before;
                 if kind == Pick::Dmin {
@@ -494,7 +496,9 @@ fn picker_drags_keep_press_origin_for_resize_move_and_new_selection() {
 fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
     editor_harness(|mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("illuminated-patches.dng")], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| {
             assert!(
                 editor.document.visit.canvas.ready.is_some(),
@@ -508,7 +512,7 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         let selected = harness.read(|editor| editor.document.visit.current_source);
         // The native file chooser is outside this test: supply its resulting path as fixture setup.
         harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         for (layout, size, width) in [
             ("normal", egui::vec2(1100., 800.), 315.),
             ("narrow", egui::vec2(800., 600.), 270.),
@@ -538,11 +542,13 @@ fn flat_reference_support_fits_both_layouts_and_widgets_cancel_or_apply() {
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.enter(|editor, cx| editor.begin_flat_edit(fixture("bare-light.dng"), None, cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.get_by_label("Apply").click();
         harness.step();
-        harness.read(|editor| assert!(editor.busy));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        harness.read(|editor| assert!(editor.interaction_blocked()));
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
         harness.read(|editor| assert!(editor.document.flat_edit().is_none()));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));

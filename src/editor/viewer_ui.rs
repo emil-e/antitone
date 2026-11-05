@@ -107,21 +107,16 @@ impl Editor {
             self.document.source = true;
         }
 
-        let navigating = self.canvas_frame.layout.is_some() && !self.busy && !self.mask_dragging();
-        let cancellable_tool_work = hosted.is_some()
-            && self
-                .hosted_tool_activity()
-                .is_some_and(|request| self.tasks.is_current(request))
-            && self.tasks.view().is_some_and(|task| task.cancel.is_some());
+        let navigating = self.canvas_frame.layout.is_some()
+            && !self.interaction_blocked()
+            && !self.mask_dragging();
+
         let tool_group = tool.map(|(icon, title)| ToolGroup {
             identity: ToolIdentity { icon, title },
-            busy: self.busy,
-            cancel_enabled: !self.busy
-                || cancellable_tool_work
-                || self.document.hosted_tool.is::<AnalyzeTool>()
-                    && self.hosted_tool_activity().is_none(),
+            busy: self.interaction_blocked(),
+            cancel_enabled: !self.interaction_blocked(),
             apply_enabled: hosted.as_ref().is_some_and(|tool| {
-                !self.busy && tool.primary.is_some_and(|primary| primary.enabled)
+                !self.interaction_blocked() && tool.primary.is_some_and(|primary| primary.enabled)
             }),
         });
 
@@ -142,11 +137,8 @@ impl Editor {
         };
 
         bar.show(ui, |ui| {
-            if fullscreen
-                && let Some(view) = self.tasks.view()
-                && let Some(request) = view.compact(ui)
-            {
-                self.cancel_task(request);
+            if fullscreen && let Some(view) = self.activities.view() {
+                view.compact(ui);
             }
             ui.spacing_mut().item_spacing.x = VIEWER_ITEM_GAP;
             icons::row(ui, |ui| {

@@ -59,7 +59,9 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
             editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
-        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.interaction_blocked()
+        });
         app.read(|editor| {
             assert_eq!(editor.document.roll.wb, expected);
             assert_eq!(editor.document.input, input);
@@ -350,7 +352,7 @@ fn wb_target_is_locked_before_polling_and_cancel_allows_a_new_layer_pick_without
         });
         app.pump();
         app.read(|editor| {
-            assert!(editor.test_pick().is_none() && !editor.busy);
+            assert!(editor.test_pick().is_none() && !editor.interaction_blocked());
             assert_eq!(editor.document.state.project, before);
             assert_eq!(
                 editor.history_label(crate::editor::history::Direction::Undo),
@@ -378,7 +380,9 @@ fn wb_target_is_locked_before_polling_and_cancel_allows_a_new_layer_pick_without
             editor.set_test_pick_region(Some(region));
             editor.apply_pick(cx);
         });
-        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.interaction_blocked()
+        });
         app.read(|editor| {
             assert_eq!(editor.adjustment_layer_target(), Target::Layer(second));
             assert_eq!(editor.document.visit.adjustment_layer_settings.wb, expected);
@@ -581,7 +585,9 @@ fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion
             assert!(editor.measurement_pending());
         });
         call.run();
-        app.run_until(Duration::from_secs(5), |editor| !editor.busy);
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.interaction_blocked()
+        });
         app.read(|editor| {
             assert!(!editor.measurement_pending());
             assert!(editor.test_pick().is_none());

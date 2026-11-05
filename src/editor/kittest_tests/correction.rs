@@ -9,7 +9,7 @@ fn pick_patch(harness: &mut Harness<'_, Editor>, action: &str, area: Rect) {
     draw_region(harness, area);
     harness.get_by_label("Apply").click();
     harness.step();
-    wait_for(harness, |e| !e.busy);
+    wait_for(harness, |e| !e.interaction_blocked());
     harness.read(|editor| assert!(editor.test_pick().is_none(), "{}", editor.status));
 }
 
@@ -43,7 +43,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
         });
         assert!(!mode);
         harness.enter(|e, cx| e.begin_flat_edit(fixture("bare-light.dng"), None, cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         wait_settled(&mut harness);
         let normal_unchanged = |e: &Editor| {
             let canvas = &e.document.visit.canvas;
@@ -210,7 +210,7 @@ fn reference_view_zoom_pan_and_cancel_leave_the_working_view_and_render_products
 fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() {
     editor_harness(|mut harness, _| {
         harness.enter(|e, cx| e.add_raws(vec![fixture("illuminated-patches.dng")], cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.update(|e| {
             let mut scan = e.source_context().unwrap().scan().unwrap();
             e.set_dmin(Some(
@@ -236,10 +236,10 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
         });
         // Native chooser interaction is not part of this offscreen case.
         harness.enter(|e, cx| e.begin_flat_edit(fixture("bare-light.dng"), None, cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.get_by_label("Apply").click();
         harness.step();
-        harness.run_until(Duration::from_secs(20), |e| !e.busy);
+        harness.run_until(Duration::from_secs(20), |e| !e.interaction_blocked());
         harness.read(|e| assert!(e.document.correction.is_some(), "{}", e.status));
         harness.set_size(egui::vec2(1100., 1100.));
         harness.update(|e| {
@@ -279,9 +279,9 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
         harness.read(|e| {
             assert!((e.gamma() - desired).abs() < 1e-12, "{}", e.status);
             assert_eq!(e.document.state.project.input.gamma(), e.gamma());
-            assert!(e.busy && e.document_pending.is_some());
+            assert!(e.interaction_blocked() && e.document_pending.is_some());
         });
-        harness.run_until(Duration::from_secs(20), |e| !e.busy);
+        harness.run_until(Duration::from_secs(20), |e| !e.interaction_blocked());
         harness.read(|e| {
             assert!(e.document.state.project.flat_field().is_none());
             assert!(e.source_context().unwrap().correction.is_none());
@@ -290,7 +290,7 @@ fn correction_reset_commits_numeric_focus_and_completes_without_another_paint() 
             assert!((e.document.state.project.input.gamma() - desired).abs() < 1e-12);
         });
         harness.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
-        harness.run_until(Duration::from_secs(20), |e| !e.busy);
+        harness.run_until(Duration::from_secs(20), |e| !e.interaction_blocked());
         harness.read(|e| {
             assert_eq!(e.document.state.project.flat_field(), correction.as_ref());
             assert!((e.document.state.project.input.gamma() - desired).abs() < 1e-12);
@@ -305,7 +305,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
     std::fs::copy(fixture("bare-light.dng"), &reference).unwrap();
     editor_harness_with_thumbnails(true, |mut harness, _| {
         harness.enter(|editor, cx| editor.add_raws(vec![fixture("illuminated-patches.dng")], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert!(editor.active_canvas().ready.is_some(), "{}", editor.status));
         let before = harness.read(|editor| editor.document.state.project.clone());
         let selected = harness.read(|editor| editor.document.visit.current_source);
@@ -325,7 +327,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         );
         // The reference chooser itself remains native acceptance; use its resulting path.
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         wait_settled(&mut harness);
         let geometry = harness.read(|editor| editor.canvas_frame.layout.unwrap().0);
         let original = harness.read(|editor| editor.test_pick_region().unwrap());
@@ -388,7 +390,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.read(|editor| assert_eq!(editor.document.state.project, before));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         let geometry = harness.read(|editor| editor.canvas_frame.layout.unwrap().0);
         let region = harness.read(|editor| editor.test_pick_region().unwrap());
         drag(
@@ -416,7 +418,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         });
         harness.get_by_label("Apply").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert!(editor.document.correction.is_some(), "{}", editor.status));
         harness.read(|editor| assert_eq!(editor.document.state.project.order, before.order));
         harness.read(|editor| assert_eq!(editor.document.state.project.dmin(), before.dmin()));
@@ -650,7 +654,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         for enabled in [false, true] {
             harness.get_by_label("Enabled").click();
             harness.step();
-            wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+            wait_for(&mut harness, |e| {
+                !e.interaction_blocked() && e.document_pending.is_none()
+            });
             harness.read(|editor| assert_eq!(editor.document.correction.is_some(), enabled));
             harness.read(|editor| assert!(editor.document.source));
             harness.read(|editor| assert_eq!(editor.source_exposure, 2.));
@@ -714,7 +720,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
                 cx,
             )
         });
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert!(!editor.document.dirty(), "{}", editor.status));
         save_existing_project(&mut harness);
         let saved = harness.read(|editor| editor.document.state.project.clone());
@@ -725,7 +733,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert!(editor.document.correction.is_none()));
         let mut cleared = saved.clone();
         cleared.set_flat_field(None);
@@ -736,7 +746,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         );
         harness.get_by_label("Discard changes").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert_eq!(editor.document.state.project, saved));
         harness.read(|editor| {
             assert_eq!(
@@ -758,7 +770,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
         assert!(
             !harness
@@ -774,7 +786,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         );
         // Supply the native chooser result, then use the ordinary viewer controls.
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         assert!(
             harness
                 .get_by_label("Reset Flat-field correction")
@@ -801,10 +813,10 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.read(|editor| assert_eq!(editor.document.state.project, cleared));
         harness.read(|editor| assert_eq!(editor.document.visit.current_source, selected));
         harness.enter(|editor, cx| editor.begin_flat_edit(reference.clone(), None, cx));
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.get_by_label("Apply").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
             assert!(editor.document.correction.is_some(), "{}", editor.status);
             let mut expected = cleared.clone();
@@ -825,7 +837,9 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         );
         harness.get_by_label("Discard changes").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.read(|editor| assert_eq!(editor.document.state.project, saved));
         harness.read(|editor| assert!(editor.document.correction.is_some()));
         harness
@@ -834,7 +848,7 @@ fn correction_widgets_measure_original_inputs_render_thumbnails_toggle_and_reope
         harness.try_run_realtime().unwrap();
         harness.get_by_label("Reset Flat-field correction").click();
         harness.step();
-        wait_for(&mut harness, |e| !e.busy);
+        wait_for(&mut harness, |e| !e.interaction_blocked());
         harness.read(|editor| {
             assert_eq!(editor.document.state.project, cleared);
             assert!(editor.document.correction.is_none());

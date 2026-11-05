@@ -43,8 +43,7 @@ fn fixture(index: usize) -> Editor {
 }
 
 fn settle(editor: &mut Editor) {
-    if editor.busy {
-        assert!(editor.document.visit.source.pending());
+    if editor.document.visit.source.pending() {
         editor.source_result(editor.id, Err("fixture RAW unavailable".into()));
     }
 }
@@ -82,9 +81,13 @@ fn removing_a_photo_releases_its_sampling_inputs_and_undo_does_not_restore_worki
             weak.upgrade().is_none(),
             "real removal/history must not retain the patch payload"
         );
-        app.run_until(std::time::Duration::from_secs(20), |e| !e.busy);
+        app.run_until(std::time::Duration::from_secs(20), |e| {
+            !e.interaction_blocked()
+        });
         app.enter(|e, cx| e.restore_history(crate::editor::history::Direction::Undo, cx));
-        app.run_until(std::time::Duration::from_secs(20), |e| !e.busy);
+        app.run_until(std::time::Duration::from_secs(20), |e| {
+            !e.interaction_blocked()
+        });
         app.read(|e| {
             assert!(e.document.project.source(id).is_ok());
             assert!(
@@ -168,7 +171,7 @@ fn plain_command_and_shift_keep_active_selected_and_last_plain_anchor() {
 }
 
 #[test]
-fn pending_photo_navigation_keeps_multiselection_but_removal_waits_for_completion() {
+fn pending_photo_navigation_and_removal_use_metadata_without_waiting_for_pixels() {
     let editor = fixture(2);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
@@ -176,12 +179,16 @@ fn pending_photo_navigation_keeps_multiselection_but_removal_waits_for_completio
             editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
             let first = editor.id;
             assert!(editor.document.visit.source.pending());
-            assert!(editor.busy && editor.document.visit.canvas.selection_timing.is_some());
+            assert!(
+                !editor.interaction_blocked()
+                    && editor.document.visit.canvas.selection_timing.is_some()
+            );
             editor.select_roll_photo(4, egui::Modifiers::COMMAND, cx);
             assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
             assert_eq!(editor.document.visit.current_source, Some(ids[0]));
             editor.request_removal();
-            assert!(editor.document.removal_pending.is_none());
+            assert_eq!(editor.document.removal_pending, Some(vec![ids[0], ids[4]]));
+            editor.document.removal_pending = None;
             editor.select_roll_photo(4, egui::Modifiers::NONE, cx);
             assert!(editor.document.visit.source.pending());
             assert_ne!(editor.id, first);
@@ -194,7 +201,10 @@ fn pending_photo_navigation_keeps_multiselection_but_removal_waits_for_completio
             assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
             assert_eq!(editor.document.visit.current_source, Some(ids[4]));
             editor.source_result(first, Err("obsolete source".into()));
-            assert!(editor.busy && editor.document.visit.current_source == Some(ids[4]));
+            assert!(
+                !editor.interaction_blocked()
+                    && editor.document.visit.current_source == Some(ids[4])
+            );
             editor.source_result(editor.id, Err("fixture unavailable".into()));
             editor.request_removal();
             assert_eq!(editor.document.removal_pending, Some(vec![ids[0], ids[4]]));
@@ -372,7 +382,7 @@ fn drafts_foreground_work_and_decisions_reject_selection_and_removal() {
                     .ids
                     .push(editor.document.state.project.order[4]);
                 match blocker {
-                    "busy" => editor.busy = true,
+                    "busy" => editor.set_test_busy(true),
                     "pick" => picking::preview(editor, Pick::Dmax.display()),
                     "failure" => editor.report_failure(FailureKind::Save, "fixture".into()),
                     "transition" => editor.transition = Some(Transition::Close),

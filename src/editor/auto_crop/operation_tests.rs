@@ -24,13 +24,7 @@ fn photo_proposal_state_is_not_redirected_to_supersession_and_releases_without_c
             if poll_before_retirement {
                 app.pump();
             }
-            let new = app.update(|editor| {
-                editor.end_tool();
-                editor.begin_crop();
-                let state = editor.document.crop_state().unwrap();
-                state.borrow_mut().draft.size = [17, 19];
-                state
-            });
+            app.update(Editor::end_tool);
             app.pump();
             app.read(|editor| assert!(editor.document.spatial_preparing.is_some()));
             assert_eq!(
@@ -38,13 +32,21 @@ fn photo_proposal_state_is_not_redirected_to_supersession_and_releases_without_c
                 1,
                 "retired task releases UI state while independent preparation is still waiting"
             );
-            assert!(!std::rc::Rc::ptr_eq(&old, &new));
+
             old.borrow_mut().draft.size = [23, 29];
             let old_draft = old.borrow().draft;
-            let new_draft = new.borrow().draft;
+
             reply.send(Ok(Some(Default::default()))).unwrap();
             app.run_until(LIMIT, |editor| editor.document.spatial_preparing.is_none());
             app.pump();
+            let new = app.update(|editor| {
+                editor.begin_crop();
+                let state = editor.document.crop_state().unwrap();
+                state.borrow_mut().draft.size = [17, 19];
+                state
+            });
+            assert!(!std::rc::Rc::ptr_eq(&old, &new));
+            let new_draft = new.borrow().draft;
             assert_eq!(
                 old.borrow().draft,
                 old_draft,

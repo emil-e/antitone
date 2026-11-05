@@ -285,9 +285,9 @@ fn viewing_and_scope_preferences_do_not_dirty_the_project() {
             assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
         }
     }
-    editor.busy = true;
+    editor.set_test_busy(true);
     assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
-    editor.busy = false;
+    editor.set_test_busy(false);
     assert_eq!(editor.scope_request().err(), Some("Waiting for view"));
 }
 

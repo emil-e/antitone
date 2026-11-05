@@ -3,6 +3,7 @@ use crate::{cancellation::Cancellation, viewport::CanvasLayout};
 use futures_channel::oneshot;
 use std::{
     cell::RefCell,
+    future::Future,
     rc::{Rc, Weak},
 };
 
@@ -47,28 +48,31 @@ struct Interaction {
     display: Display,
     region: Option<Coverage>,
     drag: Option<PickDrag>,
-    submit: Option<oneshot::Sender<Coverage>>,
-    request: Option<u64>,
+    submit: Option<oneshot::Sender<(Coverage, Activity)>>,
+    #[cfg(test)]
+    activity: Option<ActivityReporter>,
 }
 
 impl Interaction {
-    fn activity(&self) -> Option<TaskRequest> {
-        self.request
-            .filter(|_| self.submit.is_none())
-            .map(TaskRequest::Measurement)
-    }
-
     fn submit(&mut self, editor: &mut Editor) {
         if let Some(region) = self.region
             && let Some(send) = self.submit.take()
         {
-            let id = self.request.expect("measurement owns its request");
-            editor
-                .tasks
-                .begin(Task::Measurement(id, self.display.label));
-            editor.busy = true;
+            let activity = editor.activities.start(
+                ActivityOptions::new(format!("Measuring {}…", self.display.label))
+                    .modal()
+                    .cancellable(
+                        "Cancel measurement",
+                        "Cancelling measurement…",
+                        crate::cancellation::Cancellation::default(),
+                    ),
+            );
+            #[cfg(test)]
+            {
+                self.activity = Some(activity.reporter());
+            }
             editor.status = "Measuring full-resolution patch…".into();
-            let _ = send.send(region);
+            let _ = send.send((region, activity));
         }
     }
 }
@@ -107,8 +111,7 @@ fn install(
     editor: &mut Editor,
     display: Display,
     previous: Option<(crate::viewport::CanvasLayout, f32)>,
-    submit: Option<oneshot::Sender<Coverage>>,
-    request: Option<u64>,
+    submit: Option<oneshot::Sender<(Coverage, Activity)>>,
     task: Option<async_executor::Task<()>>,
 ) {
     let state = Rc::new(RefCell::new(Interaction {
@@ -116,7 +119,8 @@ fn install(
         region: None,
         drag: None,
         submit,
-        request,
+        #[cfg(test)]
+        activity: None,
     }));
     let tool = PickTool::new(editor, state.clone(), previous, task);
     editor.document.thumbnails.cancel();
@@ -130,7 +134,7 @@ fn install(
 pub(super) fn preview(editor: &mut Editor, display: Display) {
     let previous = editor.document.visit.canvas.last_layout;
     if editor.prepare_tool() {
-        install(editor, display, previous, None, None, None);
+        install(editor, display, previous, None, None);
     }
 }
 
@@ -141,10 +145,15 @@ impl Editor {
 
     #[cfg(test)]
     pub(super) fn measurement_pending(&self) -> bool {
-        matches!(
-            self.hosted_tool_activity(),
-            Some(TaskRequest::Measurement(_))
-        )
+        self.document
+            .visit
+            .picker
+            .active
+            .upgrade()
+            .is_some_and(|state| {
+                let state = state.borrow();
+                state.submit.is_none() && state.activity.is_some()
+            })
     }
 }
 
@@ -231,7 +240,7 @@ impl tool::Tool for PickTool {
                 icon: if state.display.area { icons::Icon::Crop } else { icons::Icon::Pick },
                 title: state.display.label,
             },
-            primary: Some(tool::Primary { label: "Apply", enabled: state.region.is_some() && !editor.busy }),
+            primary: Some(tool::Primary { label: "Apply", enabled: state.region.is_some() && !editor.interaction_blocked() }),
             dismiss: "Cancel",
             warning: None,
             help: state.display.help.unwrap_or("Click a patch or drag an area; drag its edges/corners to resize.\nEnter applies · Escape cancels"),
@@ -294,7 +303,7 @@ impl tool::Tool for PickTool {
                     navigation::navigate_view(viewport, canvas.ui, &response, layout, relayout)
                 };
                 let space = canvas.ui.input(|input| input.key_down(egui::Key::Space));
-                if canvas.ui.is_enabled() && !editor.busy && !panning && !space {
+                if canvas.ui.is_enabled() && !editor.interaction_blocked() && !panning && !space {
                     tool.select(canvas.ui, canvas.response, layout);
                     if (canvas.response.hovered() || canvas.response.dragged())
                         && let Some(point) = canvas.ui.input(|input| input.pointer.hover_pos())
@@ -331,16 +340,12 @@ impl tool::Tool for PickTool {
 
     fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         match action {
-            tool::Action::Primary if !editor.busy => {
+            tool::Action::Primary if !editor.interaction_blocked() => {
                 self.state.borrow_mut().submit(editor);
             }
             tool::Action::Dismiss => editor.end_tool(),
             _ => {}
         }
-    }
-
-    fn activity(&self, _editor: &Editor) -> Option<TaskRequest> {
-        self.state.borrow().activity()
     }
 }
 
@@ -367,6 +372,7 @@ pub(super) fn paint_selection(ui: &egui::Ui, layout: CanvasLayout, region: Cover
     }
 }
 
+#[cfg(test)]
 pub(super) fn capture_scan(editor: &Editor) -> Result<Scan, String> {
     let ready = editor
         .document
@@ -387,13 +393,30 @@ pub(super) fn capture_scan(editor: &Editor) -> Result<Scan, String> {
     Ok(scan)
 }
 
+pub(super) fn capture_input(
+    editor: &Editor,
+) -> Result<impl Future<Output = Result<Scan, String>> + use<>, String> {
+    let input = editor.capture_source_context()?;
+    Ok(async move {
+        let context = input.await?;
+        let mut scan = Scan::with_reference(context.source, context.reference);
+        scan.set_flat_field(
+            context
+                .correction
+                .map(|correction| correction.settings.map.clone()),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(scan)
+    })
+}
+
 pub(super) fn query_services(
     services: Option<&crate::editor::source::Services>,
 ) -> Result<&crate::editor::source::Services, Error> {
     services.ok_or_else(|| Error::Gpu("image-query services unavailable".into()))
 }
 
-/// Open a picker-owned operation and await its typed result independently of the tool.
+#[cfg(test)]
 pub(super) fn pick<'scope, T, F>(
     editor: &mut Editor,
     display: Display,
@@ -404,20 +427,41 @@ where
     T: Send + 'static,
     F: FnOnce(Coverage, Cancellation) -> Result<T, Error> + Send + 'static,
 {
+    pick_prepared(editor, display, std::future::ready(Ok(measure)), cx)
+}
+
+/// Open the picker immediately; acquire precise inputs after the user submits its region.
+pub(super) fn pick_prepared<'scope, T, F, P>(
+    editor: &mut Editor,
+    display: Display,
+    prepare: P,
+    cx: UiContext<'scope, Editor>,
+) -> impl Future<Output = Option<T>> + use<'scope, T, F, P>
+where
+    T: Send + 'static,
+    F: FnOnce(Coverage, Cancellation) -> Result<T, Error> + Send + 'static,
+    P: Future<Output = Result<F, String>> + 'scope,
+{
     let (mut reply, receive) = oneshot::channel();
     let previous = editor.document.visit.canvas.last_layout;
     if editor.prepare_tool() {
         editor.retire_pick_actions();
-        let (submit, selected) = oneshot::channel();
-        let id = editor.request_id();
+        let (submit, selected) = oneshot::channel::<(Coverage, crate::editor::Activity)>();
+
         #[cfg(test)]
         let gate = editor.document.visit.picker.measurement_gate.clone();
         // The task retains work and communication endpoints, never its tool/UI owner.
         let task = cx.spawn(move |cx| async move {
             let measured = async {
-                let region = selected.await.ok()?;
-                Some(
-                    crate::background::run(move |cancelled| {
+                let (region, activity) = selected.await.ok()?;
+                let work = async {
+                    let measure = match prepare.await {
+                        Ok(measure) => measure,
+                        Err(error) => {
+                            return Some(Err(error));
+                        }
+                    };
+                    let result = crate::background::run(move |cancelled| {
                         #[cfg(test)]
                         if let Some(gate) = &gate
                             && !gate.is_after_work()
@@ -436,8 +480,16 @@ where
                     })
                     .await
                     .map_err(|_| "Measurement worker panicked".to_owned())
-                    .and_then(|result| result),
-                )
+                    .and_then(|result| result);
+                    Some(result)
+                };
+                let cancelled = async {
+                    activity.cancelled().await;
+                    None
+                };
+                let result = futures_lite::future::or(cancelled, work).await;
+                drop(activity);
+                result
             };
             let stopped = async {
                 reply.cancellation().await;
@@ -458,14 +510,7 @@ where
             }
         });
         if let Some(task) = task {
-            install(
-                editor,
-                display,
-                previous,
-                Some(submit),
-                Some(id),
-                Some(task),
-            );
+            install(editor, display, previous, Some(submit), Some(task));
         }
     }
     async move { receive.await.ok() }

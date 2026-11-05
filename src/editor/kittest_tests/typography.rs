@@ -6,7 +6,9 @@ fn typography_keeps_tabs_readouts_and_tool_actions_coherent_at_both_densities() 
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/raw/patches.dng");
         harness.enter(|editor, cx| editor.add_raws(vec![fixture], cx));
-        wait_for(&mut harness, |e| !e.busy && e.document_pending.is_none());
+        wait_for(&mut harness, |e| {
+            !e.interaction_blocked() && e.document_pending.is_none()
+        });
         harness.update(|editor| {
             editor.set_dmin(Some(DVec3::splat(3000. / 4031.)));
             editor.set_dmax(Some(DVec3::splat(128. / 4031.)));
