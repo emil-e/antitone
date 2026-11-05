@@ -2,7 +2,7 @@ use super::*;
 use crate::gpu::parameters::ProcessingParameters;
 use crate::project::Development;
 
-fn controlled() -> (Thumbnails, mpsc::Receiver<workflow::Submission>) {
+fn controlled() -> (Thumbnails, mpsc::Receiver<Submission>) {
     let (commands, requests) = mpsc::channel();
     (
         Thumbnails {
@@ -13,7 +13,7 @@ fn controlled() -> (Thumbnails, mpsc::Receiver<workflow::Submission>) {
     )
 }
 
-pub(super) type ServiceResults = Vec<Result<Outcome, workflow::Stopped>>;
+pub(super) type ServiceResults = Vec<Result<Outcome, Stopped>>;
 
 // Standalone service input: no Editor command, continuation ownership or admission claim.
 pub(super) fn service_job(
@@ -80,10 +80,7 @@ pub(super) fn start_service_request<'a>(
     .unwrap()
 }
 
-pub(super) fn run_service_request(
-    thumbnails: &Thumbnails,
-    job: Job,
-) -> Result<Outcome, workflow::Stopped> {
+pub(super) fn run_service_request(thumbnails: &Thumbnails, job: Job) -> Result<Outcome, Stopped> {
     crate::application::test_support::with_application(Vec::new(), |app| {
         let _task = start_service_request(thumbnails, job, &app.access());
         app.run_until(Duration::from_secs(30), |results| !results.is_empty());
@@ -1091,7 +1088,7 @@ fn worker_completion_wakes_an_awaiting_service_consumer_without_frame_polling() 
     });
 }
 
-fn idle_prefetch_fixture() -> (Editor, mpsc::Receiver<workflow::Submission>) {
+fn idle_prefetch_fixture() -> (Editor, mpsc::Receiver<Submission>) {
     let mut editor = Editor::state();
     *editor.document = fixture();
     let last = *editor.document.state.project.order.last().unwrap();
@@ -1145,8 +1142,8 @@ fn filmstrip_frame(
 // These fixtures exercise real command registration and service submission, not native production.
 fn take_submission(
     app: &mut crate::application::test_support::TestApplication<'_, Editor>,
-    requests: &mpsc::Receiver<workflow::Submission>,
-) -> workflow::Submission {
+    requests: &mpsc::Receiver<Submission>,
+) -> Submission {
     app.pump();
     requests.try_recv().unwrap_or_else(|error| {
         let state = app.read(|e| {
@@ -1168,7 +1165,7 @@ fn take_submission(
 }
 
 fn finish_submission(
-    submission: workflow::Submission,
+    submission: Submission,
     image: Result<Option<Arc<Product>>, String>,
     proper: bool,
 ) {

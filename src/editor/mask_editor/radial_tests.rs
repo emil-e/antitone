@@ -31,7 +31,7 @@ fn mask() -> AdjustmentLayerCoverage {
     }
 }
 
-fn handle(mask: AdjustmentLayerCoverage, layout: CanvasLayout, target: Handle) -> egui::Pos2 {
+fn handle(mask: AdjustmentLayerCoverage, layout: CanvasLayout, target: RadialHandle) -> egui::Pos2 {
     handles(mask, layout)
         .into_iter()
         .find(|(_, handle)| *handle == target)
@@ -99,13 +99,13 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
             unreachable!()
         };
         for target in [
-            Handle::Center,
-            Handle::Axis(0, 1.),
-            Handle::Axis(0, -1.),
-            Handle::Axis(1, 1.),
-            Handle::Axis(1, -1.),
-            Handle::Rotate,
-            Handle::Feather,
+            RadialHandle::Center,
+            RadialHandle::Axis(0, 1.),
+            RadialHandle::Axis(0, -1.),
+            RadialHandle::Axis(1, 1.),
+            RadialHandle::Axis(1, -1.),
+            RadialHandle::Rotate,
+            RadialHandle::Feather,
         ] {
             let start = handle(original, layout, target);
             let drag = RadialDrag::begin(Some(original), layout, start, feather);
@@ -117,14 +117,14 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
             );
             let press = source_point(layout, start);
             let delta = match target {
-                Handle::Axis(axis, sign) => axes(angle)[axis] * sign * 37.25,
+                RadialHandle::Axis(axis, sign) => axes(angle)[axis] * sign * 37.25,
                 _ => DVec2::new(35., -21.),
             };
             let end = screen_point(
                 layout,
                 SourcePoint((DVec2::from_array(press.0) + delta).to_array()),
             );
-            if matches!(target, Handle::Center | Handle::Axis(..)) {
+            if matches!(target, RadialHandle::Center | RadialHandle::Axis(..)) {
                 let AdjustmentLayerCoverage::Radial {
                     center: moved,
                     radii: resized,
@@ -137,14 +137,14 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
                 assert_eq!(rotated, angle);
                 assert_eq!(softness, feather);
                 match target {
-                    Handle::Center => {
+                    RadialHandle::Center => {
                         close(
                             moved,
                             SourcePoint((DVec2::from_array(center.0) + delta).to_array()),
                         );
                         assert_eq!(resized, radii);
                     }
-                    Handle::Axis(axis, _) => {
+                    RadialHandle::Axis(axis, _) => {
                         assert_eq!(moved, center);
                         assert!((resized[axis] - radii[axis] - 37.25).abs() < 0.001);
                         assert_eq!(resized[1 - axis], radii[1 - axis]);
@@ -153,7 +153,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
                 }
             }
         }
-        let start = handle(original, layout, Handle::Rotate);
+        let start = handle(original, layout, RadialHandle::Rotate);
         let press = DVec2::from_array(source_point(layout, start).0) - DVec2::from_array(center.0);
         let delta = glam::DMat2::from_angle(0.7) * press;
         let end = screen_point(
@@ -173,7 +173,7 @@ fn radial_handles_capture_translation_axes_rotation_and_feather_without_press_ju
         assert_eq!(resized, radii);
         assert_eq!(softness, feather);
         assert!((rotated - angle - 0.7).abs() < 1e-6);
-        let start = handle(original, layout, Handle::Feather);
+        let start = handle(original, layout, RadialHandle::Feather);
         for (radius, expected) in [(1.1, 0.), (0.6, 0.4), (0.2, 0.8), (0., 1.)] {
             let end = screen_point(
                 layout,
@@ -220,7 +220,7 @@ fn feather_handle_tracks_the_inner_boundary_and_full_feather_keeps_center_moveme
             angle,
             feather,
         };
-        let point = handle(mask, layout, Handle::Feather);
+        let point = handle(mask, layout, RadialHandle::Feather);
         assert!(
             (normalized_radius(source_point(layout, point), center, radii, angle) - (1. - feather))
                 .abs()
@@ -236,11 +236,11 @@ fn feather_handle_tracks_the_inner_boundary_and_full_feather_keeps_center_moveme
     assert!(
         !handles(full, layout)
             .iter()
-            .any(|(_, handle)| *handle == Handle::Feather)
+            .any(|(_, handle)| *handle == RadialHandle::Feather)
     );
     assert_eq!(
-        handle_at(Some(full), layout, screen_point(layout, center)),
-        Handle::Center
+        radial_handle_at(Some(full), layout, screen_point(layout, center)),
+        RadialHandle::Center
     );
 }
 
@@ -250,7 +250,10 @@ fn zero_size_drafts_are_invalid_but_positive_small_ovals_and_hard_edges_keep_exi
     let start = layout.image.center();
     let zero = RadialDrag::begin(None, layout, start, 0.8).update(start);
     assert!(zero.validate().is_err());
-    assert_eq!(handle_at(Some(zero), layout, start), Handle::New);
+    assert_eq!(
+        radial_handle_at(Some(zero), layout, start),
+        RadialHandle::New
+    );
     let horizontal =
         RadialDrag::begin(None, layout, start, 0.8).update(start + egui::vec2(20., 0.));
     horizontal.validate().unwrap();

@@ -13,9 +13,10 @@ mod lru;
 use lru::Cache;
 mod embedded;
 pub(super) use embedded::Pending as EmbeddedWork;
-mod workflow;
-pub(super) use workflow::State as ThumbnailWork;
-use workflow::{Demand, Services};
+#[cfg(test)]
+mod worker_tests;
+#[cfg(test)]
+mod workflow_tests;
 const SOURCE_SIZE: u32 = Proxy::MAX_EDGE;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -743,7 +744,7 @@ impl Thumbnails {
         state.set_limits(state.default_limits());
         state.embedded = embedded::EmbeddedPreviews::new();
         state.backend = Some(Arc::new(developments));
-        state.services = Some(Services::Production(production_worker::Worker::new(
+        state.services = Some(Services::Production(Worker::new(
             device,
             queue,
             renderers,
@@ -872,7 +873,6 @@ impl Thumbnails {
         }
     }
 }
-mod production_worker;
 
 #[derive(Default, Debug)]
 struct ThumbnailMetrics {
@@ -1516,6 +1516,798 @@ impl Editor {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
         select
+    }
+}
+
+#[cfg(test)]
+struct Submission {
+    pub job: Job,
+    pub reply: futures_channel::oneshot::Sender<Outcome>,
+}
+
+#[derive(Clone)]
+enum Services {
+    Production(Arc<Worker>),
+    #[cfg(test)]
+    Controlled(mpsc::Sender<Submission>),
+}
+
+#[derive(Debug)]
+struct Stopped;
+
+impl Services {
+    pub async fn process(
+        self,
+        job: Job,
+        sources: Option<Arc<dyn crate::source::SourceProvider>>,
+    ) -> Result<Outcome, Stopped> {
+        match self {
+            Self::Production(worker) => worker.process(job, sources.ok_or(Stopped)?).await,
+            #[cfg(test)]
+            Self::Controlled(commands) => {
+                let (reply, result) = futures_channel::oneshot::channel();
+                commands
+                    .send(Submission { job, reply })
+                    .map_err(|_| Stopped)?;
+                result.await.map_err(|_| Stopped)
+            }
+        }
+    }
+}
+
+/// Document-owned continuations include CPU/disk work whose GPU ticket has retired.
+#[derive(Default)]
+pub(super) struct ThumbnailWork {
+    tasks: Vec<Pending>,
+}
+
+struct Pending {
+    ticket: u64,
+    generation: Arc<std::sync::atomic::AtomicU64>,
+    _task: async_executor::Task<()>,
+    _retire: crate::cancellation::CancelOnDrop,
+}
+
+impl ThumbnailWork {
+    #[cfg(test)]
+    pub(super) fn pending(&self) -> bool {
+        !self.tasks.is_empty()
+    }
+}
+
+/// Visible intent stays lightweight; source/recipe ownership begins with each captured job.
+#[derive(Default)]
+enum Demand {
+    #[default]
+    None,
+    Visible(Vec<SourceId>),
+    Hidden,
+}
+
+impl Editor {
+    fn request_thumbnail(
+        &mut self,
+        key: ImageKey,
+        path: PathBuf,
+        source: Source,
+        render: bool,
+        priority: source_loading::Priority,
+        cx: &UiContext<'_, Self>,
+    ) {
+        if self.document.thumbnails.pending.is_some()
+            || self.document.thumbnails.cache.get(&key).is_some()
+        {
+            return;
+        }
+        let Some(services) = self.document.thumbnails.services.clone() else {
+            if self.document.thumbnails.gpu.is_some() {
+                self.document
+                    .thumbnails
+                    .cache
+                    .insert(key, Err("Thumbnail worker stopped".into()));
+            }
+            return;
+        };
+        let generation = self.document.thumbnails.generation.clone();
+        let ticket = generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let previous = render
+            .then(|| {
+                self.document
+                    .thumbnails
+                    .source_product(&key)
+                    .map(|(_, product)| product.clone())
+            })
+            .flatten();
+        let cancelled = crate::cancellation::Cancellation::default();
+        let retire = cancelled.cancel_on_drop();
+        let job = Job {
+            generation: generation.clone(),
+            cancelled,
+            reference: self
+                .document
+                .exposure_slot(&self.document.exposures, source.id),
+            ticket,
+            key: key.clone(),
+            path,
+            source,
+            correction: self.document.correction.clone(),
+            render,
+            priority,
+            previous,
+        };
+        self.document.thumbnails.pending_render = render;
+        self.document.thumbnails.pending = Some((ticket, key.clone()));
+        let fallback_key = key.clone();
+
+        let sources = self.document.thumbnails.acquisition();
+        let identity = generation.clone();
+        let Some(task) = cx.spawn(move |cx| async move {
+            let result = services.process(job, sources).await;
+            cx.update(|editor| {
+                let Some(index) = editor
+                    .document
+                    .thumbnail_work
+                    .tasks
+                    .iter()
+                    .position(|pending| {
+                        pending.ticket == ticket && Arc::ptr_eq(&pending.generation, &identity)
+                    })
+                else {
+                    return;
+                };
+                let pending = editor.document.thumbnail_work.tasks.swap_remove(index);
+                if Arc::ptr_eq(&identity, &editor.document.thumbnails.generation) {
+                    editor
+                        .document
+                        .state
+                        .capture_exposure(&editor.document.exposures);
+                    match result {
+                        Ok(mut outcome) => {
+                            if let Some(proxy) = outcome.proxy.take()
+                                && let Some(key) = outcome.key.source.store_key()
+                                && let Err(error) = editor.document.cache.publish_proxy(key, proxy)
+                            {
+                                log::warn!(error = error.to_string().as_str(); "thumbnail_proxy_publication_failed");
+                            }
+                            editor.document.thumbnails.complete(outcome, &editor.document.state);
+                        }
+                        Err(_) => editor.document.thumbnails.stopped(ticket, key),
+                    }
+                }
+                drop(pending);
+                editor.document.thumbnails.update_memory();
+                editor.advance_thumbnail_demand(&cx);
+            });
+        }) else {
+            self.document.thumbnails.stopped(ticket, fallback_key);
+            return;
+        };
+        self.document.thumbnail_work.tasks.push(Pending {
+            ticket,
+            generation,
+            _task: task,
+            _retire: retire,
+        });
+    }
+
+    pub(super) fn advance_thumbnail_demand(&mut self, cx: &UiContext<'_, Self>) {
+        let (visible, hidden) = match &self.document.thumbnails.demand {
+            Demand::None => return,
+            Demand::Visible(visible) if self.fullscreen.is_none() => (visible.clone(), false),
+            Demand::Visible(_) | Demand::Hidden => (Vec::new(), true),
+        };
+
+        let allowed = self.thumbnail_work_allowed();
+        let eager =
+            allowed && self.document.thumbnails.budgets.pressure == memory::Pressure::Normal;
+        let idle = allowed
+            && !self.document.visit.canvas.original.refining()
+            && if self.document.visit.working_view.revision().is_some() {
+                self.document.visit.working_view.idle()
+            } else {
+                self.document.visit.canvas.original.idle()
+            };
+        let mut protected = Vec::new();
+        for id in &visible {
+            if let Ok(source) = self.document.state.project.source(*id)
+                && let Ok(path) = self.document.source_path(*id)
+                && let Some(key) = self.thumbnail_key(source, &path, true)
+            {
+                protected.push(key);
+            }
+        }
+        if let Some((_, key)) = &self.document.thumbnails.pending {
+            let visible = visible.contains(&key.source.id);
+            let expected = self
+                .document
+                .project
+                .source(key.source.id)
+                .ok()
+                .zip(self.document.source_path(key.source.id).ok())
+                .and_then(|(source, path)| self.thumbnail_key(source, &path, visible));
+            if expected.as_ref() != Some(key)
+                || (!visible
+                    && (!eager
+                        || (self.document.thumbnails.pending_render && !idle)
+                        || protected
+                            .iter()
+                            .any(|key| !self.document.thumbnails.cache.contains(key))))
+            {
+                self.document.thumbnails.cancel();
+            }
+        }
+        self.document.thumbnails.visible_keys = protected
+            .iter()
+            .filter_map(|key| key.source.store_key())
+            .collect();
+        self.document.thumbnails.protect_cpu();
+        self.document.thumbnails.protect_images(protected.clone());
+        if self.document.thumbnails.services.is_none() {
+            if self.document.thumbnails.gpu.is_some() {
+                for key in protected {
+                    if !self.document.thumbnails.cache.contains(&key) {
+                        self.document
+                            .thumbnails
+                            .cache
+                            .insert(key, Err("Thumbnail worker stopped".into()));
+                    }
+                }
+            }
+            return;
+        }
+        if !allowed || self.document.thumbnails.pending.is_some() {
+            return;
+        }
+        let visible_indices: Vec<_> = self
+            .document
+            .project
+            .order
+            .iter()
+            .enumerate()
+            .filter_map(|(index, id)| visible.contains(id).then_some(index))
+            .collect();
+        let mut candidates: Vec<_> = (0..self.document.state.project.order.len())
+            .filter(|index| visible_indices.contains(index) || eager)
+            .collect();
+        if !hidden {
+            candidates.sort_by_key(|index| {
+                (
+                    !visible_indices.contains(index),
+                    visible_indices
+                        .iter()
+                        .map(|visible| index.abs_diff(*visible))
+                        .min()
+                        .unwrap_or(0),
+                    index.abs_diff(self.document.selected),
+                )
+            });
+        }
+        for index in candidates {
+            let id = self.document.state.project.order[index];
+            let source = self
+                .document
+                .project
+                .source(id)
+                .expect("thumbnail demand source");
+            let path = self
+                .document
+                .source_path(id)
+                .expect("thumbnail demand locator");
+            let visible = visible.contains(&id);
+            let Some(key) = self.thumbnail_key(source, &path, visible) else {
+                continue;
+            };
+            if self.document.thumbnails.cache.contains(&key) {
+                continue;
+            }
+            let render = visible || (!hidden && idle && self.document.thumbnails.can_retain(&key));
+            if !render
+                && self
+                    .document
+                    .thumbnails
+                    .attempted_sources
+                    .contains(&key.source)
+            {
+                continue;
+            }
+            let source = key.source.metadata_record(&path);
+            self.request_thumbnail(
+                key,
+                path,
+                source,
+                render,
+                if visible {
+                    source_loading::Priority::Visible
+                } else {
+                    source_loading::Priority::Eager
+                },
+                cx,
+            );
+            break;
+        }
+    }
+}
+
+enum Input {
+    Proxy(Arc<Proxy>),
+    Missing(Box<crate::source::SourceKey>),
+    Positive,
+    Retired,
+}
+
+struct Work {
+    job: Job,
+    input: Result<Input, Error>,
+    started: std::time::Instant,
+    cache_hit: bool,
+    metrics: ThumbnailMetrics,
+    preview: Option<crate::source::PreviewResult>,
+}
+
+struct Worker {
+    ready: std::sync::Mutex<ReadyWork>,
+    #[cfg(test)]
+    observe: Option<Arc<dyn Fn(SourceId, bool) + Send + Sync>>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    renderers: Arc<crate::renderer::RendererCache>,
+    disk: Option<disk::DiskCache>,
+    repaint: Arc<std::sync::OnceLock<egui::Context>>,
+    kernels: std::sync::OnceLock<Result<Arc<crate::gpu::view::ViewKernels>, Error>>,
+}
+
+impl Worker {
+    fn active(&self, job: &Job) -> bool {
+        job.generation.load(std::sync::atomic::Ordering::Relaxed) == job.ticket
+            && !job.cancelled.is_cancelled()
+    }
+
+    fn begin(&self, job: Job, cached: Option<Arc<Proxy>>) -> Work {
+        let started = std::time::Instant::now();
+        let cache_hit = cached.is_some();
+        let mut metrics = ThumbnailMetrics::default();
+        let input = (|| {
+            if job.cancelled.is_cancelled() {
+                return Ok(Input::Retired);
+            }
+            let positive = job.render && matches!(&job.key.recipe, Ok(Some(_)));
+            if job.render {
+                if let Err(reason) = &job.key.recipe {
+                    return Err(Error::Gpu(reason.clone()));
+                }
+                if positive
+                    && job
+                        .previous
+                        .as_ref()
+                        .is_some_and(|product| product.positive.is_some())
+                {
+                    return Ok(Input::Positive);
+                }
+            }
+            let cached = cached.or_else(|| {
+                let disk = self.disk.as_ref()?;
+                let tick = std::time::Instant::now();
+                let result = disk.load(&job.key.source);
+                metrics.disk_seconds = tick.elapsed().as_secs_f64();
+                match result {
+                    Ok(proxy) => {
+                        metrics.disk_hit = proxy.is_some();
+                        proxy
+                    }
+                    Err(error) => {
+                        log::debug!(
+                            source_id = job.source.id.0,
+                            error = error.to_string().as_str();
+                            "thumbnail_disk_cache_miss"
+                        );
+                        None
+                    }
+                }
+            });
+            if let Some(proxy) = cached {
+                return Ok(Input::Proxy(proxy));
+            }
+            if job.cancelled.is_cancelled() {
+                return Ok(Input::Retired);
+            }
+            let key = crate::source::SourceKey::for_load(
+                &job.path,
+                job.key.source.file.clone(),
+                &job.source.development,
+            );
+            Ok(Input::Missing(Box::new(key)))
+        })();
+        Work {
+            job,
+            input,
+            started,
+            cache_hit,
+            metrics,
+            preview: None,
+        }
+    }
+
+    fn positive(
+        &self,
+        job: &Job,
+        proxy: Option<&crate::scan::CameraProxy>,
+        metrics: &mut ThumbnailMetrics,
+    ) -> Result<Option<Arc<Product>>, Error> {
+        use crate::gpu::view::RenderedView;
+        use crate::gpu::view::ViewKernels;
+        use crate::gpu::view::ViewSource;
+        use crate::gpu::view::request::SourceRequest;
+        let Some(recipe) = job
+            .key
+            .recipe
+            .as_ref()
+            .map_err(|error| Error::Gpu(error.clone()))?
+            .as_ref()
+        else {
+            return Err(Error::Gpu("positive thumbnail requires a recipe".into()));
+        };
+        if !self.active(job) {
+            return Ok(None);
+        }
+        let mut recipe = recipe.clone();
+        if let Some(reference) = job.reference.get()
+            && recipe.neutral.reference.as_ref() != Some(reference)
+        {
+            Arc::make_mut(&mut recipe).neutral.reference = Some(reference.clone());
+        }
+        let tick = std::time::Instant::now();
+        let renderer = self.renderers.get(&self.device, &self.queue)?;
+        metrics.renderer_seconds = tick.elapsed().as_secs_f64();
+        let submissions = self.renderers.submissions();
+        let previous = job
+            .previous
+            .as_ref()
+            .and_then(|product| product.positive.as_ref());
+        let (source, produced) = if let Some((source, _)) = previous {
+            (source.clone(), None)
+        } else {
+            let proxy =
+                proxy.ok_or_else(|| Error::Gpu("thumbnail requires a camera proxy".into()))?;
+            let tick = std::time::Instant::now();
+            let mut frame = crate::frame_raster::FrameRaster::full(Composition::new(
+                job.source.development.active_area.into(),
+                Default::default(),
+                Default::default(),
+            )?)?;
+            frame.output = proxy.dimensions();
+            let spec = SourceRequest::for_recipe(frame, &recipe)?;
+            let capture =
+                crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
+            let kernels = self
+                .kernels
+                .get_or_init(|| pollster::block_on(ViewKernels::new(&self.device)))
+                .clone()?;
+            let (source, produced) = ViewSource::camera_preview(
+                &self.device,
+                &self.queue,
+                submissions,
+                renderer,
+                kernels,
+                proxy,
+                job.correction
+                    .as_ref()
+                    .map(|correction| correction.gpu.clone()),
+                spec,
+                &capture,
+            )?;
+            metrics.calculation_seconds = tick.elapsed().as_secs_f64();
+            (source, Some(produced))
+        };
+        let tick = std::time::Instant::now();
+        let capture = crate::gpu::photograph::request::PhotographRequest::Recipe(recipe.clone());
+        let (source, view) = if let Some(produced) = produced {
+            let view = RenderedView::from_processed(
+                &self.device,
+                source.clone(),
+                capture,
+                job.key.target,
+                produced,
+                previous.map(|(_, view)| view),
+            )?;
+            (source, view)
+        } else {
+            RenderedView::render_from_retained(
+                &self.device,
+                &self.queue,
+                submissions,
+                source,
+                capture,
+                job.correction
+                    .as_ref()
+                    .map(|correction| correction.gpu.clone()),
+                job.key.target,
+                previous.map(|(_, view)| view),
+            )?
+        };
+        metrics.neutral_hit = previous.is_some_and(|(prior, _)| Arc::ptr_eq(prior, &source));
+        view.ensure_submitted(
+            &self.device,
+            &self.queue,
+            submissions,
+            self.repaint.get().unwrap_or(&egui::Context::default()),
+        );
+        if !recipe.luts.is_empty() {
+            // Cards retain a full-source raster; admit only their declared composed footprint.
+            let composition = job.key.projection.unwrap_or(recipe.composition);
+            let mapping = composition.texture_mapping(
+                crate::geometry::FramePoint([0.; 2]),
+                crate::geometry::FramePoint(composition.size().map(f64::from)),
+                source.spec.frame().composition.area(),
+            );
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            let check = source.renderer.check_look_projection(
+                &self.device,
+                &mut encoder,
+                &view.image.linear,
+                mapping,
+            )?;
+            view.image.set_look_check(Some(check));
+            submissions.submit(&self.queue, [encoder.finish()]);
+            let repaint = self.repaint.clone();
+            view.image.begin_look_check_tracked(submissions, move || {
+                if let Some(context) = repaint.get() {
+                    context.request_repaint();
+                }
+            });
+        }
+        while view.in_flight() {
+            self.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|error| Error::Gpu(error.to_string()))?;
+            if !self.active(job) {
+                return Ok(None);
+            }
+        }
+        view.image
+            .look_result()
+            .expect("completed thumbnail look check")?;
+        metrics.image_seconds = tick.elapsed().as_secs_f64();
+        Ok(self.active(job).then(|| {
+            Arc::new(Product {
+                image: view.image.clone(),
+                positive: Some((source, view)),
+            })
+        }))
+    }
+
+    fn finish(&self, mut work: Work) -> Completion {
+        let mut proper = false;
+        let mut produced = None;
+        let job = &work.job;
+        let image = (|| {
+            let proxy = match work.input? {
+                Input::Positive => {
+                    proper = true;
+                    return self.positive(job, None, &mut work.metrics);
+                }
+                Input::Retired => return Ok(None),
+                Input::Proxy(proxy) => proxy,
+                Input::Missing(_) => unreachable!("source acquisition precedes proxy work"),
+            };
+
+            // Proper CPU/disk completion is document demand, not the disposable GPU ticket.
+            if job.cancelled.is_cancelled() {
+                return Ok(None);
+            }
+            produced = Some(proxy.clone());
+            if let Some(disk) = &self.disk
+                && let Err(error) = disk.store_if_missing(&job.key.source, &proxy)
+            {
+                log::warn!(
+                    source_id = job.source.id.0,
+                    error = error.to_string().as_str();
+                    "thumbnail_disk_cache_write_failed"
+                );
+            }
+            proper = true;
+            if !job.render || !self.active(job) {
+                return Ok(None);
+            }
+            if matches!(&job.key.recipe, Ok(Some(_))) {
+                let recipe = job.key.recipe.as_ref().unwrap().as_ref().unwrap();
+                let prepared = crate::photo_preparation::proxy(
+                    &job.reference,
+                    &job.source.development,
+                    recipe.neutral.input,
+                    &proxy,
+                    work.preview.unwrap_or(Ok(None)),
+                );
+                return self.positive(job, Some(&prepared), &mut work.metrics);
+            }
+            make_image(
+                &self.device,
+                &self.queue,
+                &self.renderers,
+                job,
+                &proxy,
+                &|| self.active(job),
+                &mut work.metrics,
+            )
+        })()
+        .map_err(|error: Error| error.to_string());
+        log::debug!(
+            source_id = job.source.id.0,
+            target:? = job.key.target,
+            source_cache_hit = work.cache_hit,
+            disk_cache_hit = work.metrics.disk_hit,
+            proper,
+            render = job.render,
+            cancelled = !self.active(job),
+            failed = image.is_err(),
+            seconds = work.started.elapsed().as_secs_f64(),
+            phases:? = work.metrics;
+            "thumbnail"
+        );
+        let mut key = job.key.clone();
+        if let Ok(Some(recipe)) = &mut key.recipe
+            && recipe.neutral.reference.as_ref() != job.reference.get()
+        {
+            Arc::make_mut(recipe).neutral.reference = job.reference.get().cloned();
+        }
+        Completion {
+            outcome: Outcome {
+                proxy: None,
+                ticket: job.ticket,
+                key,
+                image,
+                proper,
+            },
+            proxy: produced,
+        }
+    }
+}
+
+struct Completion {
+    outcome: Outcome,
+    proxy: Option<Arc<Proxy>>,
+}
+
+#[derive(Default)]
+struct ReadyWork {
+    pending: Vec<(Work, futures_channel::oneshot::Sender<Completion>)>,
+    running: bool,
+}
+
+impl Worker {
+    fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        renderers: Arc<crate::renderer::RendererCache>,
+        disk: Option<disk::DiskCache>,
+        repaint: Arc<std::sync::OnceLock<egui::Context>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            device,
+            queue,
+            renderers,
+            disk,
+            repaint,
+            kernels: Default::default(),
+            ready: Default::default(),
+            #[cfg(test)]
+            observe: None,
+        })
+    }
+
+    async fn process(
+        self: Arc<Self>,
+        job: Job,
+        sources: Arc<dyn crate::source::SourceProvider>,
+    ) -> Result<Outcome, Stopped> {
+        let cancelled = job.cancelled.clone();
+        let cached = job
+            .key
+            .source
+            .store_key_at(&job.path)
+            .and_then(|key| sources.available_proxy(&key));
+        let worker = self.clone();
+        let mut work = crate::background::run(move |_| worker.begin(job, cached))
+            .await
+            .map_err(|_| Stopped)?;
+        if let Ok(Input::Missing(key)) = &work.input {
+            let key = (**key).clone();
+            let cancelled = work.job.cancelled.clone();
+            work.input = futures_lite::future::or(
+                async {
+                    cancelled.wait().await;
+                    Ok(Input::Retired)
+                },
+                async {
+                    sources
+                        .load_proxy(key, work.job.priority)
+                        .await
+                        .map(Input::Proxy)
+                },
+            )
+            .await;
+            work.metrics.development_seconds =
+                work.started.elapsed().as_secs_f64() - work.metrics.disk_seconds;
+        }
+        if work.job.render
+            && !work.job.cancelled.is_cancelled()
+            && work.job.reference.get().is_none()
+            && matches!(&work.job.key.recipe, Ok(Some(recipe)) if !recipe.neutral.input.is_negative())
+        {
+            let path = work.job.path.clone();
+            let development = work.job.source.development.clone();
+            let key = crate::source::SourceKey::for_load(
+                &path,
+                work.job.key.source.file.clone(),
+                &development,
+            );
+            let load = sources.load_preview(key);
+            work.preview = futures_lite::future::or(
+                async {
+                    work.job.cancelled.wait().await;
+                    None
+                },
+                async { Some(load.await) },
+            )
+            .await;
+        }
+        let (reply, result) = futures_channel::oneshot::channel();
+        let start = {
+            let mut ready = self.ready.lock().unwrap();
+            ready.pending.push((work, reply));
+            let start = !ready.running;
+            ready.running = true;
+            start
+        };
+        if start {
+            // One pool job drains ready CPU/GPU work; native/preview waits stay in futures.
+            blocking::unblock(move || self.drain()).detach();
+        }
+        let completion = result.await.map_err(|_| Stopped)?;
+        let mut outcome = completion.outcome;
+        if !cancelled.is_cancelled() {
+            outcome.proxy = completion.proxy;
+        }
+        Ok(outcome)
+    }
+
+    fn drain(&self) {
+        loop {
+            let next = {
+                let mut ready = self.ready.lock().unwrap();
+                let index = ready
+                    .pending
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, (work, _))| work.job.priority)
+                    .map(|(index, _)| index);
+                match index {
+                    Some(index) => Some(ready.pending.remove(index)),
+                    None => {
+                        ready.running = false;
+                        None
+                    }
+                }
+            };
+            let Some((work, reply)) = next else {
+                return;
+            };
+            if let Ok(outcome) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                #[cfg(test)]
+                let id = work.job.source.id;
+                #[cfg(test)]
+                if let Some(observe) = &self.observe {
+                    observe(id, true);
+                }
+                let outcome = self.finish(work);
+                #[cfg(test)]
+                if let Some(observe) = &self.observe {
+                    observe(id, false);
+                }
+                outcome
+            })) {
+                let _ = reply.send(outcome);
+            }
+        }
     }
 }
 
