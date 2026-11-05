@@ -1,7 +1,7 @@
 use super::{
     Editor, InputSettings, UiContext,
     editing::ControlSettings,
-    picking::{Display, View, measurement},
+    picking::{self, Display, View},
 };
 use crate::{Error, color::Balance, image_recipe::NeutralRecipe, processing::NegativeInput};
 use async_executor::Task;
@@ -27,7 +27,7 @@ pub(super) struct State {
     anchor: Option<Arc<Anchor>>,
     edit: Option<Edit>,
     #[cfg(test)]
-    pub(super) edit_gate: Option<measurement::testing::Gate>,
+    pub(super) edit_gate: Option<picking::testing::Gate>,
 }
 
 struct Target {
@@ -271,7 +271,7 @@ impl Editor {
                 {
                     gate.wait(cancelled.clone()).map_err(Error::Gpu)?;
                 }
-                let services = measurement::query_services(services.as_ref())?;
+                let services = picking::query_services(services.as_ref())?;
                 let negative = |input: InputSettings| -> Result<NegativeInput, Error> {
                     let mut recipe = anchor.recipe.clone();
                     recipe.input = input;
@@ -357,7 +357,7 @@ pub(super) fn pick<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let image = measurement::capture_scan(editor)?;
+    let image = picking::capture_scan(editor)?;
     let source = editor
         .document
         .visit
@@ -368,11 +368,11 @@ pub(super) fn pick<'scope>(
         .map_err(|error| error.to_string())?;
     let services = editor.source_services.clone();
     let captured = recipe.clone();
-    let reading = measurement::pick(
+    let reading = picking::pick(
         editor,
         DISPLAY,
         move |region, cancelled| {
-            let services = measurement::query_services(services.as_ref())?;
+            let services = picking::query_services(services.as_ref())?;
             let evidence =
                 query::Evidence::capture(services, &image, region, &|| cancelled.is_cancelled())?;
             let negative = captured

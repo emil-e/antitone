@@ -1,6 +1,6 @@
 use super::{
     Balance, DVec3, Editor, InputSettings, UiContext,
-    picking::{Display, View, measurement},
+    picking::{self, Display, View},
 };
 use async_executor::Task;
 
@@ -17,13 +17,13 @@ pub(super) fn pick_dmin<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let mut image = measurement::capture_scan(editor)?;
+    let mut image = picking::capture_scan(editor)?;
     let services = editor.source_services.clone();
-    let reading = measurement::pick(
+    let reading = picking::pick(
         editor,
         DMIN,
         move |region, cancelled| {
-            let services = measurement::query_services(services.as_ref())?;
+            let services = picking::query_services(services.as_ref())?;
             query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
         },
         cx.clone(),
@@ -45,13 +45,13 @@ pub(super) fn pick_dmax<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let mut image = measurement::capture_scan(editor)?;
+    let mut image = picking::capture_scan(editor)?;
     let services = editor.source_services.clone();
-    let reading = measurement::pick(
+    let reading = picking::pick(
         editor,
         DMAX,
         move |region, cancelled| {
-            let services = measurement::query_services(services.as_ref())?;
+            let services = picking::query_services(services.as_ref())?;
             query::reference(services, &mut image, region, &|| cancelled.is_cancelled())
         },
         cx.clone(),
@@ -73,14 +73,14 @@ pub(super) fn pick_gamma<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let mut image = measurement::capture_scan(editor)?;
+    let mut image = picking::capture_scan(editor)?;
     let services = editor.source_services.clone();
     let input = editor.input();
-    let reading = measurement::pick(
+    let reading = picking::pick(
         editor,
         GAMMA,
         move |region, cancelled| {
-            let services = measurement::query_services(services.as_ref())?;
+            let services = picking::query_services(services.as_ref())?;
             query::gamma(services, &mut image, region, input, &|| {
                 cancelled.is_cancelled()
             })

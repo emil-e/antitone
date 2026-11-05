@@ -9,7 +9,7 @@ use std::{
 type Outcome = Result<SearchOutcome, String>;
 
 pub(in crate::editor::dust) struct Call {
-    pub input: search::Input,
+    pub input: SearchInput,
     pub cancelled: Cancellation,
     result: mpsc::Sender<Outcome>,
 }
@@ -68,7 +68,7 @@ pub(in crate::editor::dust) enum Search {
 impl Search {
     pub(in crate::editor::dust) fn run(
         &self,
-        input: search::Input,
+        input: SearchInput,
         cancelled: Cancellation,
     ) -> Outcome {
         match self {

@@ -45,7 +45,7 @@ fn editor() -> Editor {
         )
         .unwrap();
     editor.select_dust_repair(RepairId(1));
-    editor.document.dust.search_worker = Some(worker::testing::Search::Geometry(
+    editor.document.dust.search_worker = Some(search_testing::Search::Geometry(
         editor.document.visit.canvas.ready.as_ref().unwrap().area,
     ));
     editor

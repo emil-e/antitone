@@ -1,4 +1,4 @@
-use super::measurement::testing;
+use super::picking::testing;
 use super::*;
 use crate::{editor::Pick, raw::Rect};
 use glam::DVec3;
@@ -25,7 +25,7 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
         width: 32,
         height: 32,
     });
-    let reference = measurement::capture_scan(&editor)
+    let reference = picking::capture_scan(&editor)
         .unwrap()
         .white_balance_coverage(
             region,
@@ -40,7 +40,7 @@ fn roll_wb_feature_measures_before_its_existing_balance_and_all_adjustment_layer
         .unwrap();
     let expected = RollInput::capture(&editor)
         .measure(
-            &mut measurement::capture_scan(&editor).unwrap(),
+            &mut picking::capture_scan(&editor).unwrap(),
             region,
             editor.source_services.as_ref().unwrap(),
             &|| false,
@@ -130,7 +130,7 @@ fn layer_white_balance_pick_captures_only_preceding_layers_and_fits_a_replacemen
         height: ready.area.height / 3,
     });
     let captured = LayerInput::capture(&editor).unwrap();
-    let mut captured_image = measurement::capture_scan(&editor).unwrap();
+    let mut captured_image = picking::capture_scan(&editor).unwrap();
     let mut scan = Scan::from_source(ready.developed.clone());
     let baseline = scan
         .white_balance_coverage(
@@ -255,7 +255,7 @@ fn masked_and_partial_layer_wb_picks_neutralize_the_captured_patch_before_own_cr
         let balance = LayerInput::capture(&editor)
             .unwrap()
             .measure(
-                &mut measurement::capture_scan(&editor).unwrap(),
+                &mut picking::capture_scan(&editor).unwrap(),
                 Coverage::rectangle(patch),
                 editor.source_services.as_ref().unwrap(),
                 &|| false,
@@ -361,7 +361,7 @@ fn wb_target_is_locked_before_polling_and_cancel_allows_a_new_layer_pick_without
             LayerInput::capture(editor)
                 .unwrap()
                 .measure(
-                    &mut measurement::capture_scan(editor).unwrap(),
+                    &mut picking::capture_scan(editor).unwrap(),
                     region,
                     editor.source_services.as_ref().unwrap(),
                     &|| false,
@@ -440,7 +440,7 @@ fn a_completed_wb_result_applies_to_its_captured_layer_after_selection_changes()
         .unwrap();
     editor.select_adjustment_layer(Target::Layer(first));
     let target = (source, Target::Layer(first));
-    let mut image = measurement::capture_scan(&editor).unwrap();
+    let mut image = picking::capture_scan(&editor).unwrap();
     let area = image.area;
     let region = Coverage::rectangle(Rect {
         x: area.x + 8,
@@ -453,7 +453,7 @@ fn a_completed_wb_result_applies_to_its_captured_layer_after_selection_changes()
     let before = editor.document.visit.adjustment_layer_settings.wb;
     crate::application::test_support::with_application(editor, |app| {
         let reading = app.enter(|editor, cx| {
-            let reading = measurement::pick(
+            let reading = picking::pick(
                 editor,
                 LAYER,
                 move |region, cancelled| {
@@ -556,7 +556,7 @@ fn layer_selection_is_locked_during_wb_measurement_and_unlocked_after_completion
     let balance = LayerInput::capture(&editor)
         .unwrap()
         .measure(
-            &mut measurement::capture_scan(&editor).unwrap(),
+            &mut picking::capture_scan(&editor).unwrap(),
             region,
             editor.source_services.as_ref().unwrap(),
             &|| false,
@@ -689,8 +689,8 @@ fn photo_wb_pick_uses_its_captured_baseline_before_upstream_contrast() {
         expected_signature
     );
     let captured = LayerInput::capture(&editor).unwrap();
-    let mut captured_image = measurement::capture_scan(&editor).unwrap();
-    let mut zero_image = measurement::capture_scan(&editor).unwrap();
+    let mut captured_image = picking::capture_scan(&editor).unwrap();
+    let mut zero_image = picking::capture_scan(&editor).unwrap();
     zero_image.reference_exposure = None;
     let control = LayerInput::capture(&editor)
         .unwrap()

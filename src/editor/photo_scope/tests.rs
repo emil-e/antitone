@@ -3,7 +3,7 @@ use crate::{
     application::test_support::with_application,
     editor::{
         Coverage, Pick,
-        picking::measurement::testing,
+        picking::testing,
         tests::{add_ready_fixture, fixture},
         tool,
     },

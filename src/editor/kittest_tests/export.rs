@@ -159,14 +159,12 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
         harness.read(|editor| {
             assert_eq!(
                 editor
-                    .export_ids(crate::editor::export::batch::Scope::Selected)
+                    .export_ids(crate::editor::export::Scope::Selected)
                     .len(),
                 2
             );
             assert_eq!(
-                editor
-                    .export_ids(crate::editor::export::batch::Scope::All)
-                    .len(),
+                editor.export_ids(crate::editor::export::Scope::All).len(),
                 3
             );
         });

@@ -532,7 +532,7 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
     let expected_dmax = editor.dmax();
     let expected_roll = editor.document.roll;
     let expected_photo = editor.document.visit.adjustment_layer_settings;
-    let baseline = picking::measurement::capture_scan(&editor)
+    let baseline = picking::capture_scan(&editor)
         .unwrap()
         .reference_coverage(patch())
         .unwrap();
@@ -545,7 +545,7 @@ fn source_inspection_is_transient_and_measurements_exclude_viewing_white_and_exp
 
     editor.preview_picker(Pick::Dmin);
     editor.set_test_pick_region(Some(patch()));
-    let actual = picking::measurement::capture_scan(&editor)
+    let actual = picking::capture_scan(&editor)
         .unwrap()
         .reference_coverage(patch())
         .unwrap();
@@ -2492,10 +2492,8 @@ fn navigation_invalidates_pending_export_dialog() {
     let editor = fixture();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.document.export.draft = Some(export::batch::Draft::new(
-                OutputTarget::DisplayP3,
-                PathBuf::new(),
-            ));
+            editor.document.export.draft =
+                Some(export::Draft::new(OutputTarget::DisplayP3, PathBuf::new()));
             editor.load("another.arw".into(), cx);
             assert!(editor.document.export.draft.is_none());
             assert!(editor.document.visit.source.pending());

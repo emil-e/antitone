@@ -432,7 +432,7 @@ fn document_and_export_decisions_ignore_outside_clicks_and_cancel_without_dispat
                 0 => editor.transition = Some(Transition::Close),
                 1 => editor.project_overwrite = Some((path.clone(), Some(Transition::New))),
                 _ => {
-                    editor.document.export.draft = Some(export::batch::Draft::new(
+                    editor.document.export.draft = Some(export::Draft::new(
                         OutputTarget::Srgb,
                         directory.path().to_owned(),
                     ))
@@ -621,15 +621,15 @@ fn export_replace_decision_dispatches_the_staged_format_and_current_accepted_gra
             editor.document.visit.crop.unwrap()
         );
         let services = editor.export_services.as_ref().unwrap().clone();
-        let mut draft = export::batch::Draft::new(OutputTarget::Srgb, directory.path().to_owned());
+        let mut draft = export::Draft::new(OutputTarget::Srgb, directory.path().to_owned());
         match format {
             OutputFormat::Tiff(target) => draft.target = target,
             OutputFormat::Exr(precision) => {
-                draft.kind = export::batch::Kind::Exr;
+                draft.kind = export::Kind::Exr;
                 draft.precision = precision;
             }
         }
-        draft.collision = export::batch::Collision::Replace;
+        draft.collision = export::Collision::Replace;
         draft.confirming_replace = true;
         editor.document.export.draft = Some(draft);
         let before = editor.document.state.project.clone();
