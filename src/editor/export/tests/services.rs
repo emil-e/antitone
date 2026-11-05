@@ -1,6 +1,6 @@
 use super::*;
 use crate::editor::{
-    export::batch::{Draft, Kind, Scope},
+    export::{Draft, Kind, Scope},
     source_loading,
     tests::authored_fixture,
 };

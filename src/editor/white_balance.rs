@@ -1,7 +1,7 @@
 use super::{
     AdjustmentLayerSettings, Balance, Editor, InputSettings, RollSettings, SourceId, UiContext,
     adjustment_layers::Target,
-    picking::{Display, View, measurement},
+    picking::{self, Display, View},
 };
 use crate::{
     Error,
@@ -108,14 +108,14 @@ pub(super) fn pick_roll<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let mut image = measurement::capture_scan(editor)?;
+    let mut image = picking::capture_scan(editor)?;
     let services = editor.source_services.clone();
     let input = RollInput::capture(editor);
-    let reading = measurement::pick(
+    let reading = picking::pick(
         editor,
         ROLL,
         move |region, cancelled| {
-            let services = measurement::query_services(services.as_ref())?;
+            let services = picking::query_services(services.as_ref())?;
             input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
         },
         cx.clone(),
@@ -137,7 +137,7 @@ pub(super) fn pick_layer<'scope>(
     editor: &mut Editor,
     cx: &UiContext<'scope, Editor>,
 ) -> Result<Task<()>, String> {
-    let mut image = measurement::capture_scan(editor)?;
+    let mut image = picking::capture_scan(editor)?;
     let services = editor.source_services.clone();
     let input = LayerInput::capture(editor)?;
     let target = (
@@ -148,11 +148,11 @@ pub(super) fn pick_layer<'scope>(
             .expect("captured WB source"),
         editor.adjustment_layer_target(),
     );
-    let reading = measurement::pick(
+    let reading = picking::pick(
         editor,
         LAYER,
         move |region, cancelled| {
-            let services = measurement::query_services(services.as_ref())?;
+            let services = picking::query_services(services.as_ref())?;
             input.measure(&mut image, region, services, &|| cancelled.is_cancelled())
         },
         cx.clone(),

@@ -33,13 +33,13 @@ fn patch(editor: &Editor) -> crate::coverage::Coverage {
 }
 
 fn measured_reference(editor: &Editor, region: crate::coverage::Coverage) -> DVec3 {
-    let reference = measurement::capture_scan(editor)
+    let reference = picking::capture_scan(editor)
         .unwrap()
         .reference_coverage(region)
         .unwrap();
     let actual = query::reference(
         editor.source_services.as_ref().unwrap(),
-        &mut measurement::capture_scan(editor).unwrap(),
+        &mut picking::capture_scan(editor).unwrap(),
         region,
         &|| false,
     )
@@ -103,7 +103,7 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/raw/illuminated-patches.dng");
     let mut editor = setup(path.to_str().unwrap());
-    let mut image = measurement::capture_scan(&editor).unwrap();
+    let mut image = picking::capture_scan(&editor).unwrap();
     let patch_at = |x| Rect {
         x,
         y: 16,
@@ -129,13 +129,13 @@ fn gamma_feature_fits_its_captured_negative_stage_without_changing_roll_or_layer
     editor.sync_document();
     let region = crate::coverage::Coverage::rectangle(patch_at(144));
     let input = editor.input();
-    let reference = measurement::capture_scan(&editor)
+    let reference = picking::capture_scan(&editor)
         .unwrap()
         .roll_neutral_coverage(region, &input)
         .unwrap();
     let expected = query::gamma(
         editor.source_services.as_ref().unwrap(),
-        &mut measurement::capture_scan(&editor).unwrap(),
+        &mut picking::capture_scan(&editor).unwrap(),
         region,
         input,
         &|| false,

@@ -108,14 +108,14 @@ fn ordinary_evaluation_cannot_propose_a_different_offset() {
     assert!(e.document.dust.cached.is_empty());
 }
 
-use super::super::worker::testing::Gate;
+use super::super::search_testing::Gate;
 use crate::application::test_support::{TestApplication, with_application};
 
 fn queue(
     e: &mut Editor,
     origin: [u32; 2],
     cx: &UiContext<'_, Editor>,
-) -> super::super::search::PendingStroke {
+) -> super::super::PendingStroke {
     e.begin_dust_mask(None);
     e.document.dust_mask_draft_mut().unwrap().pixels = (origin[1]..origin[1] + 3)
         .flat_map(|y| (origin[0]..origin[0] + 3).map(move |x| [x, y]))

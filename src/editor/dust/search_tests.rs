@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::test_support::with_application;
-use crate::editor::dust::worker::testing::Gate;
+use crate::editor::dust::search_testing::Gate;
 use std::time::Duration;
 
 #[test]
@@ -36,7 +36,7 @@ fn stroke_tasks_return_their_outcome_and_completion_withdraws_pending_geometry()
             app.update(|editor| {
                 assert!(editor.pending_dust_strokes().is_empty());
                 let actual = {
-                    let mut searches = super::super::testing::searches(editor).borrow_mut();
+                    let mut searches = super::testing::searches(editor).borrow_mut();
                     let task = &mut searches.tasks[0].task;
                     assert!(task.is_finished());
                     futures_lite::future::block_on(futures_lite::future::poll_once(task))
@@ -47,7 +47,7 @@ fn stroke_tasks_return_their_outcome_and_completion_withdraws_pending_geometry()
                     editor.dust_repairs(source).is_some(),
                     matches!(expected, Ok(Some(_)))
                 );
-                let mut searches = super::super::testing::searches(editor).borrow_mut();
+                let mut searches = super::testing::searches(editor).borrow_mut();
                 searches.prune();
                 assert!(searches.tasks.is_empty());
             });

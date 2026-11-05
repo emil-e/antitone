@@ -488,11 +488,11 @@ fn decision_dialogs_expose_safe_actions_and_fit_normal_and_narrow_viewports() {
                     ))
                 }
                 2 => {
-                    let mut draft = crate::editor::export::batch::Draft::new(
+                    let mut draft = crate::editor::export::Draft::new(
                         OutputTarget::Srgb,
                         PathBuf::from("/exports/Scans/照片-long-export-folder"),
                     );
-                    draft.collision = crate::editor::export::batch::Collision::Replace;
+                    draft.collision = crate::editor::export::Collision::Replace;
                     draft.confirming_replace = true;
                     editor.document.export.draft = Some(draft);
                 }

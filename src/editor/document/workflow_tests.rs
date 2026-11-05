@@ -98,12 +98,7 @@ fn new_work_admission_withdraws_queued_feature_acceptance_after_the_picker_finis
                     } else {
                         calibration::GAMMA
                     };
-                    let reading = picking::measurement::pick(
-                        editor,
-                        display,
-                        move |_, _| Ok(value),
-                        cx.clone(),
-                    );
+                    let reading = picking::pick(editor, display, move |_, _| Ok(value), cx.clone());
                     let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
                     editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(area)));
                     editor.hosted_action(crate::editor::tool::Action::Primary);

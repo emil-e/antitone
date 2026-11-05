@@ -134,7 +134,7 @@ fn documented_states_render() {
 
         // The export dialog.
         harness.update(|editor| {
-            editor.document.export.draft = Some(crate::editor::export::batch::Draft::new(
+            editor.document.export.draft = Some(crate::editor::export::Draft::new(
                 OutputTarget::Srgb,
                 PathBuf::from("/exports"),
             ));

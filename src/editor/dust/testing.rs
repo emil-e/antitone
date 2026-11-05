@@ -32,7 +32,7 @@ impl DocumentScope {
     }
 }
 
-pub(super) fn searches(editor: &Editor) -> &RefCell<search::State> {
+pub(super) fn searches(editor: &Editor) -> &RefCell<SearchState> {
     &editor
         .document
         .dust_fixture()

@@ -1,4 +1,4 @@
-use super::batch::Photo;
+use super::Photo;
 use super::*;
 mod output;
 mod services;
@@ -90,13 +90,13 @@ impl Editor {
             .filter_map(|s| self.document.source_path(s.id).ok())
             .collect::<Vec<_>>();
         protected.extend(self.document.path.clone());
-        if let Err(error) = batch::require_safe(&request.path, &protected) {
+        if let Err(error) = require_safe(&request.path, &protected) {
             self.status = error.to_string();
             self.report_failure(FailureKind::Export, self.status.clone());
             return;
         }
         self.export_photos(
-            batch::Request {
+            Request {
                 photos: vec![Photo {
                     input: Input::Ready(request.input),
                     recipe: request.recipe,
