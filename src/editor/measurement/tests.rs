@@ -1,5 +1,5 @@
 use super::*;
-use crate::editor::{Pick, Scan};
+use crate::editor::{PickerCase, Scan};
 use crate::source as source_loading;
 use crate::{raw::Rect, source::SourceCache};
 use std::sync::Arc;
@@ -77,12 +77,15 @@ fn the_awaiting_calibration_feature_uses_its_captured_source_without_painting() 
         let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
             let tasks = app.access();
-            app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+            app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Dmin, cx));
             app.pump();
             app.update(|editor| {
                 editor.set_test_pick_region(Some(region));
                 editor.apply_pick(&tasks);
-                assert!(editor.measurement_pending() && editor.interaction_blocked());
+                assert!(
+                    !editor.picking(),
+                    "Apply ends selection before measurement begins"
+                );
                 editor.document.visit.canvas.ready = None;
             });
             std::fs::write(&path, b"replaced after the operation captured its input").unwrap();
@@ -136,17 +139,17 @@ fn cancelling_an_unpolled_measurement_releases_its_input_without_admission() {
     let before = editor.document.state.project.clone();
     crate::application::test_support::with_application(editor, |app| {
         let tasks = app.access();
-        app.update(|editor| editor.begin_pick(Pick::Dmin, &tasks));
+        app.update(|editor| editor.begin_test_picker(PickerCase::Dmin, &tasks));
         app.pump();
         app.update(|editor| {
             editor.set_test_pick_region(Some(Coverage::rectangle(
                 editor.document.visit.canvas.ready.as_ref().unwrap().area,
             )));
             editor.apply_pick(&tasks);
-            assert!(editor.interaction_blocked() && editor.measurement_pending());
+            assert!(!editor.picking());
         });
-        app.enter(|editor, cx| {
-            editor.finish_pick(cx);
+        app.update(|editor| {
+            editor.document.visit.interaction_action = None;
             editor.document.visit.canvas.ready = None;
         });
         app.pump();
@@ -192,12 +195,12 @@ fn service_rejection_retires_the_pick_without_changing_processing_or_history() {
         .map(str::to_owned);
     crate::application::test_support::with_application(editor, |app| {
         let tasks = app.access();
-        app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+        app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Dmin, cx));
         app.pump();
         app.update(|editor| {
             editor.set_test_pick_region(Some(region));
             editor.apply_pick(&tasks);
-            assert!(editor.interaction_blocked() && editor.measurement_pending());
+            assert!(!editor.picking());
         });
         app.run_until(Duration::from_secs(5), |editor| {
             !editor.interaction_blocked()
@@ -246,7 +249,7 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
         editor.source_services.as_mut().unwrap().developments = scheduler.clone();
         let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, access| editor.begin_pick(Pick::Dmin, access));
+            app.enter(|editor, access| editor.begin_test_picker(PickerCase::Dmin, access));
             app.pump();
             app.enter(|editor, access| {
                 editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
@@ -256,21 +259,22 @@ fn cancelling_or_replacing_a_queued_measurement_does_not_finish_new_work() {
                     height: 32,
                 })));
                 editor.apply_pick(access);
-                assert!(editor.measurement_pending());
+                assert!(!editor.picking());
             });
             app.pump();
+            assert!(app.read(Editor::measurement_pending));
             app.enter(|editor, cx| {
                 if replace {
                     editor.load(fixture("patches.dng"), cx);
                     assert!(editor.document.visit.source.pending());
                 } else {
-                    editor.finish_pick(cx);
+                    editor.activities.view().unwrap().request_cancel();
                     editor.document.visit.canvas.ready = None;
                 }
-                assert!(!editor.measurement_pending());
                 assert!(editor.document_pending.is_none());
             });
             app.pump();
+            assert!(!app.read(Editor::measurement_pending));
             let (status, activity) = app.read(|editor| {
                 (
                     editor.status.clone(),
@@ -320,7 +324,7 @@ fn cancelling_a_running_measurement_retains_its_source_until_physical_cleanup() 
     let before = editor.document.state.project.clone();
     let gate = testing::Gate::install(&mut editor);
     crate::application::test_support::with_application(editor, |app| {
-        app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+        app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Dmin, cx));
         app.pump();
         app.enter(|editor, cx| {
             editor.set_test_pick_region(Some(Coverage::rectangle(
@@ -329,8 +333,8 @@ fn cancelling_a_running_measurement_retains_its_source_until_physical_cleanup() 
             editor.apply_pick(cx);
         });
         let call = gate.next(app);
-        app.enter(|editor, cx| {
-            editor.finish_pick(cx);
+        app.update(|editor| {
+            editor.document.visit.interaction_action = None;
             editor.document.visit.canvas.ready = None;
         });
         app.pump();
@@ -359,6 +363,52 @@ fn cancelling_a_running_measurement_retains_its_source_until_physical_cleanup() 
             assert!(!editor.measurement_pending() && !editor.interaction_blocked());
         });
     });
+}
+
+#[test]
+fn measurement_can_succeed_or_cancel_without_any_picker_or_tool() {
+    for cancel in [false, true] {
+        let mut editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
+        let gate = testing::Gate::install(&mut editor);
+        crate::application::test_support::with_application(editor, |app| {
+            let task = app
+                .access()
+                .spawn(move |cx| async move {
+                    let work = query(&cx, |_| Ok(42_u32));
+                    run(&cx, "Independent sample", work).await
+                })
+                .unwrap();
+            let call = gate.next(app);
+            app.read(|editor| {
+                assert!(!editor.has_hosted_tool());
+                assert!(editor.interaction_blocked());
+                assert_eq!(
+                    editor.activities.view().unwrap().title,
+                    "Measuring Independent sample…"
+                );
+            });
+            if cancel {
+                app.update(|editor| editor.activities.view().unwrap().request_cancel());
+                app.run_until(Duration::from_secs(5), |_| task.is_finished());
+                assert!(call.cancelled.is_cancelled());
+            }
+            let completed = call.completed.clone();
+            call.run();
+            if cancel {
+                completed.wait(app);
+            }
+            app.run_until(Duration::from_secs(5), |_| task.is_finished());
+            assert_eq!(
+                pollster::block_on(task),
+                if cancel { None } else { Some(42) }
+            );
+            app.read(|editor| {
+                assert!(!editor.interaction_blocked());
+                assert!(editor.activities.view().is_none());
+                assert!(!editor.has_hosted_tool());
+            });
+        });
+    }
 }
 
 #[test]

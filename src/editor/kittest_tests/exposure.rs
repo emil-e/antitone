@@ -144,7 +144,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         }
         h.get_by_label("Original-resolution reference").click();
         h.step();
-        h.enter(|editor, cx| editor.begin_pick(Pick::Wb, cx));
+        h.enter(|editor, cx| editor.begin_test_picker(PickerCase::Wb, cx));
         h.step();
         wait_for(&mut h, |editor| {
             assert!(
@@ -158,7 +158,7 @@ fn assert_matched_reference_in_views(film_enabled: bool) {
         h.step();
         h.render().unwrap();
         let point = h.read(|editor| {
-            assert_eq!(editor.test_pick(), Some(Pick::Wb.display()));
+            assert_eq!(editor.test_pick(), Some(PickerCase::Wb.display()));
             editor
                 .document
                 .visit

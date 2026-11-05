@@ -206,12 +206,12 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                 add_ready_fixture(editor);
                 let context = egui::Context::default();
                 for pick in [
-                    Pick::Dmin,
-                    Pick::Dmax,
-                    Pick::Gamma,
-                    Pick::GammaPivot,
-                    Pick::RollWb,
-                    Pick::Wb,
+                    PickerCase::Dmin,
+                    PickerCase::Dmax,
+                    PickerCase::Gamma,
+                    PickerCase::GammaPivot,
+                    PickerCase::RollWb,
+                    PickerCase::Wb,
                 ] {
                     editor.preview_picker(pick);
                     for tab in 0..3 {
@@ -249,12 +249,12 @@ fn every_picker_keeps_coherent_identity_and_shared_actions_in_the_bar_on_every_t
                         }
                         let text = ui_labels(output.clone());
                         let title = match pick {
-                            Pick::Dmin => "Dmin",
-                            Pick::Dmax => "Dmax",
-                            Pick::Gamma => "Gamma neutral",
-                            Pick::GammaPivot => "Gamma colour pivot",
-                            Pick::RollWb => "Roll WB neutral",
-                            Pick::Wb => "WB neutral",
+                            PickerCase::Dmin => "Dmin",
+                            PickerCase::Dmax => "Dmax",
+                            PickerCase::Gamma => "Gamma neutral",
+                            PickerCase::GammaPivot => "Gamma colour pivot",
+                            PickerCase::RollWb => "Roll WB neutral",
+                            PickerCase::Wb => "WB neutral",
                         };
                         let marking = title.to_uppercase();
                         let identity = text
@@ -370,7 +370,7 @@ fn bar_inspector_and_help_own_pointer_drag_wheel_and_escape_before_the_canvas() 
             editor.scopes.visible = false;
             editor.begin_crop();
         } else {
-            editor.preview_picker(Pick::Wb);
+            editor.preview_picker(PickerCase::Wb);
         }
         editor.document.visit.canvas.viewport.zoom = Some(2.);
         warm(&mut editor, &context, size);
@@ -544,7 +544,7 @@ fn numeric_enter_and_escape_are_handled_before_picker_or_crop_shortcuts() {
             editor.scopes.visible = false;
             editor.begin_crop();
         } else {
-            editor.preview_picker(Pick::Dmin);
+            editor.preview_picker(PickerCase::Dmin);
             editor.set_test_pick_region(Some(Coverage::rectangle(Rect {
                 x: 20,
                 y: 30,
@@ -921,7 +921,12 @@ fn geometry_tools_use_trailing_viewer_bar_actions_and_only_their_own_inspector()
 #[test]
 fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
     let size = egui::vec2(800., 600.);
-    for pick in [Pick::Dmin, Pick::Dmax, Pick::Gamma, Pick::Wb] {
+    for pick in [
+        PickerCase::Dmin,
+        PickerCase::Dmax,
+        PickerCase::Gamma,
+        PickerCase::Wb,
+    ] {
         let mut editor = fixture();
         add_ready_fixture(&mut editor);
         let _hold = crate::background::testing::pause();
@@ -931,7 +936,7 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
             warm(app, &context, size);
             let project = app.read(|editor| editor.document.state.project.clone());
             let view = app.read(|editor| editor.document.visit.canvas.viewport);
-            app.enter(|editor, cx| editor.begin_pick(pick, cx));
+            app.enter(|editor, cx| editor.begin_test_picker(pick, cx));
             warm(app, &context, size);
             let output = frame(app, &context, size, vec![]);
             assert!(
@@ -958,7 +963,7 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
                 assert_eq!(editor.document.visit.canvas.viewport, view);
                 assert_eq!(editor.document.state.project, project);
             });
-            app.enter(|editor, cx| editor.begin_pick(pick, cx));
+            app.enter(|editor, cx| editor.begin_test_picker(pick, cx));
             app.pump();
             app.update(|editor| {
                 let area = editor.document.visit.canvas.ready.as_ref().unwrap().area;
@@ -977,6 +982,7 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
                 size,
                 text.iter().find(|(s, _)| s == "Apply").unwrap().1.center(),
             );
+            app.pump();
             app.read(|editor| {
                 assert!(
                     editor.interaction_blocked(),
@@ -986,7 +992,8 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
                     editor.test_pick_region()
                 );
                 assert_eq!(editor.document.state.project, project);
-                assert_eq!(editor.test_pick().unwrap(), pick.display());
+                assert!(editor.test_pick().is_none());
+                assert_eq!(editor.document.visit.canvas.viewport, view);
             });
             let output = frame(app, &context, size, vec![]);
             for name in ["Cancel", "Apply"] {
@@ -998,10 +1005,7 @@ fn picker_bar_actions_preserve_cancel_and_measurement_transactions() {
                         .unwrap()
                         .nodes
                         .iter()
-                        .find(|(_, node)| node.label() == Some(name))
-                        .unwrap()
-                        .1
-                        .is_disabled()
+                        .all(|(_, node)| node.label() != Some(name))
                 );
             }
         });
@@ -1053,7 +1057,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
             warm(&mut feature, &context, size);
             feature
                 .0
-                .enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+                .enter(|editor, cx| editor.begin_test_picker(PickerCase::Dmin, cx));
             feature.0.pump();
             feature.0.update(|editor| {
                 editor.set_test_pick_region(Some(region));
@@ -1084,6 +1088,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
                     ),
                 );
             }
+            feature.0.pump();
             feature.0.read(|editor| {
                 assert!(
                     editor.interaction_blocked(),
@@ -1095,8 +1100,7 @@ fn measurement_button_and_enter_register_and_finish_without_the_post_draw_launch
                 assert!(editor.measurement_pending());
                 assert_eq!(editor.dmin(), Some(expected * 1.05));
             });
-            // This is a real application's first executor turn after input, not
-            // an inert fixture. No other frame or central launch call follows.
+            // Progress requires no additional paint or post-draw launch call.
             feature.0.run_until(Duration::from_secs(5), |editor| {
                 !editor.interaction_blocked()
             });
@@ -1319,14 +1323,14 @@ fn photo_tool_shelf_keeps_replacement_tools_available_during_a_crop() {
 }
 
 #[test]
-fn pick_apply_is_present_but_disabled_until_selection_and_while_measuring() {
+fn pick_apply_requires_selection_and_gives_way_to_measurement_activity() {
     let size = egui::vec2(800., 600.);
     let mut editor = fixture();
     add_ready_fixture(&mut editor);
     let _hold = crate::background::testing::pause();
     crate::application::test_support::with_application(editor, |app| {
         let context = egui::Context::default();
-        app.enter(|editor, cx| editor.begin_pick(Pick::Gamma, cx));
+        app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Gamma, cx));
         warm(app, &context, size);
         let output = frame(app, &context, size, vec![]);
         let apply = output
@@ -1350,27 +1354,42 @@ fn pick_apply_is_present_but_disabled_until_selection_and_while_measuring() {
             })))
         });
         frame(app, &context, size, key(egui::Key::Enter));
+        app.pump();
         app.read(|editor| {
             assert!(editor.interaction_blocked());
-            assert_eq!(editor.test_pick().unwrap(), Pick::Gamma.display());
+            assert!(!editor.has_hosted_tool());
         });
+        app.update(|editor| editor.activities.elapse(Duration::from_secs(1)));
+        // Let the newly opened modal complete egui's sizing pass before control discovery.
+        frame(app, &context, size, vec![]);
         let output = frame(app, &context, size, vec![]);
+        let nodes = output.platform_output.accesskit_update.unwrap().nodes;
         for name in ["Cancel", "Apply"] {
-            let node = output
-                .platform_output
-                .accesskit_update
-                .as_ref()
-                .unwrap()
-                .nodes
-                .iter()
-                .find(|(_, node)| node.label() == Some(name))
-                .unwrap();
-            assert!(node.1.is_disabled());
+            assert!(nodes.iter().all(|(_, node)| node.label() != Some(name)));
         }
-        frame(app, &context, size, key(egui::Key::Escape));
-        assert_eq!(
-            app.read(|editor| editor.test_pick()),
-            Some(Pick::Gamma.display())
+        assert!(
+            nodes
+                .iter()
+                .any(|(_, node)| node.label() == Some("Cancel measurement") && !node.is_disabled())
         );
+        frame(app, &context, size, key(egui::Key::Escape));
+        assert!(
+            app.read(Editor::measurement_pending),
+            "Escape cannot discard a running operation like a selection draft"
+        );
+        let text = labels(app, &context, size, vec![]);
+        click(
+            app,
+            &context,
+            size,
+            text.iter()
+                .find(|(label, _)| label == "Cancel measurement")
+                .unwrap()
+                .1
+                .center(),
+        );
+        app.run_until(Duration::from_secs(5), |editor| {
+            !editor.measurement_pending()
+        });
     });
 }

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{
-    editor::picking::query::{FORWARD_RESIDUAL_FLOOR, Samples},
+    editor::measurement::query::{FORWARD_RESIDUAL_FLOOR, Samples},
     gpu::grading::Grading,
 };
 use glam::DVec3;

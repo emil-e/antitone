@@ -7,7 +7,7 @@ use std::time::Duration;
 type App<'a> = crate::application::test_support::TestApplication<'a, Editor>;
 
 fn lock(app: &mut App<'_>) {
-    app.enter(|editor, cx| editor.begin_pick(super::super::Pick::GammaPivot, cx));
+    app.enter(|editor, cx| editor.begin_test_picker(super::super::PickerCase::GammaPivot, cx));
     app.pump();
     app.enter(|editor, cx| {
         let area = editor.selected_area().unwrap();
@@ -68,7 +68,7 @@ fn capture_waits_for_apply_and_manual_gamma_accepts_one_compensated_transaction(
     with_application(editor, |app| {
         let before = app.enter(|editor, cx| {
             let before = editor.history_snapshot();
-            editor.begin_pick(super::super::Pick::GammaPivot, cx);
+            editor.begin_test_picker(super::super::PickerCase::GammaPivot, cx);
             before
         });
         app.pump();
@@ -183,7 +183,7 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
     with_application(editor, |app| {
         lock(app);
         let anchor = app.read(|editor| editor.document.gamma_pivot.anchor.clone().unwrap());
-        app.enter(|editor, cx| editor.begin_pick(super::super::Pick::GammaPivot, cx));
+        app.enter(|editor, cx| editor.begin_test_picker(super::super::PickerCase::GammaPivot, cx));
         app.pump();
         app.enter(|editor, cx| editor.finish_pick(cx));
         app.pump();
@@ -194,8 +194,8 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
             ))
         });
 
-        let gate = app.update(picking::testing::Gate::install);
-        app.enter(|editor, cx| editor.begin_pick(super::super::Pick::GammaPivot, cx));
+        let gate = app.update(measurement::testing::Gate::install);
+        app.enter(|editor, cx| editor.begin_test_picker(super::super::PickerCase::GammaPivot, cx));
         app.pump();
         app.enter(|editor, cx| {
             editor
@@ -218,10 +218,12 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
             assert_eq!(editor.status, "Measurement worker panicked");
         });
 
-        let gate = picking::testing::Gate::after_work();
-        app.update(|editor| editor.document.visit.picker.measurement_gate = Some(gate.clone()));
+        let gate = measurement::testing::Gate::after_work();
+        app.update(|editor| editor.document.visit.measurement_gate = Some(gate.clone()));
         for failure in [false, true] {
-            app.enter(|editor, cx| editor.begin_pick(super::super::Pick::GammaPivot, cx));
+            app.enter(|editor, cx| {
+                editor.begin_test_picker(super::super::PickerCase::GammaPivot, cx)
+            });
             app.pump();
             app.enter(|editor, cx| {
                 editor
@@ -262,7 +264,7 @@ fn cancelling_and_failed_repicks_preserve_evidence_and_late_workers_cannot_publi
                     !editor.interaction_blocked()
                 });
                 app.update(|editor| {
-                    editor.document.visit.picker.measurement_gate = Some(gate.clone());
+                    editor.document.visit.measurement_gate = Some(gate.clone());
                 });
             }
         }
@@ -282,7 +284,7 @@ fn stale_gamma_completion_and_invalid_gamma_leave_accepted_state_unchanged() {
             assert!(editor.status.starts_with("Edit rejected:"));
             assert!(editor.document.gamma_pivot.anchor.is_some());
         });
-        let gate = picking::testing::Gate::default();
+        let gate = measurement::testing::Gate::default();
         app.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
         propose(app, 0.9, Some(egui::Id::new("pending gesture")));
         let stale = gate.next(app);
@@ -300,7 +302,7 @@ fn stale_gamma_completion_and_invalid_gamma_leave_accepted_state_unchanged() {
         app.update(|editor| editor.gamma_gesture_frame(false));
         app.pump();
         app.enter(|editor, _| assert_eq!(editor.history_snapshot(), before));
-        let gate = picking::testing::Gate::after_work();
+        let gate = measurement::testing::Gate::after_work();
         app.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
         propose(app, 0.8, None);
         let stale = gate.next(app);
@@ -325,7 +327,7 @@ fn completed_gamma_work_cannot_publish_to_a_replacement_document() {
     with_application(editor, |app| {
         lock(app);
         let before = app.enter(|editor, _| editor.history_snapshot());
-        let gate = picking::testing::Gate::after_work();
+        let gate = measurement::testing::Gate::after_work();
         app.update(|editor| editor.document.gamma_pivot.edit_gate = Some(gate.clone()));
         propose(app, 0.9, None);
         let late = gate.next(app);

@@ -1,19 +1,14 @@
 use super::*;
-use crate::{cancellation::Cancellation, viewport::CanvasLayout};
+use crate::viewport::CanvasLayout;
 use futures_channel::oneshot;
 use std::{
     cell::RefCell,
-    future::Future,
     rc::{Rc, Weak},
 };
 
 #[cfg(test)]
-mod measurement_tests;
-#[cfg(test)]
 mod operation_tests;
-pub(super) mod query;
-#[cfg(test)]
-pub(super) mod testing;
+
 #[cfg(test)]
 mod tests;
 
@@ -48,31 +43,27 @@ struct Interaction {
     display: Display,
     region: Option<Coverage>,
     drag: Option<PickDrag>,
-    submit: Option<oneshot::Sender<(Coverage, Activity)>>,
-    #[cfg(test)]
-    activity: Option<ActivityReporter>,
+    submit: Option<oneshot::Sender<Coverage>>,
 }
 
 impl Interaction {
-    fn submit(&mut self, editor: &mut Editor) {
+    fn new(display: Display, submit: Option<oneshot::Sender<Coverage>>) -> Self {
+        Self {
+            display,
+            region: None,
+            drag: None,
+            submit,
+        }
+    }
+
+    fn submit(&mut self) -> bool {
         if let Some(region) = self.region
             && let Some(send) = self.submit.take()
         {
-            let activity = editor.activities.start(
-                ActivityOptions::new(format!("Measuring {}…", self.display.label))
-                    .modal()
-                    .cancellable(
-                        "Cancel measurement",
-                        "Cancelling measurement…",
-                        crate::cancellation::Cancellation::default(),
-                    ),
-            );
-            #[cfg(test)]
-            {
-                self.activity = Some(activity.reporter());
-            }
-            editor.status = "Measuring full-resolution patch…".into();
-            let _ = send.send((region, activity));
+            let _ = send.send(region);
+            true
+        } else {
+            false
         }
     }
 }
@@ -81,8 +72,6 @@ impl Interaction {
 #[derive(Default)]
 pub(super) struct State {
     active: Weak<RefCell<Interaction>>,
-    #[cfg(test)]
-    pub measurement_gate: Option<testing::Gate>,
 }
 
 impl State {
@@ -109,20 +98,10 @@ impl State {
 
 fn install(
     editor: &mut Editor,
-    display: Display,
+    state: Rc<RefCell<Interaction>>,
     previous: Option<(crate::viewport::CanvasLayout, f32)>,
-    submit: Option<oneshot::Sender<(Coverage, Activity)>>,
-    task: Option<async_executor::Task<()>>,
 ) {
-    let state = Rc::new(RefCell::new(Interaction {
-        display,
-        region: None,
-        drag: None,
-        submit,
-        #[cfg(test)]
-        activity: None,
-    }));
-    let tool = PickTool::new(editor, state.clone(), previous, task);
+    let tool = PickTool::new(editor, state.clone(), previous);
     editor.document.thumbnails.cancel();
     editor
         .document
@@ -134,7 +113,11 @@ fn install(
 pub(super) fn preview(editor: &mut Editor, display: Display) {
     let previous = editor.document.visit.canvas.last_layout;
     if editor.prepare_tool() {
-        install(editor, display, previous, None, None);
+        install(
+            editor,
+            Rc::new(RefCell::new(Interaction::new(display, None))),
+            previous,
+        );
     }
 }
 
@@ -142,24 +125,11 @@ impl Editor {
     pub(super) fn picking(&self) -> bool {
         self.document.visit.picker.display().is_some()
     }
-
-    #[cfg(test)]
-    pub(super) fn measurement_pending(&self) -> bool {
-        self.document
-            .visit
-            .picker
-            .active
-            .upgrade()
-            .is_some_and(|state| {
-                let state = state.borrow();
-                state.submit.is_none() && state.activity.is_some()
-            })
-    }
 }
 
 pub(super) struct PickTool {
     state: Rc<RefCell<Interaction>>,
-    _task: Option<async_executor::Task<()>>,
+
     viewport: Viewport,
     orientation: (RollOrientation, PhotoOrientation),
     crop: Option<Crop>,
@@ -171,12 +141,11 @@ impl PickTool {
         editor: &Editor,
         state: Rc<RefCell<Interaction>>,
         previous: Option<(CanvasLayout, f32)>,
-        task: Option<async_executor::Task<()>>,
     ) -> Self {
         let temporary_view = state.borrow().display.view != View::Working;
+
         let mut tool = Self {
             state,
-            _task: task,
             crop: editor.document.visit.crop,
             initial_view: temporary_view.then_some(editor.document.visit.canvas.viewport),
             viewport: editor.document.visit.canvas.viewport,
@@ -341,7 +310,10 @@ impl tool::Tool for PickTool {
     fn action(&mut self, action: tool::Action, editor: &mut Editor, _cx: &UiContext<'_, Editor>) {
         match action {
             tool::Action::Primary if !editor.interaction_blocked() => {
-                self.state.borrow_mut().submit(editor);
+                let submitted = self.state.borrow_mut().submit();
+                if submitted {
+                    editor.end_tool();
+                }
             }
             tool::Action::Dismiss => editor.end_tool(),
             _ => {}
@@ -372,146 +344,52 @@ pub(super) fn paint_selection(ui: &egui::Ui, layout: CanvasLayout, region: Cover
     }
 }
 
-#[cfg(test)]
-pub(super) fn capture_scan(editor: &Editor) -> Result<Scan, String> {
-    let ready = editor
-        .document
-        .visit
-        .canvas
-        .ready
-        .as_ref()
-        .ok_or("No developed source for measurement")?;
-    let mut scan = Scan::with_reference(ready.developed.clone(), ready.reference.clone());
-    scan.set_flat_field(
-        editor
-            .document
-            .correction
-            .as_ref()
-            .map(|correction| correction.settings.map.clone()),
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(scan)
-}
-
-pub(super) fn capture_input(
-    editor: &Editor,
-) -> Result<impl Future<Output = Result<Scan, String>> + use<>, String> {
-    let input = editor.capture_source_context()?;
-    Ok(async move {
-        let context = input.await?;
-        let mut scan = Scan::with_reference(context.source, context.reference);
-        scan.set_flat_field(
-            context
-                .correction
-                .map(|correction| correction.settings.map.clone()),
-        )
-        .map_err(|error| error.to_string())?;
-        Ok(scan)
-    })
-}
-
-pub(super) fn query_services(
-    services: Option<&crate::editor::source::Services>,
-) -> Result<&crate::editor::source::Services, Error> {
-    services.ok_or_else(|| Error::Gpu("image-query services unavailable".into()))
-}
-
-#[cfg(test)]
-pub(super) fn pick<'scope, T, F>(
-    editor: &mut Editor,
-    display: Display,
-    measure: F,
+/// The UI host observes this request; its caller owns the future and the lease.
+struct InteractionLease<'scope> {
+    state: Weak<RefCell<Interaction>>,
     cx: UiContext<'scope, Editor>,
-) -> impl std::future::Future<Output = Option<T>> + use<'scope, T, F>
-where
-    T: Send + 'static,
-    F: FnOnce(Coverage, Cancellation) -> Result<T, Error> + Send + 'static,
-{
-    pick_prepared(editor, display, std::future::ready(Ok(measure)), cx)
 }
 
-/// Open the picker immediately; acquire precise inputs after the user submits its region.
-pub(super) fn pick_prepared<'scope, T, F, P>(
-    editor: &mut Editor,
-    display: Display,
-    prepare: P,
-    cx: UiContext<'scope, Editor>,
-) -> impl Future<Output = Option<T>> + use<'scope, T, F, P>
-where
-    T: Send + 'static,
-    F: FnOnce(Coverage, Cancellation) -> Result<T, Error> + Send + 'static,
-    P: Future<Output = Result<F, String>> + 'scope,
-{
-    let (mut reply, receive) = oneshot::channel();
-    let previous = editor.document.visit.canvas.last_layout;
-    if editor.prepare_tool() {
-        editor.retire_pick_actions();
-        let (submit, selected) = oneshot::channel::<(Coverage, crate::editor::Activity)>();
-
-        #[cfg(test)]
-        let gate = editor.document.visit.picker.measurement_gate.clone();
-        // The task retains work and communication endpoints, never its tool/UI owner.
-        let task = cx.spawn(move |cx| async move {
-            let measured = async {
-                let (region, activity) = selected.await.ok()?;
-                let work = async {
-                    let measure = match prepare.await {
-                        Ok(measure) => measure,
-                        Err(error) => {
-                            return Some(Err(error));
-                        }
-                    };
-                    let result = crate::background::run(move |cancelled| {
-                        #[cfg(test)]
-                        if let Some(gate) = &gate
-                            && !gate.is_after_work()
-                        {
-                            gate.wait(cancelled.clone())?;
-                        }
-                        let result =
-                            measure(region, cancelled.clone()).map_err(|error| error.to_string());
-                        #[cfg(test)]
-                        if let Some(gate) = &gate
-                            && gate.is_after_work()
-                        {
-                            gate.wait(cancelled)?;
-                        }
-                        result
-                    })
-                    .await
-                    .map_err(|_| "Measurement worker panicked".to_owned())
-                    .and_then(|result| result);
-                    Some(result)
-                };
-                let cancelled = async {
-                    activity.cancelled().await;
-                    None
-                };
-                let result = futures_lite::future::or(cancelled, work).await;
-                drop(activity);
-                result
-            };
-            let stopped = async {
-                reply.cancellation().await;
-                None
-            };
-            let result = futures_lite::future::or(stopped, measured).await;
-            let value = cx
-                .update(|editor| {
-                    if let Some(Err(error)) = &result {
-                        editor.status = error.clone();
-                    }
+impl Drop for InteractionLease<'_> {
+    fn drop(&mut self) {
+        if self.state.strong_count() == 0 {
+            return;
+        }
+        let state = self.state.clone();
+        // A caller may drop its future while Editor is borrowed. Defer only UI cleanup,
+        // not feature work, and never remove an interaction installed after this one.
+        if let Some(cleanup) = self.cx.spawn(move |cx| async move {
+            cx.update(|editor| {
+                if state.upgrade().is_some()
+                    && Weak::ptr_eq(&state, &editor.document.visit.picker.active)
+                {
                     editor.end_tool();
-                    result.and_then(Result::ok)
-                })
-                .flatten();
-            if let Some(value) = value {
-                let _ = reply.send(value);
-            }
-        });
-        if let Some(task) = task {
-            install(editor, display, previous, Some(submit), Some(task));
+                }
+            });
+        }) {
+            cleanup.detach();
         }
     }
-    async move { receive.await.ok() }
+}
+
+/// Select a region. Apply ends the tool before returning the accepted coverage.
+pub(super) async fn pick(cx: &UiContext<'_, Editor>, display: Display) -> Option<Coverage> {
+    let (submit, selected) = oneshot::channel();
+    let state = Rc::new(RefCell::new(Interaction::new(display, Some(submit))));
+    let _lease = InteractionLease {
+        state: Rc::downgrade(&state),
+        cx: cx.clone(),
+    };
+    let installed = cx.update(|editor| {
+        if !editor.tool_start_available() || editor.has_hosted_tool() {
+            return false;
+        }
+        let previous = editor.document.visit.canvas.last_layout;
+        install(editor, state, previous);
+        true
+    })?;
+    if !installed {
+        return None;
+    }
+    selected.await.ok()
 }

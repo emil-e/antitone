@@ -191,6 +191,7 @@ impl Editor {
         if !self.tool_start_available() {
             return false;
         }
+        self.document.visit.interaction_action = None;
         self.cancel_active_tool();
         self.canvas_frame = Default::default();
         self.finish_adjustment_layer_interaction();

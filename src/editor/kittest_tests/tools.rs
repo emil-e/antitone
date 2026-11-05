@@ -175,9 +175,9 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                 .unwrap();
             });
             let (tab, label, kind) = if angle == 0. {
-                ("Roll", "Pick Dmin (film base)", Pick::Dmin)
+                ("Roll", "Pick Dmin (film base)", PickerCase::Dmin)
             } else {
-                ("Photo", "Pick neutral for white balance", Pick::Wb)
+                ("Photo", "Pick neutral for white balance", PickerCase::Wb)
             };
             stage(&mut h, tab);
             h.get_by_label(label).scroll_to_me();
@@ -208,7 +208,7 @@ fn precision_tools_paint_completed_originals_in_native_and_straightened_frames()
                     e.active_canvas().last_layout.unwrap().0,
                     e.document.target,
                     matrix,
-                    matches!(kind, Pick::Wb).then(|| {
+                    matches!(kind, PickerCase::Wb).then(|| {
                         e.adjustment_layer_snapshot(
                             e.document
                                 .state
@@ -306,8 +306,13 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
             harness.get_by_label("Scopes").click();
             harness.step();
             for (name, tab, label, kind) in [
-                ("dmin", "Roll", "Pick Dmin (film base)", Pick::Dmin),
-                ("wb", "Photo", "Pick neutral for white balance", Pick::Wb),
+                ("dmin", "Roll", "Pick Dmin (film base)", PickerCase::Dmin),
+                (
+                    "wb",
+                    "Photo",
+                    "Pick neutral for white balance",
+                    PickerCase::Wb,
+                ),
             ] {
                 stage(&mut harness, tab);
                 let before = harness.read(|editor| editor.document.state.project.clone());
@@ -333,15 +338,15 @@ fn viewer_tools_use_widget_drafts_cancel_and_apply_at_both_layouts() {
                 wait_for(&mut harness, |editor| editor.test_pick().is_some());
                 click_patch(
                     &mut harness,
-                    egui::pos2(if kind == Pick::Dmin { 32. } else { 96. }, 32.),
+                    egui::pos2(if kind == PickerCase::Dmin { 32. } else { 96. }, 32.),
                 );
                 harness.get_by_label("Apply").click();
                 harness.step();
-                harness.read(|editor| assert!(editor.interaction_blocked()));
-                wait_for(&mut harness, |e| !e.interaction_blocked());
+                harness.read(|editor| assert!(!editor.has_hosted_tool()));
+                wait_interaction(&mut harness);
                 harness.read(|editor| assert!(editor.test_pick().is_none(), "{}", editor.status));
                 let mut expected = before;
-                if kind == Pick::Dmin {
+                if kind == PickerCase::Dmin {
                     let measured = harness.read(|editor| editor.dmin().unwrap());
                     assert!(
                         (measured - DVec3::splat(3000. / 4031.)).abs().max_element() <= 2. / 65535.

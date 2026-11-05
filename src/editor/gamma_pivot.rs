@@ -1,6 +1,7 @@
 use super::{
     Editor, InputSettings, UiContext,
     editing::ControlSettings,
+    measurement,
     picking::{self, Display, View},
 };
 use crate::{Error, color::Balance, image_recipe::NeutralRecipe, processing::NegativeInput};
@@ -27,7 +28,7 @@ pub(super) struct State {
     anchor: Option<Arc<Anchor>>,
     edit: Option<Edit>,
     #[cfg(test)]
-    pub(super) edit_gate: Option<picking::testing::Gate>,
+    pub(super) edit_gate: Option<measurement::testing::Gate>,
 }
 
 struct Target {
@@ -144,7 +145,9 @@ impl Editor {
             self.finish_gamma_edit();
             self.status = "Gamma pivot released".into();
         } else {
-            self.begin_pick(super::Pick::GammaPivot, cx);
+            if let Err(error) = self.start_interaction(cx, pick) {
+                self.status = error;
+            }
         }
     }
 
@@ -271,7 +274,7 @@ impl Editor {
                 {
                     gate.wait(cancelled.clone()).map_err(Error::Gpu)?;
                 }
-                let services = picking::query_services(services.as_ref())?;
+                let services = measurement::query_services(services.as_ref())?;
                 let negative = |input: InputSettings| -> Result<NegativeInput, Error> {
                     let mut recipe = anchor.recipe.clone();
                     recipe.input = input;
@@ -353,66 +356,70 @@ impl Editor {
     }
 }
 
-pub(super) fn pick<'scope>(
-    editor: &mut Editor,
-    cx: &UiContext<'scope, Editor>,
-) -> Result<Task<()>, String> {
-    let image = picking::capture_input(editor)?;
-    let source = editor
-        .document
-        .visit
-        .current_source
-        .ok_or("No selected source")?;
-    let recipe = editor
-        .pivot_recipe(source)
-        .map_err(|error| error.to_string())?;
-    let services = editor.source_services.clone();
-    let captured = recipe.clone();
-    let reading = picking::pick_prepared(
-        editor,
-        DISPLAY,
-        async move {
-            let image = image.await?;
-            Ok(
-                move |region, cancelled: crate::cancellation::Cancellation| {
-                    let services = picking::query_services(services.as_ref())?;
-                    let evidence = query::Evidence::capture(services, &image, region, &|| {
-                        cancelled.is_cancelled()
-                    })?;
-                    let negative = captured
-                        .processing_input()?
-                        .negative_input()
-                        .ok_or(Error::UnusableSample("gamma pivot basis changed"))?;
-                    evidence.compensate(
-                        services,
-                        negative,
-                        negative,
-                        image.camera_to_ap1,
-                        Balance::default(),
-                        &|| cancelled.is_cancelled(),
-                    )?;
-                    Ok(evidence)
-                },
-            )
-        },
-        cx.clone(),
-    );
-    cx.spawn(move |cx| async move {
-        let Some(evidence) = reading.await else {
+pub(super) async fn pick(cx: UiContext<'_, Editor>) {
+    let captured = cx.read(|editor| {
+        let source = editor
+            .document
+            .visit
+            .current_source
+            .ok_or("No selected source")?;
+        Ok::<_, String>((
+            measurement::capture_input(editor)?,
+            source,
+            editor
+                .pivot_recipe(source)
+                .map_err(|error| error.to_string())?,
+            editor.source_services.clone(),
+        ))
+    });
+    let (image, source, recipe, services) = match captured {
+        Ok(input) => input,
+        Err(error) => {
+            cx.update(|editor| editor.status = error);
             return;
-        };
-        cx.update(|editor| {
-            let anchor = Arc::new(Anchor { recipe, evidence });
-            if editor.document.visit.current_source == Some(source) {
-                if editor.pivot_compatible(&anchor) {
-                    editor.finish_gamma_edit();
-                    editor.document.gamma_pivot.anchor = Some(anchor);
-                    editor.status = "Gamma pivot set".into();
-                } else {
-                    editor.status = "gamma pivot basis changed".into();
-                }
-            }
-        });
+        }
+    };
+    let captured = recipe.clone();
+    let worker_cx = cx.clone();
+    let Some(region) = picking::pick(&cx, DISPLAY).await else {
+        return;
+    };
+    let Some(evidence) = measurement::run(&cx, DISPLAY.label, async move {
+        let image = image.await?;
+        measurement::query(&worker_cx, move |cancelled| {
+            let services = measurement::query_services(services.as_ref())?;
+            let evidence =
+                query::Evidence::capture(services, &image, region, &|| cancelled.is_cancelled())?;
+            let negative = captured
+                .processing_input()?
+                .negative_input()
+                .ok_or(Error::UnusableSample("gamma pivot basis changed"))?;
+            evidence.compensate(
+                services,
+                negative,
+                negative,
+                image.camera_to_ap1,
+                Balance::default(),
+                &|| cancelled.is_cancelled(),
+            )?;
+            Ok(evidence)
+        })
+        .await
     })
-    .ok_or_else(|| "Application stopped".into())
+    .await
+    else {
+        return;
+    };
+    cx.update(|editor| {
+        let anchor = Arc::new(Anchor { recipe, evidence });
+        if editor.document.visit.current_source == Some(source) {
+            if editor.pivot_compatible(&anchor) {
+                editor.finish_gamma_edit();
+                editor.document.gamma_pivot.anchor = Some(anchor);
+                editor.status = "Gamma pivot set".into();
+            } else {
+                editor.status = "gamma pivot basis changed".into();
+            }
+        }
+    });
 }

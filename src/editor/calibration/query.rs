@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     Error,
     coverage::Coverage,
-    editor::picking::query::{FORWARD_RESIDUAL_FLOOR, Samples},
+    editor::measurement::query::{FORWARD_RESIDUAL_FLOOR, Samples},
     sampling::GammaNeutral,
     scan::Scan,
 };

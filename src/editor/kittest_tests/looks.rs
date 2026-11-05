@@ -1079,7 +1079,7 @@ fn narrow_import_clips_finite_values_without_regrading_and_calibration_bypasses_
             )
         });
         assert!(harness.query_by_label("Look rendering failed").is_none());
-        harness.enter(|editor, cx| editor.begin_pick(Pick::Gamma, cx));
+        harness.enter(|editor, cx| editor.begin_test_picker(PickerCase::Gamma, cx));
         harness.step();
         paint_until(&mut harness, |editor| {
             assert!(

@@ -132,7 +132,7 @@ fn working_feedback_gallery_preserves_available_interactions_and_exposes_every_s
                             task: None,
                         }));
                     } else if name == "measurement" {
-                        super::super::picking::preview(editor, Pick::Dmin.display());
+                        super::super::picking::preview(editor, PickerCase::Dmin.display());
                     }
                     let options = ActivityOptions::new(title);
                     held_activity(

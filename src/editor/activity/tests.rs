@@ -304,7 +304,7 @@ fn matching_success_retires_source_save_and_measurement_activity() {
         let hold = crate::background::testing::pause();
         crate::application::test_support::with_application(editor, |app| {
             if operation == 2 {
-                app.enter(|editor, cx| editor.begin_pick(Pick::Dmin, cx));
+                app.enter(|editor, cx| editor.begin_test_picker(PickerCase::Dmin, cx));
                 app.pump();
             }
             let mut source_completion = None;
@@ -347,9 +347,12 @@ fn matching_success_retires_source_save_and_measurement_activity() {
                         height: area.height - 16,
                     })));
                     editor.apply_pick(access);
-                    assert!(editor.measurement_pending());
+                    assert!(!editor.picking());
                 }
             });
+            if operation == 2 {
+                app.pump();
+            }
             assert!(app.read(|editor| editor.activities.view().is_some()));
             if let Some((id, saved)) = save_completion {
                 app.enter(|e, cx| e.save_result(id, Ok(Box::new(saved)), cx));

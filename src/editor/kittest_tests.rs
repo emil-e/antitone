@@ -760,6 +760,22 @@ fn wait_for(harness: &mut Harness<'_, Editor>, done: impl Fn(&Editor) -> bool) {
     wait_for_with_timeout(harness, Duration::from_secs(60), done);
 }
 
+// Wait for the launched action, not the end of a UI mode or a gap between activities.
+fn wait_interaction(harness: &mut Harness<'_, Editor>) {
+    assert!(
+        harness.read(|editor| editor.document.visit.interaction_action.is_some()),
+        "fixture must launch a real action"
+    );
+    wait_for(harness, |editor| {
+        editor
+            .document
+            .visit
+            .interaction_action
+            .as_ref()
+            .is_some_and(|task| task.is_finished())
+    });
+}
+
 #[track_caller]
 fn wait_for_with_timeout(
     harness: &mut Harness<'_, Editor>,
@@ -859,7 +875,7 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         wait_for(&mut harness, |editor| editor.test_pick().is_some());
         assert_eq!(
             harness.read(|editor| editor.test_pick()),
-            Some(Pick::Dmin.display())
+            Some(PickerCase::Dmin.display())
         );
         assert!(harness.get_by_label("Apply").accesskit_node().is_disabled());
         harness.get_by_label("Cancel").click();
@@ -873,7 +889,7 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         wait_for(&mut harness, |editor| editor.test_pick().is_some());
         assert_eq!(
             harness.read(|editor| editor.test_pick()),
-            Some(Pick::Dmin.display())
+            Some(PickerCase::Dmin.display())
         );
         let point = harness.read(|editor| {
             editor
@@ -898,11 +914,9 @@ fn dmin_picker_cancels_or_applies_measurement_and_paints_source() {
         assert!(harness.read(|editor| editor.test_pick_region().is_some()));
         harness.get_by_label("Apply").click();
         harness.step();
-        assert!(harness.read(|editor| editor.interaction_blocked()));
+        assert!(harness.read(|editor| !editor.has_hosted_tool()));
         // This fixture delivers completion without another UI pass.
-        harness.run_until(Duration::from_secs(5), |editor| {
-            !editor.interaction_blocked()
-        });
+        harness.run_until(Duration::from_secs(5), |editor| editor.dmin().is_some());
         harness.read(|editor| {
             assert!(editor.test_pick().is_none());
             assert_eq!(editor.status, "Dmin measured");

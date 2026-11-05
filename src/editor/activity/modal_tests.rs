@@ -14,10 +14,13 @@ fn slow_measurement_exposes_modal_cancel_without_accepting_a_late_worker_result(
     add_ready_fixture(&mut editor);
     editor.sync_document();
     let before = editor.document.project.clone();
-    let gate = crate::editor::picking::testing::Gate::install(&mut editor);
+    let gate = crate::editor::measurement::testing::Gate::install(&mut editor);
     with_application(editor, |app| {
         app.enter(|editor, cx| {
-            editor.begin_pick(crate::editor::Pick::Dmin, cx);
+            editor.begin_test_picker(crate::editor::PickerCase::Dmin, cx);
+        });
+        app.pump();
+        app.update(|editor| {
             editor.set_test_pick_region(Some(crate::coverage::Coverage::rectangle(
                 crate::raw::Rect {
                     x: 40,
@@ -27,9 +30,14 @@ fn slow_measurement_exposes_modal_cancel_without_accepting_a_late_worker_result(
                 },
             )));
             assert!(editor.submit_test_picker());
-            editor.activities.elapse(Duration::from_secs(1));
+            assert!(!editor.picking());
         });
         let worker = gate.next(app);
+        app.update(|editor| {
+            assert!(!editor.has_hosted_tool());
+            editor.activities.elapse(Duration::from_secs(1));
+        });
+
         let context = egui::Context::default();
         app_frame(app, &context, vec![]);
         let labels = app_frame(app, &context, vec![]);
@@ -42,7 +50,9 @@ fn slow_measurement_exposes_modal_cancel_without_accepting_a_late_worker_result(
         for pressed in [true, false] {
             app_frame(app, &context, pointer(cancel, pressed));
         }
-        app.run_until(Duration::from_secs(10), |editor| !editor.picking());
+        app.run_until(Duration::from_secs(10), |editor| {
+            !editor.measurement_pending()
+        });
         assert!(worker.cancelled.is_cancelled());
         app.read(|editor| {
             assert!(editor.activities.view().is_none());

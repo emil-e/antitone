@@ -151,7 +151,7 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
         ))
     ));
 
-    let scan = crate::editor::picking::capture_scan(&editor).unwrap();
+    let scan = crate::editor::measurement::capture_scan(&editor).unwrap();
     let captured =
         Evidence::capture(services, &scan, Coverage::rectangle(scan.area), &|| false).unwrap();
     let native = captured.mean(services, negative(1.), &|| false).unwrap();
@@ -190,7 +190,7 @@ fn frozen_samples_are_individually_inverted_and_arbitrary_colour_is_preserved() 
 #[test]
 fn actual_nonuniform_source_coverage_matches_individually_transformed_originals() {
     let editor = crate::editor::tests::authored_fixture(&["patches.dng"]);
-    let scan = crate::editor::picking::capture_scan(&editor).unwrap();
+    let scan = crate::editor::measurement::capture_scan(&editor).unwrap();
     let services = editor.source_services.as_ref().unwrap();
     let coverage = Coverage::new(
         [

@@ -471,7 +471,7 @@ fn setup<'scope>(
 
 fn correct(editor: &mut Editor, input: CorrectionInput, cx: &UiContext<'_, Editor>) {
     let before = editor.document.state.project.clone();
-    editor.retire_pick_actions();
+
     editor.end_tool();
     editor.cancel_spatial();
     editor.finish_gamma_edit();
