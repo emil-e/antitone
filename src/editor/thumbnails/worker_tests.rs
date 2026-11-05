@@ -31,9 +31,9 @@ fn cold_positive_captures_resolved_starting_exposure_before_authoring_its_graph(
         unreachable!()
     };
     for ev in [0., -1.] {
-        let job = super::super::tests::service_job(
+        let job = super::tests::service_job(
             &thumbnails,
-            super::super::tests::key(&document, id),
+            super::tests::key(&document, id),
             file.path().to_owned(),
             source.clone(),
             None,
@@ -81,7 +81,7 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
     let file = crate::raw::fixture::bayer_dng();
     let mut document = Document::default();
     document.import(&[file.path().to_owned()]).unwrap();
-    let document: super::super::super::document_scope::DocumentScope = document.into();
+    let document: super::super::document_scope::DocumentScope = document.into();
     let id = document.project.order[0];
     let source = document.project.source(id).unwrap().clone();
     let scan = Scan::open(file.path(), Some(source.development.decode.fixed_wb)).unwrap();
@@ -127,7 +127,7 @@ fn retiring_the_document_releases_retention_while_its_physical_thumbnail_job_fin
     with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.request_thumbnail(
-                super::super::tests::key(&editor.document, id),
+                super::tests::key(&editor.document, id),
                 file.path().to_owned(),
                 source,
                 true,
@@ -181,7 +181,7 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
                 .collect::<Vec<_>>(),
         )
         .unwrap();
-    let document: super::super::super::document_scope::DocumentScope = document.into();
+    let document: super::super::document_scope::DocumentScope = document.into();
     let ids = document.project.order.clone();
     let (device, queue) = pollster::block_on(async {
         crate::gpu::instance()
@@ -238,9 +238,9 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
     }));
     let worker = worker.clone();
     let job = |id, priority| {
-        let mut job = super::super::tests::service_job(
+        let mut job = super::tests::service_job(
             &thumbnails,
-            super::super::tests::key(&document, id),
+            super::tests::key(&document, id),
             document.source_path(id).unwrap(),
             document.project.source(id).unwrap().clone(),
             None,
@@ -250,7 +250,7 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
         job
     };
     with_application(Vec::new(), |app| {
-        let _first = super::super::tests::start_service_request(
+        let _first = super::tests::start_service_request(
             &thumbnails,
             job(ids[0], source_loading::Priority::Visible),
             &app.access(),
@@ -268,7 +268,7 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
             );
             std::thread::yield_now();
         }
-        let _eager = super::super::tests::start_service_request(
+        let _eager = super::tests::start_service_request(
             &thumbnails,
             job(ids[1], source_loading::Priority::Eager),
             &app.access(),
@@ -282,7 +282,7 @@ fn ready_thumbnail_processing_is_serial_and_visible_work_precedes_queued_eager_w
             );
             std::thread::yield_now();
         }
-        let _visible = super::super::tests::start_service_request(
+        let _visible = super::tests::start_service_request(
             &thumbnails,
             job(ids[2], source_loading::Priority::Visible),
             &app.access(),
