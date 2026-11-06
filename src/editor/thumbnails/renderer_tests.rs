@@ -26,6 +26,7 @@ fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_ow
         thumbnails.set_limits(limits);
         let renderer = renderers.get(&device, &queue).unwrap();
         let store = renderer.evaluation.materializations();
+        store.set_test_pressure(crate::sys::MemoryPressure::Normal);
         let bytes = 2 << 20;
         let key = RetainedKey::new(("zero-filled storage", bytes));
         let produce = || {
@@ -102,6 +103,41 @@ fn gpu_retention_settings_include_calculation_values_without_withdrawing_live_ow
                 .is_some(),
             "restoring optional space must readmit regenerated values"
         );
+
+        for pressure in [
+            crate::sys::MemoryPressure::Warning,
+            crate::sys::MemoryPressure::Critical,
+        ] {
+            let live = produce().await;
+            store.set_test_pressure(pressure);
+            assert_eq!(renderer.evaluation.cache_policy().generated_bytes, 8 << 20);
+            assert_eq!(renderer.evaluation.retained_bytes(), 0);
+            assert!(
+                store
+                    .find_ready(&key, |size: &u64| *size == bytes)
+                    .is_some()
+            );
+            drop(live);
+            assert!(
+                store
+                    .find_ready(&key, |size: &u64| *size == bytes)
+                    .is_none()
+            );
+            drop(produce().await);
+            assert!(
+                store
+                    .find_ready(&key, |size: &u64| *size == bytes)
+                    .is_none(),
+                "pressure suspends optional admission without changing the chosen budget"
+            );
+            store.set_test_pressure(crate::sys::MemoryPressure::Normal);
+            drop(produce().await);
+            assert!(
+                store
+                    .find_ready(&key, |size: &u64| *size == bytes)
+                    .is_some()
+            );
+        }
     });
 }
 

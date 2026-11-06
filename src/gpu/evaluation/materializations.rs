@@ -284,6 +284,8 @@ struct State {
     programs: Arc<Programs>,
     retention: cache::Allowance,
     retention_enabled: std::sync::atomic::AtomicBool,
+    #[cfg(all(test, feature = "raw"))]
+    pressure_override: Mutex<Option<crate::sys::MemoryPressure>>,
     entries: Mutex<VecDeque<Entry>>,
 }
 struct Entry {
@@ -333,6 +335,8 @@ impl Materializations {
             programs,
             retention,
             retention_enabled: true.into(),
+            #[cfg(all(test, feature = "raw"))]
+            pressure_override: Mutex::new(None),
             entries: Mutex::new(VecDeque::new()),
         }))
     }
@@ -379,15 +383,28 @@ impl Materializations {
         }
     }
 
+    #[cfg(all(test, feature = "raw"))]
+    pub(crate) fn set_test_pressure(&self, pressure: crate::sys::MemoryPressure) {
+        *self.0.pressure_override.lock().unwrap() = Some(pressure);
+        self.pressure(pressure);
+    }
+
+    #[cfg(feature = "raw")]
+    fn pressure(&self, pressure: crate::sys::MemoryPressure) {
+        #[cfg(test)]
+        let fixed = self.0.pressure_override.lock().unwrap();
+        #[cfg(test)]
+        let pressure = fixed.unwrap_or(pressure);
+        self.set_retention_enabled(pressure == crate::sys::MemoryPressure::Normal);
+    }
+
     #[cfg(feature = "raw")]
     pub(crate) fn watch_pressure(&self) -> crate::sys::MemoryPressureWatch {
-        self.set_retention_enabled(
-            crate::sys::memory_pressure() == crate::sys::MemoryPressure::Normal,
-        );
+        self.pressure(crate::sys::memory_pressure());
         let weak = Arc::downgrade(&self.0);
         crate::sys::MemoryPressureWatch::observe(move |pressure| {
             if let Some(state) = weak.upgrade() {
-                Self(state).set_retention_enabled(pressure == crate::sys::MemoryPressure::Normal);
+                Self(state).pressure(pressure);
             }
         })
     }

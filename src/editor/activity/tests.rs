@@ -233,6 +233,7 @@ fn retired_analysis_progress_and_cancel_actions_cannot_touch_the_new_task() {
 #[test]
 fn feedback_prominence_is_delayed_without_changing_document_availability() {
     let editor = fixture();
+    editor.activities.freeze_time();
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
             editor.start_document(Preparation::Open("project.json".into()), cx);
@@ -260,6 +261,7 @@ fn feedback_prominence_is_delayed_without_changing_document_availability() {
 #[test]
 fn export_blocks_the_workspace_before_its_progress_modal_becomes_prominent() {
     let mut editor = fixture();
+    editor.activities.freeze_time();
     add_ready_fixture(&mut editor);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|editor, cx| {
