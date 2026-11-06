@@ -170,28 +170,20 @@ fn captured_inputs_fit_reviewed_support_and_keep_only_bounded_statistics_per_fra
         after.analysis_regions,
         request.areas.as_ref().unwrap().entries
     );
-    assert!(
-        after
-            .source(before.order[0])
-            .unwrap()
-            .adjustment_layers
-            .as_ref()
-            .unwrap()
-            .layers[0]
-            .adjustment
-            .photo
-            .exposure
-            > after
-                .source(before.order[1])
+    for &id in &before.order {
+        assert_eq!(
+            after
+                .source(id)
                 .unwrap()
                 .adjustment_layers
                 .as_ref()
                 .unwrap()
                 .layers[0]
                 .adjustment
-                .photo
-                .exposure
-    );
+                .photo,
+            AdjustmentLayerSettings::default()
+        );
+    }
     assert_eq!(request.document.project, before);
 
     scheduler.close_and_wait().unwrap();
