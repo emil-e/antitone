@@ -1,5 +1,9 @@
 #![cfg(all(feature = "raw", target_os = "macos"))]
 use antitone::{
+    adjustment_layers::{
+        AdjustmentLayer, AdjustmentLayerPipeline, AdjustmentLayerSettings, AdjustmentLayerSnapshot,
+    },
+    color::AP1_TO_XYZ,
     processing::{
         CAMERA_INPUT_FLOOR, Calibration, DEFAULT_GAMMA, InputSettings, NegativeInput, Response,
     },
@@ -119,9 +123,31 @@ fn authored_roll_keeps_its_known_baseline_with_isolated_sensor_white_in_film_sup
         assert!(statistics.balance_samples >= 256);
         assert!(statistics.exposure_samples >= 512);
     }
-    // The denser second negative is brighter after inversion and needs less exposure.
-    assert!(proposal.photos[0].exposure > proposal.photos[1].exposure);
-    assert!((proposal.photos[0].exposure + proposal.photos[1].exposure).abs() < 1e-12);
+    assert_eq!(proposal.photos, vec![AdjustmentLayerSettings::default(); 2]);
+    let luminances: Vec<_> = frames
+        .iter()
+        .zip(&proposal.photos)
+        .map(|(frame, photo)| {
+            let layers =
+                AdjustmentLayerSnapshot::new(vec![AdjustmentLayer::global(*photo)]).unwrap();
+            let pipeline = AdjustmentLayerPipeline::new(
+                proposal.input,
+                proposal.roll,
+                layers,
+                matrix.unwrap(),
+            )
+            .unwrap();
+            frame
+                .picture
+                .iter()
+                .map(|&pixel| (AP1_TO_XYZ * pipeline.apply(pixel, [0, 0]).unwrap().rgb).y)
+                .sum::<f64>()
+                / frame.picture.len() as f64
+        })
+        .collect();
+    // The second frame's authored 3/4 transmission stays brighter after inversion;
+    // a shared Roll exposure does not normalize away that density difference.
+    assert!(luminances[1] > luminances[0]);
     assert!(
         roll_analysis::estimate(
             &frames,

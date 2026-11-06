@@ -294,8 +294,8 @@ fn pressure_observation_does_not_keep_cache_ownership_alive() {
         },
     );
     let values = context.materializations();
+    values.set_test_pressure(crate::sys::MemoryPressure::Normal);
     let _watch = values.watch_pressure();
-    values.set_retention_enabled(true);
     let image = produce(&values, 1, buffer(&device, 1.));
     let weak = Arc::downgrade(&image.image);
     drop(image);

@@ -55,9 +55,19 @@ impl Options {
 struct Registry {
     entries: Mutex<Vec<Weak<Entry>>>,
     context: Mutex<Option<egui::Context>>,
+    #[cfg(test)]
+    clock: Mutex<Option<Instant>>,
 }
 
 impl Registry {
+    fn now(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(now) = *self.clock.lock().unwrap() {
+            return now;
+        }
+        Instant::now()
+    }
+
     fn repaint(&self) {
         if let Some(context) = self.context.lock().unwrap().as_ref() {
             context.request_repaint();
@@ -89,6 +99,14 @@ impl Entry {
 
     fn live(&self) -> bool {
         self.live.load(Ordering::Acquire)
+    }
+
+    fn elapsed(&self) -> Duration {
+        let now = self
+            .registry
+            .upgrade()
+            .map_or_else(Instant::now, |registry| registry.now());
+        now.saturating_duration_since(*self.started.lock().unwrap())
     }
 
     fn cancelling(&self) -> bool {
@@ -127,7 +145,7 @@ impl Activities {
         let entry = Arc::new(Entry {
             live: AtomicBool::new(true),
 
-            started: Mutex::new(Instant::now()),
+            started: Mutex::new(self.0.now()),
             display: Mutex::new(Display {
                 title: String::new(),
                 measured: None,
@@ -193,6 +211,11 @@ impl Activities {
         if view.presentation().modal(context, id) {
             view.request_cancel();
         }
+    }
+
+    #[cfg(test)]
+    pub fn freeze_time(&self) {
+        *self.0.clock.lock().unwrap() = Some(Instant::now());
     }
 
     #[cfg(test)]
@@ -283,7 +306,7 @@ impl Reporter {
                 .filter(|_| !cancelling)
                 .map(|cancel| cancel.label),
             modal: entry.modal,
-            elapsed: entry.started.lock().unwrap().elapsed(),
+            elapsed: entry.elapsed(),
             reporter: self.clone(),
         })
     }

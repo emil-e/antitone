@@ -360,13 +360,7 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                     source.adjustment_layers.as_ref().unwrap().layers[0]
                         .adjustment
                         .photo,
-                    AdjustmentLayerSettings {
-                        exposure: source.adjustment_layers.as_ref().unwrap().layers[0]
-                            .adjustment
-                            .photo
-                            .exposure,
-                        ..AdjustmentLayerSettings::default()
-                    }
+                    AdjustmentLayerSettings::default()
                 );
                 let layers = source.adjustment_layers.as_ref().unwrap();
                 assert_eq!(layers.layers.len(), 1);
@@ -400,23 +394,6 @@ fn exercise_analyze(harness: &mut Harness<'_, Editor>, picture: Rect, case: &str
                     .into_iter()
                     .all(|value| (value - 3000. / 4031.).abs() <= 2. / 65535.)
             );
-            let exposures: Vec<_> = after
-                .order
-                .iter()
-                .map(|id| {
-                    after
-                        .source(*id)
-                        .unwrap()
-                        .adjustment_layers
-                        .as_ref()
-                        .unwrap()
-                        .layers[0]
-                        .adjustment
-                        .photo
-                        .exposure
-                })
-                .collect();
-            assert!(exposures[0] > exposures[1]);
         }
     });
     settled_targets(harness, case);
