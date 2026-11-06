@@ -1,5 +1,6 @@
 use super::*;
 use crate::{geometry::FramePoint, viewport::CanvasLayout};
+use icons::Icon;
 use std::{cell::RefCell, rc::Rc};
 
 #[cfg(test)]
@@ -63,6 +64,7 @@ enum CropDrag {
         layout: CanvasLayout,
     },
     Resize {
+        start: egui::Pos2,
         handle: [i8; 2],
         layout: CanvasLayout,
     },
@@ -116,6 +118,24 @@ fn aspect_label(ratio: Option<f64>) -> String {
     format!("{ratio:.3}:1")
 }
 
+fn crop_canvas(rect: egui::Rect) -> egui::Rect {
+    let margin = 20_f32.min((rect.width().min(rect.height()) - 1.).max(0.) * 0.5);
+    rect.shrink(margin)
+}
+
+fn resized_layout(original: CanvasLayout, next: Composition) -> CanvasLayout {
+    let size = next.size().map(|v| v as f32);
+    CanvasLayout {
+        image: egui::Rect::from_center_size(
+            original.image.center(),
+            egui::vec2(size[0], size[1]) * original.scale,
+        ),
+        composition: next,
+        area: next.region(),
+        ..original
+    }
+}
+
 fn reframe_crop(
     viewport: &mut Viewport,
     previous: CanvasLayout,
@@ -159,125 +179,18 @@ impl CropEdit {
 
 impl CropTool {
     fn controls(&mut self, ui: &mut egui::Ui, reset: bool, status: &mut String) {
-        use icons::Icon;
         let mut edit = self.edit.borrow_mut();
         let viewport = &mut self.viewport;
         let area = edit.base.area();
-        let full = edit.base.cropped(Crop::from_region(area)).unwrap();
         let composition = edit.base.cropped(edit.draft).unwrap();
         let previous = edit.draft;
-        let size = composition.size();
-        let previous_ratio = edit.ratio;
-        let mut degrees = -edit.draft.angle.to_degrees() * composition.handedness();
-        let previous_degrees = degrees;
-        let mut reset_angle = false;
-        icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
-            let label = presentation::name_label(ui, "Aspect");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icons::button_at(
-                    ui,
-                    Icon::Swap,
-                    edit.ratio.is_some(),
-                    "Swap portrait / landscape",
-                    "Swap portrait / landscape",
-                    presentation::INSPECTOR_ROW_HEIGHT,
-                )
-                .clicked()
-                {
-                    edit.ratio = edit.ratio.map(|r| 1. / r);
-                }
-                egui::ComboBox::from_id_salt("crop-aspect")
-                    .width(96.)
-                    .selected_text(aspect_label(edit.ratio))
-                    .show_ui(ui, |ui| {
-                        for (label, ratio) in [
-                            ("Free", None),
-                            ("Current", Some(f64::from(size[0]) / f64::from(size[1]))),
-                            (
-                                "Original",
-                                Some(f64::from(full.size()[0]) / f64::from(full.size()[1])),
-                            ),
-                            ("1:1", Some(1.)),
-                            ("3:2", Some(1.5)),
-                            ("4:3", Some(4. / 3.)),
-                            ("5:4", Some(1.25)),
-                            ("16:9", Some(16. / 9.)),
-                        ] {
-                            ui.selectable_value(&mut edit.ratio, ratio, label);
-                        }
-                    });
-            });
-            label
-        });
+
+        aspect_control(ui, &mut edit, composition);
         ui.add_space(presentation::PARAMETER_GAP);
-        icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
-            let angle_label = presentation::name_label(ui, "Angle");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                reset_angle = icons::button_at(
-                    ui,
-                    Icon::Reset,
-                    degrees != 0.,
-                    "Reset straighten",
-                    "Reset straighten",
-                    presentation::INSPECTOR_ROW_HEIGHT,
-                )
-                .clicked();
-                let angle = ui
-                    .add_sized(
-                        [96., presentation::INSPECTOR_ROW_HEIGHT - 2.],
-                        egui::DragValue::new(&mut degrees)
-                            .range(-180.0..=180.0)
-                            .speed(0.1)
-                            .fixed_decimals(2)
-                            .update_while_editing(false)
-                            .suffix("°"),
-                    )
-                    .labelled_by(angle_label.id);
-                if controls::numeric_cancelled(ui, &angle) || !ui.is_enabled() {
-                    degrees = previous_degrees;
-                }
-            });
-        });
+        angle_control(ui, &mut edit, composition, status);
         ui.add_space(presentation::PARAMETER_GAP);
-        icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
-            presentation::name_label(ui, "Guides");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let size = presentation::INSPECTOR_ROW_HEIGHT;
-                icons::toggle_at(
-                    ui,
-                    Icon::Guides,
-                    &mut edit.guides,
-                    "Thirds guides",
-                    "Show thirds guides. Composition aid only; never affects measurements or exports.",
-                    size,
-                );
-            });
-        });
+        guides_control(ui, &mut edit.guides);
         ui.add_space(presentation::PARAMETER_GAP);
-        if edit.ratio != previous_ratio
-            && let Some(ratio) = edit.ratio
-        {
-            let extent = [f64::from(size[0]), f64::from(size[0]) / ratio];
-            let min = [
-                (f64::from(size[0]) - extent[0]) * 0.5,
-                (f64::from(size[1]) - extent[1]) * 0.5,
-            ];
-            edit.draft = composition.crop_from_frame(
-                FramePoint(min),
-                FramePoint([min[0] + extent[0], min[1] + extent[1]]),
-            );
-        }
-        if degrees != previous_degrees || reset_angle {
-            let angle = if reset_angle {
-                0.
-            } else {
-                -degrees.to_radians() * composition.handedness()
-            };
-            match edit.draft.straightened(area, angle) {
-                Ok(crop) => edit.draft = crop,
-                Err(error) => *status = format!("Straighten rejected: {error}"),
-            }
-        }
         if reset {
             edit.draft = Crop::from_region(area);
             edit.ratio = None;
@@ -309,7 +222,6 @@ impl CropTool {
         status: &mut String,
     ) -> CanvasLayout {
         let mut edit = self.edit.borrow_mut();
-        let viewport = &mut self.viewport;
         // Disabled widgets may not receive drag_stopped; physical release still
         // ends the owned gesture before gating new canvas interaction.
         if response.drag_stopped_by(egui::PointerButton::Primary)
@@ -336,122 +248,18 @@ impl CropTool {
         if response.drag_started_by(egui::PointerButton::Primary)
             && let Some(start) = ui.input(|input| input.pointer.press_origin())
         {
-            edit.drag = match handle_at(layout.image, start) {
-                Some(handle) => Some(CropDrag::Resize { handle, layout }),
-                None if layout.image.contains(start) => Some(CropDrag::Move {
-                    start,
-                    crop: edit.draft,
-                    layout,
-                }),
-                None => {
-                    let delta = start - layout.image.center();
-                    Some(CropDrag::Straighten {
-                        start_angle: f64::from(delta.y.atan2(delta.x)),
-                        crop: edit.draft,
-                        layout,
-                    })
-                }
-            };
+            edit.drag = Some(CropDrag::begin(start, edit.draft, layout));
         }
         if response.dragged_by(egui::PointerButton::Primary)
             && let (Some(drag), Some(point)) = (edit.drag, response.interact_pointer_pos())
         {
-            match drag {
-                CropDrag::Move {
-                    start,
-                    crop,
-                    layout: original,
-                } => {
-                    let a = original
-                        .composition
-                        .frame_to_source(original.frame_point(start));
-                    let b = original
-                        .composition
-                        .frame_to_source(original.frame_point(point));
-                    edit.draft = Crop {
-                        center: [
-                            crop.center[0] - (b.0[0] - a.0[0]),
-                            crop.center[1] - (b.0[1] - a.0[1]),
-                        ],
-                        ..crop
-                    }
-                    .constrained(original.composition.area())
-                    .expect("moving a valid frame retains its coverage basis");
-                }
-                CropDrag::Resize {
-                    handle,
-                    layout: original,
-                } => {
-                    let dimensions = original.composition.size().map(f64::from);
-                    let p = original.frame_point(point).0;
-                    let mut min = [0., 0.];
-                    let mut max = dimensions;
-                    for axis in 0..2 {
-                        if handle[axis] < 0 {
-                            min[axis] = p[axis].min(max[axis] - 1.);
-                        }
-                        if handle[axis] > 0 {
-                            max[axis] = p[axis].max(min[axis] + 1.);
-                        }
-                    }
-                    if let Some(ratio) = edit.ratio {
-                        let mut extent = [max[0] - min[0], max[1] - min[1]];
-                        if handle[0] == 0
-                            || (handle[1] != 0
-                                && (extent[1] - dimensions[1]).abs() * ratio
-                                    > (extent[0] - dimensions[0]).abs())
-                        {
-                            extent[0] = extent[1] * ratio;
-                        } else {
-                            extent[1] = extent[0] / ratio;
-                        }
-                        for axis in 0..2 {
-                            if handle[axis] < 0 {
-                                min[axis] = max[axis] - extent[axis];
-                            } else if handle[axis] > 0 {
-                                max[axis] = min[axis] + extent[axis];
-                            } else {
-                                min[axis] = (dimensions[axis] - extent[axis]) * 0.5;
-                                max[axis] = min[axis] + extent[axis];
-                            }
-                        }
-                    }
-                    edit.draft = original
-                        .composition
-                        .crop_from_frame(FramePoint(min), FramePoint(max));
-                    layout.image = original.screen_coverage(edit.draft.coverage().unwrap());
-                    layout.scale = original.scale;
-                }
-                CropDrag::Straighten {
-                    start_angle,
-                    crop,
-                    layout: original,
-                } => {
-                    let delta = point - original.image.center();
-                    let turn = f64::from(delta.y.atan2(delta.x)) - start_angle;
-                    let turn = turn.sin().atan2(turn.cos());
-                    let angle = (crop.angle - turn * original.composition.handedness())
-                        .clamp(-std::f64::consts::PI, std::f64::consts::PI);
-                    match crop.straightened(original.composition.area(), angle) {
-                        Ok(crop) => {
-                            edit.draft = crop;
-                            let size = original.composition.size().map(|v| v as f32);
-                            let next = edit.base.cropped(crop).unwrap().size().map(|v| v as f32);
-                            // Coverage may shrink, but the straighten pivot stays at the frame centre.
-                            layout.image = egui::Rect::from_center_size(
-                                original.image.center(),
-                                original.image.size()
-                                    * egui::vec2(next[0] / size[0], next[1] / size[1]),
-                            );
-                            layout.scale = original.scale;
-                        }
-                        Err(error) => *status = format!("Straighten rejected: {error}"),
-                    }
-                }
+            let modifiers = ui.input(|input| input.modifiers);
+            if let Err(error) = drag.apply(point, modifiers, &mut edit, &mut layout) {
+                *status = format!("Straighten rejected: {error}");
             }
             layout.composition = edit.base.cropped(edit.draft).unwrap();
-            ui.ctx().request_repaint();
             layout.area = layout.composition.region();
+            ui.ctx().request_repaint();
         }
         if response.hovered() || response.dragged() {
             // On release, describe the next gesture at the updated frame.
@@ -460,31 +268,12 @@ impl CropTool {
             } else {
                 handle
             };
-            let cursor = match handle {
-                Some([x, y]) if x != 0 && y != 0 => {
-                    if x * y > 0 {
-                        egui::CursorIcon::ResizeNwSe
-                    } else {
-                        egui::CursorIcon::ResizeNeSw
-                    }
-                }
-                Some([0, _]) => egui::CursorIcon::ResizeVertical,
-                Some(_) => egui::CursorIcon::ResizeHorizontal,
-                None if matches!(edit.drag, Some(CropDrag::Straighten { .. }))
-                    && response.dragged_by(egui::PointerButton::Primary) =>
-                {
-                    egui::CursorIcon::Crosshair
-                }
-                None if response.dragged() => egui::CursorIcon::Grabbing,
-                None if hover.is_some_and(|point| layout.image.contains(point)) => {
-                    egui::CursorIcon::Grab
-                }
-                None => egui::CursorIcon::Crosshair,
-            };
-            ui.ctx().set_cursor_icon(cursor);
+            ui.ctx()
+                .set_cursor_icon(interaction_cursor(edit.drag, handle, response, layout));
         }
-        // The painted layout is the editing viewport: retain it, not a new Fit of the crop.
-        viewport.reframe(layout, layout.composition, ui.ctx().pixels_per_point());
+        // Persist this camera for the next pass without changing the normal photo viewport.
+        self.viewport
+            .reframe(layout, layout.composition, ui.ctx().pixels_per_point());
         edit.layout = Some(layout);
         layout
     }
@@ -528,6 +317,366 @@ impl CropTool {
     }
 }
 
+fn aspect_control(ui: &mut egui::Ui, edit: &mut CropEdit, composition: Composition) {
+    let area = edit.base.area();
+    let full = edit.base.cropped(Crop::from_region(area)).unwrap();
+    let size = composition.size();
+    let previous_ratio = edit.ratio;
+    icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
+        let label = presentation::name_label(ui, "Aspect");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icons::button_at(
+                ui,
+                Icon::Swap,
+                edit.ratio.is_some(),
+                "Swap portrait / landscape",
+                "Swap portrait / landscape",
+                presentation::INSPECTOR_ROW_HEIGHT,
+            )
+            .clicked()
+            {
+                edit.ratio = edit.ratio.map(|r| 1. / r);
+            }
+            egui::ComboBox::from_id_salt("crop-aspect")
+                .width(96.)
+                .selected_text(aspect_label(edit.ratio))
+                .show_ui(ui, |ui| {
+                    for (label, ratio) in [
+                        ("Free", None),
+                        ("Current", Some(f64::from(size[0]) / f64::from(size[1]))),
+                        (
+                            "Original",
+                            Some(f64::from(full.size()[0]) / f64::from(full.size()[1])),
+                        ),
+                        ("1:1", Some(1.)),
+                        ("3:2", Some(1.5)),
+                        ("4:3", Some(4. / 3.)),
+                        ("5:4", Some(1.25)),
+                        ("16:9", Some(16. / 9.)),
+                    ] {
+                        ui.selectable_value(&mut edit.ratio, ratio, label);
+                    }
+                });
+        });
+        label
+    });
+    if edit.ratio != previous_ratio
+        && let Some(ratio) = edit.ratio
+    {
+        let extent = [f64::from(size[0]), f64::from(size[0]) / ratio];
+        let min = [
+            (f64::from(size[0]) - extent[0]) * 0.5,
+            (f64::from(size[1]) - extent[1]) * 0.5,
+        ];
+        edit.draft = composition.crop_from_frame(
+            FramePoint(min),
+            FramePoint([min[0] + extent[0], min[1] + extent[1]]),
+        );
+    }
+}
+
+fn angle_control(
+    ui: &mut egui::Ui,
+    edit: &mut CropEdit,
+    composition: Composition,
+    status: &mut String,
+) {
+    let area = edit.base.area();
+    let mut degrees = -composition.crop().angle.to_degrees() * composition.handedness();
+    let previous_degrees = degrees;
+    let mut reset_angle = false;
+    icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
+        let angle_label = presentation::name_label(ui, "Angle");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            reset_angle = icons::button_at(
+                ui,
+                Icon::Reset,
+                degrees != 0.,
+                "Reset straighten",
+                "Reset straighten",
+                presentation::INSPECTOR_ROW_HEIGHT,
+            )
+            .clicked();
+            let angle = ui
+                .add_sized(
+                    [96., presentation::INSPECTOR_ROW_HEIGHT - 2.],
+                    egui::DragValue::new(&mut degrees)
+                        .range(-180.0..=180.0)
+                        .speed(0.1)
+                        .fixed_decimals(2)
+                        .update_while_editing(false)
+                        .suffix("°"),
+                )
+                .labelled_by(angle_label.id);
+            if controls::numeric_cancelled(ui, &angle) || !ui.is_enabled() {
+                degrees = previous_degrees;
+            }
+        });
+    });
+    if degrees != previous_degrees || reset_angle {
+        let angle = if reset_angle {
+            0.
+        } else {
+            -degrees.to_radians() * composition.handedness()
+        };
+        match edit.draft.straightened(area, angle) {
+            Ok(crop) => edit.draft = crop,
+            Err(error) => *status = format!("Straighten rejected: {error}"),
+        }
+    }
+}
+
+fn guides_control(ui: &mut egui::Ui, guides: &mut bool) {
+    icons::row_at(ui, presentation::INSPECTOR_ROW_HEIGHT, |ui| {
+        presentation::name_label(ui, "Guides");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let size = presentation::INSPECTOR_ROW_HEIGHT;
+            icons::toggle_at(
+                ui,
+                Icon::Guides,
+                guides,
+                "Thirds guides",
+                "Show thirds guides. Composition aid only; never affects measurements or exports.",
+                size,
+            );
+        });
+    });
+}
+
+impl CropDrag {
+    fn begin(start: egui::Pos2, crop: Crop, layout: CanvasLayout) -> Self {
+        match handle_at(layout.image, start) {
+            Some(handle) => Self::Resize {
+                start,
+                handle,
+                layout,
+            },
+            None if layout.image.contains(start) => Self::Move {
+                start,
+                crop,
+                layout,
+            },
+            None => {
+                let delta = start - layout.image.center();
+                Self::Straighten {
+                    start_angle: f64::from(delta.y.atan2(delta.x)),
+                    crop,
+                    layout,
+                }
+            }
+        }
+    }
+
+    fn apply(
+        self,
+        point: egui::Pos2,
+        modifiers: egui::Modifiers,
+        edit: &mut CropEdit,
+        layout: &mut CanvasLayout,
+    ) -> Result<(), Error> {
+        match self {
+            Self::Move {
+                start,
+                crop,
+                layout: original,
+            } => {
+                edit.draft = move_crop(original, crop, start, point);
+            }
+            Self::Resize {
+                start,
+                handle,
+                layout: original,
+            } => {
+                let delta = (point - start) / original.scale;
+                edit.draft =
+                    resize_crop(original.composition, handle, delta, edit.ratio, modifiers);
+                *layout = resized_layout(original, edit.base.cropped(edit.draft).unwrap());
+            }
+            Self::Straighten {
+                start_angle,
+                crop,
+                layout: original,
+            } => {
+                edit.draft = straighten_crop(original, crop, start_angle, point)?;
+                let size = original.composition.size().map(|v| v as f32);
+                let next = edit
+                    .base
+                    .cropped(edit.draft)
+                    .unwrap()
+                    .size()
+                    .map(|v| v as f32);
+                // Coverage may shrink, but the straighten pivot stays at the frame centre.
+                layout.image = egui::Rect::from_center_size(
+                    original.image.center(),
+                    original.image.size() * egui::vec2(next[0] / size[0], next[1] / size[1]),
+                );
+                layout.scale = original.scale;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn move_crop(original: CanvasLayout, crop: Crop, start: egui::Pos2, point: egui::Pos2) -> Crop {
+    let a = original
+        .composition
+        .frame_to_source(original.frame_point(start));
+    let b = original
+        .composition
+        .frame_to_source(original.frame_point(point));
+    Crop {
+        center: [
+            crop.center[0] - (b.0[0] - a.0[0]),
+            crop.center[1] - (b.0[1] - a.0[1]),
+        ],
+        ..crop
+    }
+    .constrained(original.composition.area())
+    .expect("moving a valid frame retains its coverage basis")
+}
+
+fn straighten_crop(
+    original: CanvasLayout,
+    crop: Crop,
+    start_angle: f64,
+    point: egui::Pos2,
+) -> Result<Crop, Error> {
+    let delta = point - original.image.center();
+    let turn = f64::from(delta.y.atan2(delta.x)) - start_angle;
+    let turn = turn.sin().atan2(turn.cos());
+    let angle = (crop.angle - turn * original.composition.handedness())
+        .clamp(-std::f64::consts::PI, std::f64::consts::PI);
+    crop.straightened(original.composition.area(), angle)
+}
+
+fn resize_crop(
+    composition: Composition,
+    handle: [i8; 2],
+    delta: egui::Vec2,
+    ratio: Option<f64>,
+    modifiers: egui::Modifiers,
+) -> Crop {
+    let dimensions = composition.size().map(f64::from);
+    let centered = modifiers.alt;
+    let ratio = if modifiers.shift {
+        Some(dimensions[0] / dimensions[1])
+    } else {
+        ratio
+    };
+    let mut min = [0., 0.];
+    let mut max = dimensions;
+    for axis in 0..2 {
+        // Recentring moves both screen edges: twice the pointer delta changes
+        // the full extent while the grabbed edge follows the pointer.
+        let extent =
+            (dimensions[axis] + 2. * f64::from(handle[axis]) * f64::from(delta[axis])).max(1.);
+        if centered {
+            min[axis] = (dimensions[axis] - extent) * 0.5;
+            max[axis] = min[axis] + extent;
+        } else if handle[axis] < 0 {
+            min[axis] = dimensions[axis] - extent;
+        } else if handle[axis] > 0 {
+            max[axis] = extent;
+        }
+    }
+    if let Some(ratio) = ratio {
+        constrain_aspect(&mut min, &mut max, dimensions, handle, centered, ratio);
+    }
+    clip_resize_motion(composition, &mut min, &mut max);
+    composition.crop_from_frame(FramePoint(min), FramePoint(max))
+}
+
+fn constrain_aspect(
+    min: &mut [f64; 2],
+    max: &mut [f64; 2],
+    dimensions: [f64; 2],
+    handle: [i8; 2],
+    centered: bool,
+    ratio: f64,
+) {
+    let mut extent = [max[0] - min[0], max[1] - min[1]];
+    if handle[0] == 0
+        || (handle[1] != 0
+            && (extent[1] - dimensions[1]).abs() * ratio > (extent[0] - dimensions[0]).abs())
+    {
+        extent[0] = extent[1] * ratio;
+    } else {
+        extent[1] = extent[0] / ratio;
+    }
+    for axis in 0..2 {
+        if centered || handle[axis] == 0 {
+            min[axis] = (dimensions[axis] - extent[axis]) * 0.5;
+            max[axis] = min[axis] + extent[axis];
+        } else if handle[axis] < 0 {
+            min[axis] = max[axis] - extent[axis];
+        } else {
+            max[axis] = min[axis] + extent[axis];
+        }
+    }
+}
+
+fn clip_resize_motion(composition: Composition, min: &mut [f64; 2], max: &mut [f64; 2]) {
+    // Clip motion at source coverage without translating the resize anchor.
+    let dimensions = composition.size().map(f64::from);
+    let area = composition.area();
+    let lower = [area.x, area.y].map(f64::from);
+    let upper = [area.x + area.width, area.y + area.height].map(f64::from);
+    let mut fraction = 1_f64;
+    for corner in [[0, 0], [1, 0], [1, 1], [0, 1]] {
+        let start = std::array::from_fn(|axis| dimensions[axis] * f64::from(corner[axis]));
+        let end = std::array::from_fn(|axis| {
+            if corner[axis] == 0 {
+                min[axis]
+            } else {
+                max[axis]
+            }
+        });
+        let source = composition.frame_to_source(FramePoint(start)).0;
+        let target = composition.frame_to_source(FramePoint(end)).0;
+        for axis in 0..2 {
+            let delta = target[axis] - source[axis];
+            if delta > 0. {
+                fraction = fraction.min((upper[axis] - source[axis]) / delta);
+            } else if delta < 0. {
+                fraction = fraction.min((lower[axis] - source[axis]) / delta);
+            }
+        }
+    }
+    let fraction = fraction.clamp(0., 1.);
+    for axis in 0..2 {
+        min[axis] *= fraction;
+        max[axis] = dimensions[axis] + (max[axis] - dimensions[axis]) * fraction;
+    }
+}
+
+fn interaction_cursor(
+    drag: Option<CropDrag>,
+    handle: Option<[i8; 2]>,
+    response: &egui::Response,
+    layout: CanvasLayout,
+) -> egui::CursorIcon {
+    let hover = response.hover_pos();
+    match handle {
+        Some([x, y]) if x != 0 && y != 0 => {
+            if x * y > 0 {
+                egui::CursorIcon::ResizeNwSe
+            } else {
+                egui::CursorIcon::ResizeNeSw
+            }
+        }
+        Some([0, _]) => egui::CursorIcon::ResizeVertical,
+        Some(_) => egui::CursorIcon::ResizeHorizontal,
+        None if matches!(drag, Some(CropDrag::Straighten { .. }))
+            && response.dragged_by(egui::PointerButton::Primary) =>
+        {
+            egui::CursorIcon::Crosshair
+        }
+        None if response.dragged() => egui::CursorIcon::Grabbing,
+        None if hover.is_some_and(|point| layout.image.contains(point)) => egui::CursorIcon::Grab,
+        None => egui::CursorIcon::Crosshair,
+    }
+}
+
 impl tool::Tool for CropTool {
     fn presentation(&self, _editor: &Editor) -> tool::Presentation {
         tool::Presentation {
@@ -538,9 +687,9 @@ impl tool::Tool for CropTool {
             primary: Some("Apply".into()),
             dismiss: "Cancel",
             warning: self.edit.borrow().auto_problem.clone(),
-            help: "Crop: drag inside to move the image, edges/corners to resize, outside to straighten.",
+            help: "Drag inside to move the image, edges/corners to resize, outside to straighten. Option/Alt resizes from center; Shift keeps the current aspect ratio. Combine both modifiers.",
             navigation_help: None,
-            fit_label: "Fit source",
+            fit_label: "Fit crop",
         }
     }
 
@@ -618,9 +767,8 @@ impl tool::Tool for CropTool {
                 }
                 let rect = canvas.response.rect;
                 let ppp = canvas.ui.ctx().pixels_per_point();
-                let margin = 20_f32.min((rect.width().min(rect.height()) - 1.).max(0.) * 0.5);
                 let relayout = |viewport: &mut Viewport| {
-                    let mut layout = viewport.layout_crop(rect.shrink(margin), composition, ppp);
+                    let mut layout = viewport.layout_crop(crop_canvas(rect), composition, ppp);
                     layout.canvas = rect;
                     layout
                 };

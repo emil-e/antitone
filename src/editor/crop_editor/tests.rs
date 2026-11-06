@@ -85,6 +85,8 @@ pub(in crate::editor) fn request_auto_crop(
     });
 }
 
+mod resizing;
+
 const AREA: Rect = Rect {
     x: 12,
     y: 7,
@@ -309,19 +311,13 @@ fn rotated_resize_stays_frame_aligned_and_move_keeps_coverage_inside_source() {
     h.editor.document.crop_edit_mut().unwrap().draft =
         Crop::from_region(PATCH).straightened(AREA, 0.31).unwrap();
     let before = h.frame(vec![]);
-    assert!(
-        before
-            .canvas
-            .shrink(19.)
-            .contains_rect(before.screen_region(AREA))
-    );
+    assert!(before.canvas.shrink(19.).contains_rect(before.image));
     let marker = egui::pos2((AREA.x + 17) as f32, (AREA.y + 23) as f32);
-    let original = before.screen_point(marker);
     let start = before.image.max;
     let end = start - egui::vec2(40., 30.);
     h.press(start, true);
     let after = h.frame(vec![egui::Event::PointerMoved(end)]);
-    assert!(after.image.min.distance(before.image.min) < 0.001);
+    assert!(after.image.center().distance(before.canvas.center()) < 0.001);
     assert!(after.composition.size()[0] < before.composition.size()[0]);
     assert!(after.composition.size()[1] < before.composition.size()[1]);
     assert_eq!(
@@ -333,9 +329,15 @@ fn rotated_resize_stays_frame_aligned_and_move_keeps_coverage_inside_source() {
     h.press(end, false);
     let layout = h.frame(vec![]);
     assert_eq!(layout.scale, before.scale);
+    assert!((layout.scale - after.scale).abs() < 0.001);
     assert!(layout.image.min.distance(after.image.min) < 0.001);
     assert!(layout.image.max.distance(after.image.max) < 0.001);
-    assert!(layout.screen_point(marker).distance(original) < 0.001);
+    assert!(
+        layout
+            .screen_point(marker)
+            .distance(after.screen_point(marker))
+            < 0.001
+    );
     h.press(layout.image.center(), true);
     h.frame(vec![egui::Event::PointerMoved(egui::pos2(-1000., -1000.))]);
     h.editor
@@ -350,7 +352,7 @@ fn rotated_resize_stays_frame_aligned_and_move_keeps_coverage_inside_source() {
 }
 
 #[test]
-fn full_source_is_visible_and_resize_release_does_not_zoom_or_move_the_image() {
+fn resize_continuously_centers_without_zoom_feedback_or_a_release_jump() {
     for turns in [
         crate::geometry::QuarterTurns::Zero,
         crate::geometry::QuarterTurns::One,
@@ -359,33 +361,36 @@ fn full_source_is_visible_and_resize_release_does_not_zoom_or_move_the_image() {
     ] {
         let mut h = Harness::new(turns, RollOrientation::default(), None);
         let before = h.frame(vec![]);
-        let source_bounds = before.screen_region(AREA);
-        assert!(before.canvas.shrink(19.).contains_rect(source_bounds));
-        let marker = egui::pos2((AREA.x + 17) as f32, (AREA.y + 23) as f32);
-        let original = before.screen_point(marker);
+        assert!(before.canvas.shrink(19.).contains_rect(before.image));
+        assert!(before.image.center().distance(before.canvas.center()) < 0.001);
         let start = before.image.max;
         let end = start - egui::vec2(30., 25.);
         h.press(start, true);
         let smaller = h.frame(vec![egui::Event::PointerMoved(end)]);
         assert_eq!(smaller.scale, before.scale);
-        assert!(smaller.screen_point(marker).distance(original) < 0.001);
-        h.press(end, false);
+        assert!(smaller.image.center().distance(before.canvas.center()) < 0.001);
+        assert!(smaller.canvas.shrink(19.).contains_rect(smaller.image));
+        assert!(smaller.image.max.distance(end) < before.scale * 0.36);
+        let draft = smaller.composition.crop();
+        for _ in 0..3 {
+            let stationary = h.frame(vec![]);
+            assert_eq!(
+                stationary.composition.crop(),
+                draft,
+                "the camera must not drive the gesture"
+            );
+            assert!(stationary.image.min.distance(smaller.image.min) < 0.001);
+            assert!(stationary.image.max.distance(smaller.image.max) < 0.001);
+        }
+        let further = h.frame(vec![egui::Event::PointerMoved(end - egui::vec2(10., 8.))]);
+        assert!(further.composition.size()[0] < smaller.composition.size()[0]);
+        assert!(further.composition.size()[1] < smaller.composition.size()[1]);
+        assert_eq!(further.scale, smaller.scale);
+        h.press(end - egui::vec2(10., 8.), false);
         let released = h.frame(vec![]);
-        assert_eq!(released.scale, before.scale);
-        assert!(released.screen_point(marker).distance(original) < 0.001);
-        assert!(released.image.max.distance(smaller.image.max) < 0.001);
-        // One edge drag can reach the available source boundary, without intermediate refits.
-        let end = released.screen_region(AREA).max;
-        assert!(released.canvas.contains(end));
-        h.press(released.image.max, true);
-        let larger = h.frame(vec![egui::Event::PointerMoved(end)]);
-        h.press(end, false);
-        let finished = h.frame(vec![]);
-        assert!(larger.composition.size()[0] > released.composition.size()[0]);
-        assert!(larger.composition.size()[1] > released.composition.size()[1]);
-        assert_eq!(finished.scale, before.scale);
-        assert!(finished.screen_point(marker).distance(original) < 0.001);
-        assert!(finished.image.max.distance(end) < before.scale * 1.01);
+        assert!(released.image.min.distance(further.image.min) < 0.001);
+        assert!(released.image.max.distance(further.image.max) < 0.001);
+        assert_eq!(released.composition.crop(), further.composition.crop());
     }
 }
 
@@ -673,7 +678,9 @@ fn move_and_resize_drags_keep_their_native_cursors_when_crossing_the_frame() {
             Some(CropDrag::Move { .. } | CropDrag::Resize { .. })
         ));
         let released = h.press(end, false);
-        let point = released.image.right_center() + egui::vec2(18., 0.);
+        let gap = released.canvas.right() - released.image.right();
+        assert!(gap > 9., "fixture needs space beyond the handle hit area");
+        let point = released.image.right_center() + egui::vec2((9. + gap) * 0.5, 0.);
         h.frame(vec![egui::Event::PointerMoved(point)]);
         assert_rotation_cursor(&h, point, released.image.center());
     }
@@ -763,6 +770,8 @@ fn rotation_cursor_respects_disabled_popup_and_canvas_exit_at_both_scales() {
 struct Harness {
     editor: Editor,
     enabled: bool,
+    modifiers: egui::Modifiers,
+    density: f32,
     context: egui::Context,
     cursor: egui::CursorIcon,
     cursor_image: Option<egui::CustomCursorImage>,
@@ -798,6 +807,8 @@ impl Harness {
         Self {
             editor,
             enabled: true,
+            modifiers: egui::Modifiers::NONE,
+            density: 1.,
             context: egui::Context::default(),
             cursor: egui::CursorIcon::Default,
             cursor_image: None,
@@ -805,65 +816,63 @@ impl Harness {
         }
     }
 
-    fn frame(&mut self, events: Vec<egui::Event>) -> CanvasLayout {
+    fn frame(&mut self, mut events: Vec<egui::Event>) -> CanvasLayout {
+        events.insert(0, egui::Event::ModifiersChanged(self.modifiers));
         let mut result = None;
-        let mut output = self.context.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(600., 400.),
-                )),
-                events,
-                ..Default::default()
-            },
-            |ui| {
-                egui::CentralPanel::default()
-                    .frame(egui::Frame::NONE)
-                    .show(ui, |ui| {
-                        if !self.enabled {
-                            ui.disable();
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(600., 400.),
+            )),
+            events,
+            ..Default::default()
+        };
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .native_pixels_per_point = Some(self.density);
+        let mut output = self.context.run_ui(input, |ui| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| {
+                    if !self.enabled {
+                        ui.disable();
+                    }
+                    let (canvas, response) =
+                        ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+                    let composition = Composition::with_crop(
+                        AREA,
+                        self.editor.document.roll_orientation,
+                        self.editor.document.visit.photo_orientation,
+                        Some(self.editor.document.crop_edit().unwrap().draft),
+                    )
+                    .unwrap();
+                    let mut layout = self
+                        .editor
+                        .document
+                        .crop_viewport_mut()
+                        .unwrap()
+                        .layout_crop(canvas.shrink(20.), composition, ui.ctx().pixels_per_point());
+                    layout.canvas = canvas;
+                    let input_allowed = self.editor.canvas_input_allowed(ui, canvas);
+                    self.editor.with_current_tool(|tool, editor| {
+                        let tool = (tool as &mut dyn std::any::Any)
+                            .downcast_mut::<CropTool>()
+                            .unwrap();
+                        let layout = ui
+                            .add_enabled_ui(input_allowed, |ui| {
+                                tool.interact(ui, &response, layout, &mut editor.status)
+                            })
+                            .inner;
+                        tool.paint(ui, layout);
+                        if input_allowed {
+                            tool.rotation_cursor(ui, &response, layout);
                         }
-                        let (canvas, response) = ui.allocate_exact_size(
-                            ui.available_size(),
-                            egui::Sense::click_and_drag(),
-                        );
-                        let composition = Composition::with_crop(
-                            AREA,
-                            self.editor.document.roll_orientation,
-                            self.editor.document.visit.photo_orientation,
-                            Some(self.editor.document.crop_edit().unwrap().draft),
-                        )
-                        .unwrap();
-                        let mut layout = self
-                            .editor
-                            .document
-                            .crop_viewport_mut()
-                            .unwrap()
-                            .layout_crop(
-                                canvas.shrink(20.),
-                                composition,
-                                ui.ctx().pixels_per_point(),
-                            );
-                        layout.canvas = canvas;
-                        let input_allowed = self.editor.canvas_input_allowed(ui, canvas);
-                        self.editor.with_current_tool(|tool, editor| {
-                            let tool = (tool as &mut dyn std::any::Any)
-                                .downcast_mut::<CropTool>()
-                                .unwrap();
-                            let layout = ui
-                                .add_enabled_ui(input_allowed, |ui| {
-                                    tool.interact(ui, &response, layout, &mut editor.status)
-                                })
-                                .inner;
-                            tool.paint(ui, layout);
-                            if input_allowed {
-                                tool.rotation_cursor(ui, &response, layout);
-                            }
-                            result = Some(layout);
-                        });
+                        result = Some(layout);
                     });
-            },
-        );
+                });
+        });
         self.cursor = output.platform_output.cursor_icon;
         self.cursor_image = output.platform_output.cursor_image.take();
         self.shapes = std::mem::take(&mut output.shapes);
@@ -956,6 +965,7 @@ fn every_edge_and_corner_resizes_without_moving_its_opposite_anchor() {
                         .find(|(_, other)| *other == handle.map(|axis| -axis))
                         .unwrap()
                         .0;
+                    let fixed_source = before.source_point(fixed);
                     h.press(start, true);
                     let end =
                         start - egui::vec2(f32::from(handle[0]) * 23., f32::from(handle[1]) * 17.);
@@ -977,8 +987,9 @@ fn every_edge_and_corner_resizes_without_moving_its_opposite_anchor() {
                         .unwrap()
                         .0;
                     assert!(
-                        new_fixed.distance(fixed) <= before.scale * 1.01,
-                        "{turns:?} {handle:?}: {fixed:?} -> {new_fixed:?}"
+                        after.source_point(new_fixed).distance(fixed_source) <= 1.01,
+                        "{turns:?} {handle:?}: {fixed_source:?} -> {:?}",
+                        after.source_point(new_fixed)
                     );
                     assert!(AREA.contains_region(after.area));
                     assert_ne!(after.area, PATCH);
@@ -986,7 +997,7 @@ fn every_edge_and_corner_resizes_without_moving_its_opposite_anchor() {
                     h.press(end, false);
                     assert!(h.editor.document.crop_edit().unwrap().drag.is_none());
                     let released = h.frame(vec![]);
-                    assert!((released.scale - before.scale).abs() < 1e-6);
+                    assert!((released.scale - after.scale).abs() < 1e-5);
                     assert!(released.image.min.distance(after.image.min) < 0.001);
                     assert!(released.image.max.distance(after.image.max) < 0.001);
                 }
@@ -1009,6 +1020,11 @@ fn aspect_locked_edges_preserve_proportions_to_integer_pixel_precision() {
         let end = start - egui::vec2(f32::from(handle[0]) * 90., f32::from(handle[1]) * 60.);
         let after = h.frame(vec![egui::Event::PointerMoved(end)]);
         let [width, height] = after.composition.size();
+        let [original_width, original_height] = before.composition.size();
+        assert!(
+            width < original_width && height < original_height,
+            "a locked-aspect drag must shrink both dimensions: {handle:?}"
+        );
         assert!((f64::from(width) - 1.5 * f64::from(height)).abs() <= 1.5);
         assert!(AREA.contains_region(after.area));
     }

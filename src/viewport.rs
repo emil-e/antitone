@@ -89,7 +89,7 @@ impl Viewport {
         }
     }
 
-    /// Crop editing fits the entire source once, then never clamps/refits to the shrinking frame.
+    /// Crop editing fits the draft once; its tool owns subsequent resize-camera changes.
     pub fn layout_crop(
         &mut self,
         canvas: egui::Rect,
@@ -100,7 +100,7 @@ impl Viewport {
             canvas,
             composition,
             pixels_per_point,
-            Some(Coverage::rectangle(composition.area())),
+            Some(composition.crop().coverage().expect("valid crop coverage")),
             false,
         )
     }

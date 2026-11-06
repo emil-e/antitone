@@ -1506,12 +1506,7 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
         app_frame(&mut editor, &context, vec![]);
     }
     let layout = editor.document.crop_edit().unwrap().layout.unwrap();
-    assert!(
-        layout
-            .canvas
-            .shrink(19.)
-            .contains_rect(layout.screen_region(layout.composition.area()))
-    );
+    assert!(layout.canvas.shrink(19.).contains_rect(layout.image));
     let zoom = layout.scale * context.pixels_per_point();
     let text = app_frame(&mut editor, &context, vec![]);
     let button = text.iter().find(|(s, _)| s == "100%").unwrap().1.center();
@@ -1536,14 +1531,22 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
         app_frame(&mut editor, &context, vec![]);
     }
     let explicit = editor.document.crop_edit().unwrap().layout.unwrap();
-    assert!(!explicit.image.intersects(explicit.canvas));
+    assert!(explicit.image.center().distance(explicit.canvas.center()) < 0.001);
     assert_eq!(explicit.scale * context.pixels_per_point(), 1.);
+    editor.document.crop_viewport_mut().unwrap().pan(
+        explicit,
+        context.pixels_per_point(),
+        egui::vec2(explicit.canvas.width() * 2., 0.),
+    );
+    app_frame(&mut editor, &context, vec![]);
+    let offscreen = editor.document.crop_edit().unwrap().layout.unwrap();
+    assert!(!offscreen.image.intersects(offscreen.canvas));
     assert!(!editor.document.visit.canvas.original.refining());
     assert!(editor.document.visit.canvas.original.task.is_none());
     let text = app_frame(&mut editor, &context, vec![]);
     let fit = text
         .iter()
-        .find(|(s, _)| s == "Fit source")
+        .find(|(s, _)| s == "Fit crop")
         .unwrap()
         .1
         .center();
@@ -1569,12 +1572,7 @@ fn crop_explicit_zoom_can_leave_the_frame_offscreen_without_requesting_refinemen
         [layout.canvas.width(), fitted.canvas.width()],
         [layout.canvas.height(), fitted.canvas.height()]
     );
-    assert!(
-        fitted
-            .canvas
-            .shrink(19.)
-            .contains_rect(fitted.screen_region(fitted.composition.area()))
-    );
+    assert!(fitted.canvas.shrink(19.).contains_rect(fitted.image));
 }
 
 #[test]

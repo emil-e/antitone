@@ -39,6 +39,13 @@ Activate **Crop & straighten** from the tool shelf:
   **Swap portrait / landscape** flips the ratio.
 - **Angle** / **Reset straighten** — straighten by eye; Thirds guides help composition.
 
+Drag a crop edge or corner to resize; hold **Option** (Alt on Windows) to resize from
+the center, **Shift** to keep the aspect ratio from the start of the drag, or both.
+The frame continuously centers as you resize without changing zoom; the grabbed handle
+follows the cursor within the aspect and image bounds. **Fit crop** explicitly refits the view.
+Drag inside to move the image beneath the frame, or outside to straighten.
+**Apply** accepts the draft; **Cancel** discards it.
+
 Rotation and crop are per-photo; scan orientation (for the whole roll) is on the Roll
 tool shelf.
 

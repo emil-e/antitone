@@ -2,6 +2,7 @@ use super::*;
 use glam::DMat3;
 
 mod grading;
+mod resizing;
 mod stability;
 
 fn assert_crop_patch_pixels(harness: &mut Harness<'_, Editor>, capture: &RefCell<FloatCapture>) {
