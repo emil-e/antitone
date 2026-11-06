@@ -615,29 +615,18 @@ impl Editor {
             && !self.picking()
             && let Some(source) = self.document.visit.current_source
         {
-            let composition = self
-                .document
-                .state
-                .project
-                .source(source)
-                .ok()
-                .map(|source| source.development.active_area.into())
-                .map(|area| self.normal_canvas_composition(area));
-            if let Some(composition) = composition {
-                match self.document.thumbnails.selected_preview(
-                    self.id,
-                    &self.document.state,
-                    source,
-                    composition,
-                    self.document.correction.as_ref(),
-                ) {
-                    Ok(preview) => {
-                        log::debug!(request = self.id, cache_hit = preview.is_some(), boundary = "admission", elapsed_ms = started.elapsed().as_secs_f64() * 1000.; "selected_switch");
-                        self.document.visit.pending_preview = preview;
-                    }
-                    Err(error) => {
-                        log::debug!(request = self.id, error = error.to_string().as_str(); "selected_preview_unavailable")
-                    }
+            match self.document.thumbnails.selected_preview(
+                self.id,
+                &self.document.state,
+                source,
+                self.document.correction.as_ref(),
+            ) {
+                Ok(preview) => {
+                    log::debug!(request = self.id, cache_hit = preview.is_some(), boundary = "admission", elapsed_ms = started.elapsed().as_secs_f64() * 1000.; "selected_switch");
+                    self.document.visit.pending_preview = preview;
+                }
+                Err(error) => {
+                    log::debug!(request = self.id, error = error.to_string().as_str(); "selected_preview_unavailable")
                 }
             }
         }

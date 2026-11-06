@@ -492,9 +492,12 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
         wait_for(&mut h, |e| {
             !e.interaction_blocked() && !e.document.visit.source.pending()
         });
+        let admission = crate::background::testing::pause();
         h.get_by_label("roll-0.dng").click();
         h.step();
+        h.step();
         h.read(|e| {
+            assert!(e.document.visit.source.pending());
             assert_eq!(e.document.visit.crop, Some(crop));
             assert_eq!(
                 e.document.state.project.source(first).unwrap().crop,
@@ -504,14 +507,16 @@ fn switching_back_uses_source_crop_for_pending_and_ready_views() {
             assert_eq!(
                 e.document
                     .visit
-                    .pending_preview
-                    .as_ref()
+                    .canvas
+                    .last_layout
                     .unwrap()
+                    .0
                     .composition
                     .crop(),
                 crop
             );
         });
+        drop(admission);
         wait_for(&mut h, |e| {
             !e.interaction_blocked() && !e.document.visit.source.pending()
         });

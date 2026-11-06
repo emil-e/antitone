@@ -25,6 +25,7 @@ mod history;
 mod looks;
 mod masks;
 mod menus;
+mod orientation;
 mod picking;
 mod progress;
 mod project;

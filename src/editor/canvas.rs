@@ -822,18 +822,9 @@ impl Editor {
         let selected = self.selected_view();
         let pixels_per_point = ui.ctx().pixels_per_point();
         let canvas_input = self.canvas_input_allowed(ui, canvas);
-        let composition = selected.as_ref().map(|(area, _, pending)| {
-            if *pending {
-                self.document
-                    .visit
-                    .pending_preview
-                    .as_ref()
-                    .map(|preview| preview.composition)
-                    .unwrap_or_else(|| self.normal_canvas_composition(*area))
-            } else {
-                self.normal_canvas_composition(*area)
-            }
-        });
+        let composition = selected
+            .as_ref()
+            .map(|(area, _, _)| self.normal_canvas_composition(*area));
         let Some((_, proxy, pending)) = selected else {
             if let Some(view) = self.activities.view() {
                 view.viewer(ui, canvas);

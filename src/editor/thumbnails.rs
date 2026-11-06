@@ -244,7 +244,6 @@ impl Proxy {
 pub(super) struct SelectedPreview {
     request: u64,
     key: SourceKey,
-    pub(super) composition: crate::geometry::Composition,
     pub(super) proxy: crate::viewer::GpuProxy,
 }
 
@@ -423,7 +422,6 @@ impl Thumbnails {
         request: u64,
         document: &Document,
         id: SourceId,
-        composition: crate::geometry::Composition,
         correction: Option<&Arc<Correction>>,
     ) -> Result<Option<SelectedPreview>, Error> {
         let started = std::time::Instant::now();
@@ -452,7 +450,6 @@ impl Thumbnails {
         let preview = SelectedPreview {
             request,
             key: key.clone(),
-            composition,
             proxy: crate::viewer::GpuProxy::new_continuous(
                 renderer,
                 device,
