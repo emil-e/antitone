@@ -79,13 +79,13 @@ fn operation_failure_owns_escape_above_settings_without_closing_settings() {
         harness.try_run_realtime().unwrap();
         native_action(&mut harness, Action::Settings);
         harness.update(|editor| {
-            editor.report_failure(FailureKind::Export, "fixture export failure".into())
+            editor.report_failure(FailureCase::Export, "fixture export failure".into())
         });
         harness.try_run_realtime().unwrap();
         assert!(!harness.get_by_label("OK").accesskit_node().is_disabled());
         harness.key_press(egui::Key::Escape);
         harness.try_run_realtime().unwrap();
-        harness.read(|editor| assert!(editor.failure.is_none()));
+        harness.read(|editor| assert!(!editor.dialogs.is_open()));
         harness
             .read(|editor| assert_eq!(editor.menus.panel, Some(presentation::AppPanel::Settings)));
     });

@@ -421,15 +421,10 @@ fn authored_dust_save_new_open_restores_intent_exact_results_and_looked_view_ref
         });
         native_file_action(&mut h, crate::platform::menu::Action::New);
         h.run();
-        h.read(|editor| {
-            assert!(
-                editor.transition.is_some(),
-                "repair-only edits must guard New"
-            )
-        });
+        h.read(|editor| assert!(editor.files.pending(), "repair-only edits must guard New"));
         h.get_by_label("Cancel").click();
         h.run();
-        h.read(|editor| assert!(editor.transition.is_none()));
+        h.read(|editor| assert!(!editor.files.pending()));
         h.read(|editor| assert_eq!(editor.document.state.project, expected));
         save_existing_project(&mut h);
         h.read(|editor| {

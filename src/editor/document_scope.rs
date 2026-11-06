@@ -71,7 +71,7 @@ mod sampling_tests;
 pub(super) struct DocumentScope {
     pub thumbnails: super::Thumbnails,
     pub input: super::InputSettings,
-    pub input_switch: Option<super::InputSettings>,
+
     pub roll: super::RollSettings,
     pub gamma_pivot: super::gamma_pivot::State,
     pub deferred_menu: std::collections::VecDeque<crate::platform::menu::Action>,
@@ -85,7 +85,7 @@ pub(super) struct DocumentScope {
     pub source: bool,
     pub selected: usize,
     pub roll_selection: super::RollSelection,
-    pub removal_pending: Option<Vec<super::SourceId>>,
+
     pub export: super::export::State,
     pub correction: Option<Arc<super::Correction>>,
     pub flat_correction: Option<async_executor::Task<()>>,
@@ -109,7 +109,7 @@ pub(super) struct DocumentScope {
     pub thumbnail_work: super::thumbnails::ThumbnailWork,
     pub write: super::save::State,
     pub look: Option<super::look::Operation>,
-    pub material_switch: Option<super::look::MaterialSwitch>,
+    pub dialog_action: Option<async_executor::Task<()>>,
     pub dust: super::dust::State,
     #[cfg(test)]
     pub analysis_preparation_work:
@@ -119,12 +119,6 @@ pub(super) struct DocumentScope {
 }
 
 impl DocumentScope {
-    pub fn confirming(&self) -> bool {
-        self.removal_pending.is_some()
-            || self.material_switch.is_some()
-            || self.visit.adjustment_layers.confirming()
-    }
-
     pub fn replacement(&self, state: Document) -> Self {
         let mut next: Self = state.into();
         next.thumbnails = self.thumbnails.for_document(next.cache.clone());
@@ -236,10 +230,10 @@ impl From<Document> for DocumentScope {
             hosted_tool: Default::default(),
             selected: 0,
             roll_selection: super::RollSelection::default(),
-            removal_pending: None,
+
             export: Default::default(),
             input,
-            input_switch: None,
+
             roll: super::RollSettings::default(),
             gamma_pivot: Default::default(),
             deferred_menu: Default::default(),
@@ -266,7 +260,7 @@ impl From<Document> for DocumentScope {
             thumbnail_work: Default::default(),
             write: super::save::State::default(),
             look: None,
-            material_switch: None,
+            dialog_action: None,
             dust: super::dust::State::default(),
             #[cfg(test)]
             analysis_preparation_work: None,

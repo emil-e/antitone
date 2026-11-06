@@ -17,13 +17,12 @@ impl Editor {
     fn fullscreen_blocked(&self) -> bool {
         self.menus.panel.is_some()
             || self.activities.blocks_workspace()
-            || self.failure.is_some()
+            || self.dialogs.is_open()
             || self.document_pending.is_some()
-            || self.transition.is_some()
-            || self.project_overwrite.is_some()
+            || self.files.pending()
             || self.allow_close
             || self.export_modal()
-            || self.document.confirming()
+            || self.dialogs.is_open()
     }
 
     pub(super) fn fullscreen_available(&self) -> bool {

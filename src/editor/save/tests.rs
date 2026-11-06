@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     application::test_support::with_application,
-    editor::{Preparation, document, source, tests::fixture},
+    editor::{FailureCase, Preparation, document, source, tests::fixture},
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -85,7 +85,7 @@ fn live_save_without_backend_or_paint_preserves_later_edits_history_visit_and_so
                 locator
             );
             assert!(
-                !e.interaction_blocked() && e.activities.view().is_none() && e.failure.is_none()
+                !e.interaction_blocked() && e.activities.view().is_none() && !e.dialogs.is_open()
             );
         });
     });
@@ -113,9 +113,12 @@ fn failed_live_save_preserves_destination_dirty_state_and_guarded_transition() {
         app.read(|e| {
             assert_eq!(e.document.state.project, accepted);
             assert!(e.document.dirty());
-            assert_eq!(e.transition, Some(crate::editor::Transition::Close));
+            assert!(e.files.closing());
             assert!(e.document_pending.is_none() && !e.allow_close);
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::Save);
+            assert_eq!(
+                e.dialogs.message().unwrap().title,
+                FailureCase::Save.title()
+            );
             assert!(!e.interaction_blocked() && e.activities.view().is_none());
         });
     });
@@ -130,7 +133,12 @@ fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operatio
     let path = directory.path().join("retired.antitone");
     with_application(editor, |app| {
         app.enter(|e, access| {
-            e.save_project(path.clone(), crate::project::Save::New, None, access);
+            e.save_project(
+                path.clone(),
+                crate::project::Save::New,
+                Some(crate::editor::Transition::Close),
+                access,
+            );
         });
         let retired = app.read(|e| e.document_pending.unwrap());
         app.pump();
@@ -143,7 +151,7 @@ fn retiring_queued_write_drops_its_continuation_and_cannot_finish_a_new_operatio
         app.read(|e| {
             assert_eq!(e.document_pending, Some(current));
             assert!(e.interaction_blocked() && e.activities.view().is_some());
-            assert!(e.failure.is_none());
+            assert!(!e.dialogs.is_open());
         });
         assert!(!path.exists());
     });
@@ -166,13 +174,13 @@ fn cancelling_the_after_save_decision_does_not_cancel_the_accepted_write_or_clos
             );
         });
         app.pump();
-        app.update(|e| e.after_save = None);
+        app.update(|e| e.files = Default::default());
         drop(hold);
         app.run_until(Duration::from_secs(15), |e| e.document_pending.is_none());
         assert!(path.exists());
         app.read(|e| {
             assert!(!e.document.dirty());
-            assert!(e.after_save.is_none() && e.transition.is_none() && !e.allow_close);
+            assert!(!e.files.pending() && !e.allow_close);
             assert!(e.document_pending.is_none());
         });
     });
@@ -211,12 +219,8 @@ fn successful_save_continues_new_open_and_close_without_another_ui_pass() {
             });
             assert_eq!(crate::project::Project::load(&written).unwrap(), captured);
             app.read(|e| {
-                assert!(e.failure.is_none(), "{}", e.status);
-                assert!(
-                    e.after_save.is_none()
-                        && e.transition.is_none()
-                        && e.activities.view().is_none()
-                );
+                assert!(!e.dialogs.is_open(), "{}", e.status);
+                assert!(!e.files.pending() && e.activities.view().is_none());
                 match &transition {
                     Transition::New => {
                         assert!(

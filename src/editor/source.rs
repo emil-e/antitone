@@ -577,7 +577,10 @@ impl Editor {
         self.invalidate_original();
         self.document.visit.canvas.viewport.fit();
         self.document.export.draft = None;
-        self.document.export.summary = None;
+        #[cfg(test)]
+        {
+            self.document.export.summary = None;
+        }
         self.document.visit.return_notice = None;
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);

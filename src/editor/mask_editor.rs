@@ -338,7 +338,7 @@ impl Editor {
             && self.document.input.ready()
             && !self.document.source
             && !self.picking()
-            && !self.document.visit.adjustment_layers.confirming()
+            && !self.dialogs.is_open()
             && self.fullscreen.is_none()
     }
 

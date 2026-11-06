@@ -94,7 +94,7 @@ fn negative_and_paper_select_independently_with_real_generation_and_paper_bypass
         wait_for(&mut h, |e| {
             !e.interaction_blocked() && e.document_pending.is_none()
         });
-        h.read(|e| assert!(!e.document.dirty() && e.failure.is_none()));
+        h.read(|e| assert!(!e.document.dirty() && !e.dialogs.is_open()));
         let reopened = crate::project::Project::load(&path).unwrap();
         assert_eq!(
             reopened.output.film_and_paper,
@@ -110,7 +110,7 @@ fn negative_and_paper_select_independently_with_real_generation_and_paper_bypass
             )
         });
         wait_for(&mut h, |e| e.document.export.operation.is_none());
-        h.read(|e| assert!(e.failure.is_none()));
+        h.read(|e| assert!(e.dialogs.message().is_none()));
         h.get_by_role_and_label(egui::accesskit::Role::Button, "OK")
             .click();
         h.step();
@@ -126,7 +126,7 @@ fn negative_and_paper_select_independently_with_real_generation_and_paper_bypass
             )
         });
         wait_for(&mut h, |e| e.document.export.operation.is_none());
-        h.read(|e| assert!(e.failure.is_none()));
+        h.read(|e| assert!(e.dialogs.message().is_none()));
         h.get_by_role_and_label(egui::accesskit::Role::Button, "OK")
             .click();
         h.step();

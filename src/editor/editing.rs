@@ -428,10 +428,10 @@ impl Editor {
                 start,
                 drop,
                 finish,
-            } => self.adjustment_layer_order_input(start, drop, finish),
+            } => self.adjustment_layer_order_input(start, drop, finish, cx),
             Command::Photo(action) => self.apply_photo_action(action, cx),
             Command::Roll(action) => self.apply_roll_orientation(action),
-            Command::Adjustment(action) => self.apply_adjustment_layer_action(action),
+            Command::Adjustment(action) => self.apply_adjustment_layer_action(action, cx),
 
             Command::CreateMask(radial) => {
                 if radial {
@@ -457,10 +457,7 @@ impl Editor {
                 } else {
                     candidate.project.set_flat_field(None);
                 }
-                self.start_document(
-                    Preparation::Correction(candidate, self.document.visit.current_source),
-                    cx,
-                );
+                self.start_correction(candidate, cx);
             }
             Command::FlatEdit(path, region) => flat::FlatTool::open(self, path, region, cx),
         }

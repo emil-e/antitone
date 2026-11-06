@@ -104,9 +104,12 @@ fn export_activity_closes_before_awaited_failure_feedback() {
         });
         app.read(|editor| {
             assert!(editor.activities.view().is_none() && !editor.interaction_blocked());
-            assert_eq!(editor.failure.as_ref().unwrap().kind, FailureKind::Export);
             assert_eq!(
-                editor.failure.as_ref().unwrap().details,
+                editor.dialogs.message().unwrap().title,
+                FailureCase::Export.title()
+            );
+            assert_eq!(
+                editor.dialogs.message().unwrap().details,
                 "Export services unavailable"
             );
             assert_eq!(editor.document.state.project, before);
@@ -446,7 +449,7 @@ fn activity_keeps_viewer_geometry_stable_and_never_covers_an_acknowledged_failur
                 .activities
                 .start(ActivityOptions::new("Saving project…").modal());
             editor.activities.elapse(Duration::from_secs(1));
-            editor.report_failure(FailureKind::Save, "previous failure".into());
+            editor.report_failure(FailureCase::Save, "previous failure".into());
             app_frame(editor, &context, vec![]);
             let labels = app_frame(editor, &context, vec![]);
             assert!(
@@ -459,7 +462,7 @@ fn activity_keeps_viewer_geometry_stable_and_never_covers_an_acknowledged_failur
                     .memory(|memory| memory.area_rect(egui::Id::new("working-document")))
                     .is_none()
             );
-            assert!(editor.failure.is_some() && editor.activities.view().is_some());
+            assert!(editor.dialogs.is_open() && editor.activities.view().is_some());
         });
     });
 }

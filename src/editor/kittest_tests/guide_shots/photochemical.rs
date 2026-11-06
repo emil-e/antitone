@@ -81,7 +81,7 @@ pub(super) fn capture_demo(harness: &mut Harness<'_, Editor>, directory: &Path, 
                 selection.map(MaterialSelection::origin),
                 "requested {name} material was not accepted",
             );
-            assert!(e.failure.is_none());
+            assert!(!e.dialogs.is_open());
         });
         harness
             .get_by_role_and_label(egui::accesskit::Role::ComboBox, "Paper")
@@ -95,7 +95,7 @@ pub(super) fn capture_demo(harness: &mut Harness<'_, Editor>, directory: &Path, 
             !e.interaction_blocked() && e.document_pending.is_none()
         });
         let project = harness.read(|e| {
-            assert!(e.failure.is_none());
+            assert!(!e.dialogs.is_open());
             assert!(!e.document.dirty());
             e.document.state.project.clone()
         });
@@ -125,7 +125,7 @@ fn supplied_project_renders_and_saves_the_paper_routes_without_reanalysis() {
                 && e.document_pending.is_none()
                 && e.document.visit.canvas.ready.is_some()
         });
-        harness.read(|e| assert!(e.failure.is_none()));
+        harness.read(|e| assert!(!e.dialogs.is_open()));
         settle_view(&mut harness);
         capture_demo(&mut harness, &output, "negative");
     });
@@ -168,7 +168,7 @@ fn supplied_digital_photograph_renders_and_saves_the_same_component_routes() {
         });
         settle_view(&mut harness);
         harness.read(|e| {
-            assert!(e.failure.is_none());
+            assert!(!e.dialogs.is_open());
             assert_eq!(
                 e.document
                     .project

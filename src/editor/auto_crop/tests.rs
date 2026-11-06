@@ -165,10 +165,10 @@ fn batch_crop_closes_local_editing_and_preserves_masks_on_apply_and_cancel() {
         assert!(!e.adjustment_layer_owns_delete());
         e.begin_linear_mask(None);
         e.begin_radial_mask(None);
-        e.delete_selected_adjustment_layer();
+        e.delete_selected_adjustment_layer(&UiContext::render_only());
         assert!(e.creating_mask());
         assert!(!e.document.auto_crop.reviewing());
-        assert!(!e.document.visit.adjustment_layers.confirming());
+        assert!(!e.dialogs.is_open());
         assert_eq!(e.document.state.project, before);
         e.finish_adjustment_layer_interaction();
         e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
@@ -647,7 +647,7 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
         app.enter(|e, cx| {
             let before = e.document.state.project.clone();
             e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");
-            e.request_removal();
+            e.request_removal(cx);
             for action in [
                 FileAction::New,
                 FileAction::Save,
@@ -667,7 +667,7 @@ fn draft_tool_keeps_document_commands_export_and_removal_guarded() {
                     && e.test_pick().is_none()
                     && e.document.flat_edit().is_none()
                     && !e.dusting()
-                    && e.document.removal_pending.is_none()
+                    && !e.dialogs.is_open()
             );
             assert!(e.document.auto_crop.reviewing());
             assert!(e.document.export.operation.is_none());
@@ -784,7 +784,7 @@ fn batch_entry_respects_document_operations_and_removal() {
         match case {
             0 => e.set_test_busy(true),
             4 => e.document_pending = Some(99),
-            5 => e.document.removal_pending = Some(vec![e.document.visit.current_source.unwrap()]),
+            5 => e.block_with_decision(),
             _ => unreachable!(),
         }
         e.begin_auto_crop_review(e.document.project.order.clone(), "Whole roll");

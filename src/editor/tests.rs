@@ -1,5 +1,54 @@
 use super::*;
 
+// Feature scenarios exercise real owners; this catalogue is test data only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FailureCase {
+    FlatReference,
+    FlatSupport,
+    FlatCorrection,
+    Save,
+    Export,
+    Look,
+    #[cfg(feature = "ui-tests")]
+    LookRendering,
+}
+
+impl FailureCase {
+    pub(super) fn title(self) -> &'static str {
+        match self {
+            Self::FlatReference => "Could not prepare reference",
+            Self::FlatSupport => "Area not accepted",
+            Self::FlatCorrection => "Could not change correction",
+            Self::Save => "Could not save project",
+            Self::Export => "Could not export image",
+            Self::Look => "Could not prepare look",
+            #[cfg(feature = "ui-tests")]
+            Self::LookRendering => "Could not render look",
+        }
+    }
+}
+impl Editor {
+    pub(super) fn block_with_decision(&mut self) {
+        drop(self.dialogs.show(|context, id, escape| {
+            presentation::DecisionDialog::new("Pending decision", "Fixture decision", "Continue")
+                .show(context, id, escape)
+        }));
+    }
+
+    pub(super) fn report_failure(&mut self, scenario: FailureCase, details: String) {
+        match scenario {
+            FailureCase::FlatReference => self.reference_failed(details),
+            FailureCase::FlatSupport => self.support_failed(details),
+            FailureCase::FlatCorrection => self.correction_failed(details),
+            FailureCase::Save => self.save_failed(details),
+            FailureCase::Export => self.export_failed(details),
+            FailureCase::Look => self.look_failed(details),
+            #[cfg(feature = "ui-tests")]
+            FailureCase::LookRendering => self.look_render_failed(details),
+        }
+    }
+}
+
 // Test scenarios select real feature entry points; production has no picker catalogue.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum PickerCase {
@@ -3264,11 +3313,13 @@ fn input_stage_switch_requires_confirmation_before_discarding_negative_settings(
         app.enter(|editor, cx| {
             editor.request_input(crate::processing::InputSettings::Digital, cx);
             assert_eq!(editor.document.input, negative);
-            assert_eq!(
-                editor.document.input_switch,
-                Some(crate::processing::InputSettings::Digital)
-            );
-            editor.document.input_switch = None;
+            assert!(editor.dialogs.is_open());
+            editor.dialogs.answer_for_test("Cancel");
+        });
+        app.pump();
+        app.read(|editor| {
+            assert!(!editor.dialogs.is_open());
+            assert_eq!(editor.document.input, negative);
         });
     });
 }

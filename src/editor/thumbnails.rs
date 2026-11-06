@@ -1059,10 +1059,9 @@ impl Editor {
             && !self.cropping()
             && !self.masking()
             && self.document_pending.is_none()
-            && self.transition.is_none()
-            && self.project_overwrite.is_none()
+            && !self.files.pending()
             && !self.export_modal()
-            && !self.document.confirming()
+            && !self.dialogs.is_open()
     }
 
     pub(super) fn hidden_filmstrip(&mut self, ui: &egui::Ui, cx: &UiContext<'_, Self>) {
@@ -1481,7 +1480,7 @@ impl Editor {
             self.preferences.filmstrip_height = strip.response.rect.height().clamp(52., 240.);
         }
         if remove {
-            self.request_removal();
+            self.request_removal(cx);
         }
         self.document.thumbnails.demand = if select.is_none() && !remove {
             Demand::Visible(

@@ -257,7 +257,7 @@ fn representative_batch_preview_reuses_the_image_browses_freely_and_commits_only
             });
             h.step();
             wait_for(&mut h, |e| !e.interaction_blocked());
-            h.read(|editor| assert!(editor.failure.is_none(), "{}", editor.status));
+            h.read(|editor| assert!(editor.dialogs.message().is_none(), "{}", editor.status));
             let mut decoder =
                 tiff::decoder::Decoder::new(std::fs::File::open(output).unwrap()).unwrap();
             let [w, height] = composition.size();
@@ -346,7 +346,7 @@ fn numeric_popup_disabled_and_hidden_artwork_input_cannot_accidentally_accept_or
         h.read(|editor| assert_eq!(editor.document.state.project, before));
         h.key_press(egui::Key::Delete);
         h.step();
-        h.read(|editor| assert!(editor.document.removal_pending.is_none()));
+        h.read(|editor| assert!(!editor.dialogs.is_open()));
         h.key_press(egui::Key::Escape);
         h.step();
         h.step();

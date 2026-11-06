@@ -243,16 +243,13 @@ impl Editor {
     pub(super) fn history_available(&self) -> bool {
         !self.interaction_blocked()
             && !self.document.gamma_pivot.pending()
-            && self.failure.is_none()
+            && !self.dialogs.is_open()
             && self.menus.panel.is_none()
             && self.document.look.is_none()
             && self.document_pending.is_none()
             && !self.export_modal()
-            && self.transition.is_none()
-            && self.after_save.is_none()
+            && !self.files.pending()
             && !self.allow_close
-            && self.project_overwrite.is_none()
-            && !self.document.confirming()
             && !self.document.visit.adjustment_layers.dragging()
             && !self.dust_history_draft()
     }

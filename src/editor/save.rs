@@ -2,20 +2,28 @@
 mod tests;
 
 use super::{
-    ActivityOptions, Editor, FailureKind, UiContext,
+    ActivityOptions, Editor, UiContext, dialogs,
     document::{Document, Write},
 };
 
 #[derive(Default)]
+
 pub(super) struct State {
     task: Option<async_executor::Task<()>>,
+    response: Option<futures_channel::oneshot::Sender<bool>>,
 }
 
 impl Editor {
-    pub(super) fn start_save(&mut self, write: Write, cx: &UiContext<'_, Self>) {
+    pub(super) fn start_save(
+        &mut self,
+        write: Write,
+        cx: &UiContext<'_, Self>,
+    ) -> futures_channel::oneshot::Receiver<bool> {
+        let (send, receive) = futures_channel::oneshot::channel();
         if self.dust_search_pending() {
             self.status = "Wait for donor selection before saving".into();
-            return;
+            let _ = send.send(false);
+            return receive;
         }
         if self.picking() {
             self.end_tool();
@@ -23,10 +31,11 @@ impl Editor {
         self.document.history.finish_group();
         self.history_pending = None;
         let id = self.begin_document_operation(false);
+        self.document.write.response = Some(send);
         let activity = self
             .activities
             .start(ActivityOptions::new("Saving project…").modal());
-        self.document_failure = Some(FailureKind::Save);
+
         self.new_project_pending = false;
         let device = self
             .source_services
@@ -43,30 +52,35 @@ impl Editor {
             drop(activity);
             cx.update(|editor| {
                 editor.save_result(id, result, &cx);
-                editor.acquire_working(&cx);
+                // The close continuation resumes outside this transaction.
+                if !editor.files.closing() {
+                    editor.acquire_working(&cx);
+                }
             });
         }) else {
             self.save_result(id, Err("Application stopped".into()), cx);
-            return;
+            return receive;
         };
         self.document.write.task = Some(task);
+        receive
     }
 
     pub(super) fn save_result(
         &mut self,
         id: u64,
         result: Result<Box<Document>, String>,
-        cx: &UiContext<'_, Self>,
+        _cx: &UiContext<'_, Self>,
     ) {
         if self.document_pending != Some(id) {
             return;
         }
+        let response = self.document.write.response.take();
         self.document.write = State::default();
+        let succeeded = result.is_ok();
         self.source_epoch
             .store(self.id, std::sync::atomic::Ordering::Relaxed);
 
         self.document_pending = None;
-        self.document_failure = None;
 
         self.resume_source_after_document();
         match result {
@@ -74,21 +88,31 @@ impl Editor {
                 log::info!(request = id; "project_saved");
                 self.document.accept_save(*document);
                 self.status = "Project saved".into();
-                self.resolve_failure(FailureKind::Save);
-                if let Some(transition) = self.after_save.take() {
-                    self.perform_transition(transition, cx);
-                }
             }
             Err(error) => {
                 self.status = format!("Save failed: {error}");
-                self.transition = self.after_save.take();
-                self.report_failure(FailureKind::Save, error);
+
+                self.save_failed(error);
             }
+        }
+        if let Some(response) = response {
+            let _ = response.send(succeeded);
         }
         if self.document_pending.is_none() && self.document.spatial_preparing.is_some() {
             self.status = "Preparing film and picture regions…".into();
         } else {
             self.resume_region_actions();
         }
+    }
+}
+
+impl Editor {
+    pub(super) fn save_failed(&mut self, details: String) {
+        drop(self.dialogs.report(dialogs::Message {
+            severity: super::presentation::Severity::Error,
+            title: "Could not save project",
+            explanation: "Your edits are still in memory and the destination file was not replaced. Review the details, then try saving again.",
+            details,
+        }));
     }
 }

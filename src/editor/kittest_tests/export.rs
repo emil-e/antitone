@@ -210,7 +210,7 @@ fn selected_exr_export_can_be_cancelled_and_retried_without_exporting_unselected
         });
         harness.read(|editor| {
             assert!(
-                editor.failure.is_none()
+                !editor.dialogs.is_open()
                     && !editor.interaction_blocked()
                     && editor.activities.view().is_none()
             );

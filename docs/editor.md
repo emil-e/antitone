@@ -76,11 +76,11 @@ A displayed number is not necessarily a rounded stored value. Controls preserve 
 
 Colour wheels drag relative to the accepted value; holding Shift gives ten-times finer motion without a jump when Shift changes. Popovers, numeric controls and toolbar gestures own input ahead of the canvas, so one action cannot also pan, pick or apply a draft.
 
-## Decisions are not operation failures
+## Dialogs return answers to their workflows
 
-A decision asks permission before changing or replacing something; a failure explains why an attempted operation did not complete. Save/Discard, project and output replacement use the shared [decision dialog](../src/editor/presentation/dialogs.rs) family, so a required choice is not presented as a warning and none of these confirmations is an operation failure. Analyze folds its Photo-reset consequence into the sampling-area review instead of opening another dialog.
+Notifications and decisions use one [dialog host](../src/editor/dialogs.rs). Features submit presentation and await a typed answer when their continuation needs one. Captured targets and subsequent actions stay in the feature's async workflow, retained by its document, photo visit or file-action owner. The host presents one dialog at a time until an explicit user answer; later submissions wait. Dropping a response waiter or succeeding on a later attempt does not erase an unread dialog.
 
-[Feedback presentation](../src/editor/presentation/feedback.rs) distinguishes information, warning and error with a named severity, glyph and restrained colour — never colour alone. Acknowledged messages state what did not happen and what remains intact, with full diagnostic details behind a subdued disclosure. [Operation controllers](../src/editor/feedback.rs) retain the typed failure separately from status text: acknowledgement or a matching success retires it, while merely starting another job or receiving stale results does not. Other import/analysis failures remain passive status rather than acknowledged messages.
+A decision asks permission before changing or replacing something; a failure explains why an attempt did not complete. Save/Discard and replacement choices use shared [decision presentation](../src/editor/presentation/dialogs.rs). [Notice presentation](../src/editor/presentation/feedback.rs) supplies named severity, glyph, restrained colour and expandable diagnostic Details. Required choices are not labelled operation failures. Analyze folds its Photo-reset consequence into its sampling-area review. Other import/analysis failures remain passive status rather than acknowledged messages.
 
 ## Working feedback follows what remains usable
 

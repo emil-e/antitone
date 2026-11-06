@@ -82,8 +82,8 @@ fn unsupported_material_requests_preserve_pending_and_accepted_choices_until_con
             assert_eq!(e.photochemical_selection(), None);
             e.select_negative(Negative::from_id("kodak_portra_400").map(Into::into), cx);
             assert_eq!(e.document.look.as_ref().unwrap().activity.clone(), pending);
-            assert!(e.document.material_switch.is_some());
-            e.resolve_material_switch(false, cx);
+            assert!(e.dialogs.is_open());
+            e.dialogs.answer_for_test("Cancel");
             assert_eq!(e.document.look.as_ref().unwrap().activity.clone(), pending);
         });
         app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
@@ -95,9 +95,10 @@ fn unsupported_material_requests_preserve_pending_and_accepted_choices_until_con
             assert!(e.document.look.is_none());
             assert_eq!(e.document.project, accepted);
             assert_eq!(e.document.project.output.lut.as_ref(), Some(&imported));
-            assert!(e.document.material_switch.is_some());
+            assert!(e.dialogs.is_open());
         });
-        app.enter(|e, cx| e.resolve_material_switch(false, cx));
+        app.update(|e| e.dialogs.answer_for_test("Cancel"));
+        app.pump();
         app.enter(|e, cx| e.select_paper(Some(Paper::default().into()), cx));
         app.run_until(Duration::from_secs(90), |e| e.document.look.is_none());
         app.enter(|e, cx| {
@@ -109,9 +110,10 @@ fn unsupported_material_requests_preserve_pending_and_accepted_choices_until_con
         app.read(|e| {
             assert!(e.document.look.is_none());
             assert_eq!(e.document.project, colour);
-            assert!(e.document.material_switch.is_some());
+            assert!(e.dialogs.is_open());
         });
-        app.enter(|e, cx| e.resolve_material_switch(false, cx));
+        app.update(|e| e.dialogs.answer_for_test("Cancel"));
+        app.pump();
     });
     scheduler.close_and_wait().unwrap();
 }

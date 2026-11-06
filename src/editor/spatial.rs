@@ -168,14 +168,16 @@ impl Editor {
             }
         }
         let resumed = self.document.spatial_resumed.clone();
+        let dialogs = self.dialogs.changes();
         let cx = cx.clone();
         Some(async move {
             let metadata = receive.await.ok().flatten()?;
 
             loop {
                 let changed = resumed.listen();
-                if cx.read(|editor| editor.document_pending.is_some() || editor.failure.is_some()) {
-                    changed.await;
+                let dialog_changed = dialogs.listen();
+                if cx.read(|editor| editor.document_pending.is_some() || editor.dialogs.is_open()) {
+                    futures_lite::future::or(changed, dialog_changed).await;
                     continue;
                 }
                 return cx

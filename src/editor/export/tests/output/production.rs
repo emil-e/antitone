@@ -100,7 +100,7 @@ fn authored_production_worker_keeps_captured_repairs_look_and_destination_safe_o
                 // Change live state after capture; neither file may follow this newer value.
                 editor.document.state.project.output.lut = (!with_look).then(|| look.clone());
             });
-            assert!(editor.failure.is_none(), "{}", editor.status);
+            assert!(editor.dialogs.message().is_none(), "{}", editor.status);
             editor.document.state.project.output.lut = Some(look.clone());
             let pixels = tiff_pixels(&path);
             let (triplets, tail) = pixels.as_chunks::<3>();

@@ -13,9 +13,11 @@ mod batch_tests;
 mod tests;
 
 #[derive(Default)]
+
 pub(super) struct State {
     pub operation: Option<Operation>,
     pub draft: Option<Draft>,
+    #[cfg(test)]
     pub summary: Option<Summary>,
 }
 
@@ -385,7 +387,10 @@ impl Editor {
         });
         self.document.thumbnails.cancel();
         self.status = "Exporting…".into();
-        self.document.export.summary = None;
+        #[cfg(test)]
+        {
+            self.document.export.summary = None;
+        }
         let total = request.photos.len();
         log::info!(total; "export_started");
 
@@ -431,11 +436,8 @@ impl Editor {
                 editor.document.export.operation = None;
                 if editor.interaction_blocked() {
                     // A captured batch cannot finish a newer foreground operation.
-                    if summary.failed() > 0
-                        && editor.failure.is_none()
-                        && editor.document.export.summary.is_none()
-                    {
-                        editor.document.export.summary = Some(summary);
+                    if summary.failed() > 0 {
+                        editor.present_export_summary(summary);
                     }
                     return;
                 }
@@ -443,18 +445,18 @@ impl Editor {
                     if let Outcome::Exported(path) = &summary.outcomes[0] {
                         editor.status = format!("Exported {}", path.display());
                     }
-                    editor.resolve_failure(FailureKind::Export);
-                    editor.document.export.summary = Some(summary);
+
+                    editor.present_export_summary(summary);
                 } else if summary.total == 1 && summary.failed() == 1 {
                     if let Outcome::Failed { error, .. } = &summary.outcomes[0] {
                         editor.status = error.clone();
-                        editor.report_failure(FailureKind::Export, error.clone());
+                        editor.export_failed(error.clone());
                     }
                 } else if summary.stopped && summary.outcomes.is_empty() {
                     editor.status = "Export cancelled".into();
                 } else {
                     editor.status = summary.text();
-                    editor.document.export.summary = Some(summary);
+                    editor.present_export_summary(summary);
                 }
             });
         }) else {
@@ -504,7 +506,7 @@ pub(super) struct Draft {
     pub precision: ExrPrecision,
     pub suffix: String,
     pub collision: Collision,
-    pub confirming_replace: bool,
+
     pub error: Option<String>,
 }
 
@@ -518,7 +520,7 @@ impl Draft {
             precision: ExrPrecision::Half,
             suffix: String::new(),
             collision: Collision::KeepBoth,
-            confirming_replace: false,
+
             error: None,
         }
     }
@@ -549,13 +551,14 @@ pub(super) struct Request {
     pub protected: Vec<PathBuf>,
 }
 
+#[derive(Clone)]
 pub(super) enum Outcome {
     Exported(PathBuf),
     Skipped(PathBuf),
     Failed { path: PathBuf, error: String },
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Summary {
     pub total: usize,
     pub outcomes: Vec<Outcome>,
@@ -985,7 +988,7 @@ fn form(ui: &mut egui::Ui, draft: &mut Draft, selected: usize, all: usize) -> In
 
 impl Editor {
     pub(super) fn export_modal(&self) -> bool {
-        self.document.export.draft.is_some() || self.document.export.summary.is_some()
+        self.document.export.draft.is_some()
     }
 
     pub(super) fn open_export_dialog(&mut self) {
@@ -1008,19 +1011,6 @@ impl Editor {
         cx: &UiContext<'_, Self>,
     ) {
         if let Some(mut draft) = self.document.export.draft.take() {
-            if draft.confirming_replace {
-                let choice = presentation::DecisionDialog::new("Replace existing exported files?", "Existing files with the generated names in the destination folder will be replaced. Completed replacements cannot be undone.", "Replace and export")
-                    .warning().detail(&draft.folder.display().to_string()).show(context, egui::Id::new("confirm-batch-replace"), escape);
-                match choice {
-                    Some(presentation::DialogChoice::Confirm) => self.accept_export(draft, cx),
-                    Some(presentation::DialogChoice::Cancel) => {
-                        draft.confirming_replace = false;
-                        self.document.export.draft = Some(draft);
-                    }
-                    _ => self.document.export.draft = Some(draft),
-                }
-                return;
-            }
             let selected = self.export_ids(Scope::Selected).len();
             let all = self.export_ids(Scope::All).len();
             let response = presentation::modal(context, egui::Id::new("export-photos"), |ui| {
@@ -1044,16 +1034,23 @@ impl Editor {
             }
             if response.inner.export {
                 if draft.collision == Collision::Replace {
-                    draft.confirming_replace = true;
-                    self.document.export.draft = Some(draft);
+                    self.request_export_replacement(draft, cx);
                 } else {
                     self.accept_export(draft, cx);
                 }
             } else {
                 self.document.export.draft = Some(draft);
             }
-        } else if let Some(summary) = self.document.export.summary.take() {
-            let response = presentation::modal(context, egui::Id::new("export-summary"), |ui| {
+        }
+    }
+
+    fn present_export_summary(&mut self, summary: Summary) {
+        #[cfg(test)]
+        {
+            self.document.export.summary = Some(summary.clone());
+        }
+        drop(self.dialogs.show(move |context, id, escape| {
+            let response = presentation::modal(context, id, |ui| {
                 ui.heading(if summary.stopped {
                     "Export stopped"
                 } else {
@@ -1093,10 +1090,27 @@ impl Editor {
             if let Some(path) = &response.inner.1 {
                 reveal_file(path.clone());
             }
-            if !response.inner.0 && !presentation::escape_requested(&response, escape) {
-                self.document.export.summary = Some(summary);
-            }
-        }
+            (response.inner.0 || presentation::escape_requested(&response, escape)).then_some(())
+        }));
+    }
+
+    pub(super) fn request_export_replacement(&mut self, draft: Draft, cx: &UiContext<'_, Self>) {
+        let detail = draft.folder.display().to_string();
+        let response = self.dialogs.show(move |context, id, escape| {
+            presentation::DecisionDialog::new("Replace existing exported files?",
+                "Existing files with the generated names in the destination folder will be replaced. Completed replacements cannot be undone.",
+                "Replace and export").warning().detail(&detail).show(context, id, escape)
+        });
+        self.document.dialog_action = cx.spawn(move |cx| async move {
+            let Ok(choice) = response.await else { return };
+            cx.update(|editor| {
+                if choice == presentation::DialogChoice::Confirm {
+                    editor.accept_export(draft, &cx);
+                } else {
+                    editor.document.export.draft = Some(draft);
+                }
+            });
+        });
     }
 
     fn accept_export(&mut self, mut draft: Draft, cx: &UiContext<'_, Self>) {
@@ -1108,7 +1122,6 @@ impl Editor {
             }
             Err(error) => {
                 draft.error = Some(error.to_string());
-                draft.confirming_replace = false;
                 self.document.export.draft = Some(draft);
             }
         }
@@ -1126,5 +1139,16 @@ fn reveal_file(path: PathBuf) {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = path;
+    }
+}
+
+impl Editor {
+    pub(super) fn export_failed(&mut self, details: String) {
+        drop(self.dialogs.report(dialogs::Message {
+            severity: super::presentation::Severity::Error,
+            title: "Could not export image",
+            explanation: "Nothing was exported. The project and any existing destination file are unchanged. Review the details, then try exporting again.",
+            details,
+        }));
     }
 }

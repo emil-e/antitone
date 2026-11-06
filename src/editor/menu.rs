@@ -36,19 +36,10 @@ impl Editor {
         if self.allow_close {
             return host::QuitState::Approved;
         }
-        if self.failure.is_some() {
-            return host::QuitState::Running;
-        }
-        let closing =
-            |transition: &Option<Transition>| matches!(transition, Some(Transition::Close));
+
         if self.menus.pending.contains(&Action::Quit)
             || self.document.deferred_menu.contains(&Action::Quit)
-            || closing(&self.transition)
-            || closing(&self.after_save)
-            || self
-                .project_overwrite
-                .as_ref()
-                .is_some_and(|(_, after)| closing(after))
+            || self.files.closing()
         {
             host::QuitState::Pending
         } else {
@@ -94,13 +85,10 @@ impl Editor {
     fn application_modal(&self) -> bool {
         self.allow_close
             || self.activities.blocks_workspace() && self.document.spatial_preparing.is_none()
-            || self.failure.is_some()
+            || self.dialogs.is_open()
             || self.document_pending.is_some()
             || self.document.export.draft.is_some()
-            || self.document.export.summary.is_some()
-            || self.transition.is_some()
-            || self.project_overwrite.is_some()
-            || self.document.confirming()
+            || self.files.pending()
     }
 
     pub(super) fn application_menu_state(&self) -> State {

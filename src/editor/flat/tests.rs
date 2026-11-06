@@ -89,19 +89,25 @@ fn reference_rejection_and_cancel_preserve_document_and_working_context() {
                 !e.document.source && e.test_pick().is_none() && e.document.flat_edit().is_none()
             );
             assert_eq!(e.document.state.project, original);
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
             assert_eq!(
-                e.failure.as_ref().unwrap().details,
+                e.dialogs.message().unwrap().title,
+                FailureCase::FlatReference.title()
+            );
+            assert_eq!(
+                e.dialogs.message().unwrap().details,
                 "Reference services unavailable"
             );
         });
         app.enter(|e, cx| {
             e.begin_flat_edit("other.ARW".into(), None, cx);
-            assert!(e.interaction_blocked());
+            assert!(!e.interaction_blocked() && e.document.flat_edit().is_none());
             assert_eq!(
-                e.failure.as_ref().unwrap().details,
+                e.dialogs.message().unwrap().details,
                 "Reference services unavailable"
             );
+            e.dialogs.answer_for_test("OK");
+            e.begin_flat_edit("other.ARW".into(), None, cx);
+            assert!(e.interaction_blocked());
             e.end_tool();
             assert_eq!(e.document.roll, roll);
             assert_eq!(e.document.state.project, original);
@@ -154,8 +160,8 @@ fn failed_map_acceptance_restores_transient_edit_without_accepting_document_chan
             ));
             assert!(!e.document.source);
             assert_eq!(
-                e.failure.as_ref().unwrap().kind,
-                FailureKind::FlatCorrection
+                e.dialogs.message().unwrap().title,
+                FailureCase::FlatCorrection.title()
             );
             assert_eq!(
                 e.history_label(crate::editor::history::Direction::Undo),
@@ -292,6 +298,7 @@ fn flat_support_uses_source_space_and_restores_rotated_composition_and_view() {
     );
     with_application(editor, |app| {
         app.enter(|e, cx| {
+            e.dialogs.answer_for_test("OK");
             e.end_tool();
             assert_eq!(e.document.state.project, original);
             assert_eq!(

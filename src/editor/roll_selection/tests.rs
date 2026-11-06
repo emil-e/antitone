@@ -71,9 +71,7 @@ fn removing_a_photo_releases_its_sampling_inputs_and_undo_does_not_restore_worki
     editor.document.roll_selection.only(id);
     crate::application::test_support::with_application(editor, |app| {
         app.enter(|e, cx| {
-            e.request_removal();
-            assert_eq!(e.document.removal_pending, Some(vec![id]));
-            e.remove_selected_photos(cx);
+            e.remove_selected_photos(vec![id], cx);
             assert!(e.document.project.source(id).is_err());
             assert_eq!(e.document.sampling_inputs.retained_bytes(), 0);
         });
@@ -186,9 +184,10 @@ fn pending_photo_navigation_and_removal_use_metadata_without_waiting_for_pixels(
             editor.select_roll_photo(4, egui::Modifiers::COMMAND, cx);
             assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
             assert_eq!(editor.document.visit.current_source, Some(ids[0]));
-            editor.request_removal();
-            assert_eq!(editor.document.removal_pending, Some(vec![ids[0], ids[4]]));
-            editor.document.removal_pending = None;
+            editor.request_removal(cx);
+            assert!(editor.dialogs.is_open());
+            assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
+            editor.dialogs.answer_for_test("Cancel");
             editor.select_roll_photo(4, egui::Modifiers::NONE, cx);
             assert!(editor.document.visit.source.pending());
             assert_ne!(editor.id, first);
@@ -206,8 +205,9 @@ fn pending_photo_navigation_and_removal_use_metadata_without_waiting_for_pixels(
                     && editor.document.visit.current_source == Some(ids[4])
             );
             editor.source_result(editor.id, Err("fixture unavailable".into()));
-            editor.request_removal();
-            assert_eq!(editor.document.removal_pending, Some(vec![ids[0], ids[4]]));
+            editor.request_removal(cx);
+            assert!(editor.dialogs.is_open());
+            assert_eq!(editor.document.roll_selection.ids, vec![ids[0], ids[4]]);
         });
     });
 }
@@ -234,29 +234,40 @@ fn deselecting_active_prefers_selected_successor_then_predecessor() {
 #[test]
 fn removal_is_staged_cancellable_and_uses_old_index_in_the_updated_order() {
     for (index, removed, expected) in [(2, vec![0, 2], 4), (4, vec![0, 4], 3), (0, vec![0], 1)] {
-        let editor = fixture(index);
-        crate::application::test_support::with_application(editor, |app| {
-            app.enter(|editor, cx| {
-                let ids = editor.document.state.project.order.clone();
+        crate::application::test_support::with_application(fixture(index), |app| {
+            let (ids, before, selection) = app.enter(|editor, cx| {
+                let ids = editor.document.project.order.clone();
                 editor.document.roll_selection.ids =
                     removed.iter().map(|index| ids[*index]).collect();
                 editor.sync_document();
-                let before = editor.document.state.project.clone();
-                editor.request_removal();
-                assert_eq!(editor.document.state.project, before);
+                let before = editor.document.project.clone();
                 let selection = editor.document.roll_selection.ids.clone();
-                editor.document.removal_pending = None;
+                editor.request_removal(cx);
+                assert_eq!(editor.document.project, before);
+                editor.dialogs.answer_for_test("Cancel");
+                (ids, before, selection)
+            });
+            app.pump();
+            app.read(|editor| {
+                assert_eq!(editor.document.project, before);
                 assert_eq!(editor.document.roll_selection.ids, selection);
-                assert!(!editor.document.visit.source.pending());
-                editor.request_removal();
-                editor.remove_selected_photos(cx);
+                assert!(!editor.document.visit.source.pending() && !editor.dialogs.is_open());
+            });
+            let previous = app.enter(|editor, cx| {
+                editor.request_removal(cx);
+                editor.export_failed("Unrelated notice queued after the question".into());
+                editor.dialogs.answer_for_test("Remove photos");
+                editor.id
+            });
+            app.pump();
+            app.read(|editor| {
                 assert_eq!(editor.document.visit.current_source, Some(ids[expected]));
                 assert_eq!(
                     editor.document.selected,
-                    index.min(editor.document.state.project.order.len() - 1)
+                    index.min(editor.document.project.order.len() - 1)
                 );
                 assert_eq!(editor.document.roll_selection.ids, vec![ids[expected]]);
-                let mut expected_project = before;
+                let mut expected_project = before.clone();
                 expected_project.order.retain(|id| !selection.contains(id));
                 expected_project
                     .sources
@@ -264,10 +275,25 @@ fn removal_is_staged_cancellable_and_uses_old_index_in_the_updated_order() {
                 expected_project
                     .analysis_regions
                     .retain(|entry| !selection.contains(&entry.source));
-                assert_eq!(editor.document.state.project, expected_project);
-                assert!(editor.document.removal_pending.is_none());
-                assert!(editor.document.visit.source.pending());
+                assert_eq!(editor.document.project, expected_project);
+                assert!(editor.dialogs.is_open());
+                assert_eq!(
+                    editor.dialogs.message().unwrap().details,
+                    "Unrelated notice queued after the question"
+                );
+                assert!(
+                    editor.id > previous,
+                    "removal must request its selected successor"
+                );
+                assert_eq!(
+                    editor
+                        .source_epoch
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    editor.id
+                );
             });
+            app.update(|editor| editor.dialogs.answer_for_test("OK"));
+            app.read(|editor| assert!(!editor.dialogs.is_open()));
         });
     }
 }
@@ -287,8 +313,7 @@ fn removing_every_photo_clears_working_images_and_stale_replies_but_keeps_roll_b
             let old_id = editor.id;
             let ready = editor.document.visit.canvas.ready.take().unwrap();
             let source = Arc::downgrade(&ready.developed);
-            editor.request_removal();
-            editor.remove_selected_photos(cx);
+            editor.remove_selected_photos(editor.document.roll_selection.ids.clone(), cx);
             assert_eq!(editor.document.state.project, expected);
             assert!(editor.document.visit.current_source.is_none());
             assert!(
@@ -352,8 +377,8 @@ fn an_ordinary_picker_preserves_multiselection_and_anchor() {
             settle(editor);
             assert_eq!(editor.document.roll_selection.ids, selection);
             assert_eq!(editor.document.roll_selection.anchor, anchor);
-            editor.request_removal();
-            assert!(editor.document.removal_pending.is_none());
+            editor.request_removal(cx);
+            assert!(!editor.dialogs.is_open());
             editor.finish_pick(cx);
             settle(editor);
             assert_eq!(editor.document.visit.current_source, Some(active));
@@ -384,24 +409,21 @@ fn drafts_foreground_work_and_decisions_reject_selection_and_removal() {
                 match blocker {
                     "busy" => editor.set_test_busy(true),
                     "pick" => picking::preview(editor, PickerCase::Dmax.display()),
-                    "failure" => editor.report_failure(FailureKind::Save, "fixture".into()),
-                    "transition" => editor.transition = Some(Transition::Close),
+                    "failure" => editor.report_failure(FailureCase::Save, "fixture".into()),
+                    "transition" => editor.guard_transition(Transition::Close, cx),
                     "analysis" => editor.document_pending = Some(12),
-                    "removal" => {
-                        editor.document.removal_pending =
-                            Some(vec![editor.document.visit.current_source.unwrap()])
-                    }
+                    "removal" => editor.request_removal(cx),
                     _ => unreachable!(),
                 }
                 let before = editor.document.state.project.clone();
                 let selection = editor.document.roll_selection.ids.clone();
-                let pending = editor.document.removal_pending.clone();
+                let pending = editor.dialogs.is_open();
                 editor.select_roll_photo(0, egui::Modifiers::NONE, cx);
                 editor.select_active_photo_only();
-                editor.request_removal();
+                editor.request_removal(cx);
                 assert_eq!(editor.document.state.project, before);
                 assert_eq!(editor.document.roll_selection.ids, selection);
-                assert_eq!(editor.document.removal_pending, pending);
+                assert_eq!(editor.dialogs.is_open(), pending);
                 assert!(!editor.document.visit.source.pending());
             });
         });

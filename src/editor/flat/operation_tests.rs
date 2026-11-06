@@ -148,7 +148,10 @@ fn reference_proposal_and_correction_finish_without_backend_or_paint_and_keep_wo
                 &current,
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed
             ));
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
+            assert_eq!(
+                e.dialogs.message().unwrap().title,
+                FailureCase::FlatReference.title()
+            );
         });
     });
     scheduler.close_and_wait().unwrap();
@@ -240,7 +243,7 @@ fn retiring_preparation_or_replacing_accepted_work_cannot_publish_into_a_success
             drop(hold);
             wait(app);
             app.read(|e| {
-                assert!(e.failure.is_none());
+                assert!(!e.dialogs.is_open());
                 assert!(e.document.state.project.flat_field().is_none());
             });
         });
@@ -478,7 +481,10 @@ fn reference_failure_after_a_visit_change_finishes_its_own_preparation_activity(
         wait(app);
         app.read(|e| {
             assert!(e.document.flat_edit().is_none() && e.activities.view().is_none());
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
+            assert_eq!(
+                e.dialogs.message().unwrap().title,
+                FailureCase::FlatReference.title()
+            );
             assert_eq!(e.document.state.project, before);
             assert_eq!(e.document.visit.canvas.viewport, viewport);
             assert_eq!(e.document.source, source);
@@ -524,8 +530,8 @@ fn invalid_measured_support_fails_without_accepting_reference_records_or_history
             assert_eq!(e.document.state.project, before);
             assert!(e.document.flat_edit().is_none() && e.document.correction.is_none());
             assert_eq!(
-                e.failure.as_ref().unwrap().kind,
-                FailureKind::FlatCorrection
+                e.dialogs.message().unwrap().title,
+                FailureCase::FlatCorrection.title()
             );
             assert!(
                 e.history_label(crate::editor::history::Direction::Undo)
@@ -584,8 +590,8 @@ fn failed_replacement_preserves_the_previous_correction_and_adds_no_history_entr
         wait(app);
         app.read(|editor| {
             assert_eq!(
-                editor.failure.as_ref().unwrap().kind,
-                FailureKind::FlatCorrection
+                editor.dialogs.message().unwrap().title,
+                FailureCase::FlatCorrection.title()
             );
             assert_eq!(editor.document.project, accepted);
             assert!(Arc::ptr_eq(
@@ -598,7 +604,7 @@ fn failed_replacement_preserves_the_previous_correction_and_adds_no_history_entr
         frame(app, &context, key(egui::Key::Escape));
         app.read(|editor| {
             assert!(
-                editor.failure.is_none(),
+                !editor.dialogs.is_open(),
                 "acknowledge the rejected replacement before Undo"
             )
         });
@@ -640,7 +646,10 @@ fn missing_reference_services_finish_activity_and_preserve_accepted_state() {
             assert!(!e.interaction_blocked() && e.activities.view().is_none());
             assert!(e.document.flat_edit().is_none());
             assert_eq!(e.document.state.project, before);
-            assert_eq!(e.failure.as_ref().unwrap().kind, FailureKind::FlatReference);
+            assert_eq!(
+                e.dialogs.message().unwrap().title,
+                FailureCase::FlatReference.title()
+            );
             assert!(Arc::ptr_eq(
                 &pixels,
                 &e.document.visit.canvas.ready.as_ref().unwrap().developed
@@ -1070,11 +1079,11 @@ fn unpolled_preparation_can_be_retired_and_closed_execution_rejects_new_work() {
                 );
                 assert_eq!(e.document.state.project, before);
                 assert_eq!(
-                    e.failure.as_ref().unwrap().kind,
+                    e.dialogs.message().unwrap().title,
                     if accept {
-                        FailureKind::FlatCorrection
+                        FailureCase::FlatCorrection.title()
                     } else {
-                        FailureKind::FlatReference
+                        FailureCase::FlatReference.title()
                     }
                 );
                 assert_eq!(e.status, "Application stopped");
