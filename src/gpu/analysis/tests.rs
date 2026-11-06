@@ -195,6 +195,40 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
     assert!((actual.roll.exposure - reference.roll.exposure).abs() < 2e-4);
     assert!((actual.roll.wb.warmth - reference.roll.wb.warmth).abs() < 2e-4);
     assert!((actual.roll.wb.tint - reference.roll.wb.tint).abs() < 2e-4);
+
+    let luminance =
+        (crate::color::AP1_TO_XYZ * crate::color::wb_matrix(actual.roll.wb).unwrap() * matrix)
+            .row(1);
+    let mut frame_medians = Vec::new();
+    for picture in &pictures {
+        let mut values = Vec::new();
+        assert!(
+            model
+                .read(
+                    actual.input.negative_input().unwrap(),
+                    picture,
+                    &mut || false,
+                    &mut |_, positive| {
+                        let y = luminance.dot(positive);
+                        assert!(y > 1e-8, "all fixture samples must be exposure-eligible");
+                        values.push(y);
+                        Ok(())
+                    },
+                )
+                .unwrap()
+        );
+        assert_eq!(values.len(), picture.len());
+        assert_eq!(
+            values.len() % 2,
+            1,
+            "fixture medians have a single middle sample"
+        );
+        values.sort_by(f64::total_cmp);
+        frame_medians.push(values[values.len() / 2]);
+    }
+    // Two differently sized frames have equal influence on the linear roll key.
+    let key = (frame_medians[0] + frame_medians[1]) * 0.5;
+    assert!((key * actual.roll.exposure.exp2() - 0.18).abs() < 1e-8);
     assert_eq!(
         actual.photos,
         vec![crate::adjustment_layers::AdjustmentLayerSettings::default(); frames.len()]

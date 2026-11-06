@@ -159,21 +159,6 @@ fn usable_film_is_pooled_without_requiring_every_frame_to_supply_base() {
     );
     assert!(negative(&p).balance.warmth.abs() < 1e-9 && negative(&p).balance.tint.abs() < 1e-9);
     assert_ne!(p.roll.exposure, 0.);
-    let inv = Inversion::new(negative(&p)).unwrap();
-    let mut totals = Vec::new();
-    for pixels in [&a, &b] {
-        let mut y: Vec<_> = pixels
-            .iter()
-            .map(|&v| (AP1_TO_XYZ * (wb_matrix(p.roll.wb).unwrap() * inv.apply(v).unwrap().rgb)).y)
-            .collect();
-        y.sort_by(f64::total_cmp);
-        let at = (y.len() - 1) as f64 * 0.99;
-        let p99 = y[at.floor() as usize] * (1. - at.fract()) + y[at.ceil() as usize] * at.fract();
-        let mean = y.iter().map(|v| v.min(p99)).sum::<f64>() / y.len() as f64;
-        let total = ((0.18 / mean).log2() - p99.log2()) * 0.5;
-        totals.push(total);
-    }
-    assert!((p.roll.exposure - (totals[0] + totals[1]) * 0.5).abs() < 1e-11);
     assert_eq!(p.photos, vec![AdjustmentLayerSettings::default(); 2]);
 }
 
@@ -202,8 +187,8 @@ fn shared_roll_exposure_preserves_dark_and_bright_frame_placement() {
 
     // With gamma/toe 1 and no shoulder, positive = (1 / transmission - 1) / 4.
     // The three constant frames therefore have luminances 1, 1/16 and 1/4.
-    // Each exposure prior targets sqrt(0.18); the median belongs to the 1/4 frame.
-    let gain = 0.18_f64.sqrt() / 0.25;
+    // The middle frame's luminance sets the common gain to place it at 0.18.
+    let gain: f64 = 0.18 / 0.25;
     assert!((p.roll.exposure - gain.log2()).abs() < 1e-11);
     assert_eq!(p.photos, vec![AdjustmentLayerSettings::default(); 3]);
 
@@ -224,6 +209,67 @@ fn shared_roll_exposure_preserves_dark_and_bright_frame_placement() {
             DVec3::splat(positive * gain),
         );
     }
+}
+
+#[test]
+fn frame_luminance_median_handles_skewed_and_even_populations() {
+    let film = vec![BASE; 256];
+    for (dark_count, middle_count, median) in [(301, 501, 0.25), (500, 301, 5. / 32.)] {
+        let picture: Vec<_> = std::iter::repeat_n(BASE * 0.8, dark_count)
+            .chain(std::iter::repeat_n(BASE * 0.5, middle_count))
+            .chain(std::iter::repeat_n(BASE * 0.2, 199))
+            .collect();
+        let p = proposal(
+            &[FrameSamples {
+                film: &film,
+                picture: &picture,
+            }],
+            DMat3::IDENTITY,
+            current(
+                1.,
+                Response {
+                    toe: 1.,
+                    shoulder: 0.,
+                },
+            ),
+        );
+        // These neutral populations invert to 1/16, 1/4 and 1. The odd case's
+        // median is 1/4; the even case averages 1/16 and 1/4 to get 5/32.
+        // The bright fifth raises the mean and p99 without setting either median.
+        let gain: f64 = 0.18 / median;
+        assert!((p.roll.exposure - gain.log2()).abs() < 1e-11);
+    }
+}
+
+#[test]
+fn roll_key_weights_frames_equally_and_averages_even_medians_in_linear_luminance() {
+    let film = vec![BASE; 256];
+    let pictures = [(512, 0.2), (1024, 0.8), (2048, 0.5), (8192, 1. / 3.)]
+        .map(|(count, transmission)| vec![BASE * transmission; count]);
+    let frames: Vec<_> = pictures
+        .iter()
+        .map(|picture| FrameSamples {
+            film: &film,
+            picture,
+        })
+        .collect();
+    let p = proposal(
+        &frames,
+        DMat3::IDENTITY,
+        current(
+            1.,
+            Response {
+                toe: 1.,
+                shoulder: 0.,
+            },
+        ),
+    );
+    // Frame medians are 1, 1/16, 1/4 and 1/2, so the roll key is 3/8.
+    // Pooling pixels would let the largest frame set the key to 1/2;
+    // averaging the middle EVs would instead use a geometric luminance mean.
+    let gain: f64 = 0.18 / (3. / 8.);
+    assert!((p.roll.exposure - gain.log2()).abs() < 1e-11);
+    assert_eq!(p.photos, vec![AdjustmentLayerSettings::default(); 4]);
 }
 
 #[test]
@@ -341,7 +387,7 @@ fn out_of_range_shared_wb_is_rejected_not_clamped_or_replaced_by_identity() {
 }
 
 #[test]
-fn one_hdr_outlier_does_not_move_the_p99_capped_exposure_prior_or_clamp_working_pixels() {
+fn isolated_hdr_sample_does_not_move_median_exposure_or_clip_working_pixels() {
     let film = vec![BASE; 256];
     let mut source = vec![BASE * 0.3; 8192];
     let fit = |pixels: &[DVec3]| {
@@ -386,7 +432,10 @@ fn one_hdr_outlier_does_not_move_the_p99_capped_exposure_prior_or_clamp_working_
         calibration(&after)
     );
     let uncapped_mean = y.iter().sum::<f64>() / y.len() as f64;
-    assert!((uncapped_mean / y[1]).log2() * 0.5 > 2.);
+    assert!(
+        uncapped_mean > 16. * y[1],
+        "the outlier must materially bias an arithmetic mean"
+    );
     assert_eq!(after.frames[0].exposure_samples, source.len());
 }
 
