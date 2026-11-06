@@ -9,15 +9,15 @@ eligible camera samples
   → Dmin and independent-channel Dmax
   → shared channel curves, fitted independently of photographic WB
   → shared Roll WB
-  → per-photo exposure estimates
-  → shared Roll EV median; Photo EV zero
+  → per-photo luminance medians
+  → shared Roll EV from their median; Photo EV zero
 ```
 
 ## 1. Choose what to sample
 
 The analysis uses original developed camera pixels, with accepted scan correction applied — never a displayed preview or an embedded camera JPEG. Two sample populations have different jobs: the film population supplies the low-density reference; the picture population supplies dense tails, colour trends and exposure statistics. Sampling batches only selected 8×8 camera cells, retaining their original coordinates for correction. Local numerical checks reject precision-floored footprints before retaining their original centre pixels; fitting retains samples rather than every developed RAW.
 
-Spatial support excludes the holder and unsuitable material; numerical checks establish usable developed values. Statistical anchors and capped exposure means limit the influence of isolated extremes.
+Spatial support excludes the holder and unsuitable material; numerical checks establish usable developed values. Statistical anchors and median exposure statistics limit the influence of isolated extremes.
 
 **Analyze** on the Roll tool shelf requests reusable [shared film/picture metadata and automatic sampling windows](spatial-metadata.md), then opens one review for the roll. Either Analyze or Auto-crop can prepare the shared description without accepting the other's edits. The viewer shows the uncropped source with both opening and picture areas — direct canvas selection, corner resizing and dragging; automatic film exclusions stay visible, and warning icons identify missing areas and the consequence of replacing existing Photo adjustments. Selection and browsing retain their ordinary behavior and never narrow this roll-wide review. Browse to edit individual exceptions, then confirm the complete set with **Analyze roll**; Cancel leaves accepted areas and grading unchanged. Finishing or cancelling keeps the currently displayed photo.
 
@@ -75,20 +75,18 @@ This is a roll-wide colour prior, not a measured neutral target. Photo WB starts
 
 ## 5. Set shared roll exposure
 
-Each photo supplies an exposure estimate after curve fitting and Roll WB. Two goals are blended equally in stops:
-
-- Put a robust mean luminance near 0.18.
-- Put the 99th-percentile luminance near one.
-
-The mean counts values above p99 as p99, reducing the leverage of very bright outliers. **Only the statistic is capped; working pixels are not clipped.**
+Each photo supplies the median of its eligible positive AP1 luminances after curve fitting and Roll WB. The median of those frame medians supplies the roll key, giving each photo equal influence regardless of sample count:
 
 ```text
-estimated_EV = (log2(0.18 / capped_mean) + log2(1 / p99)) / 2
+roll_key = median(frame_luminance_medians)
+Roll_EV = log2(0.18 / roll_key)
 ```
 
-Roll EV receives the median of those estimates; every Photo EV starts at zero. The common exposure preserves frame-to-frame brightness differences, using scene-metered film exposure as a practical prior. Individually normalizing frames can darken foregrounds beneath bright skies or lift dark scenes and their shadow noise. Manual Photo EV remains available for exceptions.
+Both medians are taken in linear luminance; even populations average their two middle values. This reduces the influence of bright and dark tails without clipping working pixels. The 0.18 target is a starting-brightness choice, not a claim that a scene's median surface is a gray card.
 
-The targets are working-luminance priors, not display white or exposure ground truth. The shared baseline still depends on the roll's scenes and consistent scanning exposure.
+Every Photo EV starts at zero. The common exposure preserves frame-to-frame brightness differences, using scene-metered film exposure as a practical prior. Individually normalizing frames can darken foregrounds beneath bright skies or lift dark scenes and their shadow noise. Manual Photo EV remains available for exceptions.
+
+The shared baseline still depends on the roll's scenes and consistent scanning exposure. Predominantly dark or bright rolls can need manual Roll EV adjustment; the statistic cannot infer photographic intent.
 
 ## Review uses finished detection
 

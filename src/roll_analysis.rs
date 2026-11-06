@@ -263,7 +263,7 @@ pub(crate) fn estimate_with_model(
         return Ok(None);
     }
 
-    let mut totals = Vec::with_capacity(frames.len());
+    let mut frame_medians = Vec::with_capacity(frames.len());
     let mut statistics = Vec::with_capacity(frames.len());
     for (index, frame) in frames.iter().enumerate() {
         if cancelled() {
@@ -282,19 +282,10 @@ pub(crate) fn estimate_with_model(
             balance_samples: balance_count,
             exposure_samples: luminances.len(),
         });
-        let p99 = quantile(luminances, 0.99);
-        // Cap the statistic only: signed/HDR working pixels remain unchanged.
-        let capped_mean = luminances
-            .iter()
-            .map(|y| y.min(p99) / luminances.len() as f64)
-            .sum::<f64>();
-        let total = (0.18_f64.log2() - capped_mean.log2() - p99.log2()) * 0.5;
-        if !total.is_finite() {
-            return Err(Error::NumericalOverflow);
-        }
-        totals.push(total);
+        frame_medians.push(quantile(luminances, 0.5));
     }
-    roll.exposure = quantile(&mut totals, 0.5);
+    let roll_key = quantile(&mut frame_medians, 0.5);
+    roll.exposure = 0.18_f64.log2() - roll_key.log2();
     exposure_multiplier(roll.exposure)?;
     let photos = vec![AdjustmentLayerSettings::default(); frames.len()];
     if cancelled() {
