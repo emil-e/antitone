@@ -195,9 +195,10 @@ fn roll_estimation_keeps_corrected_camera_headroom_and_statistical_inputs() {
     assert!((actual.roll.exposure - reference.roll.exposure).abs() < 2e-4);
     assert!((actual.roll.wb.warmth - reference.roll.wb.warmth).abs() < 2e-4);
     assert!((actual.roll.wb.tint - reference.roll.wb.tint).abs() < 2e-4);
-    for (actual, reference) in actual.photos.iter().zip(&reference.photos) {
-        assert!((actual.exposure - reference.exposure).abs() < 2e-4);
-    }
+    assert_eq!(
+        actual.photos,
+        vec![crate::adjustment_layers::AdjustmentLayerSettings::default(); frames.len()]
+    );
 }
 
 #[test]

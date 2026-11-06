@@ -294,20 +294,9 @@ pub(crate) fn estimate_with_model(
         }
         totals.push(total);
     }
-    roll.exposure = quantile(&mut totals.clone(), 0.5);
+    roll.exposure = quantile(&mut totals, 0.5);
     exposure_multiplier(roll.exposure)?;
-    let photos = totals
-        .into_iter()
-        .map(|total| {
-            let photo = AdjustmentLayerSettings {
-                exposure: total - roll.exposure,
-                wb: Balance::default(),
-                ..AdjustmentLayerSettings::default()
-            };
-            exposure_multiplier(photo.exposure)?;
-            Ok(photo)
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
+    let photos = vec![AdjustmentLayerSettings::default(); frames.len()];
     if cancelled() {
         return Ok(None);
     }

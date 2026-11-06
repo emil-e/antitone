@@ -161,7 +161,7 @@ fn usable_film_is_pooled_without_requiring_every_frame_to_supply_base() {
     assert_ne!(p.roll.exposure, 0.);
     let inv = Inversion::new(negative(&p)).unwrap();
     let mut totals = Vec::new();
-    for (index, pixels) in [&a, &b].into_iter().enumerate() {
+    for pixels in [&a, &b] {
         let mut y: Vec<_> = pixels
             .iter()
             .map(|&v| (AP1_TO_XYZ * (wb_matrix(p.roll.wb).unwrap() * inv.apply(v).unwrap().rgb)).y)
@@ -172,17 +172,58 @@ fn usable_film_is_pooled_without_requiring_every_frame_to_supply_base() {
         let mean = y.iter().map(|v| v.min(p99)).sum::<f64>() / y.len() as f64;
         let total = ((0.18 / mean).log2() - p99.log2()) * 0.5;
         totals.push(total);
-        assert!((p.roll.exposure + p.photos[index].exposure - total).abs() < 1e-11);
-        assert_eq!(
-            p.photos[index],
-            AdjustmentLayerSettings {
-                exposure: p.photos[index].exposure,
-                ..AdjustmentLayerSettings::default()
-            }
-        );
     }
     assert!((p.roll.exposure - (totals[0] + totals[1]) * 0.5).abs() < 1e-11);
-    assert!((p.photos[0].exposure + p.photos[1].exposure).abs() < 1e-11);
+    assert_eq!(p.photos, vec![AdjustmentLayerSettings::default(); 2]);
+}
+
+#[test]
+fn shared_roll_exposure_preserves_dark_and_bright_frame_placement() {
+    let film = vec![BASE; 256];
+    let pictures = [0.2, 0.8, 0.5].map(|transmission| vec![BASE * transmission; 512]);
+    let frames: Vec<_> = pictures
+        .iter()
+        .map(|picture| FrameSamples {
+            film: &film,
+            picture,
+        })
+        .collect();
+    let p = proposal(
+        &frames,
+        DMat3::IDENTITY,
+        current(
+            1.,
+            Response {
+                toe: 1.,
+                shoulder: 0.,
+            },
+        ),
+    );
+
+    // With gamma/toe 1 and no shoulder, positive = (1 / transmission - 1) / 4.
+    // The three constant frames therefore have luminances 1, 1/16 and 1/4.
+    // Each exposure prior targets sqrt(0.18); the median belongs to the 1/4 frame.
+    let gain = 0.18_f64.sqrt() / 0.25;
+    assert!((p.roll.exposure - gain.log2()).abs() < 1e-11);
+    assert_eq!(p.photos, vec![AdjustmentLayerSettings::default(); 3]);
+
+    for ((picture, photo), positive) in pictures.iter().zip(&p.photos).zip([1., 1. / 16., 0.25]) {
+        let layers = antitone::adjustment_layers::AdjustmentLayerSnapshot::new(vec![
+            antitone::adjustment_layers::AdjustmentLayer::global(*photo),
+        ])
+        .unwrap();
+        let pipeline = antitone::adjustment_layers::AdjustmentLayerPipeline::new(
+            p.input,
+            p.roll,
+            layers,
+            DMat3::IDENTITY,
+        )
+        .unwrap();
+        close(
+            pipeline.apply(picture[0], [0, 0]).unwrap().rgb,
+            DVec3::splat(positive * gain),
+        );
+    }
 }
 
 #[test]

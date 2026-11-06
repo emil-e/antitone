@@ -90,6 +90,7 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         editor.set_floor(crate::processing::CAMERA_INPUT_FLOOR);
         editor.document.state.project.analysis_area = Some([96, 96, 320, 320]);
         editor.set_gamma(0.7);
+        editor.document.visit.adjustment_layer_settings.exposure = 0.75;
         editor.document.roll_orientation.turn_clockwise();
         editor.document.visit.photo_orientation.flips.horizontal = true;
         editor.document.visit.crop = Some(crate::crop::Crop {
@@ -118,12 +119,20 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
         {
             assert_eq!(source.orientation, prior.orientation);
             assert_eq!(source.crop, prior.crop);
+            if Some(prior.id) == selected {
+                assert_eq!(
+                    prior.adjustment_layers.as_ref().unwrap().layers[0]
+                        .adjustment
+                        .photo
+                        .exposure,
+                    0.75
+                );
+            }
             assert_eq!(
                 source.adjustment_layers.as_ref().unwrap().layers[0]
                     .adjustment
-                    .photo
-                    .wb,
-                Balance::default()
+                    .photo,
+                AdjustmentLayerSettings::default()
             );
         }
         let expected = 3000. / 4031.;
@@ -135,33 +144,6 @@ fn authored_roll_runs_the_editor_worker_and_preserves_failure_cancel_and_save_op
                 .unwrap()
                 .iter()
                 .all(|v| (v - expected).abs() <= 2. / 65535.)
-        );
-        let ids = &editor.document.state.project.order;
-        assert!(
-            editor
-                .document
-                .project
-                .source(ids[0])
-                .unwrap()
-                .adjustment_layers
-                .as_ref()
-                .unwrap()
-                .layers[0]
-                .adjustment
-                .photo
-                .exposure
-                > editor
-                    .document
-                    .project
-                    .source(ids[1])
-                    .unwrap()
-                    .adjustment_layers
-                    .as_ref()
-                    .unwrap()
-                    .layers[0]
-                    .adjustment
-                    .photo
-                    .exposure
         );
         let accepted = editor.document.state.project.clone();
         let directory = tempfile::tempdir().unwrap();

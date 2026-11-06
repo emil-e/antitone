@@ -1,6 +1,6 @@
 # Analyze roll: estimating a starting grade
 
-Analyze turns a roll of camera scans into a shared colour baseline and individually exposed photographs. It aims to make manual grading start from somewhere useful—not to finish every image or measure the film's physical response.
+Analyze turns a roll of camera scans into a shared colour and exposure baseline. It aims to make manual grading start from somewhere useful—not to finish every image or measure the film's physical response.
 
 The distinction from [processing](processing.md) matters: processing transforms pixels using supplied settings; analysis **estimates those settings** from sampled images.
 
@@ -9,8 +9,8 @@ eligible camera samples
   → Dmin and independent-channel Dmax
   → shared channel curves, fitted independently of photographic WB
   → shared Roll WB
-  → individual total exposures
-  → Roll EV median + Photo EV residuals
+  → per-photo exposure estimates
+  → shared Roll EV median; Photo EV zero
 ```
 
 ## 1. Choose what to sample
@@ -73,9 +73,9 @@ With the curves fixed, equal-count samples produce one positive mean per photo. 
 
 This is a roll-wide colour prior, not a measured neutral target. Photo WB starts at zero and remains manual: automatically neutralizing each photo would too readily remove blue shade, coloured lighting or a scene's dominant material colour.
 
-## 5. Place each photo's exposure
+## 5. Set shared roll exposure
 
-Exposure is estimated after curve fitting and Roll WB. Two goals are blended equally in stops:
+Each photo supplies an exposure estimate after curve fitting and Roll WB. Two goals are blended equally in stops:
 
 - Put a robust mean luminance near 0.18.
 - Put the 99th-percentile luminance near one.
@@ -83,12 +83,12 @@ Exposure is estimated after curve fitting and Roll WB. Two goals are blended equ
 The mean counts values above p99 as p99, reducing the leverage of very bright outliers. **Only the statistic is capped; working pixels are not clipped.**
 
 ```text
-total_EV = (log2(0.18 / capped_mean) + log2(1 / p99)) / 2
+estimated_EV = (log2(0.18 / capped_mean) + log2(1 / p99)) / 2
 ```
 
-These are working-luminance priors, not display white or exposure ground truth. A sky-heavy frame can still leave its foreground too dark; manual exposure remains appropriate.
+Roll EV receives the median of those estimates; every Photo EV starts at zero. The common exposure preserves frame-to-frame brightness differences, using scene-metered film exposure as a practical prior. Individually normalizing frames can darken foregrounds beneath bright skies or lift dark scenes and their shadow noise. Manual Photo EV remains available for exceptions.
 
-Roll EV receives the median total EV, and each Photo EV receives its total minus that median. For desired exposures of 1, 2 and 4 stops, that means Roll EV 2 and Photo EV −1, 0 and 2: the sums—and therefore the calculated appearance—are unchanged. This is a useful control decomposition, not another normalization.
+The targets are working-luminance priors, not display white or exposure ground truth. The shared baseline still depends on the roll's scenes and consistent scanning exposure.
 
 ## Review uses finished detection
 
@@ -100,7 +100,7 @@ Review needs only geometry and material classification; it does not develop RAWs
 
 ## Install the baseline, not a partial result
 
-Analyze replaces calibration, channel balance, Roll WB/EV and all ordered Photo grading. Photo exposure gets the estimated residual; Photo WB, contrast, pivot, colour preservation, saturation and density return to their actual defaults. Each analyzed photo's layer stack is replaced with one ordinary global layer carrying the estimated exposure; its non-reusing ID allocator is retained. The accepted flat-field reference grade is untouched.
+Analyze replaces calibration, channel balance, Roll WB/EV and all ordered Photo grading. Photo exposure and WB start at zero; contrast, pivot, colour preservation, saturation and density return to their actual defaults. Each analyzed photo's layer stack is replaced with one ordinary global layer at default settings; its non-reusing ID allocator is retained. The accepted flat-field reference grade is untouched.
 
 Every run reviews sampling areas. Nondefault layer settings or a stack other than the initial global layer add an explicit reset warning to that same review, not a second modal; the warning names layer replacement, and the accepted installation is one undoable history entry. Pending numeric edits commit before preparation; switching tools retires the unfinished analysis. Selected global gamma/response, accepted correction and Roll/Photo orientation and crop are preserved; no review draft is saved.
 
